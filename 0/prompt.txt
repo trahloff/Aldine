@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bjcnykv0b</task-id>
+<tool-use-id>toolu_01FUS1FdgLTiv4jUHf1EeML4</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bjcnykv0b.output</output-file>
+<status>killed</status>
+<summary>Background command "Start API server for recording" was stopped</summary>
+</task-notification>
