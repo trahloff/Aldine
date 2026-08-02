@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bb7u7kven</task-id>
+<tool-use-id>toolu_01GtWmwuV6o5sCoYZ9BbjYZt</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bb7u7kven.output</output-file>
+<status>completed</status>
+<summary>Background command "Run full e2e suite on React 19 build" completed (exit code 0)</summary>
+</task-notification>
