@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b95mvfacv</task-id>
+<tool-use-id>toolu_01FtTihBE9ornUHYrh51ZHND</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4/tasks/b95mvfacv.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for and read C2 result" was stopped</summary>
+</task-notification>
