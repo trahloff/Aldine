@@ -1,0 +1,1 @@
+Would it maybe make sense to refactor this for a platform like supabase to make stuff like this easier?
