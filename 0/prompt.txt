@@ -1,0 +1,1 @@
+also, when I click on "diagnose & fix", I get "Typeset first — there are no errors to fix."
