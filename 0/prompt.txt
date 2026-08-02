@@ -1,0 +1,1 @@
+Check background task baw2fqbts (e2e specs 08/12/01/03 on main with React 19 and fixed tests). If green, commit the React 19 upgrade + test fixes on main and push (user approved: "let's do it"), then report. If failures, diagnose before committing.
