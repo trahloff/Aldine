@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>btqkwqlrv</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/b072d290-e2bb-4fe8-b04d-824d9638b0e7/tasks/btqkwqlrv.output</output-file>
+<status>completed</status>
+<summary>Background command "Commit aifix message + rebuild app" completed (exit code 0)</summary>
+</task-notification>
