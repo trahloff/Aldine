@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bci72g51o</task-id>
+<tool-use-id>toolu_018BG7h5X4iXKyCHt8t5jgtG</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4/tasks/bci72g51o.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for security review result" was stopped</summary>
+</task-notification>
