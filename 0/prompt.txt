@@ -1,0 +1,160 @@
+<task-notification>
+<task-id>adb5604149fa63ab6</task-id>
+<tool-use-id>toolu_01994mSXfUm9X4YCKbsAXyHm</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/adb5604149fa63ab6.output</output-file>
+<status>completed</status>
+<summary>Agent "Map auth/session integration surface" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have a complete picture. Here is the full integration-surface inventory.
+
+# Papyr Auth / Session / User Integration Surface
+
+## Identity model (what flows everywhere)
+
+The canonical user record is `User` in `apps/server/src/db/types.ts:10-18`: `{ id, email, name, salt, hash, createdAt, provider? }`. Everything downstream consumes a stripped `PublicUser = { id, email, name, provider? }` (`apps/server/src/auth.ts:22`, projected by `pub()` at `auth.ts:27`). The frontend mirror is `AuthUser = { id, email, name, provider? }` (`apps/web/src/api.ts:1`).
+
+Fields actually depended on downstream:
+- **`user.id`** — project ownership (`meta.ownerId === user.id`), usage metering, GitHub connection bucket keying, session lookup.
+- **`user.email`** — collaborator ACL matching (lowercased), OAuth account linking key, reset lookup.
+- **`user.name`** — comment author, git commit author attribution, UI display chip.
+- **`user.provider`** — distinguishes password vs OAuth accounts; gates password-change UI; enforces "same provider only" merge.
+
+---
+
+## 1. apps/server/src/auth.ts — the security core
+
+Env/config constants:
+- `AUTH_ENABLED` `auth.ts:14` — master gate (`AUTH_ENABLED=1`). When off, everything here is bypassed and every request is anonymous with full access.
+- `SSO_ONLY` `auth.ts:16` (`PAPYR_SSO_ONLY=1`) — disables all password endpoints.
+- `COOKIE = 'papyr_session'` `auth.ts:17` — the session cookie name.
+- `SESSION_DAYS = 30` `auth.ts:18`; `RESET_TTL_MS = 1h` `auth.ts:19`.
+- `SECURE_COOKIES` `auth.ts:25` — Secure flag when HTTPS.
+
+Password hashing (custom, scrypt):
+- `hashPassword` `auth.ts:29-31` — `crypto.scryptSync(password, salt, 64)`.
+- `verifyPassword` `auth.ts:32-37` — timing-safe compare.
+
+Exported functions:
+- `pub(u)` `auth.ts:27` — User → PublicUser.
+- `register(email, password, name?, provider?)` `auth.ts:39-56` — validates email/password, rejects duplicates, generates `id = randomBytes(9).base64url`, hashes password (empty hash for OAuth users), persists via `db().createUser`. Returns PublicUser.
+- `login(email, password)` `auth.ts:58-62` — looks up by email, `verifyPassword`, throws on empty hash (OAuth accounts can't password-login).
+- `getUser(id)` `auth.ts:64-66` — passthrough to `db().getUser`.
+- `findOrCreateOAuth(email, name, provider)` `auth.ts:74-82` — the OAuth user-provisioning path. Merges only into an existing account of the **same** provider; otherwise errors (anti-pre-hijack). Creates a passwordless user via `register(email, '', name, provider)`.
+- `changePassword(userId, current, next)` `auth.ts:84-93` — re-hashes, then `revokeUser` (sign out everywhere).
+- `requestReset(email)` `auth.ts:96-102` — mints `randomBytes(24)` token, stores via `db().createReset`, returns `{token, user}` (or null; never leaks existence).
+- `resetPassword(token, next)` `auth.ts:104-115` — validates token/expiry, re-hashes, deletes reset, revokes all sessions.
+
+Session model — **server-side revocable, opaque random SID** (not a JWT):
+- `createSession(userId)` `auth.ts:118-122` — `sid = randomBytes(24).base64url`, stored with 30-day exp via `db().createSession`. Returns the raw sid (which becomes the cookie value).
+- `destroySession(sid)` `auth.ts:124-126`, `revokeUser(userId)` `auth.ts:128-130` (deletes all sessions for a user).
+- `verifyToken(sid)` `auth.ts:132-138` — the core validation: `db().getSession(sid)` → check expiry → `db().getUser` → `pub`. **This is the single function any external provider would have to replace.**
+
+Cookie helpers:
+- `parseCookies` `auth.ts:141-149`, `sessionCookie(sid)` `auth.ts:150-152` (`HttpOnly; SameSite=Lax; Path=/; Max-Age`), `clearCookie()` `auth.ts:153-155`.
+- `sidFromRequest(cookieHeader)` `auth.ts:156-158` — pulls the `papyr_session` value.
+- `userFromRequest(cookieHeader)` `auth.ts:159-162` — `AUTH_ENABLED ? verifyToken(sidFromRequest(...)) : null`. **The universal "who is this request" entry point**, used by both routes and collab.
+
+Persistence is fully abstracted behind the `DataStore` interface (`db/types.ts:70-111`), implemented twice: JSON files (`db/json.ts:52-94`) and Postgres (`db/pg.ts:73-115`, tables `users`/`sessions`/`resets` created at `pg.ts:40-50`). Auth methods needed: `createUser/getUser/findUserByEmail/updateUser`, `createSession/getSession/deleteSession/deleteSessionsForUser`, `createReset/getReset/deleteReset`.
+
+---
+
+## 2. apps/server/src/oauth.ts — provider registry
+
+- `OAuthProvider` interface `oauth.ts:12-20`: `{ id, label, configured(), authorizeUrl(state, redirectUri), exchange(code, redirectUri): Promise&lt;OAuthProfile&gt; }`. `OAuthProfile = { email, name }` `oauth.ts:10` — only a **verified email + name** ever leaves a provider.
+- `github` `oauth.ts:22-58` — gated on `GITHUB_LOGIN_CLIENT_ID`/`_SECRET`; scope `read:user user:email`; exchanges code, then fetches `/user` and `/user/emails` to get a primary+verified email.
+- `google` `oauth.ts:60-97` — gated on `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`; scope `openid email profile`; exchanges code, hits userinfo, requires `email_verified`.
+- Registry: `providers = [google, github]` `oauth.ts:99`; `configuredProviders()` `oauth.ts:101-103`; `getProvider(id)` `oauth.ts:104-106` (only returns if configured).
+
+Note: these are **login** providers, distinct from the separate GitHub-repo-sync OAuth in `github.ts` (see routes below).
+
+---
+
+## 3. apps/server/src/routes.ts — wiring
+
+Current-user access:
+- `reqUser(req)` `routes.ts:33-35` — synchronous read of `req._user`, the cached per-request user.
+- `onRequest` hook `routes.ts:188-190` — resolves `req._user = AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null` once per request. **Single population point.**
+
+Session cookie set/clear sites:
+- register `routes.ts:88` (`set-cookie sessionCookie(createSession)`)
+- login `routes.ts:99`
+- logout `routes.ts:105-106` (`destroySession(sidFromRequest)` + `clearCookie`)
+- change-password `routes.ts:118` (re-issue after revoke)
+- oauth-callback `routes.ts:179` (session cookie + clears `papyr_oauth_state`)
+
+Auth routes:
+- `GET /api/auth/me` `routes.ts:77` — returns `{ authEnabled, passwordAuth: !SSO_ONLY, user: reqUser(req), providers }`. The frontend's source of truth.
+- `POST /api/auth/register` `routes.ts:82-91` (gated `AUTH_ENABLED`, `!SSO_ONLY`, rate-limited).
+- `POST /api/auth/login` `routes.ts:93-102`.
+- `POST /api/auth/logout` `routes.ts:104-108`.
+- `POST /api/auth/password` (change) `routes.ts:111-121`.
+- `POST /api/auth/reset-request` `routes.ts:125-147` — emails link (`email.sendMail`) or logs token; `PAPYR_RESET_ECHO=1` returns token.
+- `POST /api/auth/reset` `routes.ts:149-156`.
+- `GET /api/auth/oauth/:provider` `routes.ts:159-166` — sets CSRF `papyr_oauth_state` cookie, redirects to `provider.authorizeUrl`.
+- `GET /api/auth/oauth/:provider/callback` `routes.ts:168-184` — validates state, `provider.exchange` → `auth.findOrCreateOAuth` → session cookie → redirect `/`.
+- `publicBase(req)` `routes.ts:41-46` builds OAuth redirect origins.
+
+Access enforcement — the `preHandler` guard `routes.ts:195-211`:
+- No-op when `!AUTH_ENABLED`.
+- If route has a decoded `:id` param, loads meta and calls `canAccess(meta, user)` → 401 if no user, 403 if denied.
+- Non-id routes matching `/api/projects` or `/api/projects/import` require a signed-in user.
+- Per-route ownership via `isOwner` at share `routes.ts:237`, delete `routes.ts:303`.
+- Project listing filters by `canAccess` `routes.ts:216`; create/import stamp `ownerId = reqUser(req)?.id` (`routes.ts:229`, `269`, `730`).
+
+`SSO_ONLY` gating: every password endpoint calls `passwordDisabled(reply)` (403) at `routes.ts:80`, checked at lines 84, 95, 113, 127, 151.
+
+Secondary user-id consumers in routes:
+- Usage metering: `usage.overQuota(user.id)` / `recordCompile(user.id)` `routes.ts:390,398`; `/api/usage` `routes.ts:408-412`.
+- GitHub-sync connections keyed by user: `ghUserId(req) = reqUser(req)?.id || 'local'` `routes.ts:642`; `requireSignIn` `routes.ts:646-649`; separate GitHub-connect OAuth flow `routes.ts:677-700` (own `papyr_gh_state` cookie — independent of login OAuth).
+- Commit/author attribution uses `reqUser(req)?.name` (`routes.ts:616,624,776,784,824,842,854`).
+
+---
+
+## 4. apps/server/src/collab.ts — WebSocket auth (must keep working)
+
+- `authHook` `collab.ts:75-85` — only defined when `AUTH_ENABLED` (defining `onAuthenticate` makes Hocuspocus require a token from all clients). Inside `onAuthenticate` `collab.ts:76-84`: parses the doc name → **`user = await userFromRequest(requestHeaders.cookie)`** (`collab.ts:79`) → `readMeta` → `canAccess(meta, user)`. Throws to reject.
+- The real credential is the **HttpOnly `papyr_session` cookie** sent on the WS upgrade; the client-supplied `token` string is just a non-empty trigger.
+- Upgrade wiring: `apps/server/src/index.ts:46-49` forwards `/collab` upgrades to `hocuspocus.handleConnection(ws, request)` (request carries the cookie header).
+- Client side: `CodePane.tsx:167-177` and `editor/commentSignal.ts:20-27` open `HocuspocusProvider` at `/collab` with `token: 'papyr-session'` (placeholder). No token/JWT is sent — auth rides entirely on the cookie.
+
+Coupling: collab depends on `userFromRequest` (cookie → PublicUser) and `canAccess`. Any provider swap must keep the session identifiable from the WS handshake's cookie header, or switch collab to a token passed in the `token` field.
+
+---
+
+## 5. apps/server/src/authz.ts — access decisions
+
+Depends only on `AUTH_ENABLED`, `PublicUser` (`user.id`, `user.email`), and `ProjectMeta` (`ownerId`, `share`):
+- `canAccess(meta, user)` `authz.ts:5-13` — open when auth off or legacy project (no `ownerId`); owner via `meta.ownerId === user.id`; link-share; else collaborator match on `user.email.toLowerCase()` against `meta.share.collaborators`.
+- `isOwner(meta, user)` `authz.ts:16-20` — `meta.ownerId === user.id`.
+- `ownerName(meta)` `authz.ts:23-26` — `getUser(meta.ownerId)?.name` for listings.
+
+So project ownership hinges on **`user.id`** matching stored `ownerId`, and sharing on **`user.email`**. If IDs change under a new provider, existing `ownerId` values would need migration.
+
+---
+
+## 6. Frontend — apps/web/src/components/Auth.tsx + api.ts
+
+State/flow (`Auth.tsx`):
+- `AuthProvider` `Auth.tsx:17-45` — on mount calls `api.me()` (`refresh`, lines 24-36) to populate `{authEnabled, user, providers, passwordAuth}`. If `authEnabled &amp;&amp; !user`, renders `LoginScreen` and blocks the app (`Auth.tsx:42`). Exposes `useAuth()` context `Auth.tsx:15` with `user`, `setUser`, `refresh`.
+- `LoginScreen` `Auth.tsx:58-167` — modes `login | register | forgot | reset` (`Mode` `Auth.tsx:47`). OAuth buttons are plain `&lt;a href="/api/auth/oauth/${p.id}"&gt;` `Auth.tsx:118` (full-page redirect, no JS). `reset_token` query param auto-enters reset mode `Auth.tsx:72-80`. `submit()` `Auth.tsx:82-104` calls `api.login/register/resetRequest/resetPassword` and passes the returned `.user` to `onAuthed → setUser`.
+
+There is **no client-side token storage** — the session is the HttpOnly cookie; the client only holds the `AuthUser` object in React state. "Logged in" is knowable purely from `api.me()`.
+
+API surface (`api.ts`), all cookie-based (`fetch` with default same-origin credentials):
+- `me()` `api.ts:154`, `changePassword` `:155`, `resetRequest` `:157`, `resetPassword` `:159`, `login` `:161`, `register` `:163`, `logout` `:165`.
+- `AuthUser`/`OAuthProviderInfo` types `api.ts:1-2`.
+
+Other consumers:
+- `Home.tsx:25` `useAuth()`; user chip `Home.tsx:92-95`; sign-out `await api.logout(); setUser(null)` `Home.tsx:95`; opens `AccountSettings` `Home.tsx:158-159`.
+- `AccountSettings.tsx` — `isSso = !!user.provider` `:11`; shows `user.email/name/provider`; calls `api.changePassword` `:17` (hidden for SSO users).
+- `localUser()` `api.ts:170-184` — **separate, unrelated** localStorage identity (random "Writer NNN" name + color) used only for Yjs presence and comment authorship. Not tied to the auth user; would remain regardless of provider.
+
+---
+
+## Summary: what a provider swap touches
+
+Server chokepoints (small, well-isolated): `auth.ts` (`verifyToken`, `userFromRequest`, `createSession`, `sessionCookie`, `findOrCreateOAuth`, password fns), `oauth.ts` (whole registry), the auth routes + cookie-set sites + `onRequest`/`preHandler` hooks in `routes.ts`, and the `DataStore` user/session/reset methods (`db/types.ts:75-90`, json.ts, pg.ts).
+
+Cross-cutting couplings that constrain any design: (a) **collab.ts authenticates via the HttpOnly cookie on the WS handshake** through `userFromRequest` — must be preserved or reworked; (b) **`authz.ts` keys ownership on `user.id` and sharing on `user.email`** — stored `ownerId` values and `share.collaborators` emails create migration coupling if identity IDs change; (c) usage metering and GitHub-sync connections are keyed on `user.id`; (d) the frontend is entirely `api.me()`-driven with no token handling, so it adapts to any cookie/session scheme without storage changes.</result>
+<usage><subagent_tokens>64838</subagent_tokens><tool_uses>15</tool_uses><duration_ms>124901</duration_ms></usage>
+</task-notification>
