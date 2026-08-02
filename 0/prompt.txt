@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>baw2fqbts</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/baw2fqbts.output</output-file>
+<status>completed</status>
+<summary>Background command "Run fixed specs plus UI/collab suites on main" completed (exit code 0)</summary>
+</task-notification>
