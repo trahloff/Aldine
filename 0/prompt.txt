@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>burhwf81e</task-id>
+<tool-use-id>toolu_01EePrKaiGm5CFpCXK1pBpq4</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/burhwf81e.output</output-file>
+<status>completed</status>
+<summary>Background command "Build and push prod images with main-admin profile" completed (exit code 0)</summary>
+</task-notification>
