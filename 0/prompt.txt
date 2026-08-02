@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bp6s16ylj</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/bp6s16ylj.output</output-file>
+<status>completed</status>
+<summary>Background command "Build compiler image with pinned snapshot + biber warm" completed (exit code 0)</summary>
+</task-notification>
