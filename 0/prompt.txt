@@ -1,0 +1,1 @@
+mh, at this point, wouldn't it maybe be even easier to do it natively on supabase? at least user mgmt?
