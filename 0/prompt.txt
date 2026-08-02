@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b5ve2o655</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b5ve2o655.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for pages deploy of new commit to finish" completed (exit code 0)</summary>
+</task-notification>
