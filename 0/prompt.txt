@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bfn259nr3</task-id>
+<tool-use-id>toolu_012nsRDqcourigwywgyKHzRR</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bfn259nr3.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for visual suite result" was stopped</summary>
+</task-notification>
