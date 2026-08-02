@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bcjtzlby0</task-id>
+<tool-use-id>toolu_01HX2LX2CwkFWQ3FNfFyesnF</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bcjtzlby0.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI on the lockfile-fixed commit" completed (exit code 0)</summary>
+</task-notification>
