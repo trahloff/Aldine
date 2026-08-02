@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b1gv2bmvn</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/f061c70e-a647-4007-a5ca-78a5ca2f6fb6/tasks/b1gv2bmvn.output</output-file>
+<status>completed</status>
+<summary>Background command "Build and push prod images with new publish feature" completed (exit code 0)</summary>
+</task-notification>
