@@ -1,0 +1,1 @@
+[Image #1] on mobile, the top navigation seems to overflow. also, "github" should be a github icon instead of string
