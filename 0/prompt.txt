@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bqj0blfpr</task-id>
+<tool-use-id>toolu_01UcvobDEXDkXh94iR5vf3be</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bqj0blfpr.output</output-file>
+<status>completed</status>
+<summary>Background command "Commit P3+P4; run entire main e2e suite" completed (exit code 0)</summary>
+</task-notification>
