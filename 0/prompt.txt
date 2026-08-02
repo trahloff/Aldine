@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>brpsv8dl1</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/f061c70e-a647-4007-a5ca-78a5ca2f6fb6/tasks/brpsv8dl1.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for release workflow (multi-arch TeX Live build, likely 30-60 min)" completed (exit code 0)</summary>
+</task-notification>
