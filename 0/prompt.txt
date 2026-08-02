@@ -1,0 +1,1 @@
+Check background task b5ve2o655 (GitHub Pages deploy of ed3b5ee with the visual screenshot). Verify aldine.dev serves assets/visual-dark.png. Then give the final wrap-up: everything done except prod image push, which is blocked on the user running `! aws sso login` — retry push-images.sh only if they've logged in.
