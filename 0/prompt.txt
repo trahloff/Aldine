@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b05bi141e</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b05bi141e.output</output-file>
+<status>killed</status>
+<summary>Background command "Start Vite (5173)" was stopped</summary>
+</task-notification>
