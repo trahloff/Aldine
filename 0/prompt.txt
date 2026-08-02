@@ -1,0 +1,2 @@
+Feedback from a friend: "Feature Request: Sample nginx config 😄
+ich bau mir kein Caddy hinterm nginx auf". Let's have a simplified deployment documentation. most users who self-host will deploy the docker compose, but do ingress incl TLS and everything via NGINX or Traeffik
