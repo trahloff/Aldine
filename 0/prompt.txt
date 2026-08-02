@@ -1,0 +1,5 @@
+<bash-stdout>Attempting to open your default browser.
+If the browser does not open, open the following URL:
+
+https://oidc.eu-west-1.amazonaws.com/authorize?response_type=code&amp;REDACTED&amp;redirect_uri=http%3A%2F%2F127.0.0.1%3A63204%2Foauth%2Fcallback&amp;state=eac85e42-e6d0-42de-9410-130868294df6&amp;code_challenge_method=S256&amp;scopes=sso%3Aaccount%3Aaccess&amp;REDACTED
+Successfully logged into Start URL: https://d-936777e6f2.awsapps.com/start</bash-stdout><bash-stderr></bash-stderr>
