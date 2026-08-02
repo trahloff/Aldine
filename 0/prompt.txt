@@ -1,0 +1,1 @@
+[Image #1] works better now. two findings: 1 - the icons for closed folders looks weird. 2 - when opening a file it does not show the editor
