@@ -11,3 +11,7 @@ I want to not have the little scripts anymore. I want to have aldine (and aldine
 ---
 
 do it
+
+---
+
+auch im public repo? da würde ich es nicht in die claude.md schreiben und ich würde es auch nicht in der public git history lassen (dass es Mal in der claude.md war, dass wir keine trailer haben wollen)
