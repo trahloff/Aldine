@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bl96pry0m</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bl96pry0m.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for aldine.dev TLS to go live" was stopped</summary>
+</task-notification>
