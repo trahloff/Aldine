@@ -1,0 +1,1 @@
+Let's completely disable email for the  moment and only let users signup via google. that circumvents the SMTP requirement
