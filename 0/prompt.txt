@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>be4q316g2</task-id>
+<tool-use-id>toolu_01Tz4VR2nHHkcPnuPM9ozVQV</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/be4q316g2.output</output-file>
+<status>completed</status>
+<summary>Background command "Add license fields; re-record demo GIF in dark" completed (exit code 0)</summary>
+</task-notification>
