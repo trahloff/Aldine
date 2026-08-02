@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bkd7as6tg</task-id>
+<tool-use-id>toolu_01JsWEqJDwFWHM628oUzqUqb</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4/tasks/bkd7as6tg.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for security review to finish" was stopped</summary>
+</task-notification>
