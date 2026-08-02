@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bprob22fc</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/f061c70e-a647-4007-a5ca-78a5ca2f6fb6/tasks/bprob22fc.output</output-file>
+<status>completed</status>
+<summary>Background command "Start minimal stack with amd64 emulation" completed (exit code 0)</summary>
+</task-notification>
