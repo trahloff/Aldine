@@ -1,0 +1,1 @@
+in a new branch, do a thorough investigation whether it would make sense for us to adapt https://astryx.atmeta.com/. you first need to research and fully understand the project and then test it. it only makes sense if it improves the ui and ux, and at the same time makes the code easier to extend and maintain
