@@ -1,0 +1,1 @@
+ok, but in the readme there should be a super simple "quickstart" for selfhosters. Just a dockercompose inline snippet without any bells and whistles. just the minimal setup that is needed so a minimal working installastion runs
