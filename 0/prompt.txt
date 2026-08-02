@@ -1,0 +1,117 @@
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   Papyr is a slim, self-hosted, Apple-style, open-source Overleaf-alternative LaTeX collaboration platform, built autonomously. This conversation's requests, in order:
+   - Test the real Zotero integration (user provided real key `REDACTED`) and wire the OpenRouter API key (in env) for AI error-fix.
+   - Advise on next steps / hosting (chose Hetzner over AWS/Netlify for cost/margin; localhost-only reality).
+   - Extract a `DataStore` interface with JSON default + Postgres backend (avoid Supabase; "is this how we'd build a 10k SaaS?").
+   - Document architecture in the repo.
+   - Run the Docker stack to play with it; enable auth.
+   - "pls build all the required elements for us to actually properly use this with many collaborators. If possible, SSO (Google) would already be great" → Google SSO + account settings + Postgres deploy.
+   - "can you create the google credentials yourself? I have the console open in the browser" → drove Chrome to create a Google OAuth Web client.
+   - "Let's completely disable email for the moment and only let users signup via google" → `PAPYR_SSO_ONLY`.
+   - "is full GitHub sync already done?" → No; then "let's do it! I think this will be the main UX how people create projects" → full GitHub sync.
+   - Fix real-usage bugs on imported repo `trahloff/paper-iac-2026-gsaas` (subdir compile, no directories in tree, blank editor, viewport overflow, comment popup, epstopdf warning, diagnose&fix message).
+   - "Do all of the 4 ideas. 'ship it to others' should be done via gha" → editor polish, GitHub sync depth, multi-user Redis, GHA CI/release.
+   - "push but do private repo" → push Papyr to private GitHub repo.
+   - "Do 2, 3, 4. for 4: skip the public demo instance for the moment but work on the readme. also do a first-run onboarding when people launch the app for the first time" → collab hardening, GitHub branches/PR, README + onboarding.
+
+2. Key Technical Concepts:
+   - Stack: Fastify 5 + embedded Hocuspocus 2 (Yjs CRDT) + simple-git; TeX Live compiler (latexmk); React 18 + Vite 6 + CodeMirror 6 + y-codemirror.next + pdfjs.
+   - DataStore interface (`db/`): JsonStore (default, flat files in metaRoot) | PgStore (Postgres via DATABASE_URL). Optional deps loaded dynamically: pg, @sentry/node, ioredis, @hocuspocus/extension-redis.
+   - Auth: env-gated (AUTH_ENABLED=1); scrypt; revocable server-side sessions (DataStore-backed); Google/GitHub OAuth (generic provider registry in `oauth.ts`); `PAPYR_SSO_ONLY=1` disables password endpoints.
+   - GitHub sync (`github.ts`): per-user token in DataStore connections; import repo→clone as project; push/pull/status; branch switch/create; PRs. Token injected INLINE per git op, never persisted to .git/config (compiler-visible).
+   - Multi-node: DATABASE_URL (Postgres) + REDIS_URL (rate limits via Lua token-bucket + collab sync via @hocuspocus/extension-redis, requires sticky routing).
+   - Compiler: restricted shell-escape (`shell_escape=p`, whitelist), latexmk `-cd` for subdir root files, packages newtx/xurl/sttools/acro/translations baked in.
+   - Doc naming: `projectId::branch::filePath`; local `main` maps to `github.remoteBranch`.
+   - CI/CD: GitHub Actions (ci.yml + release.yml to GHCR); repo private at `git@github.com:trahloff/Papyr.git`.
+
+3. Files and Code Sections:
+   - **apps/server/src/ai.ts**: Provider-aware (OpenRouter→OpenAI→Anthropic); OpenRouter default model `anthropic/claude-opus-4.8`.
+   - **apps/server/src/db/{types,json,pg,index}.ts**: DataStore interface + JSON/PG backends. PgStore.init has connect-retry. Added connection methods getConnection/setConnection/deleteConnection.
+   - **apps/server/src/auth.ts**: SSO_ONLY export; PublicUser has `provider?`; findOrCreateOAuth blocks cross-provider hijack; sessions via db().
+   - **apps/server/src/oauth.ts**: Provider registry (google + github); google uses GOOGLE_OAUTH_CLIENT_ID/SECRET, github LOGIN uses GITHUB_LOGIN_CLIENT_ID/SECRET.
+   - **apps/server/src/github.ts**: Token client; GITHUB_CLIENT_ID/SECRET for sync (distinct from login). Added listBranches, createPullRequest, exchangeCode, connectUrl, tokenUrl.
+   - **apps/server/src/gitops.ts**: cloneRepo (renames default→main, returns remoteBranch), pushToRemote, remoteStatus, pullFromRemote, resetToRemote. FIXED: merge/pullFromRemote check `status.conflicted` after merge (simple-git raw doesn't reject on conflict).
+   - **apps/server/src/compile.ts / apps/compiler/server.js**: `-cd` + rootDir-aware output paths; restricted shell-escape (removed `-no-shell-escape`).
+   - **apps/compiler/Dockerfile**: tlmgr installs `... xurl sttools acro translations`; `RUN tlmgr conf texmf shell_escape p`.
+   - **apps/server/src/routes.ts**: detectRootFile (finds `\documentclass`); /output allows `<subdir>/.papyr-out/`; github routes (import/push[message]/pull/status/reset-to-remote/branches/switch-branch/create-branch/pr); SSO_ONLY guards; async rate-limit awaits.
+   - **apps/server/src/ratelimit.ts**: RateLimiter async, Redis Lua token-bucket + in-memory fallback; initRateLimit().
+   - **apps/server/src/collab.ts**: CodePane token auth; `@hocuspocus/extension-redis` gated on REDIS_URL (sticky routing documented); onLoadDocument early-returns if text has state.
+   - **apps/web/src/components/FileTree.tsx**: Nested tree (buildTree), dot-dirs collapsed by default (override Map), source-only filter, clean single FolderIcon.
+   - **apps/web/src/components/CodePane.tsx**: `token: 'papyr-session'` on HocuspocusProvider; `.cm-ySelectionInfo` name-label CSS in theme.
+   - **apps/web/src/components/CommentComposer.tsx**: NEW — integrated comment modal (replaced window.prompt).
+   - **apps/web/src/components/GithubSync.tsx**: Rewritten — branch chip/menu (switch/create/PR), push dialog w/ message, conflict dialog, auto-sync toggle.
+   - **apps/web/src/components/Onboarding.tsx**: NEW (most recent) — first-run welcome modal with 3 start tiles (New/GitHub/ZIP) + feature bullets + Get started.
+     ```tsx
+     export default function Onboarding({ onNew, onGithub, onImportZip, onClose }: {...}) {
+       const start = (fn: () => void) => { onClose(); fn(); };
+       // ...tiles onboard-new/onboard-github/onboard-zip, points, onboard-dismiss
+     }
+     ```
+   - **apps/web/src/pages/Home.tsx** (most recent): added `import Onboarding`; `const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('papyr.onboarded') !== '1');` `const dismissOnboarding = () => { localStorage.setItem('papyr.onboarded', '1'); setShowOnboarding(false); };`; render `{showOnboarding && <Onboarding onNew={() => setCreating(true)} onGithub={() => setShowGithub(true)} onImportZip={importZip} onClose={dismissOnboarding} />}`; also empty-state now shows New/GitHub/ZIP.
+   - **apps/web/src/app.css** (most recent): added `.onboard*` styles; earlier `.gh-branch*`, `.gh-sync__auto`, `.conflict__list`, `.btn--danger`, `.tree__*`, `.composer__*`, `.settings__row`, `.gh-repo*`.
+   - **README.md** (most recent): added GitHub sync feature bullet, SSO in auth bullet, scaling bullet, restricted shell-escape, deploy OAuth env (GOOGLE_OAUTH_*, GITHUB_CLIENT_*), links to CONTRIBUTING.md/deploy/README.md.
+   - **docs/SCALING.md**: wall #1 done (Postgres+Redis); wall #2 mostly done (Redis collab ext + sticky routing).
+   - **CONTRIBUTING.md**, **.github/workflows/{ci,release}.yml**: NEW.
+   - **apps/server/test/github-sync.integration.mjs**: hermetic test (connect→import→push[msg]→pull→conflict→take-remote→create-branch→branches→PR→switch); relative imports `../src/...`.
+   - **.env** (gitignored, host): COMPOSE_PROFILES=postgres, AUTH_ENABLED=1, DATABASE_URL, POSTGRES_PASSWORD=REDACTED, PAPYR_PUBLIC_URL=http://localhost:8080, GOOGLE_OAUTH_CLIENT_ID/SECRET, OPENROUTER_API_KEY, PAPYR_AI_MODEL, PAPYR_SSO_ONLY=1, GITHUB_CLIENT_ID/SECRET.
+
+4. Errors and fixes:
+   - Imported repo `paper/main.tex` didn't compile: (a) rootFile guessed a chapter → detectRootFile finds `\documentclass`; (b) subdir inputs unresolved → latexmk `-cd`; (c) missing packages → added xurl/sttools/acro/translations. Fixed existing project sbp3tdbz2m rootFile in Postgres to paper/main.tex.
+   - Blank editor under auth: Hocuspocus onAuthenticate requires a token but client sent none → added `token: 'papyr-session'` to provider (real auth is session cookie). Latent bug in all auth-enabled editing.
+   - Broken folder icons: malformed hand-drawn SVG → single clean FolderIcon.
+   - Editor overflowed viewport: `.code-pane` lacked `min-height: 0` → added `min-height: 0; overflow: hidden`.
+   - Comment as window.prompt → CommentComposer modal (user: "the comment is currently a browser popup. it needs to be integrated into the normal ui/ux").
+   - "Diagnose & fix" said "Typeset first" on a cleanly-compiling doc → distinguished states (no-compile vs compiled-ok).
+   - epstopdf warning → restricted shell-escape (`shell_escape=p`) fixes it while blocking arbitrary `\write18` (verified `touch` refused).
+   - GitHub conflict returned 200 with markers: simple-git `raw(['merge'])` doesn't reject on conflict → check `status.conflicted` after merge (also fixed branch merge()).
+   - CI failed: hardcoded `/Users/rahloff/...` imports → relative `../src/...`; added git identity config step.
+   - Multi-node collab test: content duplicated (both nodes seed from disk) → this is inherent without sticky routing; removed ineffective load-lock, documented sticky-routing requirement.
+   - Compiler tlmgr in-container install fails (repo/network); must rebuild image (`docker compose build compiler`) with sandbox disabled for network.
+
+5. Problem Solving:
+   - **SECURITY (critical)**: On "push but do private repo", found `.secrets/` (37 files, incl real Zotero key) tracked in git history. `.env` never committed. Pushed initial commit was clean. Installed git-filter-repo via brew, purged `.secrets`/`.data`/`.cache` from all 44 commits, verified no secrets in history, force-pushed to private `trahloff/Papyr`. Verified `.secrets`/`.env` → 404 on GitHub. CI went green after fixing relative imports.
+   - Google + GitHub OAuth apps created via Chrome browser automation. Google client_id `283257206051-d52umj9vf0330elavv04h4pu8prb7sdv.apps.googleusercontent.com` secret `REDACTED`. GitHub (sync) client_id `Ov23liBTWodCFr3nOJd9` secret `55fe0bfa31d2e895ea8412a902e0594693df579c`. Passkey/sudo steps were handed to the user (I must not authenticate on their behalf).
+
+6. All user messages:
+   - "Did you already try the zotero integration?"
+   - "zotero API key: REDACTED\n\nfor the AI API Key. there should be en OpenRouter API Key. pls try it"
+   - "what would you suggest as next steps?"
+   - "ok, we also do not need to specifically supabase but should we host this on AWS? Netlify? Something different? convinience and possible monetarisation should be focus. do online research if that would help"
+   - "continue"
+   - "OK, but is this really how we would like to build a multi-10k user SaaS?"
+   - "ok, you are right. pls do it"
+   - "did you document this in the repo?"
+   - "pls run the service again. I want to play around with it"
+   - "yep, I want auth"
+   - "pls build all the required elements for us to actually properly use this with many collaborators. If possible, SSO (Google) would already be great"
+   - "can you create the google credentials yourself? I have the console open in the browser"
+   - "in which browser?"
+   - "done"
+   - "yes"
+   - "Let's completely disable email for the moment and only let users signup via google. that circumvents the SMTP requirement"
+   - "is full GitHub sync already done?"
+   - "let's do it! I think this will be the main UX how people create projects"
+   - "ok, I imported https://github.com/trahloff/paper-iac-2026-gsaas. this worked but there are multiple errors. it does not compile (it compiles without an issue on overleaf) and also the left sidebar has absolutely no notion of directories"
+   - "works better now. two findings: 1 - the icons for closed folders looks weird. 2 - when opening a file it does not show the editor [image]"
+   - "the editor [image] goes beyond the browser viewport" (+ mid-turn) "also, the comment is currently a browser popup. it needs to be integrated into the normal ui/ux"
+   - "nice, what would you suggest we tackle next?" → answered "Do all of the 4 ideas. 'ship it to others' should be done via gha"
+   - "also, when I click on 'diagnose & fix', I get 'Typeset first — there are no errors to fix.'"
+   - "what are you suggesting to tackle next?" / (epstopdf) "what are you suggesting to tackle next?" / "Do you know why we see the error 'Package epstopdf Warning: Shell escape feature is not enabled.'"
+   - "push but do private repo"
+   - "what are you suggesting to tackle next?" → answered "Do 2, 3, 4. for 4: skip the public demo instance for the moment but work on the readme. also do a first-run onboarding when people launch the app for the first time."
+
+7. Pending Tasks:
+   - Task 41 (in_progress): README done; first-run onboarding built and verified — REMAINS: commit and rebuild the Docker app.
+   - Deferred/future (mentioned, not requested now): full editor screenshot refresh for README; branch-level was done; task 1 (deploy to real VPS) was NOT chosen.
+
+8. Current Work:
+   Immediately before this summary I was on **task 41 (README + first-run onboarding)**, the last of the "Do 2, 3, 4" mandate. I: updated README.md (GitHub sync feature, SSO auth, scaling bullet, restricted shell-escape, deploy OAuth env, CONTRIBUTING/deploy links); created `apps/web/src/components/Onboarding.tsx`; wired it into `Home.tsx` with a localStorage `papyr.onboarded` gate and `dismissOnboarding`; added `.onboard*` CSS. Typecheck passed. I started the dev stack (papyr-compiler-dev on :4020 from papyr-compiler image, mock on :4919, dev server :3000, vite :5173) and ran a Playwright check confirming: "onboarding shows on first visit: true" and "onboarding hidden after dismiss+reload: true". I then viewed `e2e/shots/onboarding.png` — it looks good (welcome card, 3 tiles, feature bullets, Get started). Tasks 39 and 40 are committed and rolled out to the Docker :8080 stack. Task 41 code changes are NOT yet committed and the Docker app is NOT yet rebuilt with them.
+
+9. Optional Next Step:
+   Commit task 41 (README + onboarding) and rebuild/redeploy the Docker app, following the established per-task pattern (`git add -A && git commit ... && docker compose up -d --build app`), then mark task 41 completed. This directly continues the user's most recent explicit request: "Do 2, 3, 4. for 4: ... work on the readme. also do a first-run onboarding when people launch the app for the first time." After committing, clean up the dev stack (kill tsx/vite/mock) leaving the Docker :8080 stack running, and report completion of tasks 39–41 (collab hardening, GitHub branches/PR, README + onboarding). Since git is now connected to the private remote, the CI will run on push; note that pushing to `origin main` will trigger CI (and I should confirm it stays green). Do not start new tangential work without confirming with the user.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/rahloff/.claude/projects/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
