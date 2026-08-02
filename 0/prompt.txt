@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bu4l5zh42</task-id>
+<tool-use-id>8370682b-be14-412a-8c09-7b850b331bb6:inner</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/bb413872-125c-45d8-8521-7dd9986346dd/tasks/bu4l5zh42.output</output-file>
+<status>failed</status>
+<summary>Background command "aws sso login --profile main-admin" failed with exit code 255</summary>
+</task-notification>
