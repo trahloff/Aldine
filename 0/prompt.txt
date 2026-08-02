@@ -1,0 +1,4 @@
+works! Do you know why we see the error "Problems
+
+Warning
+Package epstopdf Warning: Shell escape feature is not enabled."
