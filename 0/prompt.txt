@@ -1,0 +1,3 @@
+zotero API key: REDACTED
+
+for the AI API Key. there should be en OpenRouter API Key. pls try it
