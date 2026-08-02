@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bp32forym</task-id>
+<tool-use-id>toolu_01DA8cqWKZn2pdyZZKqSPS34</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bp32forym.output</output-file>
+<status>completed</status>
+<summary>Background command "Build the full-CTAN compiler image (large download)" completed (exit code 0)</summary>
+</task-notification>
