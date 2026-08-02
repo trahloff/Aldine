@@ -1,0 +1,188 @@
+<task-notification>
+<task-id>ab61df678f107be8f</task-id>
+<tool-use-id>toolu_0116LcgKyFdYDDVveuspsxdp</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/ab61df678f107be8f.output</output-file>
+<status>completed</status>
+<summary>Agent "Design visual-editor implementation plan" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have verified the ground truth against the actual code (CodePane.tsx, Editor.tsx, latexExtras.ts, the grammar package dist, e2e helpers, y-codemirror.next exports). Two corrections to the briefing worth noting up front: `SECTION_RANK` exists only *inside* `codemirror-lang-latex/dist/latex-language.js` (not exported — we must copy the 8-entry map), and `y-codemirror.next` exports `ySyncFacet`/`YSyncConfig`, which gives us a clean way to convert remote relative positions to absolute offsets for remote-caret force-reveal.
+
+# Implementation Plan: Visual Editing Mode for Aldine
+
+## 1. Extension architecture
+
+### Module layout (all new, under `apps/web/src/editor/visual/`)
+
+```
+apps/web/src/editor/visual/
+  index.ts            Public surface: visualExtensions(deps), visualKeymap,
+                      types (VisualDeps = { ydoc, awareness, projectId, branch })
+  reveal.ts           REVEAL_UNITS node-name sets, revealField (StateField&lt;RevealRange[]&gt;),
+                      setRemoteCarets StateEffect, computeRevealRanges(state, remotePos[])
+  decorations.ts      buildDecorations(state, reveals): { atomic: DecorationSet, marks: DecorationSet }
+                      — the single tree walk. Contains the copied SECTION_RANK map.
+  atomicField.ts      StateField&lt;DecorationSet&gt; for replace/widget decorations,
+                      provides EditorView.decorations + EditorView.atomicRanges
+  markPlugin.ts       ViewPlugin for viewport-only mark/line decorations (headings, bold, italic…)
+  widgets/math.ts     MathWidget extends WidgetType (KaTeX, inline + display)
+  widgets/chips.ts    FigureChip, TableChip, CiteChip, RefChip widgets
+  widgets/listMarker.ts  ItemMarkerWidget (bullet / number)
+  katex.ts            lazy loader (dynamic import) + LRU render cache keyed by
+                      `${displayMode}:${source}`
+  commands.ts         toggleBold, toggleItalic, setSectionLevel, toggleItemize —
+                      pure (state)=&gt;TransactionSpec functions + keymap entries
+  theme.ts            EditorView.theme(...) for visual mode (same pattern as
+                      aldineTheme in CodePane.tsx:89), all colors via CSS vars
+```
+
+Plus a small toolbar component: `apps/web/src/components/FormatToolbar.tsx`.
+
+### Decoration provider: hybrid StateField + ViewPlugin (recommended)
+
+This mirrors what Overleaf's production visual editor does, and it's forced by CM6 semantics:
+
+- **`atomicField.ts` — full-doc StateField** for everything that uses `Decoration.replace` (hidden markup, math widgets, chips, `\item` markers). Rationale:
+  - Replace decorations that span line breaks (display-math envs, figure/table chips) **must** come from a StateField — view plugins run after viewport/vertical-layout computation and may not change line structure.
+  - `EditorView.atomicRanges` needs the same ranges; providing both from one field guarantees they never disagree.
+  - Full-doc build cost is fine because building `Decoration` objects is cheap (one incremental-parser tree walk); the *expensive* work (KaTeX, chip DOM) happens lazily in `WidgetType.toDOM`, which CM only calls for widgets that enter the viewport. So the StateField is effectively viewport-lazy where it matters.
+  - Update logic: `deco.map(tr.changes)` always; full rebuild only when (a) `tr.docChanged` and `syntaxTree(tr.state)` differs materially (compare tree object identity + `syntaxTreeAvailable`), (b) the reveal set changed (compare `revealField` value by range equality), or (c) a `setRemoteCarets` effect arrived. Reveal-set comparison is the churn killer: pure cursor movement *within* one construct or within plain prose rebuilds nothing.
+- **`markPlugin.ts` — ViewPlugin, viewport-only** for `Decoration.mark`/`Decoration.line` styling (heading line classes `cm-vis-h1..h8`, bold/italic/emph/underline/small-caps content marks, list-item indent line class). These never alter geometry beyond fonts, so a ViewPlugin is legal, and viewport scoping makes cost O(visible ranges) regardless of doc size. Rebuild on `docChanged || viewportChanged || reveal-set change`.
+
+Both consume the shared walker in `decorations.ts` (parameterized by `{from,to}` ranges so the plugin passes `view.visibleRanges` and the field passes the whole doc).
+
+### The tree walk (`decorations.ts`)
+
+One `syntaxTree(state).iterate()` pass emitting into two `RangeSetBuilder`s. Per node type, skipping any node fully inside a reveal range:
+
+| Grammar node | Atomic (replace) | Marks |
+|---|---|---|
+| `Book…SubParagraph` → child `SectioningCommand` | hide `\section*?{` prefix (CtrlSeq token → `{` of `SectioningArgument`) and closing `}` — two zero-width `Decoration.replace({})` | `Decoration.line` heading class from copied `SECTION_RANK` (Book:0 … SubParagraph:7) |
+| `TextBoldCommand` / `TextItalicCommand` / `EmphasisCommand` / `UnderlineCommand` / `TextSmallCapsCommand` | hide `\textbf{` and `}` | mark class on the argument interior |
+| `DollarMath→InlineMath/DisplayMath`, `BracketMath`, `ParenMath`, `EquationEnvironment`, `EquationArrayEnvironment` | whole node → `Decoration.replace({ widget: MathWidget(src, display), block: false })` (display math rendered as inline-block; keep `block:false` to avoid block-widget/line interactions in v1) | — |
+| `ListEnvironment` (name via `findEnvironmentName`) | hide `\begin{itemize}`/`\end{...}` lines (replace including trailing newline where safe — see note below); `Item` node's `ItemCtrlSeq` (+one following space) → `ItemMarkerWidget` (bullet, or counter for `enumerate`, counters tracked per nesting depth during the walk) | `Decoration.line` list-indent class on item lines |
+| `FigureEnvironment` / `TableEnvironment` / `TabularEnvironment` | whole env → chip widget; caption text extracted by scanning for a `Caption` child | — |
+| `Cite` / `Ref` | whole node → CiteChip/RefChip; keys from `BibKeyArgument`/`RefArgument` text; CiteChip label formatted from the bib cache in `latexExtras.ts` (add a small exported getter, e.g. `getBibIndex(projectId, branch)`, next to `warmBib` — the cache already exists there) | — |
+| `VerbatimEnvironment`, `VerbContent`, `LstInlineContent`, anything under them | **never enter** — `iterate` returns `false` | — |
+| `UnknownCommand`, generic `CtrlSeq`, `⚠` error nodes | nothing — left as raw source | optional faint `cm-vis-source` mark (Phase 5 "honest partial rendering" styling) |
+
+Safety rules baked into the walk: tolerate partial/errored trees (skip any construct whose closing token is missing — e.g. `Group` without `CloseBrace` stays raw); never emit a replace range that crosses a reveal range; never hide a newline unless both sides verified (begin/end line hiding for lists is the only place we remove line breaks — if it proves fragile in Phase 3, fall back to rendering `\begin{itemize}` as a dim one-line chip instead of hiding it, which needs no line-structure change).
+
+### KaTeX strategy
+
+- Add `katex` (^0.16) to `apps/web/package.json`. Do **not** import statically: `katex.ts` does `const mod = await import('katex')` + `await import('katex/dist/katex.min.css')` triggered when visual mode first activates. Vite code-splits this into its own chunk (~270 KB JS + CSS + woff2 fonts as emitted assets) so the source-mode/first-load bundle is untouched — same lazy posture as pdfjs.
+- Before the module resolves, `MathWidget.toDOM` renders the raw source in a styled placeholder span; on load, a module-level notifier makes the visible views re-measure (dispatch an empty reconfigure-noop effect or `view.requestMeasure` per registered view).
+- Render cache: `Map&lt;string, string&gt;` (KaTeX `renderToString`, `throwOnError:false`) with LRU cap ~500 entries; `MathWidget.eq(other)` compares source+mode strings so CM reuses existing DOM across rebuilds — this is what keeps typing latency flat.
+- KaTeX errors (unsupported macro): render the raw source inside the widget with a subtle warn style — honest-partial-rendering thesis, no pretending.
+
+### CSS
+
+Editor-internal styles go in `visual/theme.ts` via `EditorView.theme` (existing `aldineTheme` pattern); anything reused by the React toolbar (chip styles are editor-only, segmented control is React) goes in `app.css`. Segmented control reuses the `.sidebar__tab` / `.sidebar__tab--active` pattern (app.css:400-415) as `.seg` / `.seg--active`. All colors via existing CSS vars so light/dark just works.
+
+## 2. The reveal algorithm (`reveal.ts`)
+
+**Reveal units** — walking up from `tree.resolveInner(pos, ±side)`, the first ancestor whose name is in:
+
+```
+REVEAL_UNITS = { Book..SubParagraph→SectioningCommand child only, TextBoldCommand,
+  TextItalicCommand, EmphasisCommand, UnderlineCommand, TextSmallCapsCommand,
+  DollarMath, BracketMath, ParenMath, EquationEnvironment, EquationArrayEnvironment,
+  Item (unit = the \item line's marker span), FigureEnvironment, TableEnvironment,
+  TabularEnvironment, Cite, Ref, BeginEnv, EndEnv }
+```
+
+For sectioning, the reveal unit is the `SectioningCommand` node (the `\section{...}` span), not the whole `Section` subtree — otherwise a cursor anywhere in a chapter would de-render the chapter. For list envs, `BeginEnv`/`EndEnv` are their own units (cursor on those lines reveals just those lines), while `Item` markers reveal per-item. Nested constructs (bold inside a heading): reveal only the innermost unit — the outer heading stays styled while `\textbf{` shows, matching Overleaf.
+
+**Computation** (`computeRevealRanges`):
+1. For each selection range `r` in `state.selection.ranges`: resolve unit at `r.head` (checking both `side: -1` and `1` so a cursor sitting flush against `}`\/`$` still reveals); for non-empty ranges, additionally collect every REVEAL_UNIT node *intersecting* `[r.from, r.to]` (so selecting across a bold span shows its source — no invisible bytes inside a selection).
+2. Add ranges for each remote caret position (below).
+3. Sort, merge overlaps, return `{from,to}[]`. Value-compare against previous to short-circuit.
+
+`revealField` is a `StateField&lt;RevealRange[]&gt;` recomputed on `selectionSet || docChanged || setRemoteCarets` effect. `atomicField` and `markPlugin` read it; the walker suppresses all decorations intersecting a reveal range (so hidden markup reappears and atomicRanges vanish for that construct, letting the caret reach every byte).
+
+**Remote-caret force-reveal**: in `visualExtensions`, a small `ViewPlugin` subscribes to `awareness.on('change')`; for each remote state's `cursor` field it converts the Yjs relative positions via `state.facet(ySyncFacet)` (`YSyncConfig.fromYPos`, exported by y-codemirror.next) and dispatches `setRemoteCarets.of(positions)` (debounced ~50 ms, skipped when unchanged). Result: a construct containing a remote caret is revealed locally exactly like a local-cursor reveal, so yCollab's caret decoration is always in visible text — this simultaneously answers the "caret inside replaced range" crash/invisibility risk. Fallback if a position fails to resolve: ignore it (never throw).
+
+**Click-to-enter widgets**: `MathWidget`/chips implement `ignoreEvent → false` for mousedown and the widget DOM carries `data-pos`; a `domEventHandlers` mousedown handler dispatches `selection: {anchor: from+1}` for the clicked widget's construct — cursor lands inside, reveal kicks in, source appears (KaTeX "click reveals source" requirement). Cursor-leave re-renders automatically because the reveal set recomputes on every selection change.
+
+**Byte-stability**: structural — the visual layer consists solely of decorations and never creates a transaction with `changes`. The only doc-changing code paths are the explicit commands in `commands.ts`. This is provable in e2e (see test plan).
+
+## 3. Formatting commands (`commands.ts`)
+
+All are `(view) =&gt; boolean` CM commands dispatching plain `changes` through the normal `view.dispatch` → yCollab path (Yjs-safe, undoable via `yUndoManagerKeymap`).
+
+- **`toggleBold` / `toggleItalic`** (Mod-b / Mod-i): resolve tree at selection. If the selection is inside (or exactly spans the argument of) a `TextBoldCommand`: unwrap — delete the `\textbf{` prefix (CtrlSeq start → argument `OpenBrace` inclusive) and the matching `CloseBrace`, two precise deletions, nothing else touched. Else wrap: insert `\textbf{` at `from`, `}` at `to`; empty selection inserts `\textbf{}` with cursor between braces. Multi-range selections handled per range. Register in the **static** keymap in CodePane (works in both modes — it's just a text edit; both keys verified unbound today).
+- **`setSectionLevel(rank)`** (toolbar dropdown): find enclosing `Book..SubParagraph`; replace only the command token text (`\section` → `\subsection`, preserving a `*` if present) — minimal edit, everything else byte-identical. If cursor is in plain prose: insert `\n\section{}\n` with cursor in the braces. Dropdown shows the current level by reading the same ancestor (state → toolbar via the `onStats`-style callback or a light `onCursorContext` prop).
+- **`toggleItemize`**: inside a `ListEnvironment` → delete the `\begin{...}`/`\end{...}` lines and strip each leading `\item ` (deliberate user edit — allowed to change bytes). Outside → wrap the selected lines in `\begin{itemize}…\end{itemize}` with `\item ` prefixes. Uses `findEnvironmentName` + `findMatchingEnvironment` from codemirror-lang-latex.
+
+## 4. CodePane / Editor integration
+
+**`CodePane.tsx` changes** (the only risky refactor — do it first, Phase 0):
+1. Inside the mount effect, create `const modeComp = new Compartment(); const spellComp = new Compartment();`.
+2. Extensions array: keep everything currently at :199-258 static **except**: the spellcheck `contentAttributes` (:252-256) moves into `spellComp.of(...)`, and append `modeComp.of([])`. `yCollab`, keymaps, `commentField`, updateListener, language, autocompletion all stay static — mode flips never touch them, so no Hocuspocus reconnect, no Yjs re-bind, scroll and cursor survive (same EditorView).
+3. New props `mode: 'source' | 'visual'`; two small `useEffect`s (deps `[mode]`, `[spellcheck, filePath]`) calling `view.dispatch({ effects: modeComp.reconfigure(mode === 'visual' ? visualExtensions({ ydoc, awareness, projectId, branch }) : []) })` — the compartments and view live in refs so these effects don't re-run the mount effect. Mount effect deps stay `[projectId, branch, filePath]`.
+4. Add `toggleBold`/`toggleItalic` to the static keymap block (:223-232); extend `CodePaneHandle` with `format(action: 'bold'|'italic'|'list'|{section: number}): void` for the toolbar.
+
+**`Editor.tsx` changes**:
+1. Remount key `:445` becomes `` `${id}::${branch}::${activeFile}` `` — spellcheck **and** mode are now runtime reconfigures (fixes the existing spellcheck-remount wart as a side benefit).
+2. `const [mode, setMode] = useState&lt;'source'|'visual'&gt;(() =&gt; localStorage.getItem('aldine.editorMode') === 'visual' ? 'visual' : 'source')`; setter writes `aldine.editorMode` (per-user, matching the `aldine.autoTypeset`/`aldine.spellcheck` pattern at :39/:44).
+3. Segmented control `Source | Visual` in the top toolbar after `&lt;BranchMenu&gt;` (:348), `data-testid="mode-toggle"`, rendered only when the experimental flag is on.
+4. Command palette entry in the `commands` memo (:276): `{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: toggleMode }`. Plus (pre-launch gate) `{ id: 'experimental-visual', title: 'Enable experimental visual editor…' }` toggling `localStorage aldine.experimental.visualEditor` — the flag simply hides/shows the segmented control; flag off + stored mode 'visual' falls back to source.
+5. `FormatToolbar` rendered in the CodePane `pane__header` row (:435-443, before the word count, after the filename) when `mode === 'visual'`; buttons call `codeRef.current?.format(...)`.
+
+## 5. Performance plan
+
+- **Build cost**: one incremental-parse tree walk per rebuild; rebuilds gated on tree-change/reveal-change as described. Marks are viewport-only. Target: &lt;4 ms rebuild on a 1 MB fixture (measure with `performance.now` logging during Phase 1 on a generated large doc; if the full-doc atomic build exceeds budget, fallback plan: restrict the atomic field to `viewport ± 2000 lines` with rebuild-on-scroll via a `requestMeasure` bridge — but start simple; Overleaf ships full-doc).
+- **KaTeX**: `renderToString` cache + `Widget.eq` DOM reuse; lazy chunk load; only visible widgets ever render.
+- **Typing latency**: typing inside a revealed construct or prose changes no reveal set → atomic field only `map`s (O(log n)); mark plugin rebuilds viewport only. The existing 350 ms stats debounce (:236) already keeps `latexWordCount` off the hot path.
+- Guardrail e2e: type 30 chars into the large fixture in visual mode; assert doc contains them and the test completes within a time budget (coarse but catches pathological regressions).
+
+## 6. Test plan
+
+**Unit-ish** (new: add `vitest` as a devDependency of `apps/web` — no unit runner exists today; these tests run headless-DOM-free since decoration building needs only `EditorState`):
+`apps/web/src/editor/visual/__tests__/decorations.test.ts` — build an `EditorState` with `latex()` + visual fields from fixture strings; assert exact atomic/mark ranges for: each heading level, each style wrapper, nested bold-in-heading, `$x$` / `\[..\]` / equation env, itemize/enumerate incl. nesting, figure/table chips, verbatim untouched, unknown command untouched, `⚠` partial input, reveal-suppression given a selection. Also `commands.test.ts`: wrap/unwrap/section-level/list-toggle produce exact expected strings (byte-precision at unit level).
+
+**E2E** — new `e2e/tests/13-visual.spec.ts` (+ enable flag &amp; mode via `addInitScript` localStorage, reusing `openProject`/`typeAtEnd`/dual-context patterns from `helpers.ts` and `03-collab.spec.ts`); widgets carry `data-testid="vis-math" | "vis-chip-figure" | "vis-chip-cite" | "vis-item"`:
+1. Toggle renders: `\section` text absent from `.cm-content`, heading class present; toggle back instant, cursor line preserved.
+2. **Byte-stability**: seed fixture via API; in visual mode click into every construct type, arrow through the doc, wait for hocuspocus persist; `GET /api/.../file` and compare **exact string equality** with the seeded bytes.
+3. Math: `.katex` rendered; click → raw `$...$` visible; Escape/arrow-out → re-rendered.
+4. Lists, chips, cite/ref chips render; cursor-enter reveals.
+5. Mod-b on selection → API read shows `\textbf{...}`; Mod-b again → removed (byte-exact).
+6. Dual-mode collab (two contexts, A visual / B source): B edits a section title → A's rendered heading updates; A types prose + uses Mod-b → B sees exact source; final API bytes equal from both perspectives.
+7. Remote-caret force-reveal: B places cursor inside `\textbf{...}` → A shows that construct as source (and no console errors).
+8. Mode persists across reload; spellcheck toggle no longer remounts (assert no WS reconnect via no presence flicker / doc retains cursor).
+9. Regression: run existing 02/03/07 specs unchanged (source mode untouched).
+
+**Manual QA checklist**: IME (Japanese/Chinese) typing in prose and inside a revealed math region; RTL text; very long single-line docs; undo/redo across format commands and across mode toggles; dark mode chip contrast; screen-reader pass on widgets (`aria-label` on chips).
+
+## 7. Risk register
+
+| Risk | Mitigation |
+|---|---|
+| `atomicRanges` + yCollab remote carets (caret decoration inside a replaced range → invisible or mis-drawn) | Remote-caret force-reveal (primary); yCollab's own position mapping is unaffected since we never change the doc; e2e test #7; worst-case fallback: drop atomicRanges for constructs containing remote carets only |
+| Cursor trapped / skipping oddly at atomic boundaries (side/inclusivity bugs) | Resolve reveal at both sides of the cursor; explicit inclusivity on every replace (`inclusive: false`); dedicated unit fixtures for boundary positions; Overleaf's shipped combination proves the pattern viable |
+| Undo semantics: does undo of a format command restore selection inside a now-hidden construct? | Yjs undo restores relative selection → reveal recomputes on the same transaction's selection; verify in e2e #5; decorations themselves are never in undo history |
+| IME/composition adjacent to atomic ranges | Composition happens in revealed (plain) text by construction once the cursor is inside; avoid rebuild-during-composition by skipping reveal recompute while `view.composing`; manual QA item |
+| Multi-line hiding for list `\begin`/`\end` lines (line-structure change from StateField) | Legal from a StateField, but the riskiest decoration; Phase 3 fallback: dim one-line chip instead of full hiding |
+| Large-doc perf | Gated rebuilds + viewport marks + lazy widgets; measured budget in Phase 1; viewport-scoped atomic fallback documented above |
+| Grammar edge cases (⚠ nodes, unclosed braces, `UnknownCommand`, exotic verbatim like `minted`) | Walker whitelist-only: anything not positively matched stays raw source; verbatim subtrees never entered; unit fixtures for partial input |
+| KaTeX bundle bloat | Dynamic import chunk, loaded only on first visual activation; check `vite build` output size in Phase 2 |
+| Compartment refactor regressing source mode | Phase 0 lands alone with full existing e2e green before any visual code exists |
+
+## 8. Phase breakdown (branch `visual-editor`; each phase lands green)
+
+- **Phase 0 — Compartment refactor + mode plumbing (0.5–1 day)**: CodePane compartments (mode empty, spellcheck migrated), Editor remount-key change, mode state/persistence, segmented control + palette entries behind experimental flag, `visual/index.ts` returning `[]`. Existing e2e green; new test for spellcheck-no-remount.
+- **Phase 1 — Styling, hiding, reveal (2–3 days)**: `reveal.ts`, `decorations.ts` (headings + 5 style wrappers), `atomicField.ts`, `markPlugin.ts`, `theme.ts`; vitest setup + decoration unit tests; e2e #1, #2 (byte-stability), perf measurement.
+- **Phase 2 — Math widgets (1.5–2 days)**: `katex.ts` (dep, lazy chunk, cache), `widgets/math.ts`, click-to-enter handling, error fallback; e2e #3; bundle-size check.
+- **Phase 3 — Lists, chips, toolbar, commands (2–3 days)**: `widgets/listMarker.ts`, `widgets/chips.ts` (+ `getBibIndex` export in `latexExtras.ts`), `commands.ts` + static keymap Mod-b/Mod-i, `FormatToolbar.tsx` + `format()` handle method, section dropdown context reporting; unit command tests; e2e #4, #5.
+- **Phase 4 — Collab hardening + full e2e (1.5–2 days)**: remote-caret force-reveal plugin, dual-mode collab specs #6, #7, undo e2e, large-doc guardrail test, composition-skip.
+- **Phase 5 — Polish + merge behind flag (1 day)**: honest-partial-rendering styling for raw constructs, dark-mode/a11y pass, manual QA checklist, CHANGELOG/docs, merge to main with the experimental toggle defaulting off.
+
+Total: roughly 9–12 focused days.
+
+### Critical Files for Implementation
+- /Users/rahloff/projects/Papyr/apps/web/src/components/CodePane.tsx — Compartment refactor, keymap, `format()` handle (the load-bearing change)
+- /Users/rahloff/projects/Papyr/apps/web/src/pages/Editor.tsx — remount key, mode state, segmented control, palette, toolbar slot
+- /Users/rahloff/projects/Papyr/apps/web/src/editor/visual/decorations.ts — the tree walk producing all atomic + mark decorations (new; heart of the feature)
+- /Users/rahloff/projects/Papyr/apps/web/src/editor/visual/reveal.ts — reveal-unit computation + remote-caret force-reveal (new; correctness-critical)
+- /Users/rahloff/projects/Papyr/e2e/tests/13-visual.spec.ts — byte-stability and dual-mode collab proofs (new)</result>
+<usage><subagent_tokens>53171</subagent_tokens><tool_uses>14</tool_uses><duration_ms>285720</duration_ms></usage>
+</task-notification>
