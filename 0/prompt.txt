@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bf6hw138t</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/bf6hw138t.output</output-file>
+<status>completed</status>
+<summary>Background command "Rebuild and push production images, redeploy Fargate service" completed (exit code 0)</summary>
+</task-notification>
