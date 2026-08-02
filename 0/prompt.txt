@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b0lv96d6i</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b0lv96d6i.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for certificate approval" completed (exit code 0)</summary>
+</task-notification>
