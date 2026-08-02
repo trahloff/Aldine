@@ -1,0 +1,1 @@
+<bash-input>cd /private/tmp/claude-502/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4/scratchpad/npm-aldine && npm publish --access public</bash-input>
