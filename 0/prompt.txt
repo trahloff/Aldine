@@ -1,0 +1,17 @@
+ok, we did some work on the other laptop. check it so that you are uptodate
+
+---
+
+alright. so how to best further develop? aldine-ops as the main repo and Aldine as subrepo in the repo?
+
+---
+
+I want to not have the little scripts anymore. I want to have aldine (and aldine-ops) in a state where multiple people on multiple machines can work on it. are we're there yet?
+
+---
+
+do it
+
+---
+
+auch im public repo? da würde ich es nicht in die claude.md schreiben und ich würde es auch nicht in der public git history lassen (dass es Mal in der claude.md war, dass wir keine trailer haben wollen)

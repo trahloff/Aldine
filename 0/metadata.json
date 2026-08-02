@@ -1,0 +1,197 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ20WAXFYAEZQSSJSGXX5TQE",
+  "session_id": "420f389b-c8c3-4ee1-a081-5bc2ccc652b4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-02T19:58:33.963999Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "README.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "ced8cfea3232",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 158107,
+    "cache_creation_tokens": 20821235,
+    "cache_read_tokens": 1509826199,
+    "output_tokens": 2541099,
+    "api_call_count": 3134
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01LD3B6TvWuMcujEpMArryxS",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "frontend-design:frontend-design"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ced8cfea3232",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 181,
+        "end": 182,
+        "entry_ids": [
+          "63694095-0869-4824-9bfc-157cd12b0910"
+        ],
+        "tool_use_id": "toolu_01LD3B6TvWuMcujEpMArryxS"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01LD3B6TvWuMcujEpMArryxS"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: frontend-design:frontend-design",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01Xqik5qWyTj9sjCnC5eDQc6",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "artifact-design"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ced8cfea3232",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 1583,
+        "end": 1584,
+        "entry_ids": [
+          "8d2efd4e-a23b-438f-925e-aa3716e4d5b0"
+        ],
+        "tool_use_id": "toolu_01Xqik5qWyTj9sjCnC5eDQc6"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01Xqik5qWyTj9sjCnC5eDQc6"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: artifact-design",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01Fu6ou4KMzgLbdpofWNA3Xb",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "claude-api"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ced8cfea3232",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 1725,
+        "end": 1726,
+        "entry_ids": [
+          "2264e073-db69-47b8-a5cd-e691194c07aa"
+        ],
+        "tool_use_id": "toolu_01Fu6ou4KMzgLbdpofWNA3Xb"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01Fu6ou4KMzgLbdpofWNA3Xb"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: claude-api",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_013p94bvHp3etv5yBZXYZbDB",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "supabase"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ced8cfea3232",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 7746,
+        "end": 7747,
+        "entry_ids": [
+          "e55ecda3-9ed5-4ec2-9860-cf373baf941e"
+        ],
+        "tool_use_id": "toolu_013p94bvHp3etv5yBZXYZbDB"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_013p94bvHp3etv5yBZXYZbDB"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: supabase",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01QHrteHejk2iy8a1gv6aWfN",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "frontend-design:frontend-design"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "ced8cfea3232",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 11056,
+        "end": 11057,
+        "entry_ids": [
+          "d4e74ab7-0fc9-4fa1-b793-eaef9928462f"
+        ],
+        "tool_use_id": "toolu_01QHrteHejk2iy8a1gv6aWfN"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01QHrteHejk2iy8a1gv6aWfN"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: frontend-design:frontend-design",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-02T19:58:29.258761Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 8,
+    "total_committed": 0,
+    "total_lines_changed": 8,
+    "agent_percentage": 0,
+    "metric_version": 2
+  }
+}
