@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b35oth3sj</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b35oth3sj.output</output-file>
+<status>completed</status>
+<summary>Background command "Build + push prod images from merged main; force ECS redeploy" completed (exit code 0)</summary>
+</task-notification>
