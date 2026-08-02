@@ -1,0 +1,48 @@
+<task-notification>
+<task-id>a37cb314d7768b14a</task-id>
+<tool-use-id>toolu_01SinbTRn5ueZzG7kbYXjuHe</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/a37cb314d7768b14a.output</output-file>
+<status>completed</status>
+<summary>Agent "QA: collab, references, Zotero" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Testing complete. Cleanup done: my two tabs closed and project `rlj26wk7hu` deleted (remaining projects belong to the other concurrent QA sessions).
+
+# QA Report — Collaboration, References, Zotero (Aldine @ localhost:5173)
+
+Test project: "QA Collab Test" (`rlj26wk7hu`, article template) — created and deleted via API. Note: other QA agent sessions were sharing the same Chrome tab group and navigating tabs concurrently; I isolated my tabs after an initial collision, and no result below is contaminated by it.
+
+## Story results
+
+| Story | Verdict | Evidence |
+|---|---|---|
+| COLLAB-1 | PASS | Typed " MARKER-FROM-TAB-A" in tab A; appeared in tab B in &lt;2s, with a colored remote cursor labeled "Writer 930". CRDT sync bidirectional. |
+| COLLAB-2 | PASS (with note) | Toolbar shows one avatar per collaborator (2, then 3, then back to 2). Remote cursors carry name flags ("Writer 930"). Note: both tabs from the same browser share one identity, so both avatars show the same "W"/same color — expected for same-browser testing; avatar hover shows no name tooltip. |
+| COLLAB-3 | PASS | Interleaved typing in both tabs at different lines (`CONC-A-alpha-beta` line 25, `CONC-B-alpha-beta` line 21): both fully survived, identical in both tabs and in server file (verified via API). |
+| COLLAB-4 | PASS | Third tab opened mid-session received the complete current state (all markers) and presence went to 3 avatars; closing it dropped presence back to 2 within ~3s. |
+| COLLAB adversarial | PASS | Same-line concurrent edit (prefix "AAA-" in A, suffix "-ZZZ" in B on line 16) merged to identical `AAA-\maketitle MARKER-FROM-TAB-A-ZZZ` in both tabs — no loss, no divergence. Fast-typing burst and ~900-char multi-line paste both synced completely and persisted server-side. |
+| REF-1 | PASS (with MAJOR bug #1) | DOI `10.1145/3292500.3330701` → BibTeX appended to references.bib, `\cite{Akiba_2019}` inserted at cursor. arXiv `1706.03762` → `\cite{vaswani2017}` + entry appended. Malformed DOI and bogus arXiv id → graceful toast "Lookup failed: No reference found for that DOI/arXiv id", no console errors, document untouched. BUT the appended entry can break compiles (bug #1). |
+| REF-2 | PARTIAL / BLOCKED (need creds) | Negative path tested: garbage API key → graceful toast "Zotero: Zotero rejected the key (HTTP 403)", no crash/hang; panel explains what's needed ("Paste a Zotero API key with library read access") with a "Create one" link to zotero.org; key input is type=password. Empty key + Connect is a silent no-op (bug #3). Positive path (link library/collection) untestable without a real key. |
+| REF-3 | BLOCKED (need creds) | Version-aware .bib sync requires a connected Zotero library. Not reachable from the disconnected panel state. |
+| REF-4 | BLOCKED (need creds) | Library search/insert panel only appears after a successful connection. |
+| EDIT-7 | PASS | `\cite{` autocomplete listed exactly the 3 real bib keys (Akiba_2019, knuth1984, vaswani2017) with author/year hints — matches `GET /bib`. `\ref{` listed exactly `eq:euler`, `sec:method` — matches `GET /labels`. Selection inserts the key correctly. |
+| EDIT-8 | PASS | Hovering `knuth1984` in a `\cite` showed tooltip: "Literate Programming / Knuth, Donald E. · 1984 · The Computer Journal". |
+
+UI vs API cross-checks all consistent: `GET /api/projects/:id/bib`, `/labels`, and `/file?path=main.tex` matched editor state at every step.
+
+## Bugs / UX issues
+
+1. **MAJOR — DOI-imported BibTeX contains raw HTML entity `&amp;amp;`, breaking typeset.** Repro: Cite panel → add DOI `10.1145/3292500.3330701` → entry appended with `booktitle={...Knowledge Discovery &amp;amp; Data Mining}` (raw file verified via API) → actually `\cite{Akiba_2019}` and typeset. Actual: compile fails — Problems panel shows `Error line 42: Misplaced alignment tab character &amp;.` Expected: CrossRef metadata should be HTML-unescaped and LaTeX-escaped (`\&amp;`) before appending. Any DOI whose title/venue contains `&amp;` produces a .bib that un-compiles the project via the app's own headline feature.
+
+2. **MINOR — Reference-lookup error toast is transient and easy to miss.** The "Lookup failed..." toast auto-dismisses in under ~4s with no persistent indication near the identifier field; in one attempt I observed no feedback at all by the time the screenshot was taken. Expected: inline error state on the input, or a longer-lived toast.
+
+3. **MINOR — Zotero "Connect" with an empty key is a silent no-op.** No validation message, no toast, no request fired. Expected: "API key required" inline message.
+
+4. **POLISH — Console noise: `[pdf] render failed RenderingCancelledException` logged at ERROR level** (apps/web `src/components/PdfPane.tsx:97`) on nearly every auto-typeset cycle while typing (7 occurrences in one tab in ~5 min). It's an expected cancellation and should not be `console.error`.
+
+5. **POLISH — Presence avatars have no hover tooltip with the collaborator's name**; the name is only discoverable via the remote cursor flag in the document. Same-browser collaborators also share one identity/color (localStorage-scoped), so avatars are indistinguishable — cosmetic in real cross-user use, but worth a look.
+
+**Not tested (needs real Zotero credentials):** successful key validation, library/collection selection, version-aware .bib refresh (REF-3), library search + insert-citation flow (REF-4). Only the failure/validation UX of the connect step was verifiable.
+
+No fixes were made. All artifacts cleaned up (project deleted, both test tabs closed).</result>
+<usage><subagent_tokens>117992</subagent_tokens><tool_uses>44</tool_uses><duration_ms>545521</duration_ms></usage>
+</task-notification>
