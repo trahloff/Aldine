@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bff6x5yd9</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bff6x5yd9.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run previously failing specs on branch with fixed compiler" completed (exit code 0)</summary>
+</task-notification>
