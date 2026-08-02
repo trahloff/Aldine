@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bonjke5e1</task-id>
+<tool-use-id>toolu_01DvLa3u3rGHC5r1XmDoZwpu</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bonjke5e1.output</output-file>
+<status>completed</status>
+<summary>Background command "Visual e2e from repo root after theme fix" completed (exit code 0)</summary>
+</task-notification>
