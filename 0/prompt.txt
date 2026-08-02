@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>br60l8nan</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/br60l8nan.output</output-file>
+<status>completed</status>
+<summary>Background command "Final demo take, idle machine" completed (exit code 0)</summary>
+</task-notification>
