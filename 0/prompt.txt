@@ -31,3 +31,13 @@ When I use the fully deployed version (aldine.tobiasrahloff.com). how does multi
 ---
 
 jo
+
+---
+
+<task-notification>
+<task-id>bg4ps3y2k</task-id>
+<tool-use-id>toolu_01KWH6aUsRdX2Xgaj5bQHWjU</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/bg4ps3y2k.output</output-file>
+<status>completed</status>
+<summary>Background command "Run auth e2e suite incl. new link-sharing test" completed (exit code 0)</summary>
+</task-notification>
