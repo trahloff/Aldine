@@ -1,0 +1,2 @@
+❯ /goal make this project ready for OSS community release. use subagents for QA. after you achieved your goal, it should be
+  possible to publish and advertise this project and gain massive buzz (OSS, reddit, producthunt, etc). make sure that everything is ready and perfect (code quality, capabilities, documentation, a ready markdown plan that can be executed by agents to generate the buzz, etc)
