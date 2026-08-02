@@ -1,0 +1,1 @@
+nice, but pls remove this here and also remove it from the git history Most of this codebase was written by an AI agent in an autonomous loop, directed and reviewed by a human — the commit history tells that story honestly. Judge the artifact.
