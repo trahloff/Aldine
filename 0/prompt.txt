@@ -1,0 +1,107 @@
+<task-notification>
+<task-id>aacfc81d1e4649dce</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/aacfc81d1e4649dce.output</output-file>
+<status>completed</status>
+<summary>Agent "Map DataStore entities and Postgres wiring" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have a complete picture. No plan file needed — this is an inventory task. Here is the map.
+
+---
+
+# Papyr DataStore persistence map
+
+No design proposed — inventory only. **There are zero references to "supabase" anywhere in the repo** (grep across `.ts/.js/.json/.md/.yml/.yaml/.env*`, excluding node_modules, returned nothing).
+
+## 1. The `DataStore` interface + entity types (`apps/server/src/db/types.ts`)
+
+The header comment states the boundary explicitly (`types.ts:6-7`): *"Only relational/metadata state lives here. Project file contents stay in git repos on disk (see store.ts) — that's a separate storage concern."*
+
+**Entity types:**
+- `User` (`types.ts:10-18`): `id, email, name, salt, hash, createdAt, provider?` — note password auth is local (`salt`/`hash`), `provider` optional.
+- `SessionRow` (`types.ts:63`): `{ userId, exp }` — reused for both sessions and resets.
+- `Comment` + `Reply` (`types.ts:20-32`): `id, branch, file, anchor{from,to,quote}, author, body, suggestion?, resolved, createdAt, replies[]`.
+- `ProjectMeta` (`types.ts:34-61`): `id, name, rootFile, engine, createdAt, ownerId?, share?{mode, collaborators[]}, zotero?{apiKey,...}, github?{fullName,owner,repo,remoteBranch,cloneUrl,connectedBy?}`.
+
+**Interface methods** (`types.ts:70-111`), all async:
+- lifecycle: `init()`, `close()`
+- **users (auth):** `createUser, getUser, findUserByEmail, updateUser`
+- **sessions (auth):** `createSession, getSession, deleteSession, deleteSessionsForUser`
+- **resets (auth):** `createReset, getReset, deleteReset`
+- **project meta (domain):** `readMeta, writeMeta, listMeta, deleteMeta`
+- **comments (domain):** `loadComments, saveComments`
+- **usage (domain):** `getUsageSeconds, addUsageSeconds` — compile-seconds per (user, month)
+- **connections (auth-adjacent secrets):** `getConnection, setConnection, deleteConnection` — per-user provider tokens
+
+**Auth-related vs domain split:**
+- Auth: `users`, `sessions`, `resets`, `connections` (the interface comment at `types.ts:106-107` calls connections "Secrets — kept in the secrets store, never in the compiler-visible projects dir").
+- Domain: `project_meta`, `comments`, `usage`.
+
+## 2. Both backends fully implement the interface
+
+Both `class JsonStore implements DataStore` (`json.ts:17`) and `class PgStore implements DataStore` (`pg.ts:18`) implement every one of the 22 methods. I verified method-by-method presence in both files; TypeScript's `implements` would fail compile otherwise.
+
+**JsonStore** (`json.ts`) — flat JSON under `metaRoot` (layout documented `json.ts:10-13`):
+- `users.json, sessions.json, resets.json, usage.json, connections.json` + `meta/&lt;id&gt;.json`, `comments/&lt;id&gt;.json`. Atomic temp+rename writes, mode `0o600` (`json.ts:44-48`). Enforces email uniqueness in-process to mimic PG's `UNIQUE(email)` (`json.ts:54-59`).
+
+**PgStore** (`pg.ts`) — loaded when `DATABASE_URL` is set; `pg` is a dynamically imported optionalDependency (`pg.ts:24-26`). Exact `CREATE TABLE` statements (`pg.ts:39-65`):
+
+```
+users        (id text PK, email text UNIQUE NOT NULL, name text NOT NULL,
+              salt text NOT NULL, hash text NOT NULL, created_at text NOT NULL, provider text)
+sessions     (sid text PK, user_id text NOT NULL, exp bigint NOT NULL)
+             + INDEX sessions_user_idx ON sessions(user_id)
+resets       (token text PK, user_id text NOT NULL, exp bigint NOT NULL)
+project_meta (id text PK, created_at text NOT NULL, data jsonb NOT NULL)
+comments     (project_id text PK, data jsonb NOT NULL)
+usage        (user_id text NOT NULL, month text NOT NULL,
+              seconds double precision NOT NULL DEFAULT 0, PRIMARY KEY (user_id, month))
+connections  (user_id text NOT NULL, provider text NOT NULL, data jsonb NOT NULL,
+              PRIMARY KEY (user_id, provider))
+```
+
+Note: `project_meta`, `comments`, `connections` store the whole entity as a single `jsonb` `data` column (read/written wholesale — `writeMeta`/`saveComments` do full `INSERT ... ON CONFLICT DO UPDATE`, `pg.ts:122-146`). Only `users/sessions/resets/usage` are typed columns. `usage` uses an atomic increment upsert (`pg.ts:153-158`).
+
+## 3. Backend selection + init/retry (`apps/server/src/db/index.ts`)
+
+`initDb()` (`index.ts:11-18`): `const url = process.env.DATABASE_URL; store = url ? new PgStore(url) : new JsonStore(config.metaRoot);` then `await store.init()`. Logs `[papyr] datastore: postgres|json`. Module-level singleton `store`; `db()` throws if used before init (`index.ts:21-24`); `closeDb()` resets it (test/shutdown).
+
+**PgStore retry** (`pg.ts:28-38`): pool `max = PG_POOL_MAX || 10`; retries `SELECT 1` up to 30 attempts with 1s backoff (handles Postgres still starting under docker-compose) before running the `CREATE TABLE IF NOT EXISTS` DDL.
+
+## 4. Where identity is persisted / referenced
+
+- **`ProjectMeta.ownerId`** = the user's `id` (not email). Set at project creation: `store.ts:70` and `routes.ts:730` — `meta.ownerId = ownerId; meta.share = { mode:'private', collaborators:[] }`. Enforced in `authz.ts`: `meta.ownerId === user.id` (`authz.ts:9,19`); owner name resolved via `getUser(meta.ownerId)` (`authz.ts:24-25`). Legacy projects with no `ownerId` are treated as public (`authz.ts:7,18`).
+- **`share.collaborators` are EMAILS, not ids.** On write they are lowercased and validated against an email regex, capped at 50 (`routes.ts:239-241`). Access check compares by email: `meta.share?.collaborators?.some((c) =&gt; c.toLowerCase() === email)` (`authz.ts:12`). `mode:'link'` = anyone (`authz.ts:10`).
+- **GitHub connections are per-user**, keyed `(userId, 'github')` via the `connections` store. `github.ts:19-27` wraps `db().getConnection/setConnection/deleteConnection(userId, 'github', ...)`; the stored blob is `{ token, login, name }` (`GithubConnection`, `github.ts:11`). Routes use `ghUserId(req)` as the key (`routes.ts:653,663,694,...`). `ProjectMeta.github.connectedBy` records which user id created the repo link (reference only).
+- **Zotero keys live in `ProjectMeta.zotero`, i.e. INSIDE the datastore (project_meta), NOT in a separate secrets store.** Set at `routes.ts:531`: `meta.zotero = { apiKey, userId, username, libraryPrefix, collectionKey, bibFile }` then persisted via `writeMeta`. The apiKey is stripped from API responses to clients (`routes.ts:57` destructures `zotero`/`ownerId` out before returning `rest`, re-adding only non-secret zotero fields at `routes.ts:63`). Zotero keys are per-project, GitHub tokens are per-user.
+
+## 5. Supabase references
+
+None. The grep returned zero hits repo-wide.
+
+## 6. Can PgStore point at an external managed Postgres (e.g. Supabase) via `DATABASE_URL` as-is?
+
+Structurally yes — it's a plain `pg.Pool({ connectionString })` (`pg.ts:28`) with standard SQL and no extensions. Observations relevant to a managed/external Postgres:
+- Only standard features used: `text/bigint/jsonb/double precision`, `PRIMARY KEY`, `UNIQUE`, `CREATE INDEX IF NOT EXISTS`, `INSERT ... ON CONFLICT ... DO UPDATE`. No Postgres extensions, no `search_path`/schema assumptions (all tables in the default schema), no roles/RLS.
+- No SSL config is set in the pool options (`pg.ts:28`) — managed providers typically require TLS, which would need to come through the `DATABASE_URL` (e.g. `?sslmode=require`) or `PG*` env vars, since it isn't set in code.
+- The app **creates its own tables at startup** via `CREATE TABLE IF NOT EXISTS` (`pg.ts:39`), so it expects DDL privileges on first connect.
+- `created_at` is stored as `text` (ISO strings), and session `exp` as `bigint` epoch-ms — no `timestamptz`/`now()` reliance, so no timezone concerns.
+
+## What lives where (summary)
+
+| Data | Store method(s) | JSON location | PG table | Auth vs Domain |
+|---|---|---|---|---|
+| Users (local pw hash) | createUser/getUser/… | `users.json` | `users` | Auth |
+| Sessions | createSession/… | `sessions.json` | `sessions` | Auth |
+| Password resets | createReset/… | `resets.json` | `resets` | Auth |
+| GitHub tokens (per-user) | *Connection | `connections.json` | `connections` | Auth/secrets |
+| Project metadata (incl. zotero apiKey, share/owner) | readMeta/writeMeta/… | `meta/&lt;id&gt;.json` | `project_meta` (jsonb) | Domain (+ secret) |
+| Review comments | load/saveComments | `comments/&lt;id&gt;.json` | `comments` (jsonb) | Domain |
+| Compile usage | get/addUsageSeconds | `usage.json` | `usage` | Domain |
+| **Project file contents (git repos)** | NOT in DataStore | `dataDir/projects/&lt;id&gt;` + `worktrees` | — | separate storage |
+
+The datastore root is `config.metaRoot` = `META_DIR` env or `&lt;repoRoot&gt;/.secrets` (`config.ts:16`). Critically, `metaRoot` is deliberately kept **outside** `dataDir` (`config.ts:12-16`): *"Secrets &amp; project metadata MUST live outside dataDir so the compiler container (which mounts dataDir) can never read Zotero API keys via \openin."* Git repos live under `config.dataDir` = `DATA_DIR` or `&lt;repoRoot&gt;/.data` at `projects/&lt;id&gt;` and `worktrees/` (`config.ts:11,26-27`) — this is the on-disk/EFS storage that the DataStore does **not** cover.
+
+Relevant files: `apps/server/src/db/types.ts`, `apps/server/src/db/index.ts`, `apps/server/src/db/json.ts`, `apps/server/src/db/pg.ts`, `apps/server/src/config.ts`, `apps/server/src/github.ts`, `apps/server/src/authz.ts`, `apps/server/src/store.ts`, `apps/server/src/routes.ts`.</result>
+<usage><subagent_tokens>33190</subagent_tokens><tool_uses>14</tool_uses><duration_ms>104434</duration_ms></usage>
+</task-notification>
