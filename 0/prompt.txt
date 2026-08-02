@@ -1,0 +1,33 @@
+ok, we did some work on the other laptop. check it so that you are uptodate
+
+---
+
+alright. so how to best further develop? aldine-ops as the main repo and Aldine as subrepo in the repo?
+
+---
+
+I want to not have the little scripts anymore. I want to have aldine (and aldine-ops) in a state where multiple people on multiple machines can work on it. are we're there yet?
+
+---
+
+do it
+
+---
+
+auch im public repo? da würde ich es nicht in die claude.md schreiben und ich würde es auch nicht in der public git history lassen (dass es Mal in der claude.md war, dass wir keine trailer haben wollen)
+
+---
+
+nice. remove "(there's a test that proves it)." from the github page. also, the docker-compose in the repo root is stil the complex one. it should be the simple one. we could keep the super complex one that is currently the docker-compose aroun as docker-compose.full.yml or something
+
+---
+
+When I use the fully deployed version (aldine.tobiasrahloff.com). how does multi-user work? Does just everybody who logs into this running instance seeing all of the projects?
+
+---
+
+[Image #3] ok, but where is the share (mode) button?
+
+---
+
+jo
