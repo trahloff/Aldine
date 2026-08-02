@@ -1,0 +1,1 @@
+Check whether the e2e suite (background task bb7u7kven / waiter b13sbhpaw) finished. If done, diagnose the failures listed in test-results/ (likely compile-related; determine whether they're environmental — local latexmk vs docker compiler — or React 19 regressions, e.g. by running the same failing tests on main as a baseline). Then write the final Astryx evaluation report.
