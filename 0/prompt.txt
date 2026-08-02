@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bhu3etwfc</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/bhu3etwfc.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch Pages deploy; poll aldine.dev until live" completed (exit code 0)</summary>
+</task-notification>
