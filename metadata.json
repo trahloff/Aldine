@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ24X1CPRWR7CPJJ4469GK99",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "CHANGELOG.md",
+    "apps/server/src/authz.ts",
+    "apps/server/src/collab.ts",
+    "apps/server/src/routes.ts",
+    "apps/web/src/api.ts",
+    "apps/web/src/components/Modal.tsx",
+    "apps/web/src/components/ShareModal.tsx",
+    "apps/web/src/pages/Editor.tsx",
+    "apps/web/src/pages/Home.tsx",
+    "e2e/auth-tests/auth.spec.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 158201,
+    "cache_creation_tokens": 20885784,
+    "cache_read_tokens": 1540715999,
+    "output_tokens": 2567552,
+    "api_call_count": 3184
+  }
+}
