@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bj3rojfnh</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/bj3rojfnh.output</output-file>
+<status>completed</status>
+<summary>Background command "Regenerate screenshots (final)" completed (exit code 0)</summary>
+</task-notification>
