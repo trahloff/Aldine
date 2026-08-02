@@ -1,0 +1,1 @@
+when I try to login via google, it says the redirect URI is incorrect. also, now that we are on AWS, let's enable email signup again. ideally via AWS directly and with a subdomain like papyr.tobiasrahloff.com
