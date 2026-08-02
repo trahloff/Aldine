@@ -1,0 +1,1 @@
+<bash-input>aws sso login --profile main-admin</bash-input>
