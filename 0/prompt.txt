@@ -1,0 +1,1 @@
+Nice. pls generally create a markdown based user story inventory and test the application thouroughly. Basically act as a full QA/QC team and try to find any bugs or UX issues. Don't restrict it to the scope of the PR, fully test the entire application
