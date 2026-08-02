@@ -1,0 +1,48 @@
+<task-notification>
+<task-id>a1f787c5a8b016254</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/a1f787c5a8b016254.output</output-file>
+<status>completed</status>
+<summary>Agent "Review the name "Papyr"" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Pre-launch naming review: "Papyr"
+
+## Verdict: RENAME — high confidence
+
+Rename before launch. This is the last moment it costs nothing, and the research shows the name is worse off than the earlier quick check suggested. The three strongest reasons:
+
+1. **The project's most important search query is already owned by a same-space product.** The #1 result for "papyr latex" is [papyr.ai](https://papyr.ai/) — an OCR tool whose entire pitch is *converting handwritten notes to LaTeX*, on an exact-match domain. This is not distant noise like the Undertale character; it is a LaTeX-tooling product sitting permanently on the head query. Users who hear "Papyr… the LaTeX thing" and google it will land on papyr.ai.
+2. **Every distribution handle is taken, and the name is being actively re-colonized right now.** papyr.com (grammar-ed site), papyr.io (registered 2021 — verified via whois), papyr.dev, papyr.app, getpapyr.com — all registered. [github.com/papyr](https://github.com/papyr) is an active user with 162 repos, so "papyr github" surfaces them plus jupyter/papyri, papyrs, and a [real-time collaborative Markdown editor named papyrus](https://github.com/FurqanSoftware/papyrus). npm `papyr` and PyPI `papyr` are squatted. Two iOS apps named exactly "Papyr" launched in ~2025 ([document scanner](https://apps.apple.com/us/app/papyr/id6758280008), [PDF/audiobook reader](https://apps.apple.com/us/app/papyr-pdf-audiobooks/id6760125804)) — the mark is getting *more* crowded, not less. Only papyr.sh is free (verified: whois "Domain not found").
+3. **Trademark-adjacent exposure in the exact goods class.** [Papyrus Software / ISIS Papyrus](https://www.isis-papyrus.com/) is a 35-year-old vendor of *document creation and processing software* with 2,800+ enterprise customers — near-identical mark, overlapping class. Risk-ranking (not legal advice): low for a free OSS repo, but it becomes real the day Papyr offers hosted SaaS or takes sponsorship; the two live iOS apps also hold common-law claims on the exact string "Papyr" for document apps. QuirkLogic's dead Papyr tablet — literally marketed as "real-time collaboration" — shows the mark has already been used and abandoned once in this semantic space.
+
+Secondary factors that tipped it: pronunciation is genuinely ambiguous (PAY-per? pa-PIE-er? pa-PEER?); anyone who *hears* the name will type "papyrus" or "papier" and land in font/Undertale/stationery noise (verified: "papyr" alone is clean of Undertale noise — the noise attaches to the misspellings people will actually make); and the vowel-dropped "-yr" reads as 2010s Flickr/Tumblr-era styling rather than clever. The papyrus→writing semantic is good, but the truncation keeps the collision cost while shedding some of the meaning.
+
+## If you keep it anyway (mitigations)
+
+- **Register papyr.sh today** — it is the only exact-match domain left (confirmed available). papyr.io/.dev/.app/getpapyr.com are gone.
+- Anchor every surface on the two-word phrase: repo description and README H1 = "Papyr — self-hosted collaborative LaTeX editor (open-source Overleaf alternative)". Never fight for the bare term "papyr"; target "papyr latex", "overleaf alternative self-hosted", "collaborative latex editor".
+- GitHub topics: `latex`, `overleaf-alternative`, `collaborative-editing`, `self-hosted`.
+- npm: `papyr` is squatted (stale API-docs viewer, 2022) — use `papyr-latex` (verified free) or the `@papyr` scope if claimable.
+- Accept that the App Store name is unusable if you ever ship a mobile client, and avoid any hosted-commercial move without a trademark screen against ISIS Papyrus.
+
+## 5 alternative names, ranked
+
+All verified against "NAME github"/software searches, npm, and .dev RDAP (Google registry, authoritative). Note: *every* short papery name has some occupation — the bar is "no collision in the LaTeX/collab-writing space + free .dev + clean 'NAME latex' query", which Papyr fails and these pass.
+
+| # | Name | Semantic | Collisions found | Domains/packages |
+|---|------|----------|------------------|------------------|
+| 1 | **Aldine** | The Aldine Press (Aldus Manutius) — the origin of scholarly publishing, italics, the octavo. Perfect academic-LaTeX fit. | None in dev/software space. Head-term noise is Aldine ISD, a Houston school district — irrelevant vertical, and "aldine latex"/"aldine github" are clean. | **aldine.dev available, npm `aldine` free** — the only candidate clean on both. |
+| 2 | **Scrivo** | Italian/Latin "I write." Easy to say (SKREE-voh), easy to spell after hearing. | Dormant Dutch [Scrivo CMS](https://github.com/scrivo/Scrivo) (GH org taken); caveat: npm `scrivo` was claimed *this week* by a WIP terminal-IDE project — editor-space adjacency, currently ~zero users. | **scrivo.dev available** (RDAP + no NS); npm taken → scope or suffix. |
+| 3 | **Calamus** | The reed pen used to write on papyrus — keeps Papyr's entire semantic, deeper. | Dead Atari DTP software (Wikipedia-notable, discontinued 2018); active [calamus.app](https://www.calamus.app/) AI browser; a TTRPG map app. Nothing in LaTeX/writing-collab. | **calamus.dev available**; npm untested-clean at exact name — verify. |
+| 4 | **Octavo** | The book format of the Aldine Press; scholarly-print flavor. | Several dormant GH repos (crypto lib, FPGA CPU, old web editor), Octavo Systems (electronics HW). No writing-space product. | octavo.dev registered; npm taken. Weaker on handles. |
+| 5 | **Galley** | Galley proofs — *the* artifact co-authors argue over before publication; great story for a collab editor. | Deprecated/retired Istio component "galley"; common English word. | galley.dev registered; npm taken. Best semantic, worst handles. |
+
+Vetted and rejected: Frond (active [agent framework](https://frond-devtool.pages.dev/) + frond.com community platform), Skrift (Umbraco magazine, skrift.io), Deckle ([deckle.studio](https://deckle.studio/) is a novel-writing platform — same space), Quire (Getty's open-source publishing tool + Quire.io), Vellum (vellum.ai), Preamble (GH org taken, .dev gone), Texo/Colophon/Looseleaf (.dev gone), Tectonic/Texpad/Underleaf/Octree (already LaTeX products).
+
+## 5-minute recommendation
+
+Rename to **Aldine** before launch: it's the only vetted name with zero software-space collisions, a free aldine.dev and free npm name, and a semantic (the press that invented portable scholarly publishing) that gives you a better launch story than a papyrus truncation — register aldine.dev and the npm name today, rename the repo (GitHub auto-redirects the old URL), and update the Terraform/DNS whenever convenient since papyr.tobiasrahloff.com carries no brand equity yet. If you're unwilling to rename, then at minimum register papyr.sh right now (last exact-match domain, confirmed free), claim `papyr-latex` on npm, and hard-anchor all metadata on "Papyr — open-source Overleaf alternative / collaborative LaTeX editor" so you rank on the phrases instead of the contested head term — but understand you'll be sharing your name with an OCR-to-LaTeX tool, two iOS document apps, and an enterprise document-software trademark forever.
+
+Sources: [papyr.ai](https://papyr.ai/) · [Papyr scanner (App Store)](https://apps.apple.com/us/app/papyr/id6758280008) · [Papyr PDF/Audiobooks (App Store)](https://apps.apple.com/us/app/papyr-pdf-audiobooks/id6760125804) · [papyrai.com](https://www.papyrai.com/) · [QuirkLogic Papyr review](https://www.coreystephan.com/quirklogic-review/) · [QuirkLogic Papyr launch PR](https://www.businesswire.com/news/home/20200715005680/en/QuirkLogic-Expands-Ecosystem-with-New-13%E2%80%9D-Digital-Writing-Device-Papyr%E2%84%A2) · [github.com/papyr](https://github.com/papyr) · [FurqanSoftware/papyrus](https://github.com/FurqanSoftware/papyrus) · [ISIS Papyrus](https://www.isis-papyrus.com/) · [Gartner: Papyrus Platform](https://www.gartner.com/reviews/market/business-process-automation-tools/vendor/isis-papyrus-group/product/papyrus-platform) · [Scrivo CMS](https://github.com/scrivo/Scrivo) · [Calamus (Wikipedia)](https://en.wikipedia.org/wiki/Calamus_(software)) · [calamus.app](https://www.calamus.app/) · [deckle.studio](https://deckle.studio/) · [Frond](https://frond-devtool.pages.dev/) · [Skrift](https://skrift.io/issues/umbraco-ci-cd-using-jenkins-and-github/) · [Electronut Papyr](https://docs.electronut.in/papyr/) · [OED: papyr](https://www.oed.com/dictionary/papyr_n)</result>
+<usage><subagent_tokens>55627</subagent_tokens><tool_uses>19</tool_uses><duration_ms>455122</duration_ms></usage>
+</task-notification>
