@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b6w83h38b</task-id>
+<tool-use-id>toolu_01UJteXohJXfhBs5DHbBemex</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4/tasks/b6w83h38b.output</output-file>
+<status>killed</status>
+<summary>Background command "Block until security review result exists" was stopped</summary>
+</task-notification>
