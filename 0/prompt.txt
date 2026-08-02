@@ -1,0 +1,1 @@
+ok, I imported https://github.com/trahloff/paper-iac-2026-gsaas. this worked but there are multiple errors. it does not compile (it compiles without an issue on overleaf) and also the left sidebar has absolutely no notion of directories
