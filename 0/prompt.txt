@@ -1,0 +1,88 @@
+<task-notification>
+<task-id>a129363a00617be78</task-id>
+<tool-use-id>toolu_01BtrdKtFMH8PfjfYJ1QE7Cd</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/a129363a00617be78.output</output-file>
+<status>completed</status>
+<summary>Agent "Explore compiler/templates/packages" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything needed. Here is the report.
+
+---
+
+# Ground-truth report: compile / package / template subsystem
+
+## 1. Package handling today
+
+**TeX Live scheme &amp; pinned packages** — `apps/compiler/Dockerfile`
+- Line 4: base image is `texlive/texlive:latest-medium` (pinned by digest). **scheme-medium**, deliberately ~1GB vs full's ~3GB (comment lines 9-10).
+- Lines 15-18: repository is pinned to a dated tlnet snapshot (`https://texlive.info/tlnet-archive/2026/07/18/tlnet/`), then `tlmgr update --self` and a single `tlmgr install` of the extra packages: **newtx, txfonts, fontaxes, lastpage, titlesec, xstring, fancyhdr, cleveref, enumitem, wrapfig, threeparttable, placeins, multirow, doclicense, algorithmicx, xurl, sttools, acro, translations**.
+- Line 23: `biber --version` warms the PAR cache at build time.
+- Lines 29, 36-37: restricted shell-escape whitelist (`shell_escape=p`) plus `openin_any=p` / `openout_any=p`.
+- No `USER` directive anywhere → the container runs as **root** (the texlive base sets no user either).
+
+**What happens when a needed package is NOT in the image (error path):**
+1. `latexmk` runs with `-halt-on-error -file-line-error -interaction=nonstopmode` (`server.js:136-148`). A missing package makes pdflatex emit into the `.log`:
+   `! LaTeX Error: File \`foo.sty' not found.`
+2. `parseLog` in `server.js:51-58` catches lines starting with `!` as `{type:'error', message, line}` (line number pulled from a following `l.&lt;n&gt;` within 12 lines). Result: `ok:false`, `pdf:null`, plus the `errors[]` array and full `log`.
+3. `apps/server/src/compile.ts:46-77` (`runCompile`) POSTs to the compiler and normalizes the response into a `CompileResult` (`ok`, `errors`, `log`, `pdfUrl:null`). It passes the compiler's `errors`/`log` straight through — no missing-package special handling.
+4. Web surface — `apps/web/src/pages/Editor.tsx:320-483`: the Problems panel (`data-testid="errors-panel"`) lists each error row with an `Error` badge, the line number, the raw message, and — crucially — a hint from `hintFor(e.message)` (line 468). "View log" opens the full raw log (line 465, 543-544).
+
+**Existing "missing package" hint** — `apps/web/src/editor/errorHints.ts:6`:
+```
+{ re: /File `?([^']+?)\.sty'? not found/i, hint: 'A package is missing from the TeX installation, or its name is misspelled in \\usepackage.' }
+```
+So the current UX for a missing package: compile fails, the Problems panel shows `Error · line N · LaTeX Error: File \`foo.sty' not found.` with the sub-hint "A package is missing from the TeX installation, or its name is misspelled in \usepackage." There is **no** action to install the package and no distinction between "misspelled" and "genuinely absent."
+
+## 2. Network topology / sandbox
+
+**Isolation is real and enforced in compose** — `docker-compose.yml`:
+- Lines 148-151: two networks; `backend` is `internal: true` with comment "compiler (and db) have no route to the internet."
+- Lines 91-92: the `compiler` service is attached **only** to `backend`. Plus `cap_drop: ALL` (96-97), `no-new-privileges` (98-99), `cpus: 2.0`, `mem_limit: 2g`, `pids_limit: 256`.
+- Lines 88-90 comment: "no external egress… Packages are baked into the image at build time, so the compiler never needs the network."
+- The `app` service is on **both** `frontend` and `backend` (lines 70-72) — it is the only service with both internet egress and a route to the compiler.
+
+**Documented as a security property in three places:**
+- `README.md:180-183` ("internal-only Docker network (no internet egress)…").
+- `SECURITY.md:18-22` (scope note: compiler sandboxed, "keep it isolated as shipped in docker-compose.yml").
+- `deploy/README.md:92` ("compiler runs on an internal-only network (no egress)…").
+
+**Any existing egress mechanism?** None for the compiler. The **server** container reaches the internet for reference/citation work:
+- `apps/server/src/zotero.ts:11,18,30,48,58,97` — Zotero Web API (`api.zotero.org`).
+- `apps/server/src/references.ts:16-18,38,100,110` — OpenAlex, doi.org, and `export.arxiv.org` (all overridable via `*_API_BASE` env). No account/keys needed for these.
+- Plus AI providers (Anthropic/OpenAI/OpenRouter) and SMTP/SES, per `docker-compose.yml:19-47`.
+
+The server and compiler share files via the `aldine-data` volume mounted into both (`docker-compose.yml:55-56, 86-87`); `compile.ts` sends the compiler a **relative path** into that shared volume rather than transferring bytes (`compile.ts:22-24, 51-59`). This is the existing pattern any "server fetches on the compiler's behalf" feature would extend.
+
+## 3. Templates system
+
+**Server** — `apps/server/src/templates.ts`:
+- `listTemplates()` (lines 7-21): scans `config.templatesDir`, and every immediate subdir containing a `template.json` becomes a template; parses `{id,name,description,icon,order}`, defaults `id` to the folder name, sorts by `order`.
+- `templateFiles(id)` (lines 24-38): guards `id` against `..` and `/`, then walks the folder recursively returning `relPath → content` for **every file except template.json**. Purely filesystem; synchronous `readFileSync`; assumes text (UTF-8) content.
+- `config.ts:22`: `templatesDir = TEMPLATES_DIR || &lt;repoRoot&gt;/templates`.
+
+**Directory layout** — `templates/` has `article/`, `beamer/`, `report/`, `iac-paper/`. Each has a `template.json` plus `.tex`/`.bib` and, where needed, custom class/style files bundled in the folder (e.g. `iac-paper/iac.cls`, `iac.bbx`, `iac.cbx`; `report/chapters/introduction.tex`). Manifest example (`templates/article/template.json`): `{id,name,description,icon,order}`. `iac-paper/template.json` is the same shape.
+
+**Wiring** — `apps/server/src/routes.ts:229-241` (POST `/api/projects` calls `templateFiles(template)` to seed a new project; bad id → 400) and `:257` (GET `/api/templates` → `listTemplates()`). Web: `apps/web/src/api.ts:68-70` (`createProject(name, files?, template?)`, `templates()`); `apps/web/src/pages/Home.tsx:38` loads the list, `:193-208` renders the template grid, `:43` passes the chosen id into `createProject`.
+
+**How hard is adding a template?** Trivial and exactly as you suspected: drop a folder under `templates/` containing a `template.json` manifest plus whatever files (including bundled `.cls`/`.sty`). No build step, no code change, no registry. **There is no remote-fetch capability for templates** — everything is local filesystem, and `templateFiles` explicitly rejects any id containing `/` or `..`. A "fetch templates from CTAN/a gallery" feature would be entirely new, and the server is the only container with egress to implement it.
+
+## 4. tlmgr at container runtime
+
+- `tlmgr` **is present** in the running compiler image (it's used at build time, lines 15-18, 29; the texlive-medium base ships it).
+- Container runs as **root** (no `USER` in either the compiler Dockerfile or the base), so the in-image texmf tree (`/usr/local/texlive/...`) is writable at runtime.
+- **But `tlmgr install` cannot work at runtime**, for two independent reasons:
+  1. **No egress**: the compiler is only on the `internal: true` backend network — `tlmgr` cannot reach CTAN or the tlnet snapshot. This is the hard blocker.
+  2. **Ephemerality**: the texmf tree lives in the image's writable layer, **not** in a volume (only `/data` is a volume, `docker-compose.yml:86-87`). Any runtime-installed package is lost on container recreation and is not shared across replicas.
+- `cap_drop: ALL` + `no-new-privileges` don't specifically block `tlmgr`'s file writes (it runs as root, no special caps needed), but combined with `pids_limit`/`mem_limit` and the compile wall-clock timeout (`COMPILE_TIMEOUT_MS=120000`), an in-band install during a compile would be fragile even if the network existed. The compose file also does **not** set `read_only: true`, so the FS is technically writable — just non-persistent and offline.
+
+## Constraints a "fetch packages/templates from CTAN" feature must respect
+
+1. **Do not give the compiler egress.** No-egress is a documented security property in three files (README, SECURITY.md, deploy/README) and is load-bearing given LaTeX runs untrusted, Turing-complete input with shell-escape partially enabled. Punching a hole in the `backend` `internal: true` network would regress the stated posture.
+2. **The server is the sanctioned egress point.** It already fetches external resources (Zotero, OpenAlex, DOI, arXiv) and already shares the `aldine-data` volume with the compiler. The natural design is: server fetches package/template bytes from CTAN, writes them into the shared volume (e.g. a per-project texmf or the project tree the compiler already `-cd`s into), and the compiler picks them up locally — mirroring how projects/output already move between the two.
+3. **Package files must land somewhere the compiler reads without network.** The compiler compiles with `-cd` into the root file's directory (`server.js:132-146`), so files inside the project tree resolve like a local build; a per-project `TEXINPUTS`/`texmf` staged by the server would avoid touching the ephemeral image tree.
+4. **Persistence &amp; multi-node:** anything written to the image FS at runtime is ephemeral and per-replica; durable additions belong either baked into the image at build time (current model) or in the shared volume.
+5. **Templates specifically** are filesystem-only with `..`/`/` id guards (`templates.ts:25`) and no remote path today — a remote template gallery is greenfield and, again, the server (not the compiler) is where the fetch must live.
+
+Key files: `apps/compiler/Dockerfile`, `apps/compiler/server.js` (parseLog:35-69, compile flags:136-148), `apps/server/src/compile.ts:46-77`, `apps/web/src/editor/errorHints.ts:6`, `apps/web/src/pages/Editor.tsx:320-483`, `docker-compose.yml:74-101,148-151`, `README.md:180-185`, `SECURITY.md:18-22`, `deploy/README.md:92`, `apps/server/src/templates.ts`, `apps/server/src/routes.ts:229-257`, `apps/server/src/config.ts:22`, `apps/web/src/pages/Home.tsx:38-208`, `apps/web/src/api.ts:68-70`, `apps/server/src/zotero.ts`, `apps/server/src/references.ts:9-18,38,100,110`.</result>
+<usage><subagent_tokens>44535</subagent_tokens><tool_uses>23</tool_uses><duration_ms>133656</duration_ms></usage>
+</task-notification>
