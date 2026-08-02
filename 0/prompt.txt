@@ -1,0 +1,1 @@
+ok, we also do not need to specifically supabase but should we host this on AWS? Netlify? Something different? convinience and possible monetarisation should be focus. do online research if that would help
