@@ -1,0 +1,23 @@
+<bash-stdout></bash-stdout><bash-stderr>npm notice
+npm notice 📦  aldine@0.0.1
+npm notice Tarball Contents
+npm notice 452B README.md
+npm notice 488B package.json
+npm notice Tarball Details
+npm notice name: aldine
+npm notice version: 0.0.1
+npm notice filename: aldine-0.0.1.tgz
+npm notice package size: 603 B
+npm notice unpacked size: 940 B
+npm notice shasum: 5cd1260193061e62d480634bdd36a4f46aaf4682
+npm notice integrity: sha512-YJnw1Y2GUjN6t[...]doovkoKFuOaBg==
+npm notice total files: 2
+npm notice
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+npm error code E403
+npm error 403 403 Forbidden - PUT https://registry.npmjs.org/aldine - Two-factor authentication or granular access token with bypass 2fa enabled is required to publish packages.
+npm error 403 In most cases, you or one of your dependencies are requesting
+npm error 403 a package version that is forbidden by your security policy, or
+npm error 403 on a server you do not have access to.
+npm error A complete log of this run can be found in: /Users/rahloff/.npm/_logs/2026-07-21T17_39_31_474Z-debug-0.log
+</bash-stderr>
