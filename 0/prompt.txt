@@ -1,0 +1,1 @@
+<bash-input>cd deploy/aws && AWS_PROFILE=main-admin tofu apply -auto-approve</bash-input>
