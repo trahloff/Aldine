@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bw7h04xqm</task-id>
+<tool-use-id>toolu_01EPuuthtXREejQXvCDAbLzz</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/bw7h04xqm.output</output-file>
+<status>completed</status>
+<summary>Background command "Regenerate screenshots with PDF waits" completed (exit code 0)</summary>
+</task-notification>
