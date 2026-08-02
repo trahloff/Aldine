@@ -1,0 +1,58 @@
+<task-notification>
+<task-id>ae674977e28d17ace</task-id>
+<tool-use-id>toolu_01NjxmVjxChP6C45ShoCWGMi</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/ae674977e28d17ace.output</output-file>
+<status>completed</status>
+<summary>Agent "QA: cross-cutting UX, a11y, resilience" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Audit complete. Cleanup done (test project deleted, dark theme restored). Final report:
+
+---
+
+# Aldine cross-cutting QA audit (X-1..6 + holistic) — 2026-07-22
+
+**Environment caveat:** the Chrome window was shared with other concurrent QA agents that kept stealing tab focus, so screenshots intermittently returned stale frames. Every finding below was verified via DOM/computed-style inspection (`javascript_tool`), not screenshots alone. Responsive checks were done with same-origin iframes at exact CSS widths to avoid resizing the shared window.
+
+## Story verdicts
+
+| Story | Verdict | Summary |
+|---|---|---|
+| X-1 Theme | **PASS** | Dark is default (`apps/web/src/theme.ts` — anything but stored `light` → dark). Toggle via Home header button and editor ⌘K palette ("Toggle light/dark theme") flips CSS vars instantly (verified computed styles: body `#1c1c1e` ↔ `#f5f5f7`); persists across reload via `localStorage aldine.theme`. Both home and editor fully themed; no non-flipping panels found. Minor contrast nit (light line numbers, below). |
+| X-2 Responsive | **PARTIAL** | Home: clean at 1024/768; 7px horizontal overflow at 375 (header CTA row). Editor: clean at 1024; at 768 no overflow but the fixed 230px sidebar squeezes the code pane to **176px**; at 375 **broken** — 218px horizontal overflow (toolbar buttons, format selects, pdf-status all clipped) and the code pane collapses to **0px**. No mobile layout exists. |
+| X-3 Keyboard/a11y | **PARTIAL** | Good: visible `:focus-visible` rings defined for `.btn`, `.project-card`, inputs (and observed on Typeset/title); project cards are `role="button" tabindex="0"` and Enter-activates them; delete buttons have proper aria-labels ("Delete QA X-Audit"); ⌘K palette opens, filters, executes; Escape closes palette and modals; toasts are `role="status" aria-live="polite"`. Gaps: modals have **no `role="dialog"`, no `aria-modal`, and do not move/trap focus** (focus stays on body when the GitHub modal opens); "Import ZIP" hidden file input has no accessible name (invisible to screen readers/keyboard); PDF zoom % textbox unlabeled. |
+| X-4 Empty/error states | **PARTIAL** | Good: `/p/doesnotexist` → redirects home + "Project not found" toast; fresh editor shows "Typesetting your document…" spinner; bad GitHub token → clear actionable toast ("That token was rejected by GitHub. Check it has repo scope."); project delete asks a confirm with consequences spelled out and toasts "Deleted X". Bad: unknown routes render a **blank page** (Bug 2); duplicate-filename flow is silent data loss (Bug 1); "Project not found" toast fires twice. Zero-projects state untested (couldn't delete other agents' data on the shared instance). |
+| X-5 Rate limits | **NOT TESTED** | Server-behavior story; hammering login/AI/reference endpoints on the shared instance would disrupt the other agents. |
+| X-6 Sandbox | **NOT TESTED** | Owned by the compile-domain agent. |
+| Resilience (holistic) | **PASS** | Edit → reload within ~3s: content persisted (no explicit save). Back/forward navigation clean. API errors surface as polite toasts, not dead ends. No console errors on any screen visited; only React Router v7 future-flag warnings + "No routes matched" on the blank route. |
+
+## Bugs / UX issues (ranked)
+
+1. **BLOCKER — "+ New file" with an existing filename silently destroys that file's content.**
+   Repro: open a project → sidebar "+ New file" → enter `main.tex` (already exists) → Enter. Actual: no warning, no error, no toast — the inline input just closes and `main.tex` becomes **0 bytes, persisted server-side** (verified after reload: content gone). Expected: reject with "file already exists" or ask to overwrite. Any user creating a file that collides with an existing name loses work instantly. (Git history may allow recovery, but the flow itself must not be destructive-by-default.) This is exactly the kind of thing an HN visitor will hit within minutes.
+
+2. **MAJOR — Unknown routes render a completely blank page.**
+   Repro: visit `http://localhost:5173/totally/bogus/route`. Actual: empty background, nothing else — a dead end with no way back except the URL bar. Console: `No routes matched location "/totally/bogus/route"` (×2). Expected: a 404 view with a "Back to projects" link. Contrast: `/p/doesnotexist` handles this well (redirect + toast).
+
+3. **MAJOR — Editor unusable below ~600px; no mobile fallback (X-2).**
+   At 375px CSS width: 218px horizontal page overflow; toolbar buttons/selects and pdf-status render off-screen; the code pane computes to 0px width. Even a "best viewed on desktop" notice would beat the broken layout for launch-day phone visitors. Home also overflows 7px at 375 (header `New project` button, `→382px`).
+
+4. **MAJOR (a11y) — Modals are not dialogs.**
+   New project / Import from GitHub overlays have no `role="dialog"`/`aria-modal`, don't move focus into the modal on open (activeElement stays on body), and don't trap Tab. Escape does close them. Screen-reader users get no announcement that a modal opened; keyboard users can Tab into the obscured page behind it.
+
+5. **MINOR — "Project not found" toast is duplicated** (two identical stacked toasts from one bad `/p/…` navigation — likely a double-fired effect, e.g. StrictMode-unsafe fetch effect).
+
+6. **MINOR — 768px editor: fixed 230px sidebar leaves a 176px code pane.** No sidebar collapse control at narrow widths; typing in a ~20-char-wide column is impractical on small laptops/split screens.
+
+7. **MINOR (a11y) — Light-theme line numbers contrast 2.21:1** (dark theme is 3.79:1). Fails WCAG even for large text. Muted UI text elsewhere passes (4.66:1 light / 5.93:1 dark).
+
+8. **MINOR (a11y) — Unnamed controls:** "Import ZIP" file input has no accessible name (not announced, though it is in tab order); PDF zoom percentage textbox unlabeled.
+
+9. **POLISH — Sidebar tab strip wraps into two uneven rows** ("Files History Review Fix" / "Cite Zotero") with an awkward gap at default width — reads as unfinished.
+
+10. **POLISH — Native `window.confirm` for project deletion** while everything else uses styled modals/toasts — inconsistent chrome-native dialog in an otherwise polished UI (the wording itself is good: "Delete "QA X-Audit"? This removes the project and its history.").
+
+11. **POLISH — Console noise:** React Router v7 future-flag warnings on every load; duplicate "No routes matched" warnings. No actual errors observed anywhere.
+
+**Positives worth keeping:** instant CSS-variable theming with a palette command; the "Typesetting your document…" first-compile state; actionable GitHub-token error copy; aria-labels on all icon buttons except the two noted; `aria-live` toast region; Enter-operable project cards with visible focus rings; edits survive an immediate reload.</result>
+<usage><subagent_tokens>117878</subagent_tokens><tool_uses>37</tool_uses><duration_ms>839855</duration_ms></usage>
+</task-notification>
