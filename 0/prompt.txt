@@ -1,0 +1,1 @@
+[Image #3] one small bug: when I signed up, it seems like the initial modal/popup has a scroll bar and/or is cutoff [Image #4]
