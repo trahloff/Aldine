@@ -1,0 +1,1 @@
+<bash-input>export REDACTED</bash-input>
