@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b77121t0t</task-id>
+<tool-use-id>toolu_01Jruz4BRu6PVg4vdC8UGJXP</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b77121t0t.output</output-file>
+<status>completed</status>
+<summary>Background command "Run DOI regression test" completed (exit code 0)</summary>
+</task-notification>
