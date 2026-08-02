@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bh1ze1ygv</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/b072d290-e2bb-4fe8-b04d-824d9638b0e7/tasks/bh1ze1ygv.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run main suite hermetic, full capture" completed (exit code 0)</summary>
+</task-notification>
