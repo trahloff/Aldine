@@ -1,0 +1,210 @@
+<task-notification>
+<task-id>ac27fbb48148d3f50</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/94ff4a6b-9a22-4b9e-ba63-714ccb35a98b/tasks/ac27fbb48148d3f50.output</output-file>
+<status>completed</status>
+<summary>Agent "Launch-copy critique" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Papyr Launch Readiness Critique
+
+Read: `README.md`, `CONTRIBUTING.md`, `docs/SCALING.md`, `PLAN.md`, `e2e/shots.mjs`, `e2e/shots/` (15 shots), git log, repo root. Web checks done for naming. Everything below is prioritized: P0 = fix before launch, P1 = strongly recommended, P2 = nice.
+
+---
+
+## 0. The one thing that will dominate the thread (P0, read this first)
+
+52 of 56 commits carry `Co-Authored-By: Claude ...` trailers, `PLAN.md` sits in the repo root and literally documents the "Loop protocol (autonomous)" agent build process. HN will find this within **minutes** of the Show HN going up, and if you didn't disclose it, the thread becomes "AI-generated slop repo caught hiding it" instead of being about the product.
+
+You cannot hide it (git history is immutable), so **own it as the hook**. Two options:
+
+- **Lead with it**: "Show HN: Papyr – an Overleaf alternative built almost entirely by an AI agent" — this is genuinely novel and the product is real enough (Playwright e2e, live deploy) to survive scrutiny. Highest variance, highest ceiling.
+- **Disclose in the first comment**: launch on the product's merits, but your submitter comment includes one honest paragraph: "Full disclosure: most of this code was written by Claude running in an autonomous loop, with me directing, reviewing, and testing. The e2e suite and the live instance are how I keep it honest." Safer; still preempts the gotcha.
+
+Either way: `PLAN.md` reads as an internal working doc (acceptance criteria, "Bibby feature parity", loop protocol). Move it to `docs/PLAN.md` with a one-line preamble explaining what it is, or clean it up. Don't delete it — deleting it right before launch looks worse in the history than leaving it.
+
+---
+
+## 1. Hero section
+
+**What's good:** The tagline **"Write LaTeX together. Fast, versioned, yours."** is genuinely strong — keep it. The first paragraph names the category, the competitor, and the differentiator ("Two containers, no Mongo, no Redis") in two sentences. That's better than 90% of Show HN repos.
+
+**What's broken above the fold:**
+
+1. **Zero badges.** No CI status, no license, no release version, no Docker pulls. On GitHub, badges are the 2-second trust signal ("is this maintained? can I legally use it?"). You have CI (`ci.yml`), releases (`release.yml` → GHCR), and MIT — all three are free wins.
+2. **No live demo link.** You have a running instance at `papyr.tobiasrahloff.com` (per your deploy). For an editor product, "click here, type, watch it compile" converts 10x better than any screenshot. Add a demo project or a "Try it" sandbox mode (with compile quota via `PAPYR_COMPILE_QUOTA_MIN`, which you already built). If you won't expose the live box, this is the #1 reason to.
+3. **Static PNG, light-only.** ~60% of GitHub visitors are in dark mode; they see a light screenshot that looks pasted-in. Use the `&lt;picture&gt;` element with `prefers-color-scheme` — you already have both variants.
+4. **No motion.** "Real-time collaboration" and "~2s recompile" are *speed claims*. A static PNG cannot prove a speed claim. See §3.
+5. **"13-microservice sprawl" invites a fact-check.** Overleaf CE ships as a monolith container + Mongo + Redis (the sprawl is *inside* the image). Someone will "well, actually" this in comment #3. Make the claim unfalsifiable.
+
+**Exact replacement hero** (top of README through the screenshot):
+
+```markdown
+# Papyr
+
+**Write LaTeX together. Fast, versioned, yours.**
+
+[![CI](https://github.com/&lt;org&gt;/papyr/actions/workflows/ci.yml/badge.svg)](…)
+[![Release](https://img.shields.io/github/v/release/&lt;org&gt;/papyr)](…)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/ghcr.io-papyr--app-blue)](…)
+
+Papyr is a slim, self-hosted, open-source LaTeX collaboration platform — an
+Overleaf alternative built for speed and simplicity. Real-time multi-cursor
+editing, every project a real git repo with branches, native Zotero, ~2s warm
+recompiles. Two containers. No Mongo, no Redis, nothing to babysit.
+
+**[Live demo](https://papyr.example.com/demo)** · [Quick start](#quick-start) ·
+[Why not Overleaf?](#how-papyr-compares) · [Screenshots](#screenshots)
+
+&lt;picture&gt;
+  &lt;source media="(prefers-color-scheme: dark)" srcset="e2e/shots/editor-dark.png"&gt;
+  &lt;img alt="Papyr editor: LaTeX source left, live PDF right, collaborator cursors" src="e2e/shots/editor-light.png"&gt;
+&lt;/picture&gt;
+```
+
+Then a demo GIF/video directly under it (§3).
+
+**Feature list (P1):** 17 bullets is a wall; HN readers bail at 6. Restructure into **5 headline bullets** (collab, git-native branches, GitHub sync, Zotero, 2s compiles) followed by `&lt;details&gt;&lt;summary&gt;Everything else&lt;/summary&gt;…&lt;/details&gt;` or a "More" subsection with the remaining 12. Also: the parenthetical jab "*(Overleaf can't)*" in the Zotero bullet is the kind of competitor dig that gets fact-checked and sets a smug tone — Overleaf *does* have Zotero sync (premium, whole-library). Rewrite as a positive: "link your whole Zotero library **or a single collection**, no premium tier required."
+
+**Metering language (P0 for r/selfhosted):** README says compiles "can be metered per plan", and SCALING.md talks about "tier plans" and hosting "margin". r/selfhosted is hypersensitive to open-core rug-pull vibes; "per plan" in an MIT self-host README reads as "pricing page coming". Rewrite to neutral operator language: "compiles are concurrency-capped with optional per-user quotas (`PAPYR_COMPILE_QUOTA_MIN`)". SCALING.md's "Cost &amp; hosting" section should be reframed as advice for *operators* hosting their lab/team, or moved out.
+
+---
+
+## 2. What top-launched OSS repos have that this lacks
+
+Benchmarks: Immich, Excalidraw, Typst, Outline, AFFiNE. Missing pieces, in priority order:
+
+| Element | They have | You have | Fix |
+|---|---|---|---|
+| Demo GIF/video in hero | Immich, Excalidraw both | None | §3 |
+| Live demo link | Excalidraw, Typst, Outline | Deploy exists, unlinked | Link it with quota |
+| Badge row | All | None | CI, release, license, GHCR |
+| Comparison table | Immich ("vs Google Photos"), Typst (vs LaTeX) | None | Below |
+| Screenshots gallery section | Immich | 15 shots, 1 used | §3 |
+| Community channel | All (Discord/Matrix) | None | Enable GitHub Discussions minimum — zero cost, and "where do I ask questions" is the first r/selfhosted reply |
+| Project status/roadmap | Immich's famous stability banner | None | One honest line: "Papyr is young (v0.x). The e2e suite is the contract; expect rough edges. Roadmap in [PLAN.md]." Honesty banner *builds* trust with this crowd |
+| Star history / social proof | Post-launch artifact | n/a | Skip for now, add after launch |
+
+**The comparison table** — add as `## How Papyr compares` after Features. Draft (honest rows, including ones you lose):
+
+```markdown
+| | Papyr | Overleaf CE (self-hosted) | git + VS Code + LaTeX Workshop |
+|---|---|---|---|
+| Deploy | 2 containers, `docker compose up` | Toolkit: monolith + Mongo + Redis | n/a (local) |
+| Real-time collaboration | Yes (CRDT, unlimited collaborators) | Yes | No (async via git) |
+| Track changes / review comments | Anchored threads + suggested edits | Server Pro (paid) only | PR reviews |
+| Git branches from the UI | Yes — projects are real git repos | No (git bridge is paid) | Yes (it *is* git) |
+| GitHub sync + PRs from editor | Yes | Premium/Server Pro | Yes, natively |
+| Zotero | Whole library **or one collection**, free | Premium, whole library only | Via BBT + manual .bib |
+| Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
+| Templates gallery | 4 built-in | Huge community gallery ← they win | ctan/your own |
+| Rich-text / visual mode | No ← they win | Yes | No |
+| Maturity | Young (v0.x, 2026) ← they win | A decade in production | Very mature |
+| License | MIT | AGPL | MIT/varies |
+```
+
+The three "← they win" rows are load-bearing: an all-green column screams marketing and gets torn apart; two honest losses inoculate the whole table.
+
+---
+
+## 3. Screenshot strategy
+
+You have 7 light/dark pairs + orphaned `diff-light.png` (no dark twin — generate it or don't ship it).
+
+**Feature (in order):**
+1. **`editor-*`** — hero, as `&lt;picture&gt;`. It's the money shot: source + live PDF + presence.
+2. **`review-*`** — the "Server Pro feature, free" story; most differentiated vs Overleaf CE.
+3. **`branches-*`** — proves "git-native" isn't a checkbox.
+4. **`zotero-*`** — the academic-workflow hook; huge for r/LaTeX.
+
+Put 2–4 in a `## Screenshots` section as a 2×2 table of `&lt;picture&gt;` elements. **Cut from README:** `home-*` (empty-ish dashboard, weakest shot), `history-*` and `palette-*` (redundant once you have a GIF — the palette is *shown better in motion*).
+
+**A GIF is non-negotiable** for this launch. Static images cannot prove "real-time" or "~2s". The one flow to record (~20s, one take):
+
+1. Editor open, PDF rendered.
+2. A **second cursor** appears and types a sentence (character-by-character sync — the wow moment).
+3. First user hits ⌘S → PDF updates in ~2s.
+4. Double-click a line in the PDF → editor jumps + flashes (SyncTeX).
+
+That single clip demonstrates collab + compile speed + SyncTeX — your three hardest-to-believe claims. **Implementation:** extend `e2e/shots.mjs` — open two `browser.newContext()`s on the same doc, drive context B with `page.keyboard.type(text, { delay: 60 })`, capture context A via Playwright video (`recordVideo`) or CDP screencast, then `ffmpeg` → optimized GIF (&lt;10 MB for GitHub) plus an MP4 for the PH gallery. A second, shorter clip of the AI error-fix flow (broken compile → plain-English diagnosis → one-click fix → green) is your best Product Hunt asset but keep it *out* of the HN hero (see §5, comment 5).
+
+**Bug you must fix before regenerating shots (P0):** `e2e/shots.mjs:23` reads from `/Users/rahloff/projects/paper-gsaas-2026/paper/` — a hardcoded personal path. Any contributor running the script hits ENOENT, and it leaks your machine layout. Vendor a small demo paper into `e2e/fixtures/demo-paper/`. Also consider whether the seeded project name/content ("GSaaS Threat Model (IAC-26)") is a real unpublished paper you want in launch screenshots.
+
+---
+
+## 4. Naming and positioning risks
+
+Web check results — the "Papyr" namespace is **crowded but not fatally**:
+
+- **papyr.com is taken** — an [English grammar/writing education site](https://papyr.com/). You will never own the .com. Get `papyr.dev` / `papyr.sh` / `getpapyr.app` early, before launch traffic makes squatting attractive.
+- **QuirkLogic Papyr** — a [13.3" e-ink collaboration tablet](https://goodereader.com/blog/reviews/quirklogic-papyr-13-3-inch-e-note-hands-on-review), and its marketing was literally "real-time collaboration" ([QuirkLogic](https://www.quirklogic.com/blogs/blog/free-access-to-quirklogics-real-time-collaboration-software)). Mitigating: the product is [dead — platform went offline March 2023](https://catominor3.medium.com/quirklogic-papyr-an-e-brick-c556a33d6399).
+- **Two live iOS apps named Papyr**: a [document scanner](https://apps.apple.com/us/app/papyr/id6758280008) and a [PDF/audiobook reader](https://apps.apple.com/us/app/papyr-pdf-audiobooks/id6760125804) — both document-adjacent, both active (2025+). SEO for "papyr app" is contested.
+- **[papyrai.com](https://www.papyrai.com/)** — "Papyr" AI education tool.
+- **[Papyrus Software](https://apps.apple.com/us/app/papyrus-software/id522141912)** — large enterprise *document processing* vendor. Different name, but the closest thing to a trademark holder in an adjacent class. Low but nonzero risk.
+
+**Verdict:** no collision in the LaTeX/dev-tools space, so keep the name — but you'll be "papyr latex" or "papyr overleaf" in search forever, never "papyr". Budget for that in SEO (repo description, site `&lt;title&gt;`: "Papyr — self-hosted LaTeX collaboration"). Renaming now would cost more than the collisions do.
+
+**Overleaf mentions:** "Overleaf alternative" is clean nominative use — Immich/Photoprism do the same with Google Photos, and Overleaf has no history of chasing this. Two tone fixes: (a) drop the "*(Overleaf can't)*" jab (§1) — it's also *imprecise*, which is worse than mean; (b) consider one footnote-style line: "Overleaf is a trademark of its owners; Papyr is unaffiliated." Cheap insurance, standard practice.
+
+---
+
+## 5. Launch-day response playbook: top 8 hostile comments
+
+**1. "Yet another Overleaf clone. Overleaf CE exists and is free."**
+&gt; Overleaf CE is genuinely good, and if it fits, use it. Papyr exists because CE's free tier excludes what my group needed — track changes, git, and Zotero are all Server Pro or premium features — and because I wanted something I can run in two containers without Mongo and Redis. Papyr's whole feature set is MIT, including review comments and git branches. Comparison table in the README, including the rows where Overleaf wins.
+
+**2. "Why not just git + VS Code + LaTeX Workshop?"**
+&gt; That's my setup too, and Papyr doesn't replace it — projects are real git repos, so you can clone one and keep using VS Code, and pushes show up in the web editor. Papyr is for the other people on the paper: the co-author who won't install a TeX distribution, the advisor who wants to leave comments in the browser. It's a web front-end on a workflow you already like, not a walled garden replacing it.
+
+**3. "MIT? Overleaf is AGPL — did you copy code?" / "MIT means AWS eats your lunch."**
+&gt; No Overleaf code — different language, stack, and architecture (Node/Fastify + Yjs CRDTs + git worktrees vs. their Mongo-backed OT). On MIT vs AGPL: I picked maximum adoption on purpose. If a cloud vendor hosts Papyr, self-hosters still got a free tool and I lost nothing I was counting on — this isn't a company protecting a moat.
+
+**4. "Cool, another AI-built repo that'll be abandoned in six months." (sustainability/bus factor)**
+&gt; Fair — most side projects die, and I can't promise mine won't. What I can point to: a Playwright e2e suite covering compile, collab, branches, and plugins that gates every change; CI plus tagged GHCR releases; and I use it for my own papers, which is the strongest predictor of maintenance. And since projects are plain git repos on a volume, abandonment leaves you with… your git repos. The exit cost is `git clone`.
+
+**5. "Why is there AI in my LaTeX editor?" / "AI error fixing is a gimmick."**
+&gt; It's off unless you set an API key, invisible otherwise, and the key never reaches the browser. It does one narrow thing: when a compile fails, it turns LaTeX's famously hostile logs into a plain-English diagnosis with a proposed patch you can reject. If you can read `! Undefined control sequence` fluently you don't need it; your co-authors probably can't. Delete the env var and Papyr is a 100% AI-free editor.
+
+**6. "Self-hosting a LaTeX compiler is an RCE service with extra steps."**
+&gt; This was designed for, not bolted on. The compiler container runs on an internal-only Docker network with no internet egress, drops all Linux capabilities, and is capped on CPU/memory/PIDs. LaTeX runs with restricted shell-escape (whitelist) and `openin_any=p`, compiles are rate-limited and concurrency-capped. Threat model is in SECURITY.md — I'd genuinely welcome someone trying to break it, that's a review I can't buy.
+
+**7. "'Slim'? The TeX Live container is gigabytes." / "'No Redis' but SCALING.md says use Redis."**
+&gt; Both fair. TeX Live is inherently heavy — "slim" means operational surface (two containers, flat-file storage, no DB to migrate or babysit), not image size; I should say that more precisely. And yes: Postgres and Redis are the documented *opt-in* path for multi-node. The default single-box deploy uses neither, and I'd rather document the scaling walls honestly (docs/SCALING.md) than pretend they don't exist.
+
+**8. "Most of this was written by Claude. Why should I trust any of it?"**
+&gt; Yes — disclosed in the first comment (or title). I directed, reviewed, and tested; the agent wrote most of the code. My trust argument isn't "trust the author," it's the same as for any codebase: an e2e suite that exercises every headline feature in a real browser, a sandboxed compiler, a security review pass, and a live instance you're welcome to poke at. Judge the artifact, not the typist — the repo makes that unusually easy.
+
+---
+
+## 6. Titles and taglines
+
+**Show HN** (plain, descriptive, per HN norms — no "blazingly", no emoji):
+1. `Show HN: Papyr – A self-hosted Overleaf alternative in two containers`
+2. `Show HN: Papyr – Real-time LaTeX collaboration where every project is a git repo`
+3. `Show HN: Papyr – Slim open-source Overleaf alternative (Yjs, git worktrees, MIT)`
+4. `Show HN: Papyr – Self-hosted collaborative LaTeX with branches, Zotero, 2s compiles`
+5. *(if you lead with the AI angle)* `Show HN: Papyr – an Overleaf alternative built almost entirely by an AI agent`
+
+Best default: **#1** (category + differentiator in 9 words). #5 is the high-variance option per §0.
+
+**r/selfhosted:**
+1. `Papyr – self-hosted Overleaf alternative: 2 containers, no Mongo/Redis, MIT`
+2. `I built a slim self-hosted LaTeX collab platform because Overleaf CE paywalls git and track changes`
+3. `Papyr v0.x – self-hosted collaborative LaTeX editor (real git repos, Zotero, Caddy TLS one-liner)`
+
+**Product Hunt tagline:** `The self-hosted Overleaf alternative that's actually yours`
+
+**PH description (238 chars):**
+`Papyr is a slim, open-source LaTeX collaboration platform. Real-time multi-cursor editing, every project a real git repo with branches, native Zotero, ~2s recompiles, AI error fixes. Two containers, MIT-licensed: docker compose up, done.`
+
+---
+
+## Punch list (ordered)
+
+**P0:** decide the AI-authorship disclosure strategy (§0); fix hardcoded path in `e2e/shots.mjs:23`; scrub "per plan"/margin language from README + SCALING.md; add badge row; link the live demo.
+**P1:** record the collab+compile+SyncTeX GIF; add the comparison table; `&lt;picture&gt;` dark-mode hero; compress Features to 5 + details; soften the Overleaf jab; enable GitHub Discussions; add a status line; move/annotate PLAN.md.
+**P2:** screenshots gallery section; `branches-dark`/`review` pairing in gallery; generate `diff-dark.png`; register `papyr.dev`; Overleaf trademark footnote; second GIF (AI fix) for Product Hunt.
+
+Sources for the naming check: [papyr.com](https://papyr.com/), [Papyr scanner app](https://apps.apple.com/us/app/papyr/id6758280008), [Papyr PDF &amp; Audiobooks](https://apps.apple.com/us/app/papyr-pdf-audiobooks/id6760125804), [QuirkLogic Papyr review](https://goodereader.com/blog/reviews/quirklogic-papyr-13-3-inch-e-note-hands-on-review), [QuirkLogic collaboration blog](https://www.quirklogic.com/blogs/blog/free-access-to-quirklogics-real-time-collaboration-software), [QuirkLogic shutdown](https://catominor3.medium.com/quirklogic-papyr-an-e-brick-c556a33d6399), [papyrai.com](https://www.papyrai.com/), [Papyrus Software](https://apps.apple.com/us/app/papyrus-software/id522141912).</result>
+<usage><subagent_tokens>39473</subagent_tokens><tool_uses>11</tool_uses><duration_ms>195142</duration_ms></usage>
+</task-notification>
