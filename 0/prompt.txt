@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b7cmwannq</task-id>
+<tool-use-id>toolu_011NdqDc4eoai8ZtrGDqxdbV</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b7cmwannq.output</output-file>
+<status>completed</status>
+<summary>Background command "Rebuild and redeploy prod with theme+license build" completed (exit code 0)</summary>
+</task-notification>
