@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b458wfx14</task-id>
+<tool-use-id>toolu_01MSPvADkvYq3oeBR4tm5tYK</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/cee5fbea-2cb1-4b33-8346-8b717f8c261a/tasks/b458wfx14.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch CI for the CTAN commit" completed (exit code 0)</summary>
+</task-notification>
