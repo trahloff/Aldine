@@ -1,0 +1,4 @@
+pls queue the stretch goals Cite by DOI / arXiv
+, SyncTeX both ways
+, Command palette
+, Everyday polish
