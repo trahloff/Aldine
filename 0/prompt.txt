@@ -1,0 +1,88 @@
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   Aldine (formerly Papyr) is a slim, self-hosted, open-source AGPL-licensed LaTeX collaboration platform (Fastify + Yjs/Hocuspocus + TeX Live + React/CodeMirror 6), built autonomously and being prepared for a public launch. The requests in this conversation segment, in order:
+   - Build a **visual editor** (LaTeX renders as formatted text while source stays authoritative and byte-stable) — planned then built across phases P0-P5 on branch `visual-editor` behind an experimental flag.
+   - "Pls implement all of them" — implement 6 beyond-parity visual-editor features: MathLive WYSIWYG math editing, editable tables, inline tracked changes, paste-rich-text-to-LaTeX, Contents outline, rich chips (author-year cite labels + figure image previews).
+   - "did you also test this with playwright yourself and made sure everything works?" — self-verify via browser inspection.
+   - "pls also create a markdown based user story inventory and test the application thoroughly. Basically act as a full QA/QC team... Don't restrict it to the scope of the PR, fully test the entire application."
+   - "pls also implement all the deferred findings first" — implement every deferred QA finding.
+   - "When all works, update the README, alpine.dev [aldine.dev] page, etc so that it reflects the huge improvements... (eg, the visual editor) and merge the PR."
+   - "pls deploy. and the demo is on demo.aldine.dev, correct?" — deploy prod + demo.
+   - **"pls also change my deployed version to aldine.tobiasrahloff.com"** (CURRENT / MOST RECENT) — move the production deployment from papyr.tobiasrahloff.com to aldine.tobiasrahloff.com.
+
+2. Key Technical Concepts:
+   - CodeMirror 6 decoration layers: full-doc `StateField` (Decoration.replace/atomic ranges) + viewport `ViewPlugin` (Decoration.mark), Compartment-based runtime reconfiguration.
+   - Lezer LaTeX grammar (`codemirror-lang-latex` v0.4.1, an Overleaf-derived grammar) — node types like SectioningCommand, TextBoldCommand, DollarMath/BracketMath, ListEnvironment/Item, TabularEnvironment, FigureEnvironment, Cite/Ref, Caption.
+   - Yjs CRDT collaboration via Hocuspocus; **binary snapshot persistence** (`Y.encodeStateAsUpdate`/`Y.applyUpdate`) preserves operation identity across restarts to prevent document duplication.
+   - MathLive (`<math-field>`) lazy-loaded popover; KaTeX lazy chunk.
+   - "Byte-stable" invariant: visual layer never rewrites source the user didn't deliberately edit (differentiator vs Overleaf).
+   - AWS Fargate + ALB + ACM + Route53 + SES + ECR (Terraform/OpenTofu in `deploy/aws/`), parameterized by `var.domain_name`.
+   - GitHub Pages landing page (aldine.dev); Hetzner demo box (demo.aldine.dev).
+   - Playwright e2e + vitest unit tests; multi-agent QA (5 parallel browser-driving agents).
+
+3. Files and Code Sections:
+   - **`deploy/aws/terraform.tfvars`** (CURRENT WORK — just edited): changed `domain_name = "aldine.tobiasrahloff.com"` (was papyr.tobiasrahloff.com) and SES from-address to `no-reply@aldine.tobiasrahloff.com`. Contains OAuth secrets, gitignored.
+   - **`deploy/aws/ses.tf`** (CURRENT WORK — just edited): `ses_from = var.ses_from != "" ? var.ses_from : "Aldine <no-reply@${var.domain_name}>"` (changed "Papyr" → "Aldine"). Also defines SES email identity, DKIM CNAMEs, MAIL FROM subdomain, DMARC — all keyed to `var.domain_name`.
+   - **`deploy/aws/acm.tf`**: `aws_acm_certificate.main` with `domain_name = var.domain_name`, `create_before_destroy`, DNS validation via `aws_route53_record.cert_validation`.
+   - **`deploy/aws/dns.tf`**: `data.aws_route53_zone.main` (name tobiasrahloff.com), `aws_route53_record.app` A alias → ALB.
+   - **`deploy/aws/alb.tf`** line 60: `certificate_arn = aws_acm_certificate_validation.main.certificate_arn`.
+   - **`deploy/aws/ecs.tf`** line 29: `ALDINE_PUBLIC_URL = "https://${var.domain_name}"`; line 36: SES_FROM injection. Both linuxParameters have `initProcessEnabled = true`.
+   - Visual editor (all merged to main): `apps/web/src/editor/visual/` — `index.ts` (visualExtensions), `reveal.ts`, `decorations.ts` (walk, SECTION_RANK, mathParts), `atomicField.ts`, `markPlugin.ts`, `theme.ts`, `katex.ts`, `mathPopover.ts`, `html2latex.ts`, `outline.ts`, `suggestions.ts`, `bridge.ts`, `remoteCarets.ts`, `context.ts`, `refresh.ts`, `commands.ts`, `widgets/math.ts|chips.ts|table.ts|listMarker.ts`.
+   - **`apps/server/src/collab.ts`**: Yjs snapshot persistence — `writeSnapshot`/`readSnapshot`/`deleteSnapshot` (sidecar `.ybin` files under `config.metaRoot/yjs/`), onLoadDocument prefers snapshot (fallback to text seed when out-of-band disk change).
+   - **`apps/server/src/routes.ts`**: `createOnly` guard (file PUT 409), rename overwrite guard (409), root-file-delete reassignment, branch validation (400/409, reject refs/heads), auth `badCredentials` validation, comment validation, project-name cap, path-traversal 403, deleted-project 404.
+   - **`apps/server/src/references.ts`**: `unescapeHtml`/`latexEscape`/`bibField`/`sanitizeBibtex` — fix bare `&` in imported bib breaking compiles.
+   - **`apps/compiler/server.js`**: stale-aux recovery (wipe aux + rebuild on `\abx@aux@`/`.aux` errors).
+   - **`apps/web/src/components/CodePane.tsx`**: `reanchor(doc, r)` function (re-locate comment by quote), `lastCommentRanges` ref re-applied on provider 'synced'.
+   - **`apps/web/src/components/Modal.tsx`** (new): accessible dialog (role=dialog, aria-modal, focus trap, Escape) — all 6 modals migrated.
+   - **`docs/USER_STORIES.md`** (new): QA contract, ~60 stories (PROJ/EDIT/COMP/COLLAB/GIT/GH/REF/REV/AI/PLUG/AUTH/VIS/X).
+   - **`e2e/c3-reconnect-dup.mjs`** (new): deterministic Yjs duplication regression (old text-seed → 2 copies, snapshot → 1 copy).
+   - **`CHANGELOG.md`, `README.md`, `site/index.html`**: updated for full visual editor + "Visual editing, done right" landing section (live on aldine.dev).
+
+4. Errors and fixes:
+   - **Serif font specificity bug** (visual mode rendered monospace): `.code-pane .cm-scroller` mono rule beat the theme — fixed with `&.cm-editor .cm-scroller` scoping.
+   - **DOI bib bare `&`**: broke compiles → HTML-decode + LaTeX-escape; regression test.
+   - **new-file/rename data loss (2 BLOCKERs)**: silently zeroed/destroyed files → createOnly + overwrite guards (409).
+   - **Yjs document duplication (MAJOR)**: reseeding from text minted new CRDT ops → reconnect merged both copies. Fixed with binary snapshot persistence.
+   - **Comment re-anchor race**: comment push before Yjs sync ran against empty doc → re-apply on 'synced' event.
+   - **Dual-mode e2e "failure"**: was a test-assertion bug (remote-caret-reveal correctly un-rendering) not a regression — fixed assertion to be caret-agnostic.
+   - **CI failed (npm ci)**: package-lock.json out of sync after adding katex/mathlive/vitest → ran `npm install`, committed lockfile. USER-RELEVANT LEARNING: adding deps needs the lockfile committed or CI `npm ci` fails.
+   - **AWS SSO token expired** repeatedly — user re-authenticated via `! aws sso login --profile main-admin` (they must do this; I cannot authenticate on their behalf).
+
+5. Problem Solving:
+   - QA campaign closed 20+ issues with regression tests; full suite green (13 unit + 54 main e2e + 15 auth e2e + github + c2 shutdown + c3 reconnect).
+   - PR #1 merged to main (73617fe), which resolved the branch-port question (fixes reach main = production source).
+   - Prod (papyr.tobiasrahloff.com) and demo (demo.aldine.dev) redeployed to merged main and verified (health OK, compile→PDF OK on demo).
+   - Currently solving the domain move to aldine.tobiasrahloff.com; identified coupled breaking changes (Google OAuth redirect URI, SES re-verification, papyr stops resolving).
+
+6. All user messages (this segment):
+   - "go. and also go through all the phases automously" (build visual editor, all phases autonomously).
+   - "Nice. pls also create a markdown based user story inventory and test the application thouroughly. Basically act as a full QA/QC team and try to find any bugs or UX issues. Don't restrict it to the scope of the PR, fully test the entire application"
+   - "did you also test this with playwright yourself and made sure everything works?"
+   - "the deferred findings that you mentioned during planning — What were those ideas?" (paraphrased — asked about beyond-parity ideas) → "Pls implement all of them"
+   - "pls also implement all the deferred findings first"
+   - "When all works, update the README, alpine.dev page, etc so that it reflects the huge improvements you made (eg, the visual editor) and merge the PR"
+   - "pls deploy. and the demo is on demo.aldine.dev, correct?"
+   - "aws sso login --profile main-admin" (bash-input, succeeded — twice)
+   - **"pls also change my deployed version to aldine.tobiasrahloff.com"** (most recent)
+   - SECURITY CONSTRAINTS (still in force): never authenticate on the user's behalf; do not work around classifier denials (tofu apply/git filter-repo/npm publish were blocked — ask the user); never delete projects I didn't create; keep secrets out of git; confirm hard-to-reverse/outward-facing actions.
+
+7. Pending Tasks:
+   - **Apply the domain move to aldine.tobiasrahloff.com** (tofu apply), wait for ACM cert validation + ECS rollout, verify aldine.tobiasrahloff.com serves.
+   - **Flag to the user** the two manual/breaking consequences: (1) Google OAuth redirect URI must be added for https://aldine.tobiasrahloff.com/api/auth/oauth/google/callback in the Google console (project pfc-personal) or Google SSO breaks; (2) SES for the new domain re-verifies via new DKIM CNAMEs (~minutes-hours) — password-reset emails won't send during that window; (3) papyr.tobiasrahloff.com will stop resolving.
+   - (Longer-term, not requested now) durable S3 Terraform backend; the deferred architectural items in memory.
+
+8. Current Work:
+   Immediately before this summary, I was executing the domain move to aldine.tobiasrahloff.com. I had:
+   - Edited `deploy/aws/terraform.tfvars`: `domain_name = "aldine.tobiasrahloff.com"` and SES from → `no-reply@aldine.tobiasrahloff.com`.
+   - Edited `deploy/aws/ses.tf`: `ses_from` default label "Papyr" → "Aldine".
+   - Run `tofu plan` (read-only): **"Plan: 13 to add, 3 to change, 13 to destroy."** Key changes: `aws_acm_certificate.main must be replaced`, `aws_ecs_task_definition.app must be replaced`, `aws_lb_listener.https will be updated in-place`, `aws_route53_record.app must be replaced` (papyr A record destroyed, aldine created), `aws_sesv2_email_identity.domain[0] must be replaced` plus all DKIM/MAIL FROM/DMARC records replaced, `aws_route53_record.cert_validation["papyr...]` destroyed / `["aldine...]` created.
+   - AWS RESOURCE names keep the legacy "papyr" prefix intentionally (cluster/service/ECR/SSM) — only the DOMAIN changes. AWS account 294557341534, profile main-admin, region eu-west-1, zone ZA73577K6LJ5G.
+   The next step was to run `tofu apply`. NOTE: `tofu apply` has been classifier-blocked earlier in this session; if blocked I must ask the user to run it rather than work around it.
+
+9. Optional Next Step:
+   Run `AWS_PROFILE=main-admin AWS_REGION=eu-west-1 tofu apply -auto-approve` in `deploy/aws/` to execute the reviewed plan (13 add / 3 change / 13 destroy) moving prod to aldine.tobiasrahloff.com, then wait for ACM validation + `aws ecs wait services-stable`, then smoke-test `https://aldine.tobiasrahloff.com`. Directly in line with the user's most recent request: "pls also change my deployed version to aldine.tobiasrahloff.com". After applying, I MUST clearly flag the required manual Google OAuth redirect-URI update (https://aldine.tobiasrahloff.com/api/auth/oauth/google/callback) and the SES re-verification window. If `tofu apply` is classifier-blocked (as it was earlier this session), I must ask the user to run it via the `!` prefix rather than attempting to work around the denial. The reviewed plan quote: "Plan: 13 to add, 3 to change, 13 to destroy."
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/rahloff/.claude/projects/-Users-rahloff-projects-Papyr/420f389b-c8c3-4ee1-a081-5bc2ccc652b4.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
