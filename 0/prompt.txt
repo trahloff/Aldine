@@ -1,0 +1,20 @@
+<bash-stdout></bash-stdout><bash-stderr>
+[0m[1m[31mPlanning failed.[0m[1m OpenTofu encountered an error while generating this plan.[0m
+
+[0m[31m╷[0m[0m
+[31m│[0m [0m[1m[31mError: [0m[0m[1mNo valid credential sources found[0m
+[31m│[0m [0m
+[31m│[0m [0m[0m  with provider["registry.opentofu.org/hashicorp/aws"],
+[31m│[0m [0m  on versions.tf line 21, in provider "aws":
+[31m│[0m [0m  21: provider "aws" [4m{[0m[0m
+[31m│[0m [0m
+[31m│[0m [0mPlease see https://registry.terraform.io/providers/hashicorp/aws
+[31m│[0m [0mfor more information about providing credentials.
+[31m│[0m [0m
+[31m│[0m [0mError: failed to refresh cached credentials, refresh cached SSO token
+[31m│[0m [0mfailed, unable to refresh SSO token, operation error SSO OIDC: CreateToken,
+[31m│[0m [0mhttps response error StatusCode: 400, RequestID:
+[31m│[0m [0m3cdc42de-dd5f-4521-9b7f-9d9d3d3ce27d, InvalidGrantException: 
+[31m│[0m [0m
+[31m╵[0m[0m
+</bash-stderr>
