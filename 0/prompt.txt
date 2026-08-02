@@ -178,3 +178,13 @@ Tests: the link-sharing e2e gained positive controls (owner listed, link-mode co
 Verification: `typecheck` clean in both workspaces; 18/18 auth e2e and 45/45 of the non-auth suites pass. The 2 failures in `07-features` are the pre-existing full-TeX-Live ones documented in CLAUDE.md — I confirmed them by stashing my changes and reproducing both against the unmodified commit.</result>
 <usage><subagent_tokens>211134</subagent_tokens><tool_uses>129</tool_uses><duration_ms>2483510</duration_ms></usage>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>bqxu0oc5q</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/bqxu0oc5q.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run auth suite as commit gate" completed (exit code 0)</summary>
+</task-notification>
