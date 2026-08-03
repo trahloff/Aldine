@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ3AC3DPYZGBARVT0GKVV1QV",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    "apps/server/package.json",
+    "apps/server/src/db/json.ts",
+    "apps/server/src/db/pg.ts",
+    "apps/server/test/github-sync.integration.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 158281,
+    "cache_creation_tokens": 21627114,
+    "cache_read_tokens": 1569174568,
+    "output_tokens": 2611498,
+    "api_call_count": 3225
+  }
+}
