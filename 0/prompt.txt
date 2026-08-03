@@ -1,0 +1,204 @@
+ok, we did some work on the other laptop. check it so that you are uptodate
+
+---
+
+alright. so how to best further develop? aldine-ops as the main repo and Aldine as subrepo in the repo?
+
+---
+
+I want to not have the little scripts anymore. I want to have aldine (and aldine-ops) in a state where multiple people on multiple machines can work on it. are we're there yet?
+
+---
+
+do it
+
+---
+
+auch im public repo? da würde ich es nicht in die claude.md schreiben und ich würde es auch nicht in der public git history lassen (dass es Mal in der claude.md war, dass wir keine trailer haben wollen)
+
+---
+
+nice. remove "(there's a test that proves it)." from the github page. also, the docker-compose in the repo root is stil the complex one. it should be the simple one. we could keep the super complex one that is currently the docker-compose aroun as docker-compose.full.yml or something
+
+---
+
+When I use the fully deployed version (aldine.tobiasrahloff.com). how does multi-user work? Does just everybody who logs into this running instance seeing all of the projects?
+
+---
+
+[Image #3] ok, but where is the share (mode) button?
+
+---
+
+jo
+
+---
+
+<task-notification>
+<task-id>bg4ps3y2k</task-id>
+<tool-use-id>toolu_01KWH6aUsRdX2Xgaj5bQHWjU</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/bg4ps3y2k.output</output-file>
+<status>completed</status>
+<summary>Background command "Run auth e2e suite incl. new link-sharing test" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+/code-review max --fix look for similar UX issues
+
+---
+
+<task-notification>
+<task-id>blbhd537q</task-id>
+<tool-use-id>toolu_01Hi139JiJMhtadbiipmi3KE</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/blbhd537q.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for CI deploy, verify prod health and bundle" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Check task blbhd537q (CI "Deploy to AWS" run 30765430879 + prod verification). If the run succeeded and prod serves a new bundle hash with health ok: report in German (share button + link-leak fix live via first laptop-free CI deploy). If the workflow failed, read logs (gh run view 30765430879 --log-failed), diagnose; fallback is AWS_PROFILE=main-admin bash deploy/aws/push-images.sh (needs SSO login from user).
+
+---
+
+<task-notification>
+<task-id>a7b1faf0be1205840</task-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/a7b1faf0be1205840.output</output-file>
+<status>completed</status>
+<summary>Agent "/code-review max --fix look for similar UX issues" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All green. Here are the review findings.
+
+```json
+[
+  {
+    "file": "apps/server/src/routes.ts",
+    "line": 677,
+    "summary": "Zotero routes are gated only by canAccess, so any link-mode visitor can search the owner's entire personal Zotero library using the owner's stored API key, and unlink or repoint it.",
+    "failure_scenario": "Alice links Zotero to project P and sets share.mode='link'. Carol, any signed-in stranger with the URL, calls GET /api/projects/P/zotero/search?q= — the route reads meta.zotero.apiKey and returns items from Alice's whole library, unrelated to the project. She can then DELETE /api/projects/P/zotero to wipe the link, or POST /zotero/link with her own key. /github/link was owner-gated; no zotero route was."
+  },
+  {
+    "file": "apps/server/src/routes.ts",
+    "line": 969,
+    "summary": "Only github/link was owner-gated; push, pull, reset-to-remote, switch-branch, create-branch and pr had no owner or member check, and the Editor rendered the whole GithubSync toolbar to non-owners.",
+    "failure_scenario": "Alice link-shares a project linked to her public GitHub repo. Carol opens the URL, sees the full sync toolbar, and hits reset-to-remote: linkedRemote only requires that Carol has her own GitHub connection, so gitops.resetToRemote hard-resets the worktree and refreshBranchDocsFromDisk pushes it into every open editor, discarding all unpushed work. switch-branch is worse — it persists meta.github.remoteBranch, permanently repointing the owner's project."
+  },
+  {
+    "file": "apps/server/src/routes.ts",
+    "line": 74,
+    "summary": "publicMeta spreads the whole meta, so share.collaborators — the owner's private list of invitee email addresses — was returned to everyone who can open the project, link visitors included.",
+    "failure_scenario": "Alice invites bob@corp.com and dana@corp.com, then sets mode='link' and posts the URL publicly. Any signed-in visitor GETs /api/projects/&lt;id&gt; and receives share:{mode:'link',collaborators:['bob@corp.com','dana@corp.com']} — a harvestable roster of the team's real email addresses, handed to exactly the audience this commit decided must not even see the project listed. zotero was redacted in this DTO; share was not."
+  },
+  {
+    "file": "apps/server/src/collab.ts",
+    "line": 130,
+    "summary": "canAccess runs only in Hocuspocus onAuthenticate at socket connect, so revoking sharing from the new editor Share button never disconnects a user already in the document.",
+    "failure_scenario": "Carol is editing Alice's link-shared project. Alice opens the new Share button, selects 'Invite only', saves, sees 'Sharing updated'. Carol's socket is untouched: she keeps typing, her edits sync to Alice's pane and are written to disk and auto-committed into Alice's git history indefinitely. Only her REST calls 403, giving a half-broken editor that hides the divergence. Revocation appears to work and does nothing to the person actually in the room."
+  },
+  {
+    "file": "apps/server/src/routes.ts",
+    "line": 349,
+    "summary": "PATCH /api/projects/:id had no owner or member check, so a link-mode visitor could rename the project and repoint rootFile/engine for everyone.",
+    "failure_scenario": "Carol has only the share link. Editor.tsx renders the project title as contentEditable for every role; she types anything and blurs, and the PATCH succeeds because only canAccess is checked. Alice's home card and every collaborator's list now show Carol's title. Setting rootFile to a nonexistent path via the same endpoint breaks compilation for the whole team."
+  },
+  {
+    "file": "apps/web/src/pages/Home.tsx",
+    "line": 184,
+    "summary": "The Delete button rendered on every project card regardless of ownership (isOwner only affected its margin), and remove() awaited the call with no try/catch, so a non-owner's 403 was an unhandled rejection with zero feedback.",
+    "failure_scenario": "Bob is a collaborator on Alice's project, so isListed correctly lists it for him. His card shows a Delete button labelled 'Delete Alice Secret'. He clicks, confirms 'Move to the trash? You can restore it for 30 days', and DELETE returns 403. The success toast and load() never run, no error toast appears, the card sits there — Bob has no idea whether he just deleted Alice's paper. restore() and purge() on the same page both have try/catch; remove() did not."
+  },
+  {
+    "file": "apps/server/src/authz.ts",
+    "line": 22,
+    "summary": "isListed copies canAccess's `if (!meta.ownerId) return true` legacy escape hatch, and isOwner has it too, so on ownerless projects every signed-in user is listed, treated as owner, and shown the new Share button.",
+    "failure_scenario": "A server runs single-user first (AUTH_ENABLED unset), creating projects with ownerId undefined, then enables auth. Every user who registers sees all of them, opens one, gets isOwner:true, sees the Share button, and can flip sharing or delete the project — all server-honoured. Picking 'Invite only' changes nothing, because both predicates short-circuit on !ownerId before reading share.mode. The dialog promises privacy it cannot deliver."
+  },
+  {
+    "file": "apps/web/src/pages/Editor.tsx",
+    "line": 405,
+    "summary": "The 'Publish to GitHub' toolbar button (and the first-load nudge toast) was shown to every role while the server restricts publishing to the owner — the identical client/server gating mismatch this commit fixed for Share.",
+    "failure_scenario": "Carol opens Alice's link-shared, unlinked project. She gets the toast 'This project lives only on this server — publish it to GitHub…', clicks Publish, connects her real GitHub account and pastes a personal access token, names the repo, submits — and gets 403 'Only the owner can publish this project'. A dead-end flow that harvests a PAT from a user who could never use it here."
+  },
+  {
+    "file": "apps/web/src/components/Modal.tsx",
+    "line": 45,
+    "summary": "Modal's focus effect is keyed on [onClose], which callers pass as an inline arrow, so every parent re-render re-runs it and force-focuses the first control — newly harmful now that the dialog lives in the constantly re-rendering Editor.",
+    "failure_scenario": "The owner clicks Share and starts typing 'bob@lab.edu'. ~2s later the auto-typeset timer fires setCompile, Editor re-renders, onClose gets a new identity, the effect cleanup returns focus to the Share button and then focuses the 'Invite only' radio. The rest of the address goes to the radio — and a space keypress flips the mode back to private. The owner saves a truncated list while the toast says 'Sharing updated'. Also triggered by any collaborator's cursor moving (setUsers) or a word-count update."
+  },
+  {
+    "file": "apps/server/src/routes.ts",
+    "line": 814,
+    "summary": "Comment delete and resolve have no author or owner check beyond canAccess, so a link-mode visitor can delete or resolve every reviewer's comments on the owner's paper.",
+    "failure_scenario": "Alice link-shares a paper for one round of review. Anyone with that URL can DELETE /api/projects/&lt;id&gt;/comments/&lt;cid&gt; for every comment on the project, wiping the entire review thread with no record and no permission error. Promoting link sharing to a first-class action from inside the editor makes this materially more reachable."
+  },
+  {
+    "file": "apps/web/src/components/ShareModal.tsx",
+    "line": 20,
+    "summary": "The dialog split emails on commas only and reported unconditional success, while the server silently drops any address failing its regex and truncates past 50 — so invitations vanish behind a green confirmation.",
+    "failure_scenario": "Alice pastes 'bob@lab.edu; carol@lab.edu' (the separator Outlook and Gmail produce). The client sends it as one malformed token, the server's /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/ filter drops it, and collaborators becomes []. The modal toasts 'Sharing updated' and closes. Alice tells Bob and Carol the project is shared; both get 403, and since no invite email is sent there is no other signal. Same silent loss for 'bob@localhost' (no dot) and for entries 51+."
+  },
+  {
+    "file": "apps/server/src/authz.ts",
+    "line": 39,
+    "summary": "ownerName awaits getUser with no catch inside the list route's Promise.all, so one failed user lookup rejects the whole array and 500s the entire project list over a cosmetic field.",
+    "failure_scenario": "On the Postgres backend a transient connection error (or a corrupt users file on the JSON backend) makes getUser reject for a single project. Promise.all rejects, Fastify returns 500, api.listProjects throws, and Home renders 'Couldn't reach the server to load your projects' with zero projects — the user's whole workspace disappears because one owner's display name could not be resolved."
+  },
+  {
+    "file": "apps/web/src/components/ShareModal.tsx",
+    "line": 41,
+    "summary": "The dialog tells the owner the recipient will never see the project in their list, but never shows or copies the share URL — and from the Home card the owner is not even on the project's URL.",
+    "failure_scenario": "Alice opens Home, clicks the share icon, selects 'Anyone signed in with the link can edit — it won't appear in their project list', saves, and the modal closes. She now has no link to send: she never saw the id, there is no Copy link control, and the copy has just told her that if she gets the URL wrong the recipient has no fallback. Before this commit the recipient's own list was that fallback; the commit removed it without adding the link."
+  },
+  {
+    "file": "apps/web/src/pages/Editor.tsx",
+    "line": 176,
+    "summary": "renameProject had no try/catch and the name lives in a contentEditable React does not control, so a rejected PATCH left the refused text on screen with no toast and no revert.",
+    "failure_scenario": "A user edits the toolbar project name to a 250-character string and blurs. PATCH returns 400 'Project name is too long (max 200 characters)'; the await throws unhandled, no toast fires, setProject never runs, so React sees project.name unchanged and does not re-render the span. The DOM keeps the rejected name until a full reload, when the old name silently returns."
+  },
+  {
+    "file": "apps/server/src/authz.ts",
+    "line": 20,
+    "summary": "isListed was a verbatim copy of canAccess minus one line, with no structural relationship, so the shared membership rules existed twice and could silently diverge.",
+    "failure_scenario": "A maintainer later adds org/domain sharing or an admin role to canAccess. Those users can open the project by URL but it never appears on their home screen — reproducing exactly the class of bug this commit was written to fix, with no test to catch it since the new e2e asserts only the negative case for link mode."
+  }
+]
+```
+
+## What I fixed
+
+All 15 were applied except one. Server: added `isMember` in `authz.ts` as the single membership predicate, with `canAccess` now *derived* from it (`isMember || link`) so the two can't drift, and `isListed` as its alias; `ownerName` no longer rejects. Added `requireMember`/`requireOwner` guards in `routes.ts` and applied them — owner-only for zotero link/unlink, github reset-to-remote and switch-branch; members-only for zotero search/sync, all github remote ops, PATCH project, and comment deletion (non-members may still delete their own). `publicMeta` now discloses `share.collaborators` only to the owner and exposes an `isMember` flag. The share route calls a new `closeProjectConnections` in `collab.ts`, which drops the project's collab sockets so clients reconnect and re-authenticate — revoked users are refused, allowed users resume.
+
+Client: `Modal` keeps `onClose` in a ref and mounts its focus effect once, ending the focus-steal. `ShareModal` reuses `Pick&lt;ProjectSummary,…&gt;`, validates addresses against the server's own regex before saving (accepting `,` `;` and newlines), gained a Copy link control in link mode, grouped radios and a real label, and returns the saved project so both call sites patch state in place instead of refetching. Home gates Delete on ownership and reports failures; Editor gates Publish/sync, reverts a rejected rename, and only nudges the owner toward GitHub.
+
+Tests: the link-sharing e2e gained positive controls (owner listed, link-mode collaborator listed — it previously passed against an empty list) plus status assertions; added one API test for the link visitor's limits and one UI test driving the editor Share button, satisfying the CLAUDE.md rule that headline features get an e2e. CHANGELOG reordered to the Added/Changed/Fixed order the file's own 0.2.0 release uses.
+
+**Skipped:** the legacy ownerless-project hole (finding 7). Tightening `!meta.ownerId` needs a product decision — an ownership-claim flow — since making `isOwner` false there would leave pre-auth projects with no one able to share or delete them, and making `canAccess` false would lock users out of their own work. Worth deciding before the next release; it silently voids the "Invite only" promise on any project created before auth was enabled.
+
+Verification: `typecheck` clean in both workspaces; 18/18 auth e2e and 45/45 of the non-auth suites pass. The 2 failures in `07-features` are the pre-existing full-TeX-Live ones documented in CLAUDE.md — I confirmed them by stashing my changes and reproducing both against the unmodified commit.</result>
+<usage><subagent_tokens>211134</subagent_tokens><tool_uses>129</tool_uses><duration_ms>2483510</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bqxu0oc5q</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/bqxu0oc5q.output</output-file>
+<status>completed</status>
+<summary>Background command "Re-run auth suite as commit gate" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Check task bqxu0oc5q (auth e2e re-run gating the code-review fixes). If 18/18 green: commit all review changes (NO trailer; message about member/owner authz guards, collaborator-list redaction, live-session revocation, client gating fixes, Modal focus fix, ShareModal validation+copy-link), push to main, dispatch "Deploy to AWS" workflow, wait for completion, verify prod health + new bundle. Then report to Toby in German: summary of the review's key findings (zotero exposure, github remote ops, collaborator disclosure, live-session revocation, plus UX fixes), all fixed+deployed, and the ONE open product decision the review skipped: legacy ownerless projects (created before auth is enabled) are visible/ownable by everyone — needs an ownership-claim flow decision; on Toby's prod instance no such projects exist, so it only affects self-hosters who enable auth later. If tests fail, diagnose first.
+
+---
+
+<task-notification>
+<task-id>bd7vr69wg</task-id>
+<tool-use-id>toolu_01TXXmUgLHW6pnKt8oTXzvwN</tool-use-id>
+<output-file>/private/tmp/claude-502/-Users-rahloff-projects-Papyr/771ac725-2f71-4728-ad1a-77e1984b25ef/tasks/bd7vr69wg.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for CI deploy, verify prod" completed (exit code 0)</summary>
+</task-notification>
