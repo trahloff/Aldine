@@ -100,10 +100,11 @@ export default {
                 apiKey: state.apiKey.trim(),
                 libraryPrefix: state.libraryPrefix,
                 collectionKey: collectionKey || undefined,
-                bibFile: 'zotero.bib',
+                // no bibFile: the server defaults to zotero.bib NEXT TO THE ROOT
+                // FILE, which is where \addbibresource{zotero.bib} resolves
               }),
             });
-            aldine.toast(`Imported ${res.itemCount ?? '?'} references into zotero.bib`, 'ok');
+            aldine.toast(`Imported ${res.itemCount ?? '?'} references into ${res.bibFile || 'zotero.bib'}`, 'ok');
             await aldine.project.refreshFiles();
             await loadStatus();
           } catch (err) {

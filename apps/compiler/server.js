@@ -176,6 +176,15 @@ async function compileInner(body) {
   const durationMs = Date.now() - t0;
   let log = readLog(out);
   const errors = parseLog(log);
+  // -file-line-error paths are relative to the compile dir (the root file's
+  // dir, thanks to -cd) — reduce in-project ones to project-relative paths so
+  // the editor's error links and the AI-fix prompt name files the way the rest
+  // of the app does. Installed .sty/.cls files stay as reported.
+  for (const e of errors) {
+    if (typeof e.file !== 'string' || !e.file) continue;
+    const abs = path.resolve(absDir, rootDir, e.file);
+    if (abs === absDir || abs.startsWith(absDir + path.sep)) e.file = path.relative(absDir, abs);
+  }
   const ok = code === 0 && fs.existsSync(pdfPath);
   return {
     ok,

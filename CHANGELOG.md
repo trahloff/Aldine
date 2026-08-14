@@ -25,6 +25,17 @@ All notable changes to Aldine are documented here. The format follows
   timeout.
 
 ### Fixed
+- Compile errors now link to the right file in projects whose root file lives
+  in a subdirectory: error paths were reported relative to the compile dir, so
+  clicking an error in the panel opened the root file at the chapter's line
+  number (and the AI fix prompt named files inconsistently). Same root cause
+  as the SyncTeX fix below.
+- Figure previews in the visual editor now resolve `\includegraphics` paths
+  against the root file's directory (with a project-root fallback), instead of
+  silently showing nothing in nested-root projects.
+- Zotero import and cite-from-search now create their `.bib` next to the root
+  file — where `\addbibresource`/`\bibliography` actually look — instead of at
+  the project root, where a nested-root document never reads it.
 - Double-clicking the PDF now jumps to the right file in multi-file projects.
   SyncTeX reports inputs as the compile dir plus the path TeX opened
   (`…/paper/./chapters/ch1.tex`); the un-normalized `/./` defeated the editor's

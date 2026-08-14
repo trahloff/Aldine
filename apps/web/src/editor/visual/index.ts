@@ -70,6 +70,8 @@ const katexLifecycle = ViewPlugin.define((view) => {
 export interface VisualDeps {
   projectId: string;
   branch: string;
+  /** Root file path — image previews resolve \includegraphics against its dir. */
+  rootFile?: string;
   ydoc: Y.Doc;
   awareness: Awareness;
 }
@@ -80,6 +82,6 @@ export interface VisualDeps {
  * by explicit user edits and the formatting commands in ./commands.ts.
  */
 export function visualExtensions(deps: VisualDeps): Extension {
-  setVisualContext(deps.projectId, deps.branch);
+  setVisualContext(deps.projectId, deps.branch, deps.rootFile);
   return [revealField, atomicField, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle, suggestField, docEditBridge, remoteCaretReveal(deps.awareness)];
 }

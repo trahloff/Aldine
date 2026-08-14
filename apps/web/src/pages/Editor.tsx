@@ -195,7 +195,14 @@ export default function Editor() {
 
   const jumpToLine = (line: number | null, file?: string) => {
     if (line == null || !project) return;
-    const target = file && files.some((f) => f.path === file) ? file : project.rootFile;
+    // Older compilers report error paths relative to the compile dir (the root
+    // file's dir), so fall back to a suffix match before giving up on the file.
+    const norm = (file || '').replace(/\/(?:\.\/)+/g, '/');
+    const target = (norm && (
+      files.find((f) => f.path === norm)
+      ?? files.find((f) => norm.endsWith('/' + f.path))
+      ?? files.find((f) => f.path.endsWith('/' + norm))
+    )?.path) || project.rootFile;
     if (activeFile !== target) setActiveFile(target);
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 60));
   };
@@ -545,6 +552,7 @@ export default function Editor() {
                 projectId={id}
                 branch={branch}
                 filePath={activeFile}
+                rootFile={project?.rootFile}
                 onUsers={setUsers}
                 onSave={doCompile}
                 onDocChanged={onDocChanged}

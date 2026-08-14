@@ -71,6 +71,12 @@ function isHiddenPath(rel: string): boolean {
   return rel.split(/[\\/]/).some((seg) => seg === '.git' || seg.startsWith('.aldine'));
 }
 
+/** "<root file's dir>/<name>" — where \addbibresource{<name>} actually resolves. */
+function rootSiblingPath(rootFile: string, name: string): string {
+  const dir = path.dirname(rootFile || 'main.tex');
+  return dir === '.' ? name : path.posix.join(dir, name);
+}
+
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, ...rest } = meta;
   // The collaborator roster is the owner's private list of invitee email
@@ -743,14 +749,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string }; Body: { apiKey: string; libraryPrefix: string; collectionKey?: string; bibFile?: string; branch?: string } }>(
     '/api/projects/:id/zotero/link', async (req, reply) => {
-      const { apiKey, libraryPrefix, collectionKey, bibFile = 'zotero.bib', branch = 'main' } = req.body || {};
+      const { apiKey, libraryPrefix, collectionKey, branch = 'main' } = req.body || {};
       const owned = await requireOwner(req, reply, 'link a Zotero library');
       if (!owned) return;
       if (!apiKey || !libraryPrefix) return reply.code(400).send({ error: 'apiKey and libraryPrefix required' });
-      if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
       try {
         const info = await zotero.validateKey(apiKey);
         const meta = await store.readMeta(req.params.id);
+        // default next to the root file — \addbibresource{zotero.bib} resolves
+        // relative to its dir, so a project-root default would write a file the
+        // document never reads when the root lives in a subdirectory
+        const bibFile = req.body?.bibFile || rootSiblingPath(meta.rootFile, 'zotero.bib');
+        if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
         meta.zotero = { apiKey, userId: info.userID, username: info.username, libraryPrefix, collectionKey, bibFile };
         await store.writeMeta(meta);
         // sync into the branch the user linked from (the plugin refreshes that branch), not always main
@@ -796,11 +806,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // ---------- reference lookup (DOI / arXiv → BibTeX) ----------
   app.post<{ Params: { id: string }; Body: { query: string; branch?: string; bibFile?: string } }>(
     '/api/projects/:id/references/add', async (req, reply) => {
-      const { query, branch = 'main', bibFile = 'references.bib' } = req.body || {};
+      const { query, branch = 'main' } = req.body || {};
       if (!query) return reply.code(400).send({ error: 'query required' });
-      if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
       if (!(await refLimiter.take(clientKey(req, reqUser(req)?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
       try {
+        // default next to the root file (see zotero/link) so inserted cites
+        // land in a .bib the document actually reads
+        const bibFile = req.body?.bibFile || rootSiblingPath((await store.readMeta(req.params.id)).rootFile, 'references.bib');
+        if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
         const entry = await fetchBibEntry(query.trim());
         if (!entry) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
         // append to the .bib (create if missing), skipping duplicate keys

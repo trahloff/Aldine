@@ -1,5 +1,5 @@
 import { WidgetType } from '@codemirror/view';
-import { citeLabel, fileUrl } from '../context';
+import { citeLabel, fileUrl, projectFileUrl } from '../context';
 
 /** A compact pill standing in for a construct; click puts the caret inside. */
 class Chip extends WidgetType {
@@ -51,7 +51,13 @@ class FigureWidget extends WidgetType {
         img.src = url;
         img.alt = this.caption || this.image;
         img.className = 'cm-vis-figure__img';
-        img.onerror = () => img.remove();
+        // root-dir-relative miss → retry from the project root (some projects
+        // write \includegraphics paths that way), then give up quietly
+        const fallback = projectFileUrl(this.image);
+        img.onerror = () => {
+          if (fallback && img.src !== new URL(fallback, location.href).href) img.src = fallback;
+          else img.remove();
+        };
         el.appendChild(img);
       }
     }

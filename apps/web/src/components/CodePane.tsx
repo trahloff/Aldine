@@ -82,6 +82,8 @@ interface Props {
   projectId: string;
   branch: string;
   filePath: string;
+  /** Project root file — figure previews resolve image paths against its dir. */
+  rootFile?: string;
   onUsers(users: PresenceUser[]): void;
   onSave(): void;
   onDocChanged?(): void;
@@ -150,7 +152,7 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, onUsers, onSave, onDocChanged, onStats, onJumpToPdf, spellcheck = false, mode = 'source' }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onSave, onDocChanged, onStats, onJumpToPdf, spellcheck = false, mode = 'source' }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats, onSave, onJumpToPdf });
@@ -239,7 +241,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const awareness = provider.awareness!;
     const modeComp = new Compartment();
     const spellComp = new Compartment();
-    const deps: VisualDeps = { projectId, branch, ydoc, awareness };
+    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness };
     const reportUsers = () => {
       // key by Yjs clientID so two collaborators with the same display name stay distinct
       const byClient = new Map<number, PresenceUser>();
