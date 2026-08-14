@@ -218,6 +218,17 @@ async function synctex(body) {
     if (cur) cur[m[1].toLowerCase()] = isNaN(Number(m[2])) ? m[2].trim() : Number(m[2]);
   }
   if (cur) records.push(cur);
+  // Inverse lookups report the input as the compile dir + the path as TeX
+  // opened it (e.g. …/paper/./chapters/ch1.tex — latexmk -cd runs in the root
+  // file's dir). The un-normalized "/./" defeats suffix matching against
+  // project paths, so reduce every in-project input to a clean project-relative
+  // path; files outside the project (installed .sty/.cls) stay absolute.
+  const compileDir = path.join(absDir, rootDir);
+  for (const r of records) {
+    if (typeof r.input !== 'string' || !r.input) continue;
+    const abs = path.resolve(compileDir, r.input);
+    if (abs === absDir || abs.startsWith(absDir + path.sep)) r.input = path.relative(absDir, abs);
+  }
   return { ok: true, records };
 }
 

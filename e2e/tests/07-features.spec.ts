@@ -127,6 +127,31 @@ test.describe('SyncTeX jump', () => {
       await cleanup(request, id);
     }
   });
+
+  test('inverse jump opens the included chapter file, not the root', async ({ page, request }) => {
+    // Root file in a subdirectory (paper/main.tex): SyncTeX reports inputs as
+    // the compile dir + TeX's own path (…/paper/./chapters/…) — the jump must
+    // still resolve to the project-relative file and switch the editor to it.
+    const id = await createProject(request, 'SyncTeX nested');
+    const chapter = [
+      '\\section{Chapter one}',
+      ...Array.from({ length: 12 }, (_, i) => `Chapter paragraph ${i + 1} with enough text to fill a line on the page.\n`),
+    ].join('\n');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/main.tex', content: '\\documentclass{article}\n\\begin{document}\nIntro line in the root file.\n\\input{chapters/ch1}\n\\end{document}\n' } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/chapters/ch1.tex', content: chapter } });
+      await request.patch(`/api/projects/${id}`, { data: { rootFile: 'paper/main.tex' } });
+      await openProject(page, id);
+      await page.getByTestId('typeset-button').click();
+      await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 120_000 });
+      const box = await page.locator('canvas.pdf-page').first().boundingBox();
+      // mid-page is deep inside the chapter's paragraphs (the root contributes one line)
+      await page.mouse.dblclick(box!.x + box!.width * 0.5, box!.y + box!.height * 0.45);
+      await expect(page.locator('.cm-content')).toContainText('Chapter paragraph', { timeout: 10_000 });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
 });
 
 test.describe('cite-from-search (OpenAlex)', () => {

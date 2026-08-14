@@ -296,7 +296,10 @@ export default function Editor() {
       const rec = res.records?.find((r) => r.input || r.line != null);
       if (!rec) return;
       const line = Number(rec.line);
-      let file = String(rec.input || '');
+      // Older compilers return the path as TeX opened it (…/paper/./ch1.tex);
+      // collapse "/./" segments or the suffix match below never fires and the
+      // jump lands in the wrong (still-open) file.
+      let file = String(rec.input || '').replace(/\/(?:\.\/)+/g, '/');
       // synctex returns an absolute/relative path; reduce to a project-relative one
       const match = files.find((f) => file.endsWith('/' + f.path) || file.endsWith(f.path) || f.path === file);
       if (match) file = match.path;

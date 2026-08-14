@@ -25,6 +25,13 @@ All notable changes to Aldine are documented here. The format follows
   timeout.
 
 ### Fixed
+- Double-clicking the PDF now jumps to the right file in multi-file projects.
+  SyncTeX reports inputs as the compile dir plus the path TeX opened
+  (`…/paper/./chapters/ch1.tex`); the un-normalized `/./` defeated the editor's
+  suffix match whenever the root file lived in a subdirectory, so the jump
+  landed on the chapter's line number in the still-open root file. The compiler
+  now returns clean project-relative paths and the editor tolerates the old
+  form.
 - The production `.env` example in the README no longer produces broken values.
   Lines like `AUTH_ENABLED=1    multi-user login` set the variable to the whole
   string, which fails the strict `=== '1'` check, so auth stayed off on an
