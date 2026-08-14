@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:github": "tsx test/github-sync.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
-    "test:unit": "tsx test/redis-client.test.mjs"
+    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

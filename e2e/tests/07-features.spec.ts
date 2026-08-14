@@ -154,6 +154,26 @@ test.describe('SyncTeX jump', () => {
   });
 });
 
+test.describe('word count', () => {
+  test('counts the whole document, not just the open root file', async ({ page, request }) => {
+    const id = await createProject(request, 'Word Count');
+    const chapter = Array.from({ length: 20 }, (_, i) => `Chapter sentence number ${i + 1} adds a handful of words.`).join('\n\n');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/main.tex', content: '\\documentclass{article}\n\\begin{document}\nTiny root.\n\\input{chapters/ch1}\n\\end{document}\n' } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/chapters/ch1.tex', content: chapter } });
+      await request.patch(`/api/projects/${id}`, { data: { rootFile: 'paper/main.tex' } });
+      await openProject(page, id);
+      // the open root file alone is ~3 words; the displayed total must include the chapter
+      await expect.poll(async () => {
+        const text = await page.getByTestId('word-count').textContent();
+        return Number((text || '').replace(/[^\d]/g, ''));
+      }, { timeout: 10_000 }).toBeGreaterThan(100);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
+
 test.describe('cite-from-search (OpenAlex)', () => {
   test('search papers, click a result, insert the cite', async ({ page, request }) => {
     const id = await createProject(request, 'Search Cite');

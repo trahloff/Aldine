@@ -87,6 +87,16 @@ export default function Editor() {
     }
   }, [id]);
 
+  // Whole-document word count (the include graph from the root file). The
+  // status bar swaps the active file's server count for the live editor count,
+  // so the total stays current while typing without refetching.
+  const [docWords, setDocWords] = useState<{ total: number; files: Record<string, number> } | null>(null);
+  const docWordsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshDocWords = useCallback(() => {
+    api.wordcount(id, branch).then(setDocWords).catch(() => { /* keep the last total */ });
+  }, [id, branch]);
+  useEffect(() => { refreshDocWords(); }, [refreshDocWords]);
+
   const loadFiles = useCallback(async () => {
     // Several call sites invoke this fire-and-forget (onChanged, tree callbacks);
     // swallow transient failures with a toast instead of an unhandled rejection.
@@ -96,12 +106,13 @@ export default function Editor() {
       // files changed (rename/delete/upload/Zotero import) → bib & label indexes are stale
       invalidateBibCache();
       invalidateLabelCache();
+      refreshDocWords();
       return f;
     } catch {
       toast('Could not refresh the file list', 'error');
       return [];
     }
-  }, [id, branch, toast]);
+  }, [id, branch, toast, refreshDocWords]);
 
   useEffect(() => {
     (async () => {
@@ -147,12 +158,17 @@ export default function Editor() {
 
   /** Auto-typeset ~2s after edits settle. */
   const onDocChanged = useCallback(() => {
+    if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
+    docWordsTimer.current = setTimeout(refreshDocWords, 3000);
     if (!autoRef.current) return;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     autoTimer.current = setTimeout(() => doCompile(), 2000);
-  }, [doCompile]);
+  }, [doCompile, refreshDocWords]);
 
-  useEffect(() => () => { if (autoTimer.current) clearTimeout(autoTimer.current); }, []);
+  useEffect(() => () => {
+    if (autoTimer.current) clearTimeout(autoTimer.current);
+    if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
+  }, []);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -540,11 +556,23 @@ export default function Editor() {
                 <span className="statusbar__file">{activeFile}</span>
                 {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
                 <span className="toolbar__spacer" />
-                <span className="pdf-status" data-testid="word-count">
-                  {stats.selWords != null
-                    ? `${stats.selWords.toLocaleString()} of ${stats.words.toLocaleString()} words`
-                    : `${stats.words.toLocaleString()} words`}
-                </span>
+                {(() => {
+                  // document total with the open file's count kept live; a file
+                  // outside the include graph falls back to its own count
+                  const inDoc = !!(docWords && activeFile && docWords.files[activeFile] != null);
+                  const total = inDoc ? docWords!.total - docWords!.files[activeFile!] + stats.words : stats.words;
+                  return (
+                    <span
+                      className="pdf-status"
+                      data-testid="word-count"
+                      title={inDoc ? 'Words in the whole document (root file plus everything it includes)' : 'Words in this file (it is not included from the root file)'}
+                    >
+                      {stats.selWords != null
+                        ? `${stats.selWords.toLocaleString()} of ${total.toLocaleString()} words`
+                        : `${total.toLocaleString()} words`}
+                    </span>
+                  );
+                })()}
               </div>
               <CodePane
                 key={`${id}::${branch}::${activeFile}`}
@@ -628,6 +656,17 @@ export default function Editor() {
               <button className="zoom__label" onClick={() => setZoom(1)} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} title="Zoom in" aria-label="Zoom in">+</button>
             </div>
+            {compile.result?.pdfUrl && (
+              <a
+                className="btn btn--ghost btn--small"
+                href={compile.result.pdfUrl}
+                download={`${(project?.name || 'document').replace(/[\\/:*?"<>|]/g, '-')}.pdf`}
+                title="Download the compiled PDF"
+                data-testid="download-pdf"
+              >
+                Download PDF
+              </a>
+            )}
             <button
               className={`auto-toggle ${auto ? 'auto-toggle--on' : ''}`}
               onClick={toggleAuto}

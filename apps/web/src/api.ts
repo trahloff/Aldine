@@ -103,6 +103,8 @@ export const api = {
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),
+  wordcount: (id: string, branch: string) =>
+    req<{ rootFile: string; total: number; files: Record<string, number> }>(`/api/projects/${id}/wordcount?branch=${encodeURIComponent(branch)}`),
   labels: (id: string, branch: string) => req<Array<{ label: string; file: string }>>(`/api/projects/${id}/labels?branch=${encodeURIComponent(branch)}`),
 
   branches: (id: string) => req<BranchInfo[]>(`/api/projects/${id}/branches`),

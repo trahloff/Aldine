@@ -14,6 +14,7 @@ import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listTemplates, templateFiles } from './templates.js';
 import { fetchBibEntry, searchWorks } from './references.js';
+import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip, guessRoot } from './unzip.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
@@ -662,6 +663,35 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
     labelIndexCache.set(key, { v, labels });
     return labels;
+  });
+
+  // Whole-document word count: the status bar's per-file count is misleading
+  // for multi-file projects (the root is mostly preamble + \input lines), so
+  // the client sums the include graph via this endpoint. Same cache discipline
+  // as /bib and /labels.
+  const wordCountCache = new Map<string, { v: number; body: { rootFile: string; total: number; files: Record<string, number> } }>();
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/wordcount', async (req) => {
+    const branch = req.query.branch || 'main';
+    flushBranchDocs(req.params.id, branch);
+    const key = `${req.params.id}::${branch}`;
+    const v = contentVersion(req.params.id, branch);
+    const hit = wordCountCache.get(key);
+    if (hit && hit.v === v) return hit.body;
+    const meta = await store.readMeta(req.params.id);
+    const read = (p: string): string | null => {
+      if (isHiddenPath(p)) return null;
+      try { return store.readFile(req.params.id, branch, p).toString('utf8'); } catch { return null; }
+    };
+    const files: Record<string, number> = {};
+    let total = 0;
+    for (const f of documentFiles(meta.rootFile, read)) {
+      const n = latexWordCount(read(f) ?? '');
+      files[f] = n;
+      total += n;
+    }
+    const body = { rootFile: meta.rootFile, total, files };
+    wordCountCache.set(key, { v, body });
+    return body;
   });
 
   // ---------- git ----------

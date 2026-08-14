@@ -24,7 +24,17 @@ All notable changes to Aldine are documented here. The format follows
   `MAX_CONCURRENT_COMPILES` through from `.env` instead of hardcoding the
   timeout.
 
+### Added
+- Download PDF button in the preview toolbar — saves the compiled PDF named
+  after the project.
+
 ### Fixed
+- The word count now covers the whole document (the root file plus everything
+  it `\input`s/`\include`s), keeping the open file's share live while typing.
+  It used to count only the open file, which for a multi-file project meant
+  the root's preamble — a few hundred words for a ten-thousand-word paper.
+  A file outside the include graph still shows its own count (the tooltip
+  says which one you're looking at).
 - Compile errors now link to the right file in projects whose root file lives
   in a subdirectory: error paths were reported relative to the compile dir, so
   clicking an error in the panel opened the root file at the chapter's line
