@@ -22,6 +22,22 @@ responds (`curl https://<demo_domain>/api/health`).
 Note: the box clones the repo anonymously, so the repo must be **public**
 before `terraform apply` (or pass `-var repo_url=` pointing at a mirror).
 
+## Launch-day hardening
+
+The generated `.env.demo` caps every visitor at 6 typesets per minute
+(`ALDINE_COMPILE_PER_MIN`), so one person cannot starve the compiler for
+everyone else. To also keep a showcase paper alive on a world-writable demo:
+
+1. Bring the box up and create the showcase project (ZIP or GitHub import);
+   note its id from the URL.
+2. Re-apply with `-var protected_projects=<id>`. The app serves that project
+   read-only: anyone can open and typeset it, nobody can edit, rename, or
+   delete it (enforced on both the HTTP API and the collab socket).
+
+The nightly wipe destroys volumes — and with them the showcase project and its
+id — so either re-seed each morning or disable the wipe timer for launch week
+(`systemctl disable --now aldine-demo-wipe.timer` on the box).
+
 ## Tear it down
 
 ```bash

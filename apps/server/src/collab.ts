@@ -167,6 +167,11 @@ if (process.env.REDIS_URL) {
   }
 }
 
+/** Showcase projects (ALDINE_PROTECTED_PROJECTS) are world-readable, nobody-writable. */
+export const protectedProjects = new Set(
+  (process.env.ALDINE_PROTECTED_PROJECTS || '').split(',').map((s) => s.trim()).filter(Boolean),
+);
+
 export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // We handle upgrades ourselves from the Fastify HTTP server.
   quiet: true,
@@ -174,6 +179,12 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   maxDebounce: 8000,
   extensions: collabExtensions as never,
   ...authHook,
+  // Protected projects connect read-only: without this, collab edits over the
+  // websocket would bypass the HTTP-side write guard entirely.
+  async onConnect({ documentName, connection }: { documentName: string; connection: { readOnly: boolean } }) {
+    const parsed = parseDocName(documentName);
+    if (parsed && protectedProjects.has(parsed.projectId)) connection.readOnly = true;
+  },
   async onLoadDocument({ documentName, document }) {
     const parsed = parseDocName(documentName);
     if (!parsed) throw new Error(`invalid document name: ${documentName}`);
@@ -265,6 +276,47 @@ export function closeProjectConnections(projectId: string): void {
     const parsed = parseDocName(name);
     if (parsed && parsed.projectId === projectId) hocuspocus.closeConnections(name);
   });
+}
+
+/**
+ * Apply a suggestion replacement to the LIVE collab doc when one is open.
+ * A disk read-modify-write would rebuild the doc from a stale snapshot and
+ * silently revert every collaborator's unflushed edits — the CRDT edit below
+ * merges with concurrent typing instead. Returns 'no-doc' when the file has
+ * no loaded doc (caller falls back to the disk path, which is then safe).
+ */
+export function applySuggestionToDoc(
+  projectId: string,
+  branch: string,
+  filePath: string,
+  anchor: { from: number; to: number; quote: string },
+  replacement: string,
+): 'applied' | 'stale' | 'no-doc' {
+  const name = docName(projectId, branch, filePath);
+  const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
+  if (!doc) return 'no-doc';
+  const ytext = doc.getText(TEXT_KEY);
+  const content = ytext.toString();
+  let from = -1;
+  let to = -1;
+  if (content.slice(anchor.from, anchor.to) === anchor.quote) {
+    from = anchor.from;
+    to = anchor.to;
+  } else if (
+    anchor.quote &&
+    anchor.quote.length === anchor.to - anchor.from && // an untruncated quote (see comments.ts cap)
+    content.split(anchor.quote).length === 2
+  ) {
+    from = content.indexOf(anchor.quote);
+    to = from + anchor.quote.length;
+  }
+  if (from < 0) return 'stale';
+  doc.transact(() => {
+    ytext.delete(from, to - from);
+    if (replacement) ytext.insert(from, replacement);
+  });
+  writeDocToDisk(name, doc); // suggestion is on disk immediately, like a manual flush
+  return 'applied';
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */

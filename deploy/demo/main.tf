@@ -57,8 +57,9 @@ resource "hcloud_server" "demo" {
   ssh_keys     = [hcloud_ssh_key.demo.id]
   firewall_ids = [hcloud_firewall.demo.id]
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    demo_domain = var.demo_domain
-    repo_url    = var.repo_url
+    demo_domain        = var.demo_domain
+    repo_url           = var.repo_url
+    protected_projects = var.protected_projects
   })
 }
 

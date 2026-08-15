@@ -1,7 +1,21 @@
 import { CompletionContext, CompletionResult, Completion } from '@codemirror/autocomplete';
 import { Extension, EditorState } from '@codemirror/state';
-import { hoverTooltip } from '@codemirror/view';
+import { hoverTooltip, EditorView } from '@codemirror/view';
 import { api, BibEntry } from '../api';
+
+/**
+ * Accepting a key inside \cite{…}/\ref{…} hops the cursor over the auto-closed
+ * brace — otherwise a touch-typist's next words land inside the argument and
+ * the mangled key ships silently (biblatex downgrades it to a warning).
+ */
+function applyKeyAndHopBrace(view: EditorView, completion: Completion, from: number, to: number): void {
+  const closes = view.state.sliceDoc(to, to + 1) === '}';
+  view.dispatch({
+    changes: { from, to, insert: completion.label },
+    selection: { anchor: from + completion.label.length + (closes ? 1 : 0) },
+    userEvent: 'input.complete',
+  });
+}
 
 /**
  * \cite{...} and \ref{...} autocomplete.
@@ -66,10 +80,11 @@ export function citeCompletionSource(projectId: string, branch: string): Extensi
       .slice(0, 80)
       .map((e) => ({
         label: e.key,
-        detail: [firstAuthor(e.author), e.year].filter(Boolean).join(' '),
+        detail: [e.authorLabel ? (e.author?.match(/\band\b/i) ? `${e.authorLabel} et al.` : e.authorLabel) : firstAuthor(e.author), e.year].filter(Boolean).join(' '),
         info: e.title,
         type: 'constant',
         boost: e.key.toLowerCase().startsWith(q) ? 2 : 0,
+        apply: applyKeyAndHopBrace,
       }));
     if (!options.length) return null;
     return { from, options, validFor: /^[^,}]*$/ };
@@ -177,6 +192,7 @@ export function refCompletionSource(projectId: string, branch: string, currentFi
         detail: file === cur ? undefined : file,
         type: 'variable' as const,
         boost: local.has(l) ? 1 : 0,
+        apply: applyKeyAndHopBrace,
       }));
     if (!options.length) return null;
     return { from: ctx.pos - m[1].length, options, validFor: /^[^}]*$/ };

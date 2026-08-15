@@ -26,3 +26,9 @@ variable "repo_url" {
   type        = string
   default     = "https://github.com/trahloff/Aldine.git"
 }
+
+variable "protected_projects" {
+  type        = string
+  default     = ""
+  description = "Comma-separated project ids served read-only (the showcase paper). Seed the project first, then re-apply with its id."
+}

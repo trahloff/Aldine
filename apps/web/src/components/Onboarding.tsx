@@ -1,4 +1,5 @@
 import Modal from './Modal';
+import { shortcut } from '../platform';
 /** First-run welcome shown once (localStorage-gated by the parent). */
 export default function Onboarding({ onNew, onGithub, onImportZip, onClose }: {
   onNew(): void; onGithub(): void; onImportZip(file: File): void; onClose(): void;
@@ -28,7 +29,7 @@ export default function Onboarding({ onNew, onGithub, onImportZip, onClose }: {
         </div>
 
         <ul className="onboard__points">
-          <li><strong>Typeset</strong> with ⌘S — errors jump to the line; double-click the PDF to jump back.</li>
+          <li><strong>Typeset</strong> with {shortcut('S')} — errors jump to the line; double-click the PDF to jump back.</li>
           <li><strong>Collaborate</strong> live — invite others, see their cursors, leave anchored comments.</li>
           <li><strong>Version</strong> everything — branches, checkpoints, and full GitHub sync.</li>
         </ul>

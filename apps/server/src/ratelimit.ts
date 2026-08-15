@@ -98,6 +98,12 @@ export const aiLimiter = new RateLimiter('ai', n(process.env.RL_AI_BURST, 20), n
 export const refLimiter = new RateLimiter('ref', n(process.env.RL_REF_BURST, 30), 0.5);
 /** at most 2 concurrent compiles per client (per node). */
 export const compileGate = new ConcurrencyGate(n(process.env.RL_COMPILE_CONCURRENCY, 2));
+/** Optional per-client compile budget (ALDINE_COMPILE_PER_MIN, e.g. for a public
+ *  demo under launch traffic). Off by default: 0 → no limiter. */
+const compilePerMin = n(process.env.ALDINE_COMPILE_PER_MIN, 0);
+export const compileLimiter = compilePerMin > 0
+  ? new RateLimiter('compile', Math.max(2, compilePerMin), compilePerMin / 60)
+  : null;
 
 /**
  * Rate-limit key: the signed-in user when available, else the client IP.

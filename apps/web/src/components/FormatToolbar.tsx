@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CodePaneHandle } from './CodePane';
 import type { OutlineEntry } from '../editor/visual/outline';
+import { shortcut } from '../platform';
 
 interface Props {
   target: React.RefObject<CodePaneHandle | null>;
@@ -11,8 +12,8 @@ export default function FormatToolbar({ target }: Props) {
   const fmt = (action: Parameters<CodePaneHandle['format']>[0]) => () => target.current?.format(action);
   return (
     <span className="fmt" data-testid="format-toolbar">
-      <button className="fmt__btn fmt__btn--b" title="Bold (⌘B)" aria-label="Bold" onClick={fmt('bold')}>B</button>
-      <button className="fmt__btn fmt__btn--i" title="Italic (⌘I)" aria-label="Italic" onClick={fmt('italic')}>I</button>
+      <button className="fmt__btn fmt__btn--b" title={`Bold (${shortcut('B')})`} aria-label="Bold" onClick={fmt('bold')}>B</button>
+      <button className="fmt__btn fmt__btn--i" title={`Italic (${shortcut('I')})`} aria-label="Italic" onClick={fmt('italic')}>I</button>
       <button className="fmt__btn" title="Bullet list" aria-label="Bullet list" onClick={fmt('list')}>•≡</button>
       <select
         className="fmt__select"

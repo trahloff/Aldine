@@ -27,6 +27,64 @@ All notable changes to Aldine are documented here. The format follows
 ### Added
 - Download PDF button in the preview toolbar — saves the compiled PDF named
   after the project.
+- Public-demo hardening: `ALDINE_PROTECTED_PROJECTS` serves listed projects
+  read-only (HTTP and collab socket) so a showcase paper survives a
+  world-writable demo, and `ALDINE_COMPILE_PER_MIN` caps each visitor's
+  typesets per minute. The demo stack enables the cap by default.
+
+### Security
+- Accepting a review suggestion now applies to the live collaborative
+  document on the server. The old client-side path read the disk copy,
+  string-replaced, and wrote the whole file back — silently destroying every
+  collaborator's not-yet-autosaved edits, and failing with a misleading
+  "commented text has changed" toast whenever the target text was younger
+  than the autosave debounce.
+- Renaming a file flushes pending collaborative edits to disk first. The
+  rename endpoint evicted the live document before moving the file, so
+  keystrokes from the last few seconds were silently lost.
+
+### Fixed
+- Renaming the typeset root keeps it the root (the setting follows the new
+  name; deleting the root already re-derived it). Renaming a missing file now
+  returns 404 instead of 500, and a rename conflict from the command palette
+  shows the same toast as the file tree instead of failing silently.
+- Capacity rejections ("too many typesets in flight") retry automatically
+  with backoff instead of rendering as a failed document, and the preview's
+  "fix the errors" message only appears when there are errors to fix.
+- Auto-typeset now belongs to the author: it no longer fires on every
+  collaborator for every remote edit (each open tab used to recompile the
+  same PDF and starve the compile gate), and the on-open typeset respects
+  the auto-typeset toggle.
+- The errors panel lists errors before warnings (a failing biblatex run
+  buried the one actionable error behind 100+ citation warnings and a 50-row
+  cap), shows the file next to the line number, and no longer offers a jump
+  on warnings that carry no file (they landed at a meaningless line in the
+  root file). Truncation is labeled instead of silent.
+- The typeset badge reports the time you actually waited, not the compiler's
+  internal duration ("Typeset in 0.1s" after a 15-second wait).
+- Inverse SyncTeX prefers an exact project-path match before suffix
+  matching — with the template's stub `main.tex` present, jumps meant for a
+  nested `paper/main.tex` opened the stub instead.
+- Accepting a `\cite`/`\ref` autocompletion places the cursor after the
+  closing brace, so continued typing no longer lands inside the citation key
+  (which compiled without error and shipped silently).
+- Visual mode: the bullet-list button emitted `\item` before
+  `\begin{itemize}`; the heading dropdown on a commented line produced an
+  unterminated argument (both broke the compile — headings now keep trailing
+  comments outside the braces); table "+ row" inserted below `\bottomrule`
+  and "+ col" broke `@{}`-style column specs (row edits without the spec
+  edit); pasted hyperlinks emitted hyperref-only `\href` (now `\url`, which
+  compiles under far more preambles); cite chips mislabeled corporate
+  authors and compound surnames ("{Growth Market Reports}" showed as
+  "Reports 2024") — the bib API now computes the display surname before
+  brace-stripping.
+- Keyboard shortcut labels match the platform (Ctrl on Windows/Linux instead
+  of a hardcoded ⌘) everywhere they are shown.
+- Contrast fixes in both themes: light-theme tertiary text, code comments,
+  and ok/warn status text now clear WCAG AA (comments in a LaTeX editor are
+  content, not decoration); dark-theme filled surfaces (selected palette
+  row, menu hover, primary button) use a fill that carries white text at
+  4.5:1.
 
 ### Fixed
 - The word count now covers the whole document (the root file plus everything

@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
+import { shortcut } from '../platform';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -12,12 +13,14 @@ interface Props {
   pdfUrl: string | null;
   status: 'idle' | 'compiling' | 'ok' | 'error';
   zoom?: number; // multiplier on fit-width (1 = fit width)
+  /** Whether the failed compile produced actual parsed errors — gates the "fix the errors" copy. */
+  hasErrors?: boolean;
   onFirstOpen(): void;
   /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
   onInverse?(page: number, x: number, y: number): void;
 }
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, status, zoom = 1, onFirstOpen, onInverse }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, status, zoom = 1, hasErrors = false, onFirstOpen, onInverse }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
@@ -197,9 +200,12 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, stat
           {status === 'compiling' ? (
             <><span className="spinner" /><p>Typesetting your document…</p></>
           ) : status === 'error' ? (
-            <p>Fix the errors on the left, then typeset again.</p>
+            // Only blame the document when there are errors to fix — a failed
+            // run without parsed errors (missing root, server trouble) isn't
+            // the user's LaTeX.
+            <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
           ) : (
-            <p>Press <span className="kbd">⌘S</span> to typeset and preview.</p>
+            <p>Press <span className="kbd">{shortcut('S')}</span> to typeset and preview.</p>
           )}
         </div>
       )}

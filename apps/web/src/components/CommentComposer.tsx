@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Modal from './Modal';
+import { isMac } from '../platform';
 
 /** Inline composer for a new review comment (replaces the old window.prompt flow). */
 export default function CommentComposer({ quote, onSubmit, onClose }: {
@@ -50,7 +51,7 @@ export default function CommentComposer({ quote, onSubmit, onClose }: {
         <div className="modal__row" style={{ marginTop: 12 }}>
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn btn--primary" onClick={submit} disabled={!body.trim() || busy} data-testid="comment-submit">
-            {busy ? '…' : 'Comment'} <span className="composer__hint">⌘⏎</span>
+            {busy ? '…' : 'Comment'} <span className="composer__hint">{isMac ? '⌘⏎' : 'Ctrl+Enter'}</span>
           </button>
         </div>
       </div>

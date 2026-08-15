@@ -34,6 +34,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
 
 ## Features
 
+- **Bring your Overleaf projects**: download any Overleaf project as a ZIP,
+  drop it on the home screen, keep writing — root file detected, first typeset
+  automatic.
 - **Real-time collaboration**: CRDT-based (Yjs), multi-cursor with live
   presence, conflict-free by construction. Unlimited collaborators.
 - **Git-native with branches**: every project is a real git repository.
@@ -71,8 +74,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   precedence order if several are set; `ALDINE_AI_MODEL` overrides the model).
   The key stays server-side and never reaches the browser. Unset the key and
   Aldine is a 100% AI-free editor.
-- **Cite by DOI / arXiv**: paste an identifier, get BibTeX appended and the
-  `\cite` inserted (no account, free public APIs).
+- **Find and cite papers without leaving the editor**: search the literature
+  by title or author (OpenAlex), or paste a DOI / arXiv id — one click appends
+  the BibTeX and inserts the `\cite` (no account, free public APIs).
 - **SyncTeX both ways**: double-click the PDF to jump to source; ⌘J to jump
   the PDF to your cursor, with a highlight flash.
 - **Plugin system**: manifest + ES module plugins add sidebar panels and
@@ -80,9 +84,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   write your own.
 - **Templates & import**: article, IAC conference paper, beamer,
   report/thesis; or import an existing project from an Overleaf ZIP.
-- **Editor niceties**: auto-typeset on idle, live word count, spellcheck,
-  PDF zoom, drag-drop figure upload, plain-English error hints + raw log,
-  command palette (⌘K).
+- **Editor niceties**: auto-typeset on idle, live whole-document word count,
+  spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
+  error hints + raw log, command palette (⌘K / Ctrl+K).
 - **Multi-user auth** (optional): set `AUTH_ENABLED=1` for login, per-project
   ownership, and sharing (invite-only or link). Google & GitHub SSO, or
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);

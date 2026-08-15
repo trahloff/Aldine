@@ -8,7 +8,7 @@ import * as zotero from './zotero.js';
 import { compileProject, synctexLookup } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
@@ -22,7 +22,7 @@ import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
-import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
 import { safeJoin, isTextFile, newId, BRANCH_RE } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
@@ -129,6 +129,20 @@ async function requireOwner(req: any, reply: any, action: string): Promise<store
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async () => ({ ok: true, name: 'aldine' }));
+
+  // Showcase projects (ALDINE_PROTECTED_PROJECTS): every visitor may read and
+  // typeset them, nobody may change them — a public demo's sample paper must
+  // survive launch-day traffic. The collab websocket enforces the same rule
+  // via read-only connections (collab.ts onConnect).
+  if (protectedProjects.size) {
+    app.addHook('preHandler', async (req, reply) => {
+      if (req.method === 'GET' || req.method === 'HEAD') return;
+      const m = req.url.match(/^\/api\/projects\/([^/?]+)(?:\/([^?]*))?/);
+      if (!m || !protectedProjects.has(m[1])) return;
+      if (/^(compile|synctex)$/.test(m[2] || '')) return; // reading the doc includes building it
+      return reply.code(403).send({ error: 'This is a read-only showcase project — create your own to try editing.' });
+    });
+  }
 
   // ---------- auth (env-gated) ----------
   app.get('/api/auth/me', async (req) => ({ authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders() }));
@@ -533,12 +547,30 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (store.fileExists(req.params.id, branch, to)) {
         return reply.code(409).send({ error: `A file named "${to}" already exists` });
       }
-      // evict the source doc first so its final store can't recreate the old file
+      if (!store.fileExists(req.params.id, branch, from)) {
+        return reply.code(404).send({ error: `No file named "${from}"` });
+      }
+      // Flush pending edits BEFORE evicting: eviction tombstones the doc and a
+      // tombstoned doc is never written, so anything typed inside the autosave
+      // debounce window would be renamed away and lost.
+      flushBranchDocs(req.params.id, branch);
+      // evict the source doc so its final store can't recreate the old file
       evictDoc(req.params.id, branch, from);
       store.renameFile(req.params.id, branch, from, to);
       bumpContentVersion(req.params.id, branch); // bib/label indexes carry file paths
       scheduleCommit(req.params.id, branch);
-      return { ok: true };
+      // The typeset root keeps its designation through a rename (deletion
+      // already re-derives it; a rename must not orphan it).
+      let newRoot: string | undefined;
+      try {
+        const meta = await store.readMeta(req.params.id);
+        if (meta.rootFile === from) {
+          meta.rootFile = to;
+          await store.writeMeta(meta);
+          newRoot = to;
+        }
+      } catch { /* meta unreadable — leave as-is */ }
+      return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
 
   app.delete<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/file', async (req, reply) => {
@@ -589,6 +621,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // plan metering: block once a signed-in user is over their monthly compile budget
     if (user && await usage.overQuota(user.id)) {
       return reply.code(402).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Monthly typeset limit reached — upgrade your plan for more compile time.', quotaExceeded: true });
+    }
+    // optional per-client budget (public demo hardening) — checked before the
+    // concurrency gate so a rejected request never holds a slot
+    if (compileLimiter && !(await compileLimiter.take(key))) {
+      return reply.code(429).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Typeset budget reached for this minute — try again shortly' });
     }
     if (!compileGate.tryAcquire(key)) {
       return reply.code(429).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Too many typesets in flight — let the current ones finish' });
@@ -915,6 +952,44 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     '/api/projects/:id/comments/:cid/resolve', async (req, reply) => {
       const c = await comments.resolveComment(req.params.id, req.params.cid, req.body?.resolved !== false);
       return c || reply.code(404).send({ error: 'comment not found' });
+    });
+
+  // Accept a suggestion server-side. The client used to read the disk copy,
+  // string-replace, and write it back — which rebuilt the live doc from a
+  // stale snapshot and destroyed every collaborator's unflushed edits, and
+  // failed spuriously whenever the commented text hadn't autosaved yet.
+  app.post<{ Params: { id: string; cid: string }; Body: { branch?: string } }>(
+    '/api/projects/:id/comments/:cid/accept', async (req, reply) => {
+      const branch = req.body?.branch || 'main';
+      const all = await comments.listComments(req.params.id, branch);
+      const c = all.find((x) => x.id === req.params.cid);
+      if (!c) return reply.code(404).send({ error: 'comment not found' });
+      if (c.suggestion === undefined) return reply.code(400).send({ error: 'This comment has no suggestion to apply' });
+      let outcome = applySuggestionToDoc(req.params.id, branch, c.file, c.anchor, c.suggestion);
+      if (outcome === 'no-doc') {
+        // nobody has the file open — the disk copy is authoritative, edit it directly
+        let content: string;
+        try { content = store.readFile(req.params.id, branch, c.file).toString('utf8'); } catch {
+          return reply.code(404).send({ error: 'File not found' });
+        }
+        let next: string | null = null;
+        if (content.slice(c.anchor.from, c.anchor.to) === c.anchor.quote) {
+          next = content.slice(0, c.anchor.from) + c.suggestion + content.slice(c.anchor.to);
+        } else if (c.anchor.quote && c.anchor.quote.length === c.anchor.to - c.anchor.from && content.split(c.anchor.quote).length === 2) {
+          const suggestion = c.suggestion;
+          next = content.replace(c.anchor.quote, () => suggestion);
+        }
+        if (next === null) { outcome = 'stale'; } else {
+          store.writeFile(req.params.id, branch, c.file, next);
+          refreshBranchDocsFromDisk(req.params.id, branch);
+          outcome = 'applied';
+        }
+      }
+      if (outcome === 'stale') return reply.code(409).send({ error: 'The commented text has changed — apply the suggestion manually.' });
+      bumpContentVersion(req.params.id, branch);
+      scheduleCommit(req.params.id, branch);
+      await comments.resolveComment(req.params.id, req.params.cid, true);
+      return { ok: true };
     });
 
   // Anyone in the document may comment and reply, but clearing someone else's

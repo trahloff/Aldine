@@ -188,8 +188,6 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         if (!begin || !end || end.to !== n.to) return;
         // column spec is the tabular's argument group right after \begin{tabular}
         const argNode = n.node.getChild('TabularArgument') ?? n.node.getChild('TextArgument') ?? n.node.getChild('NonEmptyGroup');
-        const argOpen = argNode ? (argNode.getChild('OpenBrace') ?? findDescendant(argNode, 'OpenBrace')) : null;
-        const argClose = argNode ? (argNode.getChild('CloseBrace') ?? findDescendant(argNode, 'CloseBrace')) : null;
         const bodyFrom = argNode ? argNode.to : begin.to;
         const parsed = parseTabular(doc.sliceString(bodyFrom, end.from), bodyFrom);
         if (!parsed) {
@@ -197,13 +195,28 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
           return false;
         }
         const cols = Math.max(...parsed.rows.map((r) => r.length));
+        // New rows go above any trailing rule (\bottomrule/\hline) — inserting
+        // at the \end{tabular} line puts them below the table's closing rule.
+        let insertLine = doc.lineAt(end.from);
+        for (let ln = insertLine.number - 1; ln >= 1; ln--) {
+          const t = doc.line(ln).text.trim();
+          if (!t) continue;
+          if (/^(?:\\bottomrule|\\hline)\s*$/.test(t)) insertLine = doc.line(ln);
+          break;
+        }
+        // The spec range comes from the argument node's own bounds, not brace
+        // children — findDescendant('CloseBrace') hits the inner brace of
+        // @{}-style specs and truncates (or nulls) the range.
+        const specOk = argNode
+          && doc.sliceString(argNode.from, argNode.from + 1) === '{'
+          && doc.sliceString(argNode.to - 1, argNode.to) === '}';
         emit.atomic(n.from, n.to, Decoration.replace({
           widget: new TableWidget({
             rows: parsed.rows,
             rowEnds: parsed.rowEnds,
             cols,
-            rowInsertAt: doc.lineAt(end.from).from,
-            colSpec: argOpen && argClose ? { from: argOpen.to, to: argClose.from } : null,
+            rowInsertAt: insertLine.from,
+            colSpec: specOk ? { from: argNode!.from + 1, to: argNode!.to - 1 } : null,
           }, doc.sliceString(n.from, n.to), n.from),
         }));
         return false;

@@ -86,9 +86,17 @@ export function setSectionLevel(level: 1 | 2 | 3 | 4) {
       return true;
     }
     const line = state.doc.lineAt(pos);
-    const text = line.text.trim();
+    // Wrapping a comment (or the commented tail of a line) would put the
+    // closing brace inside the comment — a runaway argument. Head only the
+    // code part and keep any trailing comment outside the braces.
+    const raw = line.text;
+    const cm = raw.match(/(?:^|[^\\])%/);
+    const cmIdx = cm ? cm.index! + cm[0].length - 1 : -1;
+    const text = (cmIdx >= 0 ? raw.slice(0, cmIdx) : raw).trim();
+    if (!text) return false; // comment-only or blank line — nothing to turn into a heading
+    const trailing = cmIdx >= 0 ? ' ' + raw.slice(cmIdx).trim() : '';
     view.dispatch({
-      changes: { from: line.from, to: line.to, insert: `${cmd}{${text}}` },
+      changes: { from: line.from, to: line.to, insert: `${cmd}{${text}}${trailing}` },
       selection: { anchor: line.from + cmd.length + 1 + text.length },
     });
     return true;
@@ -120,12 +128,13 @@ export function toggleItemize(view: EditorView): boolean {
   }
   const fromLine = state.doc.lineAt(sel.from);
   const toLine = state.doc.lineAt(sel.to);
-  const changes: Array<{ from: number; insert: string }> = [];
+  // CodeMirror applies same-position inserts in array order, so \begin{itemize}
+  // must be pushed BEFORE the first line's \item or it lands after it.
+  const changes: Array<{ from: number; insert: string }> = [{ from: fromLine.from, insert: '\\begin{itemize}\n' }];
   for (let ln = fromLine.number; ln <= toLine.number; ln++) {
     const line = state.doc.line(ln);
     if (line.text.trim()) changes.push({ from: line.from, insert: '\\item ' });
   }
-  changes.push({ from: fromLine.from, insert: '\\begin{itemize}\n' });
   changes.push({ from: toLine.to, insert: '\n\\end{itemize}' });
   view.dispatch({ changes });
   return true;

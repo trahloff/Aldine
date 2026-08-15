@@ -78,7 +78,10 @@ function convertNode(node: Node): string {
       const href = el.getAttribute('href');
       const inner = convertChildren(el).trim();
       if (!href || href.startsWith('#') || href === inner) return inner ? `\\url{${href ?? inner}}` : '';
-      return `\\href{${href}}{${inner}}`;
+      // Never \href: it exists only under hyperref, which many classes (incl.
+      // plain article setups) don't load — one pasted link then kills the
+      // compile. \url (url/xurl, pulled in far more widely) plus the link text.
+      return `${inner} (\\url{${href}})`;
     }
     case 'ul': return convertList(el, false);
     case 'ol': return convertList(el, true);

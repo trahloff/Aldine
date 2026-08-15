@@ -86,7 +86,8 @@ interface Props {
   rootFile?: string;
   onUsers(users: PresenceUser[]): void;
   onSave(): void;
-  onDocChanged?(): void;
+  /** Fires on every doc change; `local` is false for applied remote updates. */
+  onDocChanged?(local: boolean): void;
   onStats?(stats: { words: number; selWords: number | null }): void;
   onJumpToPdf?(): void;
   spellcheck?: boolean;
@@ -138,7 +139,7 @@ const aldineTheme = EditorView.theme({
     fontFamily: 'var(--font-ui)',
     overflow: 'hidden',
   },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent)', color: 'var(--on-accent)' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent-fill)', color: 'var(--on-accent)' },
   '.cm-completionDetail': { fontStyle: 'normal', opacity: 0.65, fontSize: '11px' },
   '.cm-panels': { backgroundColor: 'var(--bg-inset)', color: 'var(--text)', borderColor: 'var(--hairline)' },
 });
@@ -235,6 +236,12 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       token: 'aldine-session',
     });
     const ytext = ydoc.getText('content');
+    // Doc-change notifications come from the Y level, not the CM update
+    // listener: tr.local distinguishes this client's edits from applied remote
+    // updates, so auto-typeset can react to typing without every collaborator
+    // recompiling on every remote keystroke.
+    const onYChange = (_e: unknown, tr: { local: boolean }) => cbRef.current.onDocChanged?.(tr.local);
+    ytext.observe(onYChange);
     const user = localUser();
     provider.setAwarenessField('user', { name: user.name, color: user.color, colorLight: user.color + '55' });
 
@@ -295,7 +302,6 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             { key: 'Mod-i', run: toggleStyle('italic') },
           ]),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) cbRef.current.onDocChanged?.();
             if (u.docChanged || u.selectionSet) {
               if (statsTimer) clearTimeout(statsTimer);
               statsTimer = setTimeout(() => {
@@ -334,6 +340,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
 
     return () => {
       if (statsTimer) clearTimeout(statsTimer);
+      ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
       awareness.off('change', reportUsers);
       view.destroy();

@@ -29,7 +29,11 @@ export function citeLabel(keys: string): string | null {
   const parts = keys.split(',').map((k) => k.trim()).filter(Boolean).map((key) => {
     const e = bib!.find((b) => b.key === key);
     if (!e) return key;
-    const surname = (e.author || '').split(/\s+and\s+|,/)[0].trim().split(/\s+/).pop() || key;
+    // authorLabel keeps corporate names ({Growth Market Reports}) and compound
+    // surnames whole — the last-word heuristic is only the legacy fallback.
+    const surname = e.authorLabel
+      || (e.author || '').split(/\s+and\s+|,/)[0].trim().split(/\s+/).pop()
+      || key;
     return e.year ? `${surname} ${e.year}` : surname;
   });
   return parts.length ? parts.join('; ') : null;

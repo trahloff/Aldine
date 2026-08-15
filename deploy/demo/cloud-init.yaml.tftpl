@@ -12,6 +12,8 @@ write_files:
       ALDINE_DOMAIN=${demo_domain}
       ALDINE_PUBLIC_URL=https://${demo_domain}
       ALDINE_APP_BIND=127.0.0.1
+      ALDINE_COMPILE_PER_MIN=6
+      ALDINE_PROTECTED_PROJECTS=${protected_projects}
 
   # Nightly wipe: destroy volumes and recreate the stack. A demo box keeps nothing.
   - path: /etc/systemd/system/aldine-demo-wipe.service

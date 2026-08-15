@@ -16,7 +16,8 @@
 
   --text: #1d1d1f;
   --text-2: #6e6e73;
-  --text-3: #aeaeb2;
+  /* tertiary carries real text (palette group labels, hints, badges) — must clear 4.5:1 */
+  --text-3: #76767b;
 
   --hairline: rgba(0, 0, 0, 0.10);
   --hairline-strong: rgba(0, 0, 0, 0.16);
@@ -29,14 +30,17 @@
   --selection: rgba(46, 98, 233, 0.22);
   --on-accent: #ffffff;
 
-  /* syntax palette — calm, one family */
+  /* syntax palette — calm, one family. Comments are core content in LaTeX
+     (preambles, TODOs) — keep them readable, not decorative. */
   --syn-command: #2456c8;
-  --syn-comment: #98989d;
+  --syn-comment: #7a7a80;
   --syn-string: #7d5b34;
   --syn-value: #6e56cf;
 
   --ok: #28a745;
+  --ok-text: #1e7e34;   /* --ok is a dot/fill color; text needs the darker grade */
   --warn: #b58a00;
+  --warn-text: #8a6d00;
   --warn-soft: rgba(181, 138, 0, 0.12);
   --error: #d70015;
   --error-soft: rgba(215, 0, 21, 0.08);
@@ -56,45 +60,47 @@
 /* Dark is Aldine's default theme; index.html stamps data-theme before paint. */
 :root[data-theme="dark"] {
   color-scheme: dark;
+
   --bg-app: #1c1c1e;
-    --bg-panel: #232326;
-    --bg-inset: #1e1e21;
-    --bg-hover: rgba(255, 255, 255, 0.06);
-    --bg-active: rgba(255, 255, 255, 0.11);
-    --bg-toolbar: rgba(32, 32, 35, 0.82);
+  --bg-panel: #232326;
+  --bg-inset: #1e1e21;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.11);
+  --bg-toolbar: rgba(32, 32, 35, 0.82);
 
-    --text: #f5f5f7;
-    --text-2: #98989d;
-    --text-3: #7c7c85;
+  --text: #f5f5f7;
+  --text-2: #98989d;
+  --text-3: #8b8b95;
 
-    --hairline: rgba(255, 255, 255, 0.10);
-    --hairline-strong: rgba(255, 255, 255, 0.18);
+  --hairline: rgba(255, 255, 255, 0.10);
+  --hairline-strong: rgba(255, 255, 255, 0.18);
 
-    --accent: #5b8cff;
-    --accent-hover: #729cff;
-    --accent-fill: #3d74f6;
-    --accent-fill-hover: #4f81f8;
-    --accent-soft: rgba(91, 140, 255, 0.16);
-    --selection: rgba(91, 140, 255, 0.30);
-    --on-accent: #ffffff;
+  --accent: #5b8cff;
+  --accent-hover: #729cff;
+  /* fill surfaces carry white text — #3568ee clears 4.5:1, the lighter accents don't */
+  --accent-fill: #3568ee;
+  --accent-fill-hover: #4676f0;
+  --accent-soft: rgba(91, 140, 255, 0.16);
+  --selection: rgba(91, 140, 255, 0.30);
+  --on-accent: #ffffff;
 
-    --syn-command: #7aa2ff;
-    --syn-comment: #70707a;
-    --syn-string: #c9a35e;
-    --syn-value: #b8a6ff;
+  --syn-command: #7aa2ff;
+  --syn-comment: #84848e;
+  --syn-string: #c9a35e;
+  --syn-value: #b8a6ff;
 
-    --ok: #32d74b;
-    --warn: #ffd60a;
-    --warn-soft: rgba(255, 214, 10, 0.14);
-    --error: #ff453a;
-    --error-soft: rgba(255, 69, 58, 0.12);
-    --bg-panel-raised: #28282c;
+  --ok: #32d74b;
+  --ok-text: #32d74b;
+  --warn: #ffd60a;
+  --warn-text: #ffd60a;
+  --warn-soft: rgba(255, 214, 10, 0.14);
+  --error: #ff453a;
+  --error-soft: rgba(255, 69, 58, 0.12);
+  --bg-panel-raised: #28282c;
 
-    --syn-comment: #84848e;
-
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
-    --shadow-card-hover: 0 4px 14px rgba(0, 0, 0, 0.5);
-    --shadow-pop: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 34px rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 34px rgba(0, 0, 0, 0.6);
 }
 
 * { box-sizing: border-box; }

@@ -23,6 +23,7 @@ import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
+import { shortcut } from '../platform';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
@@ -37,7 +38,7 @@ export default function Editor() {
   const [files, setFiles] = useState<TreeEntry[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
-  const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null }>({ status: 'idle', result: null });
+  const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
   const [pdfWidth, setPdfWidth] = useState(() => Math.max(360, Math.round(window.innerWidth * 0.4)));
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
@@ -132,7 +133,7 @@ export default function Editor() {
     })();
   }, [id, branch]);
 
-  const doCompile = useCallback(async () => {
+  const doCompile = useCallback(async (attempt = 0) => {
     if (compilingRef.current) { pendingRef.current = true; return; }
     compilingRef.current = true;
     // A typeset is where freshly typed \label/\cite content becomes relevant —
@@ -141,10 +142,18 @@ export default function Editor() {
     invalidateBibCache();
     invalidateLabelCache();
     setCompile((c) => ({ ...c, status: 'compiling' }));
+    const t0 = Date.now();
     try {
       const result = await api.compile(id, branch);
-      setCompile({ status: result.ok ? 'ok' : 'error', result });
+      setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
     } catch (err: any) {
+      // A capacity rejection is the server being busy, not a broken document —
+      // keep the busy state and retry with backoff instead of showing "Failed".
+      if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
+        pendingRef.current = false; // the retry below also serves any queued request
+        setTimeout(() => doCompile(attempt + 1), 1500 * (attempt + 1));
+        return;
+      }
       setCompile({ status: 'error', result: null });
       toast(`Typesetting failed: ${err.message}`, 'error');
     } finally {
@@ -156,11 +165,14 @@ export default function Editor() {
     }
   }, [id, branch]);
 
-  /** Auto-typeset ~2s after edits settle. */
-  const onDocChanged = useCallback(() => {
+  /** Auto-typeset ~2s after this client's own edits settle — remote edits
+   *  refresh the word count but never trigger a compile (the editing client
+   *  compiles; N passive collaborators racing to rebuild the same PDF only
+   *  starve the compile gate). */
+  const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
-    if (!autoRef.current) return;
+    if (!local || !autoRef.current) return;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     autoTimer.current = setTimeout(() => doCompile(), 2000);
   }, [doCompile, refreshDocWords]);
@@ -267,36 +279,20 @@ export default function Editor() {
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.revealPos(c.anchor.from), 80));
   }, [activeFile]);
 
+  // Accept happens server-side against the LIVE collab doc — a client-side
+  // read-replace-write of the disk copy silently reverted every collaborator's
+  // unflushed edits and failed on freshly typed (not yet autosaved) text.
   const acceptSuggestion = useCallback(async (c: Comment) => {
     if (c.suggestion === undefined) return;
     try {
-      const content = await api.readFile(id, branch, c.file);
-      let next: string | null = null;
-      // prefer the anchored range if it still holds the quoted text; else find the quote
-      if (content.slice(c.anchor.from, c.anchor.to) === c.anchor.quote) {
-        next = content.slice(0, c.anchor.from) + c.suggestion + content.slice(c.anchor.to);
-      } else if (
-        c.anchor.quote &&
-        // Only safe when the quote is the WHOLE original selection. The server
-        // caps quote at 2000 chars (comments.ts), so for a longer selection the
-        // quote is truncated and a text-replace would drop the tail — bail instead.
-        c.anchor.quote.length === c.anchor.to - c.anchor.from &&
-        content.split(c.anchor.quote).length === 2
-      ) {
-        // exactly one occurrence → unambiguous; function replacer keeps it literal
-        const suggestion = c.suggestion;
-        next = content.replace(c.anchor.quote, () => suggestion);
-      }
-      if (next === null) { toast('The commented text has changed — apply manually.', 'error'); return; }
-      await api.writeFile(id, branch, c.file, next);
-      await api.resolveComment(id, c.id, true);
+      await api.acceptSuggestion(id, c.id, branch);
       await loadComments();
       bumpComments();
       toast('Suggestion applied', 'ok');
     } catch (err: any) {
-      toast(`Could not accept: ${err.message}`, 'error');
+      toast(err.message || 'Could not accept the suggestion', 'error');
     }
-  }, [id, branch, loadComments, toast]);
+  }, [id, branch, loadComments, bumpComments, toast]);
 
   // visual-mode suggestion widgets dispatch accept/dismiss as window events
   useEffect(() => {
@@ -323,8 +319,11 @@ export default function Editor() {
       // collapse "/./" segments or the suffix match below never fires and the
       // jump lands in the wrong (still-open) file.
       let file = String(rec.input || '').replace(/\/(?:\.\/)+/g, '/');
-      // synctex returns an absolute/relative path; reduce to a project-relative one
-      const match = files.find((f) => file.endsWith('/' + f.path) || file.endsWith(f.path) || f.path === file);
+      // Exact project path first — a suffix match must never beat it, or the
+      // template's stub main.tex hijacks every jump meant for paper/main.tex.
+      const match = files.find((f) => f.path === file)
+        ?? files.find((f) => file.endsWith('/' + f.path))
+        ?? files.find((f) => f.path.endsWith('/' + file));
       if (match) file = match.path;
       if (file && files.some((f) => f.path === file)) setActiveFile(file);
       if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 80));
@@ -358,9 +357,9 @@ export default function Editor() {
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
-      { id: 'typeset', group: 'Action', title: 'Typeset document', hint: '⌘S', run: doCompile },
+      { id: 'typeset', group: 'Action', title: 'Typeset document', hint: shortcut('S'), run: doCompile },
       { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
-      { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: '⌘J', run: () => jumpToPdf() },
+      { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       ...(visualEnabled
@@ -374,8 +373,14 @@ export default function Editor() {
         id: 'rename-file', group: 'File', title: `Rename ${activeFile}…`, run: async () => {
           const to = window.prompt('Rename file to', activeFile);
           if (to && to !== activeFile) {
-            await api.renameFile(id, branch, activeFile, to);
+            try {
+              await api.renameFile(id, branch, activeFile, to);
+            } catch (err: any) {
+              toast(err.message || 'Could not rename the file', 'error');
+              return;
+            }
             await loadFiles();
+            loadProject(); // the root designation may have moved with the rename
             setActiveFile(to);
           }
         },
@@ -401,7 +406,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, insertAtCursor, loadFiles]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, insertAtCursor, loadFiles, loadProject, toast]);
 
   const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errCount = errors.filter((e) => e.type === 'error').length;
@@ -462,10 +467,10 @@ export default function Editor() {
         <div className="toolbar__group">
           <button
             className="btn btn--primary"
-            onClick={doCompile}
+            onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
             data-testid="typeset-button"
-            title="Typeset (⌘S)"
+            title={`Typeset (${shortcut('S')})`}
           >
             {compile.status === 'compiling' ? <span className="spinner" /> : null}
             Typeset
@@ -519,6 +524,7 @@ export default function Editor() {
                   try {
                     await api.renameFile(id, branch, from, to);
                     await loadFiles();
+                    loadProject(); // the root designation may have moved with the rename
                     if (activeFile === from) setActiveFile(to);
                   } catch (err: any) {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
@@ -599,19 +605,44 @@ export default function Editor() {
                 <span>{errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Problems'}</span>
                 <button className="btn btn--ghost btn--small" onClick={() => setShowLog(true)} data-testid="view-log">View log</button>
               </div>
-              {errors.slice(0, 50).map((e, i) => {
-                const hint = hintFor(e.message);
+              {(() => {
+                // Errors render before warnings: a failing biblatex run emits
+                // 100+ citation warnings and the one actionable error must
+                // never sit past the row cap.
+                const ordered = [...errors].sort((a, b) => (a.type === 'error' ? 0 : 1) - (b.type === 'error' ? 0 : 1));
+                const shown = ordered.slice(0, 50);
                 return (
-                  <button key={i} className="errors__row" onClick={() => jumpToLine(e.line, (e as { file?: string }).file)}>
-                    <span className={`errors__badge errors__badge--${e.type}`}>{e.type === 'error' ? 'Error' : 'Warning'}</span>
-                    {e.line != null && <span className="errors__line">line {e.line}</span>}
-                    <span className="errors__msgwrap">
-                      <span className="errors__msg" title={e.message}>{e.message}</span>
-                      {hint && <span className="errors__hint">{hint}</span>}
-                    </span>
-                  </button>
+                  <>
+                    {shown.map((e, i) => {
+                      const hint = hintFor(e.message);
+                      const file = (e as { file?: string }).file;
+                      // Warnings carry no file attribution — jumping would land at
+                      // a meaningless line in the root file, so they don't jump.
+                      const clickable = e.line != null && (file != null || e.type === 'error');
+                      const body = (
+                        <>
+                          <span className={`errors__badge errors__badge--${e.type}`}>{e.type === 'error' ? 'Error' : 'Warning'}</span>
+                          {e.line != null && <span className="errors__line">{file ? `${file} · ` : ''}line {e.line}</span>}
+                          <span className="errors__msgwrap">
+                            <span className="errors__msg" title={e.message}>{e.message}</span>
+                            {hint && <span className="errors__hint">{hint}</span>}
+                          </span>
+                        </>
+                      );
+                      return clickable ? (
+                        <button key={i} className="errors__row" onClick={() => jumpToLine(e.line, file)}>{body}</button>
+                      ) : (
+                        <div key={i} className="errors__row" style={{ cursor: 'default' }}>{body}</div>
+                      );
+                    })}
+                    {ordered.length > shown.length && (
+                      <div className="errors__row" style={{ cursor: 'default' }}>
+                        <span className="errors__msg">… {ordered.length - shown.length} more — open the log for the full list.</span>
+                      </div>
+                    )}
+                  </>
                 );
-              })}
+              })()}
               {errors.length === 0 && (
                 <div className="errors__row" style={{ cursor: 'default' }}>
                   <span className="errors__msg">
@@ -647,7 +678,7 @@ export default function Editor() {
             <span>Preview</span>
             <span className="pdf-status" data-testid="pdf-status" style={{ marginLeft: 10 }}>
               {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
-              {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {(compile.result.durationMs / 1000).toFixed(1)}s</>}
+              {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
               {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
             </span>
             <span className="toolbar__spacer" />
@@ -677,7 +708,17 @@ export default function Editor() {
               Auto
             </button>
           </div>
-          <PdfPane ref={pdfRef} pdfUrl={compile.result?.pdfUrl || null} status={compile.status} zoom={zoom} onFirstOpen={doCompile} onInverse={onPdfInverse} />
+          <PdfPane
+            ref={pdfRef}
+            pdfUrl={compile.result?.pdfUrl || null}
+            status={compile.status}
+            zoom={zoom}
+            hasErrors={errCount > 0}
+            // The on-open typeset is auto-typeset's job — a user who turned the
+            // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
+            onFirstOpen={() => { if (autoRef.current) doCompile(); }}
+            onInverse={onPdfInverse}
+          />
         </section>
       </div>
 

@@ -122,12 +122,16 @@ export class TableWidget extends WidgetType {
       this.edit(this.model.rowInsertAt, this.model.rowInsertAt, `${' &'.repeat(cols - 1).replace(/&/g, ' & ').trimStart()} \\\\\n`);
     }, 'vis-table-addrow');
     btn('+ col', 'Add a column', () => {
+      // Spec and rows must move together: half an edit (rows without the spec)
+      // breaks every row at the next compile, so refuse when the spec range
+      // couldn't be located.
+      if (!this.model.colSpec) return;
       // append a column: extend the colspec, then ` & ` at each row end (last first
       // so earlier offsets stay valid)
       const edits: Array<[number, string]> = [];
       for (const end of [...this.model.rowEnds].sort((a, b) => b - a)) edits.push([end, ' & ']);
       for (const [at, text] of edits) this.edit(at, at, text);
-      if (this.model.colSpec) this.edit(this.model.colSpec.to, this.model.colSpec.to, 'l');
+      this.edit(this.model.colSpec.to, this.model.colSpec.to, 'l');
     }, 'vis-table-addcol');
     btn('TeX', 'Edit LaTeX source', () => {
       window.dispatchEvent(new CustomEvent('aldine:goto', { detail: { pos: this.pos + 1 } }));

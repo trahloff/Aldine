@@ -36,7 +36,7 @@ export interface CompileResult {
   durationMs: number;
   error?: string;
 }
-export interface BibEntry { key: string; type: string; author?: string; title?: string; year?: string; journal?: string; file: string }
+export interface BibEntry { key: string; type: string; author?: string; authorLabel?: string; title?: string; year?: string; journal?: string; file: string }
 export interface LogEntry { hash: string; date: string; message: string; author: string }
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
 export interface CommentReply { author: string; body: string; createdAt: string }
@@ -161,6 +161,8 @@ export const api = {
     req<Comment>(`/api/projects/${id}/comments/${cid}/reply`, { method: 'POST', body: JSON.stringify({ body, author }) }),
   resolveComment: (id: string, cid: string, resolved: boolean) =>
     req<Comment>(`/api/projects/${id}/comments/${cid}/resolve`, { method: 'POST', body: JSON.stringify({ resolved }) }),
+  acceptSuggestion: (id: string, cid: string, branch: string) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}/accept`, { method: 'POST', body: JSON.stringify({ branch }) }),
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
