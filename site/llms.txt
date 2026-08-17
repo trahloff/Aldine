@@ -1,0 +1,32 @@
+# Aldine
+
+> Aldine is a slim, open-source, self-hosted LaTeX collaboration platform, an
+> Overleaf alternative: real-time collaborative editing (Yjs CRDT), git-native
+> branches per project, Zotero and GitHub sync, citation search (OpenAlex),
+> sandboxed TeX Live compiles, and a byte-stable visual editing mode. AGPL-3.0.
+
+Key facts:
+
+- Self-hosting is two Docker containers (app + compiler) via `docker compose up -d`;
+  a 4 GB VPS is enough. No external services required.
+- Migrating from Overleaf: ZIP import preserves the project; GitHub sync works both ways.
+- The compiler runs latexmk in a sandbox: no network egress, dropped capabilities,
+  restricted shell-escape.
+- Storage is plain files plus per-project git repos; Postgres is optional
+  (`DATABASE_URL`). Your data stays greppable on disk.
+- Live demo: https://demo.aldine.dev (world-writable, wiped nightly).
+- Source: https://github.com/trahloff/Aldine
+
+## Documentation
+
+- [README](https://raw.githubusercontent.com/trahloff/Aldine/main/README.md): features, quick start, single-VPS runbook, backup and upgrade recipes
+- [Changelog](https://raw.githubusercontent.com/trahloff/Aldine/main/CHANGELOG.md): release history (Keep a Changelog format)
+- [Scaling notes](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/SCALING.md): architecture, what scales and what is single-node by design
+- [Security policy](https://raw.githubusercontent.com/trahloff/Aldine/main/SECURITY.md): threat model, sandbox details, reporting
+- [Contributing](https://raw.githubusercontent.com/trahloff/Aldine/main/CONTRIBUTING.md): dev setup, workspace layout, test commands
+- [Agent guide](https://raw.githubusercontent.com/trahloff/Aldine/main/AGENTS.md): repo conventions for AI coding agents
+
+## Optional
+
+- [Landing page](https://aldine.dev/): screenshots, demo video, feature overview
+- [Demo deployment](https://raw.githubusercontent.com/trahloff/Aldine/main/deploy/demo/README.md): how the public demo box is run

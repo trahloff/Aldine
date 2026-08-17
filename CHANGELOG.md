@@ -31,6 +31,19 @@ All notable changes to Aldine are documented here. The format follows
   read-only (HTTP and collab socket) so a showcase paper survives a
   world-writable demo, and `ALDINE_COMPILE_PER_MIN` caps each visitor's
   typesets per minute. The demo stack enables the cap by default.
+- Search and AI discoverability for aldine.dev: `robots.txt` (all crawlers
+  welcome, AI crawlers included), `sitemap.xml`, a canonical URL, JSON-LD
+  software metadata, and a curated `llms.txt` overview for LLMs and agents.
+  The page title now says what people search for: "open-source Overleaf
+  alternative".
+- `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
+  `CLAUDE.md` now imports it instead of carrying its own copy.
+
+### Changed
+- App instances send `noindex`: an Aldine box holds private documents, and
+  the public face for search engines is aldine.dev. This covers the demo and
+  every self-hosted install; remove the tag in `apps/web/index.html` if you
+  want your instance indexed.
 
 ### Security
 - Accepting a review suggestion now applies to the live collaborative

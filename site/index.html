@@ -3,7 +3,8 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Aldine: self-hosted collaborative LaTeX editor</title>
+        <title>Aldine: open-source Overleaf alternative, self-hosted LaTeX collaboration</title>
+        <link rel="canonical" href="https://aldine.dev/" />
         <meta
             name="description"
             content="Aldine is a slim, open-source Overleaf alternative: real-time LaTeX collaboration, git-native branches, Zotero built in, sandboxed compiles. Two containers, AGPL, runs on your own box."
@@ -14,8 +15,9 @@
         />
         <meta
             property="og:title"
-            content="Aldine: self-hosted collaborative LaTeX editor"
+            content="Aldine: open-source Overleaf alternative, self-hosted LaTeX collaboration"
         />
+        <meta property="og:type" content="website" />
         <meta
             property="og:description"
             content="Write LaTeX together. Fast, versioned, yours. Open-source Overleaf alternative: live collaboration, git branches, Zotero, sandboxed compiles. AGPL."
@@ -24,8 +26,24 @@
             property="og:image"
             content="https://aldine.dev/assets/social.png"
         />
-        <meta property="og:url" content="https://aldine.dev" />
+        <meta property="og:url" content="https://aldine.dev/" />
         <meta name="twitter:card" content="summary_large_image" />
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@type": "SoftwareApplication",
+                "name": "Aldine",
+                "url": "https://aldine.dev/",
+                "description": "Slim, open-source, self-hosted LaTeX collaboration platform and Overleaf alternative: real-time editing, git-native branches, Zotero and GitHub sync, sandboxed compiles.",
+                "applicationCategory": "Productivity",
+                "operatingSystem": "Linux (Docker)",
+                "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+                "isAccessibleForFree": true,
+                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+                "screenshot": "https://aldine.dev/assets/visual-dark.png",
+                "sameAs": ["https://github.com/trahloff/Aldine"]
+            }
+        </script>
         <style>
             :root {
                 --bg: #1c1c1e;

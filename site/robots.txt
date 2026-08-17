@@ -1,0 +1,8 @@
+# aldine.dev is fully public. All crawlers are welcome, AI crawlers included:
+# training, search-index, retrieval, and live-agent fetches are all fine.
+User-agent: *
+Allow: /
+
+Sitemap: https://aldine.dev/sitemap.xml
+
+# Curated overview for LLMs and AI agents: https://aldine.dev/llms.txt
