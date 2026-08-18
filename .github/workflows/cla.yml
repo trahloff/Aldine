@@ -32,7 +32,7 @@ jobs:
           path-to-signatures: signatures/v1/cla.json
           path-to-document: https://github.com/trahloff/Aldine/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: trahloff,dependabot[bot]
+          allowlist: dependabot[bot]
           custom-notsigned-prcomment: |
             Thanks for the pull request. Aldine asks contributors to sign a
             [Contributor License Agreement](https://github.com/trahloff/Aldine/blob/main/CLA.md)
