@@ -49,6 +49,24 @@ function prodDeps(ws) {
   return seen;
 }
 
+/**
+ * Prebuilt binaries are installed only for the host platform, so walking
+ * node_modules alone yields a different file on macOS than on CI. The lockfile
+ * lists every variant, so these are read from there and carry no licence text
+ * (the tarball for another platform is not on disk to read it from).
+ */
+function platformGated() {
+  const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
+  const out = [];
+  for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+    if (!entry.os && !entry.cpu) continue;
+    if (entry.dev || entry.peer) continue;
+    const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    out.push({ name, version: entry.version ?? '', license: entry.license ?? 'UNKNOWN' });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
+}
+
 function readPackage(name) {
   const dir = join(ROOT, 'node_modules', name);
   const manifest = join(dir, 'package.json');
@@ -62,7 +80,14 @@ function readPackage(name) {
   const license = typeof pkg.license === 'string'
     ? pkg.license
     : pkg.license?.type ?? (Array.isArray(pkg.licenses) ? pkg.licenses.map((l) => l.type).join(' OR ') : 'UNKNOWN');
-  return { name, version: pkg.version, license, text, homepage: pkg.homepage ?? '' };
+  return {
+    name,
+    version: pkg.version,
+    license,
+    text,
+    homepage: pkg.homepage ?? '',
+    platformGated: Boolean(pkg.os || pkg.cpu),
+  };
 }
 
 const packages = new Map();
@@ -72,7 +97,9 @@ for (const ws of WORKSPACES) {
     if (name.startsWith('@aldine/')) continue;
     if (packages.has(name)) continue;
     const info = readPackage(name);
-    if (info) packages.set(name, info);
+    // Platform binaries come from the lockfile instead, so the output does not
+    // depend on which machine generated it.
+    if (info && !info.platformGated) packages.set(name, info);
   }
 }
 
@@ -113,6 +140,25 @@ const lines = [
   'project at tug.org/texlive.',
   '',
 ];
+
+const gated = platformGated();
+if (gated.length) {
+  lines.push(
+    '## Prebuilt platform binaries',
+    '',
+    'Installed only for the matching platform, so their license text is not on',
+    'disk to quote here. Every variant and its license:',
+    '',
+    ...gated.map((p) => `- ${p.name} ${p.version} — ${p.license}`),
+    '',
+  );
+  const bad = gated.filter((p) => DENY.test(p.license));
+  if (bad.length) {
+    console.error('Copyleft or unknown licence among platform binaries:');
+    for (const p of bad) console.error(`  ${p.name}@${p.version}: ${p.license}`);
+    process.exit(1);
+  }
+}
 
 for (const p of sorted) {
   lines.push(`## ${p.name} ${p.version}`, '', `License: ${p.license}`, '');

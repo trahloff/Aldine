@@ -4,7 +4,7 @@ Aldine itself is AGPL-3.0 (see [LICENSE](LICENSE)). It ships with the
 open-source packages listed here, each under its own license. Regenerate with
 `npm run notices`.
 
-232 packages: MIT (148), Apache-2.0 (60), ISC (10), BlueOak-1.0.0 (8), BSD-3-Clause (3), MIT-0 (1), BSD-2-Clause (1), 0BSD (1).
+229 packages: MIT (145), Apache-2.0 (60), ISC (10), BlueOak-1.0.0 (8), BSD-3-Clause (3), MIT-0 (1), BSD-2-Clause (1), 0BSD (1).
 
 Two notes that metadata alone does not capture. The `@hocuspocus/*` packages
 declare MIT in package.json but ship no license file; the grant is at
@@ -12,6 +12,50 @@ github.com/ueberdosis/hocuspocus/blob/main/LICENSE.md. The compiler image
 redistributes TeX Live, which is GPL and LPPL software invoked as an
 unmodified subprocess; its corresponding source is published by the TeX Live
 project at tug.org/texlive.
+
+## Prebuilt platform binaries
+
+Installed only for the matching platform, so their license text is not on
+disk to quote here. Every variant and its license:
+
+- @esbuild/aix-ppc64 0.28.1 — MIT
+- @esbuild/android-arm 0.28.1 — MIT
+- @esbuild/android-arm64 0.28.1 — MIT
+- @esbuild/android-x64 0.28.1 — MIT
+- @esbuild/darwin-arm64 0.28.1 — MIT
+- @esbuild/darwin-x64 0.28.1 — MIT
+- @esbuild/freebsd-arm64 0.28.1 — MIT
+- @esbuild/freebsd-x64 0.28.1 — MIT
+- @esbuild/linux-arm 0.28.1 — MIT
+- @esbuild/linux-arm64 0.28.1 — MIT
+- @esbuild/linux-ia32 0.28.1 — MIT
+- @esbuild/linux-loong64 0.28.1 — MIT
+- @esbuild/linux-mips64el 0.28.1 — MIT
+- @esbuild/linux-ppc64 0.28.1 — MIT
+- @esbuild/linux-riscv64 0.28.1 — MIT
+- @esbuild/linux-s390x 0.28.1 — MIT
+- @esbuild/linux-x64 0.28.1 — MIT
+- @esbuild/netbsd-arm64 0.28.1 — MIT
+- @esbuild/netbsd-x64 0.28.1 — MIT
+- @esbuild/openbsd-arm64 0.28.1 — MIT
+- @esbuild/openbsd-x64 0.28.1 — MIT
+- @esbuild/openharmony-arm64 0.28.1 — MIT
+- @esbuild/sunos-x64 0.28.1 — MIT
+- @esbuild/win32-arm64 0.28.1 — MIT
+- @esbuild/win32-ia32 0.28.1 — MIT
+- @esbuild/win32-x64 0.28.1 — MIT
+- @napi-rs/canvas-android-arm64 0.1.100 — MIT
+- @napi-rs/canvas-darwin-arm64 0.1.100 — MIT
+- @napi-rs/canvas-darwin-x64 0.1.100 — MIT
+- @napi-rs/canvas-linux-arm-gnueabihf 0.1.100 — MIT
+- @napi-rs/canvas-linux-arm64-gnu 0.1.100 — MIT
+- @napi-rs/canvas-linux-arm64-musl 0.1.100 — MIT
+- @napi-rs/canvas-linux-riscv64-gnu 0.1.100 — MIT
+- @napi-rs/canvas-linux-x64-gnu 0.1.100 — MIT
+- @napi-rs/canvas-linux-x64-musl 0.1.100 — MIT
+- @napi-rs/canvas-win32-arm64-msvc 0.1.100 — MIT
+- @napi-rs/canvas-win32-x64-msvc 0.1.100 — MIT
+- fsevents 2.3.3 — MIT
 
 ## @anthropic-ai/sdk 0.68.0
 
@@ -2773,12 +2817,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @esbuild/darwin-arm64 0.28.1
-
-License: MIT
-
-No license file in the published package.
-
 ## @fastify/accept-negotiator 2.0.1
 
 License: MIT
@@ -3377,12 +3415,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-## @napi-rs/canvas-darwin-arm64 0.1.100
-
-License: MIT
-
-No license file in the published package.
 
 ## @opentelemetry/api 1.9.1
 
@@ -13353,35 +13385,6 @@ License: MIT
 
 ```
 Copyright (c) 2015 Luigi Pinca
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-```
-
-## fsevents 2.3.2
-
-License: MIT
-
-```
-MIT License
------------
-
-Copyright (C) 2010-2020 by Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
