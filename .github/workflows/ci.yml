@@ -45,6 +45,11 @@ jobs:
         run: npm run test:db -w apps/server
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # A stale notices file drops somebody's attribution, and a copyleft
+      # dependency would quietly foreclose ever shipping a differently licensed
+      # edition. Same command checks both.
+      - name: Third-party notices and licence gate
+        run: npm run notices:check
 
   compose:
     name: docker compose config is valid

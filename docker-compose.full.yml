@@ -132,7 +132,9 @@ services:
   # Optional Redis for cross-node rate limiting. Enable with `--profile redis`
   # and set REDIS_URL=redis://redis:6379 in .env.
   redis:
-    image: redis:7-alpine
+    # Pinned to the last BSD-3 release: Redis 7.4 moved to RSALv2/SSPL, and the
+    # floating 7-alpine tag would pull that in silently.
+    image: redis:7.2-alpine
     profiles: ["redis"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
