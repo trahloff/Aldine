@@ -13,6 +13,13 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened]
 
+# Two runs for the same pull request would read-modify-write the same signature
+# file and one would clobber the other. Queue them instead; never cancel, since
+# a cancelled run can leave the signature file half-written.
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
 permissions:
   actions: write
   contents: write
