@@ -34,9 +34,17 @@ everyone else. To also keep a showcase paper alive on a world-writable demo:
    read-only: anyone can open and typeset it, nobody can edit, rename, or
    delete it (enforced on both the HTTP API and the collab socket).
 
-The nightly wipe destroys volumes — and with them the showcase project and its
-id — so either re-seed each morning or disable the wipe timer for launch week
-(`systemctl disable --now aldine-demo-wipe.timer` on the box).
+The nightly wipe destroys the data volumes — and with them the showcase project
+and its id — so either re-seed each morning or disable the wipe timer for launch
+week (`systemctl disable --now aldine-demo-wipe.timer` on the box).
+
+The wipe deliberately keeps `aldine_caddy-data`. Let's Encrypt issues at most 5
+certificates per week for the same hostname, so a wipe that took the certificate
+store with it would put the demo behind an unreachable TLS handshake for hours
+on the fifth day — which is exactly what happened once. A box created before
+this fix still carries the old unit; check it with
+`grep ExecStart /etc/systemd/system/aldine-demo-wipe.service` and look for
+`down -v`.
 
 ## Tear it down
 

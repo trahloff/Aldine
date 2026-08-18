@@ -39,6 +39,13 @@ All notable changes to Aldine are documented here. The format follows
 - `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
   `CLAUDE.md` now imports it instead of carrying its own copy.
 
+### Fixed
+- The demo box's nightly wipe no longer destroys Caddy's certificate store. It
+  used `docker compose down -v`, so every wipe re-issued a certificate for the
+  same hostname; on the fifth day in a rolling week Let's Encrypt refuses, and
+  the demo answers no TLS handshake at all until the window rolls over. The
+  wipe now drops the data volumes by name and leaves `aldine_caddy-data` alone.
+
 ### Changed
 - App instances send `noindex`: an Aldine box holds private documents, and
   the public face for search engines is aldine.dev. This covers the demo and
