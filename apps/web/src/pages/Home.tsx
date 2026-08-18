@@ -10,6 +10,7 @@ import AccountSettings from '../components/AccountSettings';
 import { getTheme, toggleTheme } from '../theme';
 import GithubImport from '../components/GithubImport';
 import Onboarding from '../components/Onboarding';
+import About from '../components/About';
 import { friendlyDate } from '../util/dates';
 
 export default function Home() {
@@ -25,6 +26,7 @@ export default function Home() {
   const [showGithub, setShowGithub] = useState(false);
   const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
   const [showTrash, setShowTrash] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('aldine.onboarded') !== '1');
   const dismissOnboarding = () => { localStorage.setItem('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
@@ -219,7 +221,16 @@ export default function Home() {
             </button>
           </p>
         )}
+
+        {/* AGPL section 13: a network instance must offer its users the source. */}
+        <p className="home__legal">
+          <button className="btn btn--ghost btn--small" onClick={() => setAboutOpen(true)} data-testid="open-about">
+            About &amp; source
+          </button>
+        </p>
       </div>
+
+      {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
 
       {showTrash && (
         <Modal onClose={() => setShowTrash(false)} label="Trash" testId="trash-modal">

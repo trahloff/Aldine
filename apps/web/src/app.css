@@ -576,6 +576,8 @@
 
 /* log viewer */
 .modal--wide { width: 760px; }
+
+.home__legal { text-align: center; margin-top: 26px; color: var(--text-3); }
 .logview {
   font-family: var(--font-mono);
   font-size: 11.5px;

@@ -53,3 +53,20 @@ test.describe('first-run onboarding', () => {
     } finally { await ctx.close(); }
   });
 });
+
+test.describe('source offer', () => {
+  // AGPL section 13: an instance reachable over a network has to offer its
+  // users the corresponding source. If this test goes red, every public
+  // deployment is out of compliance, not just the UI.
+  test('the home screen links to the source and the license', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('open-about').click();
+    const about = page.getByTestId('about-modal');
+    await expect(about).toBeVisible();
+    await expect(about).toContainText('Affero General Public License');
+    await expect(about.getByTestId('about-source')).toHaveAttribute(
+      'href',
+      'https://github.com/trahloff/Aldine',
+    );
+  });
+});

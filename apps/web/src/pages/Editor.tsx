@@ -4,6 +4,7 @@ import { api, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
+import About from '../components/About';
 import FileTree from '../components/FileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
@@ -59,6 +60,7 @@ export default function Editor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled } = useAuth();
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
   // Visual mode is gated by an experimental flag until it graduates.
@@ -362,6 +364,7 @@ export default function Editor() {
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
+      { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
@@ -731,6 +734,8 @@ export default function Editor() {
       {publishOpen && project && (
         <GithubPublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
       )}
+
+      {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
 
       {shareOpen && (
         <ShareModal
