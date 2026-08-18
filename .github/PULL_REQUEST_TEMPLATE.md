@@ -13,3 +13,4 @@
 - [ ] New behavior is covered by a test where practical
 - [ ] Docs updated (README / docs/) if user-visible behavior changed
 - [ ] [CLA](../CLA.md) signed (the bot comments on your first PR with how)
+<!-- CLA workflow smoke test -->
