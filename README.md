@@ -359,7 +359,18 @@ The `aldine` API exposes `ui.registerSidebarPanel`, `editor.insertAtCursor`,
 
 ## License
 
+Copyright (C) 2026 Tobias Rahloff.
+
 [AGPL-3.0](LICENSE): self-host freely; if you offer a modified Aldine as a
 service, share your changes. Third-party plugins interact with Aldine over its
-plugin API and may use any license. Overleaf is a trademark of its owners;
-Aldine is an independent project, not affiliated with or endorsed by Overleaf.
+plugin API and may use any license. `templates/iac-paper/iac.cls` is LPPL-1.3c,
+the customary license for a LaTeX class file. Overleaf is a trademark of its
+owners; Aldine is an independent project, not affiliated with or endorsed by
+Overleaf.
+
+Two things stated plainly, because finding them out later feels like a
+bait-and-switch. **A hosted Aldine service is planned**, and contributions are
+accepted under a [CLA](CLA.md) that permits relicensing, so a commercially
+licensed edition is possible in future. What will not change: the self-hosted
+edition stays AGPL-3.0, and no feature that works today moves behind a paid
+tier. The name is handled separately in [TRADEMARK.md](TRADEMARK.md).

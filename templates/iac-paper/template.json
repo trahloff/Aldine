@@ -1,7 +1,7 @@
 {
   "id": "iac-paper",
   "name": "IAC Conference Paper",
-  "description": "International Astronautical Congress manuscript (iac class, biblatex).",
+  "description": "International Astronautical Congress manuscript (unofficial iac class, biblatex). Not affiliated with or endorsed by the IAF.",
   "icon": "🛰",
   "order": 2
 }

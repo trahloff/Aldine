@@ -39,6 +39,21 @@ All notable changes to Aldine are documented here. The format follows
 - `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
   `CLAUDE.md` now imports it instead of carrying its own copy.
 
+### Added
+- An About dialog, from the home screen and the command palette, naming the
+  licence and linking to the source, stamped with the version and the commit
+  the bundle was built from. AGPL section 13 requires a network instance to
+  offer its users the corresponding source, and every public deployment had
+  been serving a UI that mentioned neither.
+- [`CLA.md`](CLA.md) and a signing workflow: contributors keep their copyright
+  and grant the right to distribute, including under different licence terms
+  later, so the project keeps the option of a commercially licensed edition.
+- [`TRADEMARK.md`](TRADEMARK.md): the AGPL covers the code, not the name. Run
+  and rebrand freely; don't ship a modified Aldine under the Aldine name.
+- The README states plainly that a hosted service is planned, that the
+  self-hosted edition stays AGPL, and that no feature that works today moves
+  behind a paid tier.
+
 ### Fixed
 - The demo box's nightly wipe no longer destroys Caddy's certificate store. It
   used `docker compose down -v`, so every wipe re-issued a certificate for the
