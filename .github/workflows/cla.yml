@@ -1,0 +1,45 @@
+# Records contributor agreement to CLA.md on the pull request itself.
+#
+# The action is pinned to the v2.6.1 commit of contributor-assistant/github-action.
+# That repository was archived in March 2026, which is why the SHA matters more
+# than usual: an archived repo cannot receive updates, so the pin is immutable,
+# but it also means no upstream fixes. Signatures live on their own branch so
+# main never carries bot commits.
+name: CLA
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    # Only run for the signing comment or for pull requests, never for ordinary chatter.
+    if: (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+    steps:
+      - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/v1/cla.json
+          path-to-document: https://github.com/trahloff/Aldine/blob/main/CLA.md
+          branch: cla-signatures
+          allowlist: trahloff,dependabot[bot]
+          custom-notsigned-prcomment: |
+            Thanks for the pull request. Aldine asks contributors to sign a
+            [Contributor License Agreement](https://github.com/trahloff/Aldine/blob/main/CLA.md)
+            before the first merge. You keep the copyright to your work; the
+            agreement grants Aldine the right to distribute it, including under
+            different licence terms in future.
+
+            To sign, post exactly this as a new comment on this pull request:
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-allsigned-prcomment: All contributors have signed the CLA. Thanks!

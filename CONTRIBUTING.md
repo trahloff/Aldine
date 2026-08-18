@@ -68,6 +68,20 @@ CI runs the typecheck/build/integration checks on pushes to `main` and on PRs
 a real Postgres service. The browser suites are not in CI yet: they need a TeX
 Live image, so run them locally before a PR that touches a headline feature.
 
+## Contributor License Agreement
+
+The first pull request you open gets a bot comment asking you to sign the
+[CLA](CLA.md) by posting one sentence back. It takes a few seconds and covers
+everything you contribute afterwards.
+
+You keep the copyright to your work. What the agreement grants Aldine is the
+right to distribute your contribution, including under licence terms that differ
+from today's AGPL-3.0 — so that a future commercial edition or licence change
+does not require tracking down every contributor. Aldine is AGPL-3.0 today and
+self-hosting stays free either way. If that trade is not one you want to make,
+say so in an issue rather than silently walking away; it is a reasonable thing to
+disagree about.
+
 ## Conventions
 
 - **Match the surrounding code** — comment density, naming, idioms.
