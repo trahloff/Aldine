@@ -1,0 +1,14 @@
+# Run the published images instead of building on the host. Worth using on a box
+# that is already busy serving GitLab: the compiler image bakes in TeX Live, and
+# building it locally is a long, memory-hungry job.
+#
+#   docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
+#     -f images.yml up -d
+#
+# `build` stays declared in the base file but is never consulted while an image
+# is present and no --build flag is passed. Pull explicitly to update.
+services:
+  app:
+    image: ghcr.io/trahloff/aldine-app:latest
+  compiler:
+    image: ghcr.io/trahloff/aldine-compiler:latest
