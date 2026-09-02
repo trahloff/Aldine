@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -22,7 +22,8 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, newId, rootSiblingPath, publicBase, BRANCH_RE, PROJECT_ID_RE } from './util.js';
+import { registerOAuth } from './oauth/routes.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -51,14 +52,6 @@ function badCredentials(body: { email?: unknown; password?: unknown } | undefine
 function oauthProviders(): Array<{ id: string; label: string }> {
   return oauth.configuredProviders().map((p) => ({ id: p.id, label: p.label }));
 }
-/** Public origin for OAuth redirects — ALDINE_PUBLIC_URL, else derived from the request. */
-function publicBase(req: FastifyRequest): string {
-  if (process.env.ALDINE_PUBLIC_URL) return process.env.ALDINE_PUBLIC_URL.replace(/\/$/, '');
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-  return `${proto}://${host}`;
-}
-
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
  *  network push. In-memory (single-node); cleared on restart → push-when-unsure. */
 const lastPushedHead = new Map<string, string>();
@@ -337,6 +330,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
     }
   });
+
+  // OAuth 2.1 authorization server for the MCP connector (src/oauth/). Wired
+  // here, after the hooks above, so /api/oauth/* sees the resolved user and the
+  // bearer-scope guard like every other /api route.
+  await registerOAuth(app);
 
   // ---------- personal access tokens (agent credentials) ----------
   // Session-cookie auth ONLY: a leaked token must not be able to mint, list,

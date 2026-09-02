@@ -108,6 +108,16 @@ export const compileLimiter = compilePerMin > 0
 /** MCP requests: 60 burst, 1/s sustained — keyed per token digest (fallback IP) by the /mcp guard. */
 export const mcpLimiter = new RateLimiter('mcp', n(process.env.RL_MCP_BURST, 60), 1);
 
+/** OAuth token endpoint: 30 burst, 1/s per IP — code/refresh guessing is
+ *  already hopeless (256-bit secrets); this bounds datastore churn. */
+export const oauthTokenLimiter = new RateLimiter('oauth-token', n(process.env.RL_OAUTH_TOKEN_BURST, 30), 1);
+/** Dynamic client registration: 10 burst, 1/min per IP — bounds client-store
+ *  flooding alongside the 500-client cap. */
+export const oauthRegisterLimiter = new RateLimiter('oauth-register', n(process.env.RL_OAUTH_REGISTER_BURST, 10), 1 / 60);
+/** Consent-page client lookups (each may fetch a client metadata URL): 20
+ *  burst, 1/5s per IP — bounds outbound fetches an attacker can trigger. */
+export const oauthClientLimiter = new RateLimiter('oauth-client', n(process.env.RL_OAUTH_CLIENT_BURST, 20), 0.2);
+
 /** Agent-originated compiles: 1 in flight per user, acquired BEFORE the shared
  *  2-slot compileGate — an agent can hold at most one of the user's two slots,
  *  so the human always keeps one. */

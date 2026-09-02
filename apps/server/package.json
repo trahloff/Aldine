@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:github": "tsx test/github-sync.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
-    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs && tsx test/import-path.test.mjs && tsx test/guess-root.test.mjs && tsx test/import-route.test.mjs && tsx test/compile-stale.test.mjs && tsx test/tokens.test.mjs && tsx test/mcp.test.mjs && tsx test/mcp-static.test.mjs && tsx test/mcp-tools.test.mjs && tsx test/autocommit-split.test.mjs"
+    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs && tsx test/import-path.test.mjs && tsx test/guess-root.test.mjs && tsx test/import-route.test.mjs && tsx test/compile-stale.test.mjs && tsx test/tokens.test.mjs && tsx test/mcp.test.mjs && tsx test/mcp-static.test.mjs && tsx test/mcp-tools.test.mjs && tsx test/autocommit-split.test.mjs && tsx test/oauth.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

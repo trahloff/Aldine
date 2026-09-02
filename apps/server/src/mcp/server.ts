@@ -5,6 +5,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import * as auth from '../auth.js';
 import { mcpLimiter } from '../ratelimit.js';
 import { authenticateMcp, mcpRateKeys, type McpIdentity } from './guards.js';
+import { publicBase } from '../util.js';
+import { wwwAuthenticate } from '../oauth/metadata.js';
 import { registerTools } from './tools.js';
 
 /**
@@ -58,7 +60,14 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
       }
     }
     const identity = await authenticateMcp(credential, staticToken);
-    if (!identity) return reply.code(401).send({ error: 'A valid access token is required' });
+    if (!identity) {
+      // The challenge points OAuth clients (claude.ai, Claude Code) at the
+      // discovery document — only when there is an authorization server to
+      // discover; with auth off the documents are 404 and a challenge would
+      // send the client on a failing probe.
+      if (auth.AUTH_ENABLED) reply.header('www-authenticate', wwwAuthenticate(publicBase(req), { invalidToken: !!credential }));
+      return reply.code(401).send({ error: 'A valid access token is required' });
+    }
     (req as any)._mcpIdentity = identity;
   };
 

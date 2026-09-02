@@ -1,6 +1,17 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
+/** Public origin for OAuth redirects and the OAuth issuer — ALDINE_PUBLIC_URL,
+ *  else derived from the request. Behind a proxy set ALDINE_PUBLIC_URL: the
+ *  Host/X-Forwarded-Host fallback is attacker-influenced on a request the
+ *  attacker sends, and only that request's response reflects it. */
+export function publicBase(req: { headers: Record<string, string | string[] | undefined>; protocol?: string }): string {
+  if (process.env.ALDINE_PUBLIC_URL) return process.env.ALDINE_PUBLIC_URL.replace(/\/$/, '');
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+  return `${proto}://${host}`;
+}
+
 export function newId(len = 10): string {
   return crypto.randomBytes(16).toString('base64url').replace(/[^a-zA-Z0-9]/g, '').slice(0, len).toLowerCase();
 }

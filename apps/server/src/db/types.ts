@@ -84,6 +84,41 @@ export interface TokenRecord {
   lastUsedAt: string | null;
   expiresAt: string | null;
   revokedAt: string | null;
+  /** OAuth-minted tokens carry the client's display name and a family id
+   *  shared with their refresh tokens (refresh reuse revokes the family).
+   *  Both null for hand-made tokens; absent on records written before the
+   *  fields existed — readers treat undefined as null. */
+  clientName: string | null;
+  family: string | null;
+}
+
+/** Dynamically registered OAuth client (RFC 7591). Public client: no secret. */
+export interface OAuthClient {
+  id: string;
+  name: string;
+  redirectUris: string[];
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+/**
+ * OAuth refresh token. `hash` is the SHA-256 digest of the `aldr_` secret.
+ * One `family` per consent; rotation marks the old record `usedAt` and a used
+ * token presented again revokes every token in the family. `clientId` binds
+ * the token to the public client that obtained it.
+ */
+export interface RefreshTokenRecord {
+  id: string;
+  hash: string;
+  tokenId: string;
+  userId: string;
+  clientId: string;
+  family: string;
+  projectIds: string[] | null;
+  clientName: string;
+  expiresAt: string;
+  usedAt: string | null;
+  revokedAt: string | null;
 }
 
 /**
@@ -114,6 +149,10 @@ export interface DataStore {
   deleteReset(token: string): Promise<void>;
 
   // personal access tokens (looked up by SHA-256 digest on every bearer request)
+  /** Also prunes OAuth-minted records (family != null) revoked for over a
+   *  week. Expired-but-unrevoked ones must stay — the family's refresh token
+   *  may be live and the record is the user's revoke handle. Hand-made tokens
+   *  keep their audit trail. */
   createToken(t: TokenRecord): Promise<void>;
   getToken(id: string): Promise<TokenRecord | null>;
   getTokenByHash(hash: string): Promise<TokenRecord | null>;
@@ -122,6 +161,25 @@ export interface DataStore {
   /** Set lastUsedAt alone. Bearer-request bookkeeping must not write a whole
    *  (possibly stale) record back — that could erase a concurrent revocation. */
   touchToken(id: string, lastUsedAt: string): Promise<void>;
+  /** Revoke every access token minted in an OAuth family (refresh-token reuse, user revoke). */
+  revokeTokensInFamily(family: string, revokedAt: string): Promise<void>;
+
+  // OAuth clients (dynamic registration; capped, least-recently-used eviction)
+  createOAuthClient(c: OAuthClient): Promise<void>;
+  getOAuthClient(id: string): Promise<OAuthClient | null>;
+  touchOAuthClient(id: string, lastUsedAt: string): Promise<void>;
+  countOAuthClients(): Promise<number>;
+  /** Delete the `n` clients with the oldest lastUsedAt. Returns how many were removed. */
+  evictOldestOAuthClients(n: number): Promise<number>;
+
+  // OAuth refresh tokens (looked up by SHA-256 digest at the token endpoint)
+  createRefresh(r: RefreshTokenRecord): Promise<void>;
+  getRefreshByHash(hash: string): Promise<RefreshTokenRecord | null>;
+  /** Compare-and-set: flips usedAt only while it is null and the record is
+   *  not revoked, and reports whether this call won. Two concurrent
+   *  rotations of one token must see exactly one true — the loser is reuse. */
+  markRefreshUsed(id: string, usedAt: string): Promise<boolean>;
+  revokeRefreshFamily(family: string, revokedAt: string): Promise<void>;
 
   // project metadata
   readMeta(id: string): Promise<ProjectMeta | null>;

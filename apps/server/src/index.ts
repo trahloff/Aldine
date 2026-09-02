@@ -43,7 +43,11 @@ if (process.env.ALDINE_MCP === '1') {
 if (fs.existsSync(path.join(config.webDist, 'index.html'))) {
   await app.register(fastifyStatic, { root: config.webDist, prefix: '/' });
   app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith('/api') || req.url.startsWith('/plugins') || req.url.startsWith('/collab')) {
+    // /oauth/authorize is the SPA's consent page; the other /oauth/* paths and
+    // /.well-known/* are protocol endpoints that must never answer with HTML.
+    const api = req.url.startsWith('/api') || req.url.startsWith('/plugins') || req.url.startsWith('/collab')
+      || req.url.startsWith('/.well-known') || (req.url.startsWith('/oauth/') && !req.url.startsWith('/oauth/authorize'));
+    if (api) {
       return reply.code(404).send({ error: 'not found' });
     }
     return reply.type('text/html').send(fs.readFileSync(path.join(config.webDist, 'index.html')));
