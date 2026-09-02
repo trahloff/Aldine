@@ -46,7 +46,29 @@ export interface BibEntry { key: string; type: string; author?: string; authorLa
 export interface LogEntry { hash: string; date: string; message: string; author: string }
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
 /** Token metadata only — the `aldn_…` value itself is returned once, on create. */
-export interface AccessToken { id: string; name: string; projectIds: string[] | null; createdAt: string; lastUsedAt: string | null; expiresAt: string | null }
+export interface AccessToken {
+  id: string;
+  name: string;
+  projectIds: string[] | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  /** Set when the token was minted through the OAuth Connect flow — the
+   *  connector's display name; null for hand-made tokens. */
+  clientName: string | null;
+}
+/** What the consent page shows about the app asking for access. */
+export interface OAuthClientInfo {
+  name: string;
+  /** Where the client's identity comes from: the metadata document's host
+   *  (CIMD) or the redirect host (dynamic registration). */
+  host: string;
+  redirectHost: string;
+  /** Every registered redirect is a loopback address — the request could
+   *  have been started by anything running on the user's machine. */
+  loopbackOnly: boolean;
+  kind: 'cimd' | 'dcr';
+}
 export interface CommentReply { author: string; body: string; createdAt: string }
 export interface Comment {
   id: string;
@@ -65,6 +87,31 @@ export interface Comment {
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) { super(message); }
+}
+
+/** OAuth routes answer in RFC 6749 shape (`error` is a code such as
+ *  `invalid_client`, `error_description` the sentence); the description is
+ *  the message and the code stays available for branching. */
+export class OAuthApiError extends ApiError {
+  constructor(message: string, status: number, public readonly code: string) { super(message, status); }
+}
+
+async function oauthReq<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+    ...init,
+  });
+  if (!res.ok) {
+    let code = `http_${res.status}`;
+    let msg = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string; error_description?: string };
+      if (body.error_description) { msg = body.error_description; code = body.error || code; }
+      else if (body.error) msg = body.error;
+    } catch { /* keep */ }
+    throw new OAuthApiError(msg, res.status, code);
+  }
+  return res.json() as Promise<T>;
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
@@ -199,6 +246,11 @@ export const api = {
   createToken: (name: string, projectIds?: string[], expiresAt?: string) =>
     req<AccessToken & { token: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ name, projectIds, expiresAt }) }),
   revokeToken: (tokenId: string) => req<{ ok: boolean }>(`/api/tokens/${tokenId}`, { method: 'DELETE' }),
+  // OAuth consent (cookie session only — access tokens are refused here)
+  getOAuthClient: (clientId: string, redirectUri: string) =>
+    oauthReq<OAuthClientInfo>(`/api/oauth/client?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`),
+  postOAuthConsent: (body: { [param: string]: string | string[] | null | undefined; decision: 'allow' | 'deny'; projectIds: string[] | null }) =>
+    oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
     req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
 };

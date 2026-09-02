@@ -850,3 +850,30 @@
   .split-pdf, .pdf-pane { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
 }
+
+/* ---------- OAuth consent (/oauth/authorize) ---------- */
+.consent { width: 420px; }
+.consent__title { font-size: 17px; font-weight: 600; line-height: 1.35; margin: 0 0 4px; }
+.consent__client { color: var(--accent); }
+.consent__origin { color: var(--text-2); font-size: 12.5px; margin: 0 0 10px; }
+.consent__origin code { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.consent__warn { color: var(--warn-text); background: var(--warn-soft); border-radius: var(--radius-m); padding: 8px 10px; font-size: 12.5px; margin: 0 0 10px; }
+.consent__what { color: var(--text-2); font-size: 13px; line-height: 1.45; margin: 0 0 14px; }
+.consent__scope { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.consent__option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); cursor: pointer; }
+.consent__option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.consent__option input { margin: 3px 0 0; accent-color: var(--accent); }
+.consent__option-title { display: block; font-size: 13.5px; font-weight: 550; }
+.consent__option-sub { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
+.consent__projects { max-height: 180px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 4px 10px; background: var(--bg-inset); }
+.consent__project { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; cursor: pointer; }
+.consent__project input { accent-color: var(--accent); }
+.consent__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.consent__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.consent__actions .btn { min-width: 84px; justify-content: center; height: 34px; }
+.consent__who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-3); font-size: 12px; margin: 14px 0 0; }
+.consent__who strong { color: var(--text-2); font-weight: 600; }
+.consent__error { color: var(--error); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
+.consent__error .btn { display: inline-flex; vertical-align: baseline; }
+.consent__hint { color: var(--text-2); font-size: 12.5px; line-height: 1.45; margin: 0 0 14px; }
+.consent__back { align-self: flex-start; }

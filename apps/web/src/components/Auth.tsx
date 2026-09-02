@@ -6,11 +6,17 @@ interface AuthState {
   authEnabled: boolean;
   user: AuthUser | null;
   providers: OAuthProviderInfo[];
+  passwordAuth: boolean;
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], passwordAuth: true, setUser: () => {}, refresh: async () => {} });
+
+/** The OAuth consent page validates the requesting client BEFORE asking for
+ *  credentials and renders the sign-in form itself, so the provider's gate
+ *  must let it mount while signed out. */
+const SELF_GATED_PATHS = ['/oauth/authorize'];
 
 export function useAuth() { return useContext(Ctx); }
 
@@ -42,9 +48,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Show the login/reset screen when signed out, OR when a reset link was opened
   // in an already-signed-in session (otherwise the ?reset_token= link does nothing).
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
-  if (authEnabled && (!user || hasResetToken)) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
+  const selfGated = typeof window !== 'undefined' && SELF_GATED_PATHS.includes(window.location.pathname);
+  if (authEnabled && (!user || hasResetToken) && !selfGated) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, providers, setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, providers, passwordAuth, setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';
@@ -58,7 +65,7 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
   ),
 };
 
-function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void }) {
+export function LoginScreen({ providers, passwordAuth, onAuthed, heading }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
@@ -109,7 +116,7 @@ function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthPr
     }
   };
 
-  const title = mode === 'login' ? 'Sign in to your projects.'
+  const title = mode === 'login' ? (heading ?? 'Sign in to your projects.')
     : mode === 'register' ? 'Create an account to get started.'
     : mode === 'forgot' ? 'Reset your password.'
     : 'Set a new password.';

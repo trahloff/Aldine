@@ -70,8 +70,17 @@ function AgentAccess() {
   return (
     <>
       <div className="menu__label" style={{ margin: '18px 0 6px' }}>Agent access</div>
+      <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>
+        In Claude: Settings → Connectors → Add custom connector → Connect. You pick which projects Claude may touch when it asks.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+        <code data-testid="agent-connector-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{connectorUrl}</code>
+        <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={() => copy(connectorUrl, 'Connector URL')} data-testid="agent-connector-copy">Copy connector URL</button>
+      </div>
+
+      <div className="menu__label" style={{ margin: '14px 0 6px' }}>Access tokens for scripts</div>
       <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 10px' }}>
-        Access tokens let Claude and other agents open your projects through the API.
+        For scripts and anything without a Connect button: send a token as the Authorization bearer or the X-Aldine-Token header. Connections made through Connect show up here too and can be revoked the same way.
       </p>
 
       {minted && (
@@ -81,11 +90,7 @@ function AgentAccess() {
             <input className="input" readOnly value={minted} data-testid="agent-token-value" style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 12 }} onFocus={(e) => e.target.select()} />
             <button className="btn btn--small" style={{ flexShrink: 0 }} onClick={() => copy(minted, 'Token')} data-testid="agent-token-copy">Copy token</button>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-            <code data-testid="agent-connector-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{connectorUrl}</code>
-            <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={() => copy(connectorUrl, 'Connector URL')}>Copy connector URL</button>
-          </div>
-          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 8px' }}>In Claude: Settings → Connectors → Add custom connector. Set Authentication to “None”, then add a request header named X-Aldine-Token with the token as its value.</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 8px' }}>Send it as <code>Authorization: Bearer …</code> or in an <code>X-Aldine-Token</code> header to {connectorUrl}. Claude connectors don’t need a token — use Connect.</p>
           <button className="btn btn--small" onClick={() => setMinted(null)} data-testid="agent-token-done">Done</button>
         </div>
       )}
@@ -133,15 +138,21 @@ function AgentAccess() {
       )}
 
       {tokens !== null && tokens.length === 0 && !showForm && !minted && (
-        <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '6px 0 0' }}>No access tokens yet — create one to connect Claude to your projects.</p>
+        <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '6px 0 0' }}>No access tokens yet — nothing is connected to your projects.</p>
       )}
       {tokens?.map((t) => (
-        <div key={t.id} className="settings__row" style={{ alignItems: 'center', gap: 10 }} data-testid={`agent-token-${t.id}`}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-            <span style={{ color: 'var(--text-3)', fontSize: 11.5 }}>Created {friendlyDate(t.createdAt)}</span>
-            <span style={{ color: 'var(--text-3)', fontSize: 11.5 }}>{t.lastUsedAt ? `Used ${friendlyDate(t.lastUsedAt)}` : 'Never used'}</span>
-            <button className="btn btn--ghost btn--small" onClick={() => revoke(t)} data-testid="agent-token-revoke">Revoke</button>
+        <div key={t.id} className="settings__row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }} data-testid={`agent-token-${t.id}`}>
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+            {t.clientName !== null && (
+              <span className="gh-repo__badge" title="Created by the Connect button in Claude; revoking also ends its refresh tokens" data-testid="agent-token-via-connect">via Connect</span>
+            )}
+            <button className="btn btn--ghost btn--small" style={{ flexShrink: 0 }} onClick={() => revoke(t)} data-testid="agent-token-revoke">Revoke</button>
+          </span>
+          <span style={{ display: 'flex', gap: 10, color: 'var(--text-3)', fontSize: 11.5 }}>
+            <span>Created {friendlyDate(t.createdAt)}</span>
+            <span>{t.lastUsedAt ? `Used ${friendlyDate(t.lastUsedAt)}` : 'Never used'}</span>
+            {t.expiresAt && <span>Expires {friendlyDate(t.expiresAt)}</span>}
           </span>
         </div>
       ))}
