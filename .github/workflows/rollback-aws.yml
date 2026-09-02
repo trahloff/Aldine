@@ -14,6 +14,14 @@ on:
       revision:
         description: Task-definition revision number (empty = previous)
         required: false
+      target:
+        description: Service to roll back
+        type: choice
+        options: [production, staging]
+        default: production
+
+env:
+  SERVICE: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
 
 permissions:
   id-token: write # OIDC
@@ -32,7 +40,7 @@ jobs:
       - name: Roll the service back
         run: |
           set -euo pipefail
-          CURRENT=$(aws ecs describe-services --cluster papyr --services papyr \
+          CURRENT=$(aws ecs describe-services --cluster papyr --services "$SERVICE" \
             --query 'services[0].taskDefinition' --output text --region "${{ vars.AWS_REGION }}")
           CUR_REV="${CURRENT##*:}"
           REV="${{ inputs.revision }}"
@@ -41,14 +49,14 @@ jobs:
             echo "Nothing to do (current revision: $CUR_REV, requested: $REV)"; exit 1
           fi
           # Surface which commit this revision carries (the SHA image tag).
-          IMG=$(aws ecs describe-task-definition --task-definition "papyr:$REV" \
+          IMG=$(aws ecs describe-task-definition --task-definition "$SERVICE:$REV" \
             --query 'taskDefinition.containerDefinitions[?name==`server`].image' \
             --output text --region "${{ vars.AWS_REGION }}")
-          echo "Rolling back: papyr:$CUR_REV → papyr:$REV ($IMG)"
-          aws ecs update-service --cluster papyr --service papyr \
-            --task-definition "papyr:$REV" --region "${{ vars.AWS_REGION }}"
-          aws ecs wait services-stable --cluster papyr --services papyr \
+          echo "Rolling back: $SERVICE:$CUR_REV → $SERVICE:$REV ($IMG)"
+          aws ecs update-service --cluster papyr --service "$SERVICE" \
+            --task-definition "$SERVICE:$REV" --region "${{ vars.AWS_REGION }}"
+          aws ecs wait services-stable --cluster papyr --services "$SERVICE" \
             --region "${{ vars.AWS_REGION }}"
-          echo "## Rolled back" >> "$GITHUB_STEP_SUMMARY"
-          echo "- from: \`papyr:$CUR_REV\` → to: \`papyr:$REV\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Rolled back (${{ inputs.target || 'production' }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- from: \`$SERVICE:$CUR_REV\` → to: \`$SERVICE:$REV\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- server image: \`$IMG\`" >> "$GITHUB_STEP_SUMMARY"

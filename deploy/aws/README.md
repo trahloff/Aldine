@@ -93,6 +93,29 @@ Set the corresponding client id/secret in `secret_env`.
 The ECS deployment circuit breaker also rolls back on its own if the new tasks
 never reach a healthy state.
 
+## Staging on the same load balancer (optional)
+
+Set `staging_domain_name` (a hostname in the same Route53 zone) and apply:
+
+```hcl
+staging_domain_name    = "staging.latex.example.com"
+staging_env            = { ALDINE_MCP = "1" }   # anything you want to try before prod
+github_deploy_branches = ["my-feature"]         # branches CI may deploy to staging
+```
+
+That adds a second certificate on the HTTPS listener, a host-header rule to a
+second target group, and a second Fargate Spot service (`papyr-staging`) with
+its own EFS filesystem and log group (`/papyr/staging`). It shares the VPC,
+roles, ECR repositories and SSM secrets with prod — so OAuth sign-in only works
+there if the providers also list the staging callback URL; password sign-in
+always works. Cost is roughly one extra Spot task plus a few GB of EFS.
+
+Deploy a branch to it from the Actions tab: **Deploy to AWS → branch: my-feature
+→ target: staging**. Roll back the same way with **Rollback AWS deploy →
+target: staging**. Scale the service to 0 in the console to pause it; unset
+`staging_domain_name` and apply to remove it entirely (the EFS filesystem goes
+with it — staging data is disposable by design).
+
 ## Cost (eu-central-1, low traffic, ballpark)
 
 | Item | ~Monthly |
