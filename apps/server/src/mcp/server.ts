@@ -27,6 +27,19 @@ export function createMcpServer(identity: McpIdentity): McpServer {
   return server;
 }
 
+/**
+ * The token may arrive as `Authorization: Bearer …` or as `X-Aldine-Token: …`.
+ * Claude's connector settings reserve the Authorization header for their own
+ * OAuth bearer, so a custom header is the only way a static token reaches us
+ * from claude.ai; Authorization wins when both are present.
+ */
+function presentedCredential(req: FastifyRequest): string | undefined {
+  if (req.headers.authorization) return req.headers.authorization;
+  const alt = req.headers['x-aldine-token'];
+  const raw = Array.isArray(alt) ? alt[0] : alt;
+  return raw ? `Bearer ${raw.trim()}` : undefined;
+}
+
 export async function registerMcp(app: FastifyInstance): Promise<void> {
   const staticToken = process.env.ALDINE_MCP_TOKEN || undefined;
   if (!auth.AUTH_ENABLED && !staticToken) {
@@ -36,14 +49,15 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
   // onRequest runs before Fastify's body parsing, so the limiter and the auth
   // check never touch the JSON-RPC payload of an unauthenticated request.
   const guard = async (req: FastifyRequest, reply: FastifyReply) => {
+    const credential = presentedCredential(req);
     // Both keys (IP, then token digest) must pass — see mcpRateKeys for why
     // the IP bucket has to gate before the token-keyed one exists.
-    for (const rateKey of mcpRateKeys(req.headers.authorization, req.ip)) {
+    for (const rateKey of mcpRateKeys(credential, req.ip)) {
       if (!(await mcpLimiter.take(rateKey))) {
         return reply.code(429).send({ error: 'Too many requests — slow down' });
       }
     }
-    const identity = await authenticateMcp(req.headers.authorization, staticToken);
+    const identity = await authenticateMcp(credential, staticToken);
     if (!identity) return reply.code(401).send({ error: 'A valid access token is required' });
     (req as any)._mcpIdentity = identity;
   };

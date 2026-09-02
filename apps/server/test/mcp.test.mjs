@@ -47,6 +47,14 @@ check(res.statusCode === 401, `no credential → 401 (got ${res.statusCode})`);
 res = await app.inject({ method: 'POST', url: '/mcp', remoteAddress: '203.0.113.1', headers: { authorization: 'Bearer aldn_wrongwrongwrongwrong' }, payload: rpcPing });
 check(res.statusCode === 401, `wrong token → 401 (got ${res.statusCode})`);
 
+res = await app.inject({ method: 'POST', url: '/mcp', remoteAddress: '203.0.113.1', headers: { 'x-aldine-token': 'aldn_wrongwrongwrongwrong' }, payload: rpcPing });
+check(res.statusCode === 401, `wrong X-Aldine-Token → 401 (got ${res.statusCode})`);
+
+// claude.ai reserves the Authorization header for its own OAuth bearer, so the
+// token must also be accepted from X-Aldine-Token (raw, no "Bearer" prefix).
+res = await app.inject({ method: 'GET', url: '/mcp', remoteAddress: '203.0.113.1', headers: { 'x-aldine-token': token } });
+check(res.statusCode === 405, `X-Aldine-Token authenticates (GET → 405, got ${res.statusCode})`);
+
 res = await app.inject({ method: 'GET', url: '/mcp', remoteAddress: '203.0.113.1', headers: { authorization: `Bearer ${token}` } });
 check(res.statusCode === 405, `GET with a valid PAT → 405, stateless server offers POST only (got ${res.statusCode})`);
 check(res.headers.allow === 'POST', 'the 405 names the allowed method');

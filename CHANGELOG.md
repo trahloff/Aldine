@@ -62,7 +62,9 @@ All notable changes to Aldine are documented here. The format follows
   Context Protocol over Streamable HTTP at `POST /mcp`, so MCP clients such as
   Claude can connect to an Aldine instance directly. Stateless — safe behind a
   load balancer. Auth is mandatory: with `AUTH_ENABLED`, a personal access
-  token (`Authorization: Bearer aldn_…`, project scope respected); without it,
+  token (`Authorization: Bearer aldn_…`, or `X-Aldine-Token: aldn_…` for
+  clients such as claude.ai that reserve the Authorization header; project
+  scope respected); without it,
   an operator-set `ALDINE_MCP_TOKEN` compared timing-safely. If neither is
   configured every request gets 401 and the server logs a setup hint at boot —
   there is no authless mode. The route is rate limited per client IP and per

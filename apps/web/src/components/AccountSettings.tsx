@@ -85,7 +85,7 @@ function AgentAccess() {
             <code data-testid="agent-connector-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{connectorUrl}</code>
             <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={() => copy(connectorUrl, 'Connector URL')}>Copy connector URL</button>
           </div>
-          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 8px' }}>In Claude: Settings → Connectors → Add custom connector.</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 8px' }}>In Claude: Settings → Connectors → Add custom connector. Set Authentication to “None”, then add a request header named X-Aldine-Token with the token as its value.</p>
           <button className="btn btn--small" onClick={() => setMinted(null)} data-testid="agent-token-done">Done</button>
         </div>
       )}

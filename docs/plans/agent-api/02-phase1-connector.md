@@ -20,7 +20,10 @@ prod, plus the demo-instance trial connector.
 
 ## 1.2 Auth for /mcp
 
-- If `AUTH_ENABLED`: require a PAT (`Authorization: Bearer aldn_…`) — Claude
+- If `AUTH_ENABLED`: require a PAT (`Authorization: Bearer aldn_…`, or
+  `X-Aldine-Token: aldn_…` — claude.ai's connector UI reserves Authorization
+  for its OAuth bearer, so its "additional request headers" need a custom
+  name; found during the first staging dogfood 2026-09-02) — Claude
   connector configured with `static_headers`. Token resolution via Phase 0's
   `userFromToken`; project scope applies.
 - If auth off: require `ALDINE_MCP_TOKEN` (operator-set static bearer,
