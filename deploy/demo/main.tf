@@ -61,6 +61,14 @@ resource "hcloud_server" "demo" {
     repo_url           = var.repo_url
     protected_projects = var.protected_projects
   })
+
+  # cloud-init runs once, at first boot. A template change must be applied on
+  # the running box (git pull + compose up, or the units edited in place) — a
+  # plan that replaces the server would destroy the data volume and the Caddy
+  # certificate volume, and a fresh box hits Let's Encrypt's rate limit.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 output "ip" {
