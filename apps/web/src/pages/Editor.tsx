@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { api, ApiError, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -223,6 +223,20 @@ export default function Editor() {
     }
   };
 
+  const setStopOnFirstError = useCallback(async (on: boolean) => {
+    if (!project || on === !!project.stopOnFirstError) return;
+    // The checkbox is controlled: flip it now so it follows the click, and
+    // roll back if the server refuses.
+    setProject((prev) => (prev ? { ...prev, stopOnFirstError: on } : prev));
+    try {
+      await api.patchProject(id, { stopOnFirstError: on });
+      toast(on ? 'Typesetting now stops at the first error' : 'Typesetting now runs to the end and lists the errors', 'ok');
+    } catch (err: any) {
+      setProject((prev) => (prev ? { ...prev, stopOnFirstError: !on } : prev));
+      toast(`Could not change the setting: ${err.message}`, 'error');
+    }
+  }, [id, project, toast]);
+
   const setEngine = useCallback(async (engine: string) => {
     if (!project || engine === project.engine) return;
     try {
@@ -322,18 +336,22 @@ export default function Editor() {
   }, [comments, id, acceptSuggestion, loadComments, bumpComments]);
 
 
-  // The preview is stale when the last run failed: the server keeps the previous
-  // pdfUrl and flags it, or the run never produced a result and the pane still
-  // shows the old canvases. A ref so the inverse callback reads the live value.
-  const pdfStale = compile.status === 'error' || !!compile.result?.pdfStale;
+  // The preview is stale when the last run produced no PDF: the server keeps
+  // the previous pdfUrl and flags it, or the run never produced a result and
+  // the pane still shows the old canvases. A run that logged errors but wrote
+  // a PDF is current — the errors sit in the list beside it. Refs so the
+  // inverse callback reads the live values.
+  const pdfStale = (compile.status === 'error' && !compile.result) || !!compile.result?.pdfStale;
   const pdfStaleRef = useRef(pdfStale);
   pdfStaleRef.current = pdfStale;
+  const compileIdRef = useRef<number | undefined>(undefined);
+  compileIdRef.current = compile.result?.compileId;
 
   // Inverse SyncTeX: double-click in the PDF → open the source file at that line.
   const onPdfInverse = useCallback(async (page: number, x: number, y: number) => {
     if (pdfStaleRef.current) toast('This preview is from the last successful typeset — fix the errors and typeset again to jump accurately');
     try {
-      const res = await api.synctex(id, branch, { direction: 'inverse', page, x, y });
+      const res = await api.synctex(id, branch, { direction: 'inverse', page, x, y, compileId: compileIdRef.current });
       const rec = res.records?.find((r) => r.input || r.line != null);
       if (!rec) { toast('No source location for that spot', 'error'); return; }
       const line = Number(rec.line);
@@ -349,7 +367,9 @@ export default function Editor() {
       if (match) file = match.path;
       if (file && files.some((f) => f.path === file)) setActiveFile(file);
       if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 80));
-    } catch {
+    } catch (err: any) {
+      // 409: the preview on screen and the SyncTeX on disk are different runs.
+      if (err instanceof ApiError && err.status === 409) { toast(err.message); return; }
       toast('Jump to source unavailable — typeset first', 'error');
     }
   }, [id, branch, files, toast]);
@@ -409,6 +429,7 @@ export default function Editor() {
       { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
+      { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
@@ -456,7 +477,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, insertAtCursor, loadFiles, loadProject, toast]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, insertAtCursor, loadFiles, loadProject, toast]);
 
   const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errCount = errors.filter((e) => e.type === 'error').length;
@@ -818,6 +839,10 @@ export default function Editor() {
             <h2>Typesetting log</h2>
             <pre className="logview" data-testid="log-view">{compile.result.log || '(no log)'}</pre>
             <div className="modal__row">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 12.5 }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
+                <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} />
+                Stop on first error
+              </label>
               <button className="btn" onClick={() => setShowLog(false)}>Close</button>
             </div>
           </div>

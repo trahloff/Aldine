@@ -5,6 +5,7 @@ export interface ProjectSummary {
   name: string;
   rootFile: string;
   engine: string;
+  stopOnFirstError?: boolean;
   createdAt: string;
   ownerId?: string;
   ownerName?: string;
@@ -33,6 +34,8 @@ export interface CompileResult {
   pdfUrl: string | null;
   /** The run failed and pdfUrl is the last successful one, unchanged. */
   pdfStale?: boolean;
+  /** The run whose PDF pdfUrl serves; sent back with SyncTeX lookups. */
+  compileId?: number;
   synctex?: string | null;
   log: string;
   errors: CompileError[];
@@ -85,7 +88,7 @@ export const api = {
   importZip: (name: string, zipBase64: string) =>
     req<ProjectSummary>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64 }) }),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
-  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine'>>) =>
+  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteProject: (id: string, permanent = false) => req<{ ok: boolean }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
