@@ -6,6 +6,12 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- AWS deployment: an optional staging service on the same load balancer
+  (`staging_domain_name`), with its own filesystem, log group and certificate,
+  so a feature branch can be tried at a real URL before it reaches prod. The
+  deploy and rollback workflows take a `target` input (production or staging).
+
 ### Security
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
   `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
