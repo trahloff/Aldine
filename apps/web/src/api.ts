@@ -31,6 +31,9 @@ export interface CompileResult {
   timedOut?: boolean;
   pdf: string | null;
   pdfUrl: string | null;
+  /** The run failed and pdfUrl is the last successful one, unchanged. */
+  pdfStale?: boolean;
+  synctex?: string | null;
   log: string;
   errors: CompileError[];
   durationMs: number;
@@ -53,6 +56,12 @@ export interface Comment {
   replies: CommentReply[];
 }
 
+/** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
+ *  framework, no JSON `error` text worth quoting) from a route's own message. */
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); }
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: init?.body ? { 'content-type': 'application/json' } : undefined,
@@ -61,7 +70,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep */ }
-    throw new Error(msg);
+    throw new ApiError(msg, res.status);
   }
   return res.json() as Promise<T>;
 }
