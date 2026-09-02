@@ -212,7 +212,11 @@ async function synctex(body) {
   const pdf = path.join(rootDir, OUT_SUBDIR, `${base}.pdf`);
   let args;
   if (direction === 'forward') {
-    args = ['view', '-i', `${line}:${column}:${body.file || rootFile}`, '-o', pdf];
+    // synctex records inputs as TeX opened them — relative to the compile dir
+    // (the root file's dir, thanks to latexmk -cd) — while the client names
+    // files project-relative. The inverse direction undoes this below; mirror it.
+    const input = path.relative(rootDir, body.file || rootFile) || path.basename(rootFile);
+    args = ['view', '-i', `${line}:${column}:${input}`, '-o', pdf];
   } else {
     args = ['edit', '-o', `${page}:${x}:${y}:${pdf}`];
   }

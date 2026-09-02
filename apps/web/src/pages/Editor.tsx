@@ -28,6 +28,21 @@ import { shortcut } from '../platform';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
+/** The engines the server accepts (PATCH rejects anything else with 400). */
+const ENGINES: Array<{ id: string; label: string }> = [
+  { id: 'pdf', label: 'pdfLaTeX' },
+  { id: 'xelatex', label: 'XeLaTeX' },
+  { id: 'lualatex', label: 'LuaLaTeX' },
+];
+
+/** A text field that is not the code editor (whose own keymap owns Mod-j). */
+function inTextField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  if (el.closest('.cm-editor')) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+}
+
 export default function Editor() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -190,21 +205,6 @@ export default function Editor() {
     localStorage.setItem('aldine.autoTypeset', next ? '1' : '0');
   };
 
-  // Cmd+S → typeset, Cmd+K → command palette
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        doCompile();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setPaletteOpen((o) => !o);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [doCompile]);
-
   const switchBranch = (name: string) => {
     setParams(name === 'main' ? {} : { branch: name });
     setCompile({ status: 'idle', result: null });
@@ -222,6 +222,18 @@ export default function Editor() {
       toast(`Could not rename: ${err.message}`, 'error');
     }
   };
+
+  const setEngine = useCallback(async (engine: string) => {
+    if (!project || engine === project.engine) return;
+    try {
+      await api.patchProject(id, { engine });
+      await loadProject();
+      // A PDF on screen was typeset with the old engine — rebuild it.
+      if (compile.result) doCompile();
+    } catch (err: any) {
+      toast(`Could not change the engine: ${err.message}`, 'error');
+    }
+  }, [id, project, compile.result, loadProject, doCompile, toast]);
 
   const jumpToLine = (line: number | null, file?: string) => {
     if (line == null || !project) return;
@@ -310,12 +322,20 @@ export default function Editor() {
   }, [comments, id, acceptSuggestion, loadComments, bumpComments]);
 
 
+  // The preview is stale when the last run failed: the server keeps the previous
+  // pdfUrl and flags it, or the run never produced a result and the pane still
+  // shows the old canvases. A ref so the inverse callback reads the live value.
+  const pdfStale = compile.status === 'error' || !!compile.result?.pdfStale;
+  const pdfStaleRef = useRef(pdfStale);
+  pdfStaleRef.current = pdfStale;
+
   // Inverse SyncTeX: double-click in the PDF → open the source file at that line.
   const onPdfInverse = useCallback(async (page: number, x: number, y: number) => {
+    if (pdfStaleRef.current) toast('This preview is from the last successful typeset — fix the errors and typeset again to jump accurately');
     try {
       const res = await api.synctex(id, branch, { direction: 'inverse', page, x, y });
       const rec = res.records?.find((r) => r.input || r.line != null);
-      if (!rec) return;
+      if (!rec) { toast('No source location for that spot', 'error'); return; }
       const line = Number(rec.line);
       // Older compilers return the path as TeX opened it (…/paper/./ch1.tex);
       // collapse "/./" segments or the suffix match below never fires and the
@@ -329,8 +349,10 @@ export default function Editor() {
       if (match) file = match.path;
       if (file && files.some((f) => f.path === file)) setActiveFile(file);
       if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 80));
-    } catch { /* synctex unavailable */ }
-  }, [id, branch, files]);
+    } catch {
+      toast('Jump to source unavailable — typeset first', 'error');
+    }
+  }, [id, branch, files, toast]);
 
   // Forward SyncTeX: from the editor, jump the PDF to the current line.
   const jumpToPdf = useCallback(async () => {
@@ -340,10 +362,34 @@ export default function Editor() {
     try {
       const res = await api.synctex(id, branch, { direction: 'forward', file: activeFile, line, column: 0 });
       const rec = res.records?.find((r) => r.page != null && (r.y != null || r.v != null));
-      if (!rec) return;
+      if (!rec) { toast('No PDF location for this line — typeset first', 'error'); return; }
       pdfRef.current?.showForward(Number(rec.page), Number(rec.y ?? rec.v));
-    } catch { /* synctex unavailable */ }
-  }, [id, branch, activeFile]);
+    } catch {
+      toast('Jump unavailable for this file', 'error');
+    }
+  }, [id, branch, activeFile, toast]);
+
+  // Cmd+S → typeset, Cmd+K → command palette, Cmd+J → jump the PDF to the cursor
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        doCompile();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j' && !e.defaultPrevented && !inTextField(e.target)) {
+        // CodeMirror binds Mod-j itself (and prevents default) when the editor
+        // has focus; this catches the shortcut from the PDF pane, tree, etc.
+        // Other text fields (comment composer, dialogs, palette) keep the
+        // keystroke: a jump against the editor's cursor from there is noise.
+        e.preventDefault();
+        jumpToPdf();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [doCompile, jumpToPdf]);
 
   const pluginCtx = useMemo(() => ({
     projectId: id,
@@ -362,6 +408,7 @@ export default function Editor() {
       { id: 'typeset', group: 'Action', title: 'Typeset document', hint: shortcut('S'), run: doCompile },
       { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
+      ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
@@ -409,7 +456,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, insertAtCursor, loadFiles, loadProject, toast]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, insertAtCursor, loadFiles, loadProject, toast]);
 
   const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errCount = errors.filter((e) => e.type === 'error').length;
@@ -565,6 +612,14 @@ export default function Editor() {
                 <span className="statusbar__file">{activeFile}</span>
                 {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
                 <span className="toolbar__spacer" />
+                <button
+                  className="btn btn--ghost btn--small"
+                  onClick={() => jumpToPdf()}
+                  title={`Show this line in the PDF (${shortcut('J')})`}
+                  data-testid="jump-to-pdf"
+                >
+                  Jump to PDF <span className="kbd">{shortcut('J')}</span>
+                </button>
                 {(() => {
                   // document total with the open file's count kept live; a file
                   // outside the include graph falls back to its own count
@@ -685,6 +740,16 @@ export default function Editor() {
               {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
             </span>
             <span className="toolbar__spacer" />
+            <select
+              className="fmt__select"
+              value={ENGINES.some((e) => e.id === project.engine) ? project.engine : 'pdf'}
+              onChange={(e) => setEngine(e.target.value)}
+              title="Typesetting engine"
+              aria-label="Typesetting engine"
+              data-testid="engine-select"
+            >
+              {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+            </select>
             <div className="zoom" data-testid="zoom-controls">
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" aria-label="Zoom out">−</button>
               <button className="zoom__label" onClick={() => setZoom(1)} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
@@ -714,9 +779,11 @@ export default function Editor() {
           <PdfPane
             ref={pdfRef}
             pdfUrl={compile.result?.pdfUrl || null}
+            branch={branch}
             status={compile.status}
             zoom={zoom}
             hasErrors={errCount > 0}
+            stale={pdfStale}
             // The on-open typeset is auto-typeset's job — a user who turned the
             // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
             onFirstOpen={() => { if (autoRef.current) doCompile(); }}

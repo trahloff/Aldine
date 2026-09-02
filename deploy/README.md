@@ -98,8 +98,8 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
 
 Then pick the ingress you already run. Aldine is one upstream (`127.0.0.1:8080`)
 serving the app, `/api`, `/plugins`, and the `/collab` WebSocket — any reverse
-proxy works as long as it forwards WebSocket upgrades and allows 32 MB bodies
-(uploads / ZIP import).
+proxy works as long as it forwards WebSocket upgrades and allows 81 MB bodies
+(a 60 MB ZIP import travels base64-encoded inside JSON; uploads need 32 MB).
 
 ### 3a. nginx (most common)
 
@@ -113,7 +113,8 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 
 See [`deploy/nginx.conf`](nginx.conf) — the load-bearing lines are
-`client_max_body_size 32m` (nginx's 1 MB default breaks ZIP import) and the
+`client_max_body_size 81m` (nginx's 1 MB default breaks ZIP import; 32m from
+an older copy cuts a ZIP import off at about 24 MB) and the
 `Upgrade`/`Connection` headers on `/collab` (without them the editor loads but
 live cursors never appear).
 
@@ -246,5 +247,5 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `RL_COMPILE_CONCURRENCY` | Max concurrent compiles the app forwards (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
-| `ALDINE_TEXLIVE_SCHEME` | Compiler image build: `medium` (default, curated set) or `full` (all of CTAN, ~9 GB on disk) |
+| `ALDINE_TEXLIVE_SCHEME` | Compiler image build: `full` (default, all of TeX Live, ~9 GB on disk) or `medium` (curated set + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~3 GB) |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |

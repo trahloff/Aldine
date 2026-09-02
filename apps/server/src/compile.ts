@@ -12,6 +12,9 @@ export interface CompileResult {
   exitCode?: number;
   pdf: string | null;      // path relative to branch dir (.aldine-out/main.pdf)
   pdfUrl: string | null;   // URL the client can fetch
+  /** A failed run left the previous PDF on disk: pdfUrl is the last successful one, unchanged. */
+  pdfStale?: boolean;
+  synctex: string | null;  // path relative to branch dir; informational
   log: string;
   errors: CompileError[];
   durationMs: number;
@@ -29,6 +32,26 @@ function relProjectDir(projectId: string, branch: string): string {
  * A queued request coalesces onto the in-flight one's successor.
  */
 const compileChain = new Map<string, Promise<unknown>>();
+
+/**
+ * Last successful pdfUrl per project::branch. A failed latexmk run leaves the
+ * previous PDF on disk (the compiler reports it by existence, not by `ok`), so
+ * minting a fresh cache-buster would present that old PDF as this run's result
+ * and misalign SyncTeX with the source. In-memory: after a restart the first
+ * failed compile reports no PDF rather than an unknown one.
+ */
+const lastGoodPdfUrl = new Map<string, string>();
+
+/**
+ * Drop remembered URLs when the files behind them go: deleting a branch
+ * removes its worktree (and .aldine-out), so a branch recreated under the
+ * same name must not inherit a URL that now 404s. Without `branch`, every
+ * branch of the project is forgotten.
+ */
+export function forgetPdfUrls(projectId: string, branch?: string): void {
+  if (branch !== undefined) { lastGoodPdfUrl.delete(`${projectId}::${branch}`); return; }
+  for (const key of lastGoodPdfUrl.keys()) if (key.startsWith(`${projectId}::`)) lastGoodPdfUrl.delete(key);
+}
 
 export function compileProject(projectId: string, branch: string): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
@@ -60,20 +83,25 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string };
   // Normalize: the compiler may return a bare {ok:false,error} on a 4xx — always
   // hand the client a well-formed CompileResult so the UI never sees undefined fields.
-  const body: Omit<CompileResult, 'pdfUrl'> = {
+  const body: Omit<CompileResult, 'pdfUrl' | 'pdfStale'> = {
     ok: !!raw.ok,
     timedOut: raw.timedOut,
     exitCode: raw.exitCode,
     pdf: raw.pdf ?? null,
+    synctex: raw.synctex ?? null,
     log: raw.log ?? (raw.error ? `Compiler error: ${raw.error}` : ''),
     errors: Array.isArray(raw.errors) ? raw.errors : [],
     durationMs: raw.durationMs ?? 0,
     error: raw.error,
   };
-  const pdfUrl = body.pdf
-    ? `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${Date.now()}`
-    : null;
-  return { ...body, pdfUrl };
+  const key = `${projectId}::${branch}`;
+  if (body.ok && body.pdf) {
+    const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${Date.now()}`;
+    lastGoodPdfUrl.set(key, pdfUrl);
+    return { ...body, pdfUrl };
+  }
+  const previous = lastGoodPdfUrl.get(key) ?? null;
+  return { ...body, pdfUrl: previous, pdfStale: previous !== null };
 }
 
 export async function synctexLookup(projectId: string, branch: string, payload: Record<string, unknown>): Promise<unknown> {

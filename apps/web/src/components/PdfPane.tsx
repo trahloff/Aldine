@@ -11,16 +11,20 @@ export interface PdfPaneHandle {
 
 interface Props {
   pdfUrl: string | null;
+  /** The branch whose PDF is shown; a change empties the pane (see below). */
+  branch?: string;
   status: 'idle' | 'compiling' | 'ok' | 'error';
   zoom?: number; // multiplier on fit-width (1 = fit width)
   /** Whether the failed compile produced actual parsed errors — gates the "fix the errors" copy. */
   hasErrors?: boolean;
+  /** The last run failed: whatever is on screen is from the last successful typeset. */
+  stale?: boolean;
   onFirstOpen(): void;
   /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
   onInverse?(page: number, x: number, y: number): void;
 }
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, status, zoom = 1, hasErrors = false, onFirstOpen, onInverse }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, onFirstOpen, onInverse }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
@@ -63,6 +67,16 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, stat
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
     return () => clearTimeout(t);
   }, [zoom]);
+
+  // A branch switch nulls pdfUrl, which alone never touches the canvases —
+  // the pane would keep showing the previous branch's pages, and a failed
+  // typeset on the new branch would label them as its last successful one.
+  useEffect(() => {
+    renderTask.current++;
+    innerRef.current?.replaceChildren();
+    pageInfo.current = [];
+    setRendered(false);
+  }, [branch]);
 
   useEffect(() => {
     if (!pdfUrl || !innerRef.current) return;
@@ -194,6 +208,9 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, stat
 
   return (
     <div className="pdf-pane" ref={scrollRef} data-testid="pdf-pane">
+      {stale && rendered && (
+        <div className="pdf-stale" data-testid="pdf-stale">Preview is from the last successful typeset</div>
+      )}
       <div className="pdf-pane__inner" ref={innerRef} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
       {!rendered && (
         <div className="pdf-empty">

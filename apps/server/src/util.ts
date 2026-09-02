@@ -19,6 +19,21 @@ export function safeJoin(base: string, rel: string): string {
   return abs;
 }
 
+/**
+ * Normalize a ZIP entry name to a project-relative posix path, or null when it
+ * cannot live inside a project: absolute, drive-lettered, a `..` segment, or
+ * nothing left after dropping `.` segments. Windows-made archives use `\\` as
+ * the separator; those become `/`. A legitimate name like `data..csv` is not
+ * an escape — only whole `..` segments are (the safeJoin rule above).
+ */
+export function importPath(entry: string): string | null {
+  const unified = entry.replace(/\\/g, '/');
+  if (unified.startsWith('/') || /^[A-Za-z]:/.test(unified) || unified.includes('\0')) return null;
+  const segments = unified.split('/').filter((seg) => seg !== '' && seg !== '.');
+  if (!segments.length || segments.includes('..')) return null;
+  return segments.join('/');
+}
+
 export function isTextFile(p: string): boolean {
   return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|json|yml|yaml|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
 }
