@@ -12,8 +12,11 @@ export interface CompileResult {
   exitCode?: number;
   pdf: string | null;      // path relative to branch dir (.aldine-out/main.pdf)
   pdfUrl: string | null;   // URL the client can fetch
-  /** A failed run left the previous PDF on disk: pdfUrl is the last successful one, unchanged. */
+  /** This run produced no PDF: pdfUrl is the last one that did, unchanged. */
   pdfStale?: boolean;
+  /** Identifies the run whose PDF pdfUrl serves; SyncTeX lookups pass it back
+   *  so a jump is refused instead of resolving against a different run. */
+  compileId?: number;
   synctex: string | null;  // path relative to branch dir; informational
   log: string;
   errors: CompileError[];
@@ -40,7 +43,17 @@ const compileChain = new Map<string, Promise<unknown>>();
  * and misalign SyncTeX with the source. In-memory: after a restart the first
  * failed compile reports no PDF rather than an unknown one.
  */
-const lastGoodPdfUrl = new Map<string, string>();
+const lastGoodPdfUrl = new Map<string, { url: string; compileId: number }>();
+
+/** compileId of the run whose SyncTeX file is on disk, per project::branch. */
+const lastSynctexId = new Map<string, number>();
+
+let lastCompileId = 0;
+/** Strictly increasing even within one millisecond, so two quick runs never share a URL. */
+function nextCompileId(): number {
+  lastCompileId = Math.max(Date.now(), lastCompileId + 1);
+  return lastCompileId;
+}
 
 /**
  * Drop remembered URLs when the files behind them go: deleting a branch
@@ -49,8 +62,9 @@ const lastGoodPdfUrl = new Map<string, string>();
  * branch of the project is forgotten.
  */
 export function forgetPdfUrls(projectId: string, branch?: string): void {
-  if (branch !== undefined) { lastGoodPdfUrl.delete(`${projectId}::${branch}`); return; }
+  if (branch !== undefined) { lastGoodPdfUrl.delete(`${projectId}::${branch}`); lastSynctexId.delete(`${projectId}::${branch}`); return; }
   for (const key of lastGoodPdfUrl.keys()) if (key.startsWith(`${projectId}::`)) lastGoodPdfUrl.delete(key);
+  for (const key of lastSynctexId.keys()) if (key.startsWith(`${projectId}::`)) lastSynctexId.delete(key);
 }
 
 export function compileProject(projectId: string, branch: string): Promise<CompileResult> {
@@ -78,9 +92,10 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
       projectDir: relProjectDir(projectId, branch),
       rootFile: meta.rootFile,
       engine: meta.engine,
+      haltOnError: !!meta.stopOnFirstError,
     }),
   });
-  const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string };
+  const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
   // Normalize: the compiler may return a bare {ok:false,error} on a 4xx — always
   // hand the client a well-formed CompileResult so the UI never sees undefined fields.
   const body: Omit<CompileResult, 'pdfUrl' | 'pdfStale'> = {
@@ -95,17 +110,35 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
     error: raw.error,
   };
   const key = `${projectId}::${branch}`;
-  if (body.ok && body.pdf) {
-    const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${Date.now()}`;
-    lastGoodPdfUrl.set(key, pdfUrl);
-    return { ...body, pdfUrl };
+  const compileId = nextCompileId();
+  // Older compilers report only `ok`; treat their successful output as fresh.
+  const pdfFresh = raw.pdfFresh ?? body.ok;
+  const synctexFresh = raw.synctexFresh ?? body.ok;
+  if (synctexFresh && body.synctex) lastSynctexId.set(key, compileId);
+  // A run that wrote a PDF is shown even when it logged errors: TeX ran to the
+  // end, so the document is complete and the errors sit in the list beside
+  // it. With stopOnFirstError the PDF on disk is truncated at the first error,
+  // so only an error-free run is shown and the previous one stays on screen.
+  if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
+    const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
+    lastGoodPdfUrl.set(key, { url: pdfUrl, compileId });
+    return { ...body, pdfUrl, compileId };
   }
   const previous = lastGoodPdfUrl.get(key) ?? null;
-  return { ...body, pdfUrl: previous, pdfStale: previous !== null };
+  return { ...body, pdfUrl: previous?.url ?? null, pdfStale: previous !== null, compileId: previous?.compileId };
 }
 
-export async function synctexLookup(projectId: string, branch: string, payload: Record<string, unknown>): Promise<unknown> {
+/** `{ stale: true }` when the caller's preview (compileId) is not the run whose SyncTeX is on disk. */
+export async function synctexLookup(projectId: string, branch: string, payload: Record<string, unknown>): Promise<{ stale?: boolean; ok?: boolean; error?: string } & Record<string, unknown>> {
   const meta = await readMeta(projectId);
+  const { compileId, ...rest } = payload;
+  if (typeof compileId === 'number') {
+    const current = lastSynctexId.get(`${projectId}::${branch}`);
+    if (current !== undefined && current !== compileId) {
+      return { ok: false, stale: true, error: 'The preview and the typeset output are from different runs — typeset again to jump accurately' };
+    }
+  }
+  payload = rest;
   const res = await fetch(`${config.compilerUrl}/synctex`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -118,7 +118,7 @@ async function compile(body) {
 }
 
 async function compileInner(body) {
-  const { projectDir, rootFile = 'main.tex', engine = 'pdf' } = body;
+  const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
   if (rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
@@ -137,7 +137,11 @@ async function compileInner(body) {
     engineFlag,
     ...(force ? ['-g'] : []), // -g: run even if latexmk thinks it's up-to-date
     '-interaction=nonstopmode',
-    '-halt-on-error',
+    // Without -halt-on-error TeX runs to the end of the document and latexmk
+    // still exits non-zero when errors occurred, so the caller gets a complete
+    // PDF plus the error list (the default). With it, the run stops at the
+    // first error and the PDF on disk is truncated at that page.
+    ...(haltOnError ? ['-halt-on-error'] : []),
     '-file-line-error',
     // no -no-shell-escape: the image sets texmf shell_escape=p (restricted),
     // so only whitelisted programs (epstopdf, kpsewhich, bibtex, …) run.
@@ -186,13 +190,21 @@ async function compileInner(body) {
     if (abs === absDir || abs.startsWith(absDir + path.sep)) e.file = path.relative(absDir, abs);
   }
   const ok = code === 0 && fs.existsSync(pdfPath);
+  // A previous run's PDF/SyncTeX stay on disk when this run fails, so existence
+  // alone says nothing about which run wrote them. "Fresh" = written by this
+  // run (mtime at or after its start, with slack for coarse filesystem clocks).
+  const freshSince = t0 - 2000;
+  const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
     timedOut,
     exitCode: code,
     // paths relative to the project dir; the app server serves them
     pdf: fs.existsSync(pdfPath) ? rel(`${base}.pdf`) : null,
-    synctex: fs.existsSync(path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`)) ? rel(`${base}.synctex.gz`) : null,
+    pdfFresh: isFresh(pdfPath),
+    synctex: fs.existsSync(synctexPath) ? rel(`${base}.synctex.gz`) : null,
+    synctexFresh: isFresh(synctexPath),
     log: log.length > 200_000 ? log.slice(-200_000) : log,
     latexmkOutput: out.length > 20_000 ? out.slice(-20_000) : out,
     errors,

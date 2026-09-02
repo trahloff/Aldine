@@ -467,11 +467,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine'>> }>(
+  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>> }>(
     '/api/projects/:id', async (req, reply) => {
       const meta = await requireMember(req, reply, 'rename or reconfigure this project');
       if (!meta) return;
-      const { name, rootFile, engine } = req.body || {};
+      const { name, rootFile, engine, stopOnFirstError } = req.body || {};
       if (name !== undefined) {
         const trimmed = String(name).trim();
         if (!trimmed) return reply.code(400).send({ error: 'Project name cannot be empty' });
@@ -484,6 +484,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           return reply.code(400).send({ error: `Unknown engine "${String(engine)}" — use one of ${ENGINES.join(', ')}` });
         }
         meta.engine = engine;
+      }
+      if (stopOnFirstError !== undefined) {
+        if (typeof stopOnFirstError !== 'boolean') return reply.code(400).send({ error: 'stopOnFirstError must be true or false' });
+        meta.stopOnFirstError = stopOnFirstError;
       }
       await store.writeMeta(meta);
       return publicMeta(meta, reqUser(req));
@@ -679,9 +683,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post<{ Params: { id: string }; Body: Record<string, unknown> & { branch?: string } }>(
-    '/api/projects/:id/synctex', async (req) => {
+    '/api/projects/:id/synctex', async (req, reply) => {
       const { branch = 'main', ...payload } = req.body || {};
-      return synctexLookup(req.params.id, branch, payload);
+      const res = await synctexLookup(req.params.id, branch, payload);
+      if (res.stale) return reply.code(409).send({ error: res.error });
+      return res;
     });
 
   // ---------- bib + label indexes (for \cite / \ref autocomplete) ----------

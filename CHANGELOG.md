@@ -6,6 +6,20 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Typesetting runs to the end of the document by default instead of stopping
+  at the first error: the preview shows the complete PDF and the errors sit in
+  the list beside it, like Overleaf. The old behaviour is a per-project setting,
+  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
+  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
+  on screen as before.
+
+### Fixed
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
+
 ### Added
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,

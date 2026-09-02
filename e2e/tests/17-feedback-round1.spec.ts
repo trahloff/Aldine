@@ -110,11 +110,66 @@ test.describe('forward SyncTeX', () => {
   });
 });
 
+const compileResponse = (page: import('@playwright/test').Page) =>
+  page.waitForResponse((r) => r.url().includes('/compile') && r.request().method() === 'POST');
+
+test.describe('compile to completion', () => {
+  test('an error mid-document still yields a complete PDF, listed beside it; stop-on-first-error restores the old behaviour', async ({ page, request }) => {
+    const id = await createPaperProject(request, 'Run To End');
+    try {
+      await withoutAutoTypeset(page);
+      await openProject(page, id);
+
+      const first = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const ok = await (await first).json();
+      expect(ok.ok).toBe(true);
+      await expectTypesetOk(page);
+      const pagesBefore = await page.locator('canvas.pdf-page').count();
+
+      // an undefined macro inside the second section: TeX reports it and carries on
+      const content = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex',
+        content: content.replace('\\section{Convergence}', '\\section{Convergence}\n\\thisMacroDoesNotExist\n') } });
+      const second = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const withErrors = await (await second).json();
+      expect(withErrors.ok).toBe(false);
+      expect(withErrors.pdfStale).toBeFalsy();
+      expect(withErrors.pdfUrl).not.toBe(ok.pdfUrl);
+      expect(withErrors.errors.some((e: { message: string }) => /undefined control sequence/i.test(e.message))).toBe(true);
+
+      await expect(page.getByTestId('errors-panel')).toBeVisible();
+      await expect(page.getByTestId('pdf-stale')).toHaveCount(0);
+      await expect.poll(() => page.locator('canvas.pdf-page').count()).toBe(pagesBefore);
+
+      // a jump from the current PDF resolves against this run's SyncTeX
+      const box = await page.locator('canvas.pdf-page').first().boundingBox();
+      await page.mouse.dblclick(box!.x + box!.width * 0.5, box!.y + box!.height * 0.55);
+      await expect(page.locator('.toast').filter({ hasText: /last successful typeset|different runs|unavailable/ })).toHaveCount(0);
+
+      // the toggle lives in the log dialog and is project meta
+      await page.getByTestId('view-log').click();
+      await page.getByTestId('stop-on-error-toggle').check();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}`)).json()).stopOnFirstError).toBe(true);
+      await page.keyboard.press('Escape');
+
+      const third = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const halted = await (await third).json();
+      expect(halted.ok).toBe(false);
+      expect(halted.pdfStale).toBe(true);
+      expect(halted.pdfUrl).toBe(withErrors.pdfUrl);
+      await expect(page.getByTestId('pdf-stale')).toBeVisible();
+    } finally { await cleanup(request, id); }
+  });
+});
+
 test.describe('stale preview', () => {
   test('a failed typeset keeps the PDF, flags it, and clears once it compiles again', async ({ page, request }) => {
     const id = await createPaperProject(request, 'Stale Preview');
-    const compileResponse = (page: import('@playwright/test').Page) =>
-      page.waitForResponse((r) => r.url().includes('/compile') && r.request().method() === 'POST');
+    // this test is about the halting mode; the default now runs to the end
+    expect((await request.patch(`/api/projects/${id}`, { data: { stopOnFirstError: true } })).ok()).toBeTruthy();
     try {
       // an on-open compile would be the response the first wait matches
       await withoutAutoTypeset(page);
@@ -153,6 +208,8 @@ test.describe('stale preview', () => {
 
   test('switching branches empties the preview so a failure there cannot claim the other branch\'s PDF', async ({ page, request }) => {
     const id = await createPaperProject(request, 'Stale Branch');
+    // halting mode: these tests are about a run that leaves no PDF to show
+    expect((await request.patch(`/api/projects/${id}`, { data: { stopOnFirstError: true } })).ok()).toBeTruthy();
     try {
       await withoutAutoTypeset(page);
       await openProject(page, id);
@@ -182,6 +239,8 @@ test.describe('stale preview', () => {
 
   test('a recreated branch does not inherit the deleted branch\'s PDF', async ({ request }) => {
     const id = await createPaperProject(request, 'Stale Recreated');
+    // halting mode: these tests are about a run that leaves no PDF to show
+    expect((await request.patch(`/api/projects/${id}`, { data: { stopOnFirstError: true } })).ok()).toBeTruthy();
     try {
       expect((await request.post(`/api/projects/${id}/branches`, { data: { name: 'draft' } })).ok()).toBe(true);
       const ok = await (await request.post(`/api/projects/${id}/compile`, { data: { branch: 'draft' } })).json();
