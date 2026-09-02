@@ -1,31 +1,42 @@
 # Two selectable TeX Live schemes (build arg TEXLIVE_SCHEME=medium|full):
 #
-#   medium (default) — ~1 GB of packages plus a pinned set of extras real
-#     papers commonly need. The slim self-host default.
-#   full — everything on CTAN preinstalled (~9 GB on disk). Choose this when your
-#     documents need packages beyond the pinned set:
-#       ALDINE_TEXLIVE_SCHEME=full docker compose up -d --build
+#   full (default) — everything on CTAN preinstalled (~9 GB on disk). Every
+#     script and language TeX Live supports compiles out of the box; this is what
+#     an Overleaf user expects.
+#   medium — ~1.3 GB of packages plus a pinned set of extras real papers commonly
+#     need, the publisher classes, and the Arabic/Persian, Cyrillic, Greek and
+#     "other" script collections (CJK is the one family left to full). For
+#     constrained hosts:
+#       ALDINE_TEXLIVE_SCHEME=medium docker compose up -d --build
 #
-# The medium base is pinned by digest so tlmgr revisions are reproducible (a
-# floating tag makes the snapshot-repository date below drift out of sync and
-# the build fail). The digest must be OLDER than the snapshot date, never
-# newer. The full base needs no tlmgr at build time (nothing to install), so
-# it can float and mirror skew cannot bite.
-ARG TEXLIVE_SCHEME=medium
+# Both bases are pinned by digest. For medium the pin keeps tlmgr revisions
+# reproducible (a floating tag makes the snapshot-repository date below drift
+# out of sync and the build fail); its digest must be OLDER than the snapshot
+# date, never newer. For full nothing is installed at build time, so the pin
+# only makes a rebuild reproduce the same image. Each digest is the multi-arch
+# index digest reported by
+#   docker buildx imagetools inspect texlive/texlive:<tag>
+# (the top-level "Digest:" line, not a per-platform manifest).
+ARG TEXLIVE_SCHEME=full
 
 FROM texlive/texlive:latest-medium@sha256:0a5aa82d0d9d6e3b3a25f87e221ef61d7c077e83639ab5065cf298b1a01ec00c AS texlive-medium
 
-# Packages beyond scheme-medium that real papers commonly need
-# (newtx fonts, cleveref, etc.). A dated tlnet snapshot (not a random CTAN
+# Packages beyond scheme-medium that real papers commonly need (newtx fonts,
+# cleveref, etc.) plus collection-publishers: the journal and conference
+# classes (elsarticle, IEEEtran, acmart, revtex4-2, agujournal, copernicus, …)
+# that scheme-medium leaves out, the script collections (langarabic makes
+# xepersian/bidi/polyglossia compile — verified against a Persian document —
+# and needs zref from latexextra), and cyrillic/greek/other. A dated tlnet snapshot (not a random CTAN
 # mirror) because live mirrors regularly lag the texlive image's revisions,
 # which makes `tlmgr install` fail with "remote database is older than the
 # local installation". Bump the date together with the base-image digest.
 RUN tlmgr option repository https://texlive.info/tlnet-archive/2026/07/18/tlnet/ \
     && tlmgr update --self \
-    && tlmgr install newtx txfonts fontaxes lastpage titlesec xstring fancyhdr cleveref \
+    && tlmgr install collection-publishers collection-langarabic collection-langcyrillic \
+       collection-langgreek collection-langother zref newtx txfonts fontaxes lastpage titlesec xstring fancyhdr cleveref \
        enumitem wrapfig threeparttable placeins multirow doclicense algorithmicx xurl sttools acro translations
 
-FROM texlive/texlive:latest-full AS texlive-full
+FROM texlive/texlive:latest-full@sha256:4984977ccf5afe883cb382d0163f267de0d029d140bb7a9e8f4c19f0b781d57b AS texlive-full
 # scheme-full already contains every CTAN package — nothing to install.
 
 FROM texlive-${TEXLIVE_SCHEME} AS base
