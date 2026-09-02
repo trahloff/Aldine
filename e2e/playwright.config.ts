@@ -34,7 +34,11 @@ export default defineConfig({
     {
       // OPENROUTER_API_KEY/OPENAI_API_KEY are emptied so an ambient key can't
       // override the mock Anthropic endpoint the AI-fix test relies on.
-      command: 'npm run build -w apps/web && PORT=3100 DATA_DIR=$(pwd)/.data-e2e OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:4919 DOI_API_BASE=http://localhost:4919 ARXIV_API_BASE=http://localhost:4919 OPENALEX_API_BASE=http://localhost:4919 ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:4919 npx tsx apps/server/src/index.ts',
+      // ALDINE_MCP_TOKEN matches MCP_TOKEN in tests/15-mcp.spec.ts (auth is off
+      // in this suite, so /mcp runs in static-token mode).
+      // ALDINE_AGENT_PRESENCE_TTL_MS shortens the 60 s agent-presence expiry so
+      // the session-review toast test (16-agent-ui) doesn't idle for a minute.
+      command: 'npm run build -w apps/web && PORT=3100 DATA_DIR=$(pwd)/.data-e2e ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp ALDINE_AGENT_PRESENCE_TTL_MS=5000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:4919 DOI_API_BASE=http://localhost:4919 ARXIV_API_BASE=http://localhost:4919 OPENALEX_API_BASE=http://localhost:4919 ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:4919 npx tsx apps/server/src/index.ts',
       cwd: '..',
       port: 3100,
       reuseExistingServer: true,
