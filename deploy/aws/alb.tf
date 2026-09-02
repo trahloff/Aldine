@@ -7,6 +7,19 @@ resource "aws_lb" "main" {
   # WebSocket collab connections are long-lived; keep the idle timeout high so
   # the ALB doesn't cut an open /collab socket during quiet stretches.
   idle_timeout = 4000
+
+  # Edge-level request log (status, target status, URL) — the app logs errors
+  # only, so without this a failed upload or a 4xx has no trace anywhere.
+  dynamic "access_logs" {
+    for_each = var.alb_access_logs ? [1] : []
+    content {
+      bucket  = aws_s3_bucket.alb_logs[0].bucket
+      prefix  = "alb"
+      enabled = true
+    }
+  }
+
+  depends_on = [aws_s3_bucket_policy.alb_logs]
 }
 
 resource "aws_lb_target_group" "app" {
