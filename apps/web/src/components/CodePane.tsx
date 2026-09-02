@@ -14,6 +14,7 @@ import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, type VisualDeps } from '../editor/visual';
+import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
@@ -249,13 +250,20 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const modeComp = new Compartment();
     const spellComp = new Compartment();
     const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness };
+    // First-seen times per agent client, so the presence tooltip can say when
+    // the session started; entries drop with the awareness state so the next
+    // session (same server-side clientID) gets a fresh start time.
+    const agentSince = new Map<number, number>();
     const reportUsers = () => {
       // key by Yjs clientID so two collaborators with the same display name stay distinct
       const byClient = new Map<number, PresenceUser>();
       awareness.getStates().forEach((s, clientId) => {
         const u = (s as { user?: PresenceUser }).user;
-        if (u?.name) byClient.set(clientId, u);
+        if (!u?.name) return;
+        if (u.isAgent && !agentSince.has(clientId)) agentSince.set(clientId, Date.now());
+        byClient.set(clientId, u.isAgent ? { ...u, startedAt: agentSince.get(clientId) } : u);
       });
+      for (const cid of [...agentSince.keys()]) if (!byClient.has(cid)) agentSince.delete(cid);
       onUsers(Array.from(byClient.values()));
     };
     awareness.on('change', reportUsers);
@@ -322,6 +330,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           spellComp.of(spellcheckAttrs(spellcheck, filePath)),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, provider.awareness),
+          // after yCollab on purpose — see agentHighlight's ordering contract
+          ...(localStorage.getItem('aldine.experimental.agentPresence') === '1'
+            ? [agentHighlight(ytext, awareness)]
+            : []),
         ],
       }),
     });

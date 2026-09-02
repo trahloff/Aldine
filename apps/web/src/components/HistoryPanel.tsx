@@ -49,9 +49,12 @@ export default function HistoryPanel({ projectId, branch }: { projectId: string;
         <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>Save</button>
       </div>
       {log.map((c) => (
-        <button key={c.hash} className="history__item" title={`${c.hash} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
+        <button key={c.hash} className={`history__item${c.author === 'Claude' ? ' history__item--agent' : ''}`} title={`${c.hash} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
           <div className="history__msg">{c.message}</div>
-          <div className="history__meta">{c.author} · {friendlyDate(c.date)}</div>
+          <div className="history__meta">
+            {c.author === 'Claude' && <span className="dot dot--agent" data-testid="agent-commit-dot" />}
+            {c.author} · {friendlyDate(c.date)}
+          </div>
         </button>
       ))}
       {log.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8 }}>No history yet on this branch.</p>}

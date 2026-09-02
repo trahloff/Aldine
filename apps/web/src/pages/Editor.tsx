@@ -22,6 +22,8 @@ import GithubSync from '../components/GithubSync';
 import GithubPublish from '../components/GithubPublish';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
+import DiffView from '../components/DiffView';
+import { filesInPatch } from '../util/patch';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
@@ -80,6 +82,8 @@ export default function Editor() {
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
   // Visual mode is gated by an experimental flag until it graduates.
   const visualEnabled = localStorage.getItem('aldine.experimental.visualEditor') === '1';
+  // Agent-edit fade highlights are gated the same way (presence chip is not).
+  const agentPresenceEnabled = localStorage.getItem('aldine.experimental.agentPresence') === '1';
   const [mode, setMode] = useState<EditorMode>(() =>
     visualEnabled && localStorage.getItem('aldine.editorMode') === 'visual' ? 'visual' : 'source');
   const switchMode = (m: EditorMode) => { localStorage.setItem('aldine.editorMode', m); setMode(m); };
@@ -198,6 +202,59 @@ export default function Editor() {
     if (autoTimer.current) clearTimeout(autoTimer.current);
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
   }, []);
+
+  // ---- agent session review (UX.md "Audit and undo") ----
+  const agentPresent = users.some((u) => u.isAgent);
+  const agentPresentRef = useRef(agentPresent);
+  agentPresentRef.current = agentPresent;
+  const agentSessionStart = useRef<number | null>(null);
+  const agentEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [agentReview, setAgentReview] = useState<{ patch: string; files: string[]; hashes: string[] } | null>(null);
+
+  useEffect(() => {
+    if (agentPresent) {
+      if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
+      if (agentSessionStart.current == null) agentSessionStart.current = Date.now();
+      return;
+    }
+    if (agentSessionStart.current == null) return;
+    // Awareness rides the open file's doc, so a file switch or reconnect blips
+    // the agent out momentarily — only a sustained absence ends the session.
+    agentEndTimer.current = setTimeout(async () => {
+      agentEndTimer.current = null;
+      if (agentPresentRef.current || agentSessionStart.current == null) return;
+      const startedAt = agentSessionStart.current;
+      agentSessionStart.current = null;
+      try {
+        const log = await api.log(id, branch);
+        // git dates carry second precision — allow slack around the session start
+        const session = log.filter((c) => c.author === 'Claude' && new Date(c.date).getTime() >= startedAt - 10_000);
+        if (!session.length) return;
+        const diffs = await Promise.all(session.map((c) => api.commitDiff(id, c.hash)));
+        const patch = diffs.map((d) => d.patch).join('\n');
+        const files = filesInPatch(patch);
+        toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
+          label: 'Review',
+          testId: 'agent-session-review',
+          onClick: () => setAgentReview({ patch, files, hashes: session.map((c) => c.hash) }),
+        });
+      } catch { /* history unavailable — nothing to review */ }
+    }, 4000);
+  }, [agentPresent, id, branch, toast]);
+  useEffect(() => () => { if (agentEndTimer.current) clearTimeout(agentEndTimer.current); }, []);
+
+  const revertAgent = useCallback(async () => {
+    if (!agentReview) return;
+    try {
+      // log order is newest-first — exactly what the revert endpoint expects
+      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', localUser().name);
+      setAgentReview(null);
+      toast(res.ok ? 'Reverted Claude’s edits' : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
+      await loadFiles();
+    } catch (err: any) {
+      toast(`Could not revert: ${err.message}`, 'error');
+    }
+  }, [agentReview, id, branch, loadFiles, toast]);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -436,6 +493,9 @@ export default function Editor() {
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
+      ...(agentPresenceEnabled
+        ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '0'); location.reload(); } }]
+        : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
@@ -824,6 +884,24 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+
+      {agentReview && (
+        <Modal onClose={() => setAgentReview(null)} label="Review Claude’s edits" wide testId="agent-review-modal">
+          <div>
+            <h2>Claude’s edits</h2>
+            <p className="modal__sub">
+              {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {branch}
+            </p>
+            <DiffView patch={agentReview.patch} />
+            <div className="modal__row">
+              <button className="btn" onClick={() => setAgentReview(null)}>Close</button>
+              <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">
+                Revert these changes
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {shareOpen && (
         <ShareModal

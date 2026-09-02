@@ -45,6 +45,8 @@ export interface CompileResult {
 export interface BibEntry { key: string; type: string; author?: string; authorLabel?: string; title?: string; year?: string; journal?: string; file: string }
 export interface LogEntry { hash: string; date: string; message: string; author: string }
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
+/** Token metadata only — the `aldn_…` value itself is returned once, on create. */
+export interface AccessToken { id: string; name: string; projectIds: string[] | null; createdAt: string; lastUsedAt: string | null; expiresAt: string | null }
 export interface CommentReply { author: string; body: string; createdAt: string }
 export interface Comment {
   id: string;
@@ -95,7 +97,8 @@ export const api = {
   claimProject: (id: string) => req<ProjectSummary>(`/api/projects/${id}/claim`, { method: 'POST' }),
   listTrash: () => req<{ id: string; name: string; deletedAt: string }[]>('/api/projects/trash'),
 
-  listFiles: (id: string, branch: string) => req<TreeEntry[]>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`),
+  listFiles: (id: string, branch: string) =>
+    req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),
   readFile: async (id: string, branch: string, path: string) => {
     const res = await fetch(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -128,6 +131,8 @@ export const api = {
     req<{ committed: boolean; hash?: string }>(`/api/projects/${id}/commit`, { method: 'POST', body: JSON.stringify({ branch, message, author }) }),
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
+  revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
+    req<{ ok: boolean; hash?: string }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
 
   // GitHub sync
   githubStatus: () => req<GithubStatus>('/api/github/status'),
@@ -190,6 +195,10 @@ export const api = {
   register: (email: string, password: string, name?: string) =>
     req<{ user: AuthUser }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  listTokens: () => req<AccessToken[]>('/api/tokens'),
+  createToken: (name: string, projectIds?: string[], expiresAt?: string) =>
+    req<AccessToken & { token: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ name, projectIds, expiresAt }) }),
+  revokeToken: (tokenId: string) => req<{ ok: boolean }>(`/api/tokens/${tokenId}`, { method: 'DELETE' }),
   share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
     req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
 };
@@ -201,9 +210,12 @@ export function localUser(): { name: string; color: string } {
     name = `Writer ${Math.floor(100 + Math.random() * 900)}`;
     localStorage.setItem('aldine.name', name);
   }
-  const palette = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#8f3ec9', '#d63384', '#0aa2c0'];
+  // No violet: #a78bfa (and the violet family generally) is reserved for the
+  // agent presence identity — a human with agent-violet breaks the semantics.
+  const palette = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#d63384', '#0aa2c0'];
   let color = localStorage.getItem('aldine.color');
-  if (!color) {
+  if (!color || !palette.includes(color)) {
+    // re-roll colors picked before the violet reservation (e.g. legacy #8f3ec9)
     color = palette[Math.floor(Math.random() * palette.length)];
     localStorage.setItem('aldine.color', color);
   }

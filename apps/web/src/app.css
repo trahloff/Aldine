@@ -104,6 +104,8 @@
 .dot--ok { background: var(--ok); }
 .dot--error { background: var(--error); }
 .dot--busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+/* #a78bfa is the reserved agent violet — kept out of the human color palette */
+.dot--agent { background: #a78bfa; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 /* ---------- modal ---------- */
@@ -377,6 +379,7 @@
   color: #fff;
 }
 .presence__avatar:first-child { margin-left: 0; }
+.presence__avatar--agent svg { display: block; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
 
@@ -764,6 +767,14 @@
 .cm-comment-resolved { background: transparent; border-bottom: 1.5px dotted var(--text-3); }
 :root[data-theme="dark"] .cm-comment-range { background: rgba(255, 214, 10, 0.16); }
 
+/* Agent-edit fade: the decoration is removed after ~4 s, the animation just
+   gets the background there gracefully. Violet is the reserved agent color. */
+.cm-agent-edit { animation: agent-fade 4s ease-out forwards; border-radius: 2px; }
+@keyframes agent-fade {
+  from { background: rgba(167, 139, 250, 0.32); }
+  to { background: rgba(167, 139, 250, 0); }
+}
+
 /* review panel */
 .review__item { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
 .review__item--resolved { opacity: 0.62; }
@@ -787,6 +798,7 @@
 .history__item:hover { background: var(--bg-hover); }
 .history__msg { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history__meta { font-size: 11px; color: var(--text-2); }
+.history__meta .dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
 
 /* segmented control (Source | Visual) */
 .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg-inset); }
