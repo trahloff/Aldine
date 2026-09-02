@@ -20,6 +20,12 @@ prod, plus the demo-instance trial connector.
 
 ## 1.2 Auth for /mcp
 
+> **Superseded for user-facing onboarding by [06-oauth.md](06-oauth.md)
+> (Phase 2.5):** on auth deployments claude.ai and Claude Code connect through
+> OAuth 2.1 (Connect button, consent page, PKCE, refresh rotation). OAuth
+> access tokens ARE `aldn_` tokens, so everything below still holds — the PAT
+> and `X-Aldine-Token` paths stay for scripts and for hosts without OAuth.
+
 - If `AUTH_ENABLED`: require a PAT (`Authorization: Bearer aldn_…`, or
   `X-Aldine-Token: aldn_…` — claude.ai's connector UI reserves Authorization
   for its OAuth bearer, so its "additional request headers" need a custom

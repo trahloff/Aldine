@@ -31,6 +31,34 @@ All notable changes to Aldine are documented here. The format follows
 
 
 ### Added
+- OAuth 2.1 for the MCP connector (auth deployments): claude.ai and Claude
+  Code now connect with a Connect button instead of a pasted token. Aldine
+  serves the RFC 9728 / RFC 8414 discovery documents, a consent page at
+  `/oauth/authorize` where the signed-in user picks which projects the client
+  may touch, and `/oauth/token` (authorization code + PKCE S256, refresh-token
+  rotation with reuse detection), `/oauth/register` (dynamic registration,
+  public clients only, capped at 500 with least-recently-used eviction) and
+  `/oauth/revoke`. Clients may identify themselves by an https client-metadata
+  URL (fetched with SSRF checks: public addresses only, no redirects, 5 s,
+  64 KB, one deadline for the whole fetch so a trickling host cannot hold a
+  socket open, at most 256 documents cached) or a registered `aldc_` id.
+  Marking a refresh token used is a compare-and-set, so two concurrent
+  rotations of one token burn the family like any replay would; a code
+  replayed while its first exchange is still minting revokes the tokens that
+  exchange produced, and a family revoked while a rotation is still minting
+  takes the freshly minted pair with it. Rotated-out OAuth access tokens are
+  pruned a week after they are revoked; an expired one whose refresh token
+  may still be live stays listed on the Agent access card so it can be
+  revoked there. The consent page tells the user when their project list could not
+  be loaded instead of claiming they have no projects. Access tokens are ordinary `aldn_` tokens
+  (24 h) shown on the Agent access card with the client's name; revoking one
+  there also cancels its refresh tokens. `/mcp` 401s carry a
+  `WWW-Authenticate` challenge pointing at the discovery document. Everything
+  returns 404 while `AUTH_ENABLED` is off. The Agent access card now leads
+  with the Connect instructions and the connector URL; tokens minted through
+  Connect carry a "via Connect" badge, and the manual token section is kept
+  for scripts. Signing in on the consent page through an SSO provider resumes
+  the consent afterwards.
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,
   so a feature branch can be tried at a real URL before it reaches prod. The

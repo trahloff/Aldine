@@ -87,6 +87,51 @@ Operational:
 - Does `references_add` on prod reach doi.org/arXiv (egress) — the app
   container has egress, the compiler does not; confirm the app's.
 
+## Connect flow (OAuth, 06-oauth.md) — checklist for the live check
+
+Toby's manual acceptance against staging, from the default connector
+settings. Tick each with the date; anything that fails becomes an
+"Observed" bullet with the exact symptom.
+
+claude.ai (Settings → Connectors → Add custom connector, URL
+`https://<staging>/mcp`, authentication "Always required", "Use Anthropic's
+hosted client metadata"):
+- [ ] Add → Connect opens `/oauth/authorize` on staging with the client's
+      name and `claude.ai` as the host on the consent card (CIMD fetched,
+      not a DCR fallback).
+- [ ] Signed out: the sign-in form appears inline; after signing in the
+      page stays on `/oauth/authorize` (password) or resumes there (SSO).
+- [ ] "Only these projects" with one project → Allow → claude.ai shows the
+      connector as connected without a second prompt.
+- [ ] In a chat: `list_projects` returns exactly the picked project;
+      `read_file` works; a project outside the scope is a tool-level refusal.
+- [ ] Deny → claude.ai reports the connection was declined, no token appears
+      on the Agent access card.
+- [ ] Agent access card: the token is listed with the client name and the
+      "via Connect" badge; Revoke there → the next tool call in claude.ai
+      fails with an auth error and reconnecting asks for consent again.
+- [ ] Leave the connector for > 24 h → the next call still works (refresh
+      rotation happened silently; only one live token per connector on the
+      card).
+- [ ] Wrong host settings: connector URL without `/mcp` → the discovery
+      probe fails cleanly (no HTML answer from `/.well-known/*`).
+
+Claude Code (`claude mcp add --transport http aldine https://<staging>/mcp`,
+then `/mcp` → login):
+- [ ] The browser opens the consent page; the card warns that the client
+      redirects only to this computer (loopback-only client).
+- [ ] Allow (all projects) → Claude Code reports authenticated;
+      `list_projects` lists everything.
+- [ ] `/mcp` → logout, then login again → a fresh consent, a fresh token; the
+      old one is gone from the card.
+
+Operational:
+- [ ] `ALDINE_PUBLIC_URL` is set on the staging task — the discovery
+      documents name `https://<staging>` as issuer, not the ALB host.
+- [ ] Server logs show no token, code, or refresh secret on any OAuth error.
+- [ ] `RL_OAUTH_*` defaults were not hit during the manual run (no 429 in
+      the logs).
+
 ## Applied tuning
 
 - 2026-09-02 · all tool descriptions · Rewritten as the model's API docs
