@@ -105,6 +105,14 @@ export const compileLimiter = compilePerMin > 0
   ? new RateLimiter('compile', Math.max(2, compilePerMin), compilePerMin / 60)
   : null;
 
+/** MCP requests: 60 burst, 1/s sustained — keyed per token digest (fallback IP) by the /mcp guard. */
+export const mcpLimiter = new RateLimiter('mcp', n(process.env.RL_MCP_BURST, 60), 1);
+
+/** Agent-originated compiles: 1 in flight per user, acquired BEFORE the shared
+ *  2-slot compileGate — an agent can hold at most one of the user's two slots,
+ *  so the human always keeps one. */
+export const agentCompileGate = new ConcurrencyGate(1);
+
 /**
  * Rate-limit key: the signed-in user when available, else the client IP.
  * req.ip is resolved by Fastify — it only honors X-Forwarded-For when the

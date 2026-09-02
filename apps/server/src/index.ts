@@ -32,6 +32,13 @@ const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 32 * 1024 * 1024, tr
 await initObservability(app);
 await registerRoutes(app);
 
+// MCP endpoint (agent connector), env-gated. Dynamic import keeps the SDK out
+// of the boot path entirely when the feature is off.
+if (process.env.ALDINE_MCP === '1') {
+  const { registerMcp } = await import('./mcp/server.js');
+  await registerMcp(app);
+}
+
 // Serve the built frontend (production). In dev, Vite serves it and proxies to us.
 if (fs.existsSync(path.join(config.webDist, 'index.html'))) {
   await app.register(fastifyStatic, { root: config.webDist, prefix: '/' });

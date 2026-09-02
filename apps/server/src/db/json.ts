@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, ProjectMeta, Comment } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, Comment } from './types.js';
 
 /**
  * Flat-JSON DataStore — the slim, zero-dependency default for single-node
@@ -18,6 +18,7 @@ export class JsonStore implements DataStore {
   private usersPath: string;
   private sessionsPath: string;
   private resetsPath: string;
+  private tokensPath: string;
   private usagePath: string;
   private connectionsPath: string;
   private metaDir: string;
@@ -28,11 +29,12 @@ export class JsonStore implements DataStore {
     this.usersPath = path.join(metaRoot, 'users.json');
     this.sessionsPath = path.join(metaRoot, 'sessions.json');
     this.resetsPath = path.join(metaRoot, 'resets.json');
+    this.tokensPath = path.join(metaRoot, 'tokens.json');
     this.usagePath = path.join(metaRoot, 'usage.json');
     this.connectionsPath = path.join(metaRoot, 'connections.json');
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
-    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.usagePath, this.connectionsPath]);
+    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath]);
   }
 
   async init(): Promise<void> {
@@ -127,6 +129,21 @@ export class JsonStore implements DataStore {
   }
   async getReset(token: string) { return this.clone(this.resets()[token] || null); }
   async deleteReset(token: string) { const r = this.resets(); if (r[token]) { delete r[token]; this.write(this.resetsPath, r); } }
+
+  // ---- personal access tokens ----
+  private tokens() { return this.read<Record<string, TokenRecord>>(this.tokensPath, {}); }
+  async createToken(t: TokenRecord) { const m = this.tokens(); m[t.id] = this.clone(t); this.write(this.tokensPath, m); }
+  async getToken(id: string) { return this.clone(this.tokens()[id] || null); }
+  async getTokenByHash(hash: string) { return this.clone(Object.values(this.tokens()).find((t) => t.hash === hash) || null); }
+  async listTokensForUser(userId: string) {
+    return this.clone(Object.values(this.tokens()).filter((t) => t.userId === userId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async updateToken(t: TokenRecord) { const m = this.tokens(); m[t.id] = this.clone(t); this.write(this.tokensPath, m); }
+  async touchToken(id: string, lastUsedAt: string) {
+    const m = this.tokens();
+    if (m[id]) { m[id].lastUsedAt = lastUsedAt; this.write(this.tokensPath, m); }
+  }
 
   // ---- project meta ----
   private metaPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.metaDir, `${id}.json`); }

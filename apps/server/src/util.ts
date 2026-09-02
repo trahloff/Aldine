@@ -34,6 +34,22 @@ export function importPath(entry: string): string | null {
   return segments.join('/');
 }
 
+/** "<root file's dir>/<name>" — where \\addbibresource{<name>} actually resolves. */
+export function rootSiblingPath(rootFile: string, name: string): string {
+  const dir = path.dirname(rootFile || 'main.tex');
+  return dir === '.' ? name : path.posix.join(dir, name);
+}
+
+/** git internals and compile output are never user-addressable — at any depth.
+ *  Shared by REST (routes.ts) and MCP (mcp/guards.ts); one definition so the
+ *  two surfaces can never drift. */
+export function isHiddenPath(rel: string): boolean {
+  // Check every segment: 'sub/.git/config' and 'paper/.aldine-out/x' must be
+  // caught too, not just a leading '.git'. Matches store.listFiles, which skips
+  // these names at every level.
+  return rel.split(/[\\/]/).some((seg) => seg === '.git' || seg.startsWith('.aldine'));
+}
+
 export function isTextFile(p: string): boolean {
   return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|json|yml|yaml|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
 }

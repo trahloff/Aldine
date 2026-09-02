@@ -6,9 +6,9 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { commitAll, ensureWorktree } from './gitops.js';
+import { commitAll, commitPaths, ensureWorktree, registerAttributedPaths, takeAttributedPaths } from './gitops.js';
 import { safeJoin, debouncePerKey } from './util.js';
-import { AUTH_ENABLED, userFromRequest } from './auth.js';
+import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 
@@ -63,16 +63,38 @@ function deleteSnapshot(name: string): void {
   try { fs.rmSync(snapPath(name), { force: true }); } catch { /* best effort */ }
 }
 
-/** Debounced auto-commit per project::branch after edits settle. */
-const scheduleAutoCommit = debouncePerKey(20_000, (key: string) => {
+/** Overridable so tests can exercise the debounced commit without 20 s waits. */
+const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') || 20_000;
+
+/** Debounced auto-commit per project::branch after edits settle. Attributed
+ *  (agent) paths commit first under their author + intent, then an anonymous
+ *  sweep commits whatever remains — one debounce window with mixed human and
+ *  agent work must never co-mingle the two into one wrongly-attributed commit
+ *  (UX.md: git is the audit ledger; HistoryPanel/session review key on the
+ *  author string). The attribution lives in gitops, OUTSIDE the debounce
+ *  args — the debounce is last-writer-wins, and a human keystroke scheduling
+ *  anonymously after an agent write must not erase the agent's attribution
+ *  (or vice versa); an explicit whole-tree commit in the window consumes it. */
+const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   const [projectId, branch] = key.split('::');
-  commitAll(projectId, branch, 'aldine: autosave').catch((err) => console.error('[collab] autocommit failed', err.message));
+  const attributed = takeAttributedPaths(projectId, branch);
+  void (async () => {
+    if (attributed) {
+      await commitPaths(projectId, branch, [...attributed.paths], attributed.message, attributed.author)
+        .catch((err) => console.error('[collab] attributed autocommit failed', err.message));
+    }
+    await commitAll(projectId, branch, 'aldine: autosave')
+      .catch((err) => console.error('[collab] autocommit failed', err.message));
+  })();
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file
- *  upload / rename / reference add) so working-tree changes reach git history
- *  even when no Yjs doc is open — not just on the next manual push. */
-export function scheduleCommit(projectId: string, branch: string): void {
+ *  upload / rename / reference add, MCP tools) so working-tree changes reach
+ *  git history even when no Yjs doc is open — not just on the next manual
+ *  push. Agent (MCP) callers pass their stated intent + author "Claude" +
+ *  the touched paths, which commit separately from the anonymous sweep. */
+export function scheduleCommit(projectId: string, branch: string, message?: string, author?: string, paths?: string[]): void {
+  if (message && author && paths?.length) registerAttributedPaths(projectId, branch, message, author, paths);
   scheduleAutoCommit(`${projectId}::${branch}`);
 }
 
@@ -138,7 +160,21 @@ const authHook = AUTH_ENABLED ? {
   async onAuthenticate({ documentName, requestHeaders }: { documentName: string; requestHeaders: Record<string, string | string[] | undefined> }) {
     const parsed = parseDocName(documentName);
     if (!parsed) throw new Error('invalid document');
-    const user = await userFromRequest(requestHeaders.cookie as string | undefined);
+    // Bearer tokens (agents) are accepted alongside session cookies, with the
+    // same project scoping the HTTP preHandler enforces. A presented bearer is
+    // authoritative (mirrors the HTTP onRequest hook): a revoked/expired/
+    // malformed token must refuse the connection, not silently borrow the
+    // cookie session's identity — which would also drop the project scope.
+    const header = requestHeaders.authorization;
+    let user: Awaited<ReturnType<typeof userFromRequest>>;
+    if (typeof header === 'string' && header.startsWith(`Bearer ${TOKEN_PREFIX}`)) {
+      const bearer = await userFromToken(header);
+      if (!bearer) throw new Error('Not authenticated');
+      if (bearer.tokenScope.projectIds && !bearer.tokenScope.projectIds.includes(parsed.projectId)) throw new Error('Access denied');
+      user = bearer.user;
+    } else {
+      user = await userFromRequest(requestHeaders.cookie as string | undefined);
+    }
     if (!user) throw new Error('Not authenticated');
     let meta;
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
@@ -291,6 +327,7 @@ export function applySuggestionToDoc(
   filePath: string,
   anchor: { from: number; to: number; quote: string },
   replacement: string,
+  origin?: unknown,
 ): 'applied' | 'stale' | 'no-doc' {
   const name = docName(projectId, branch, filePath);
   const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
@@ -314,9 +351,59 @@ export function applySuggestionToDoc(
   doc.transact(() => {
     ytext.delete(from, to - from);
     if (replacement) ytext.insert(from, replacement);
-  });
+  }, origin);
   writeDocToDisk(name, doc); // suggestion is on disk immediately, like a manual flush
   return 'applied';
+}
+
+/** Live content of a loaded collab doc, or null when no doc is open — the
+ *  reader edit_file uses to choose CRDT-apply over disk-splice. The returned
+ *  string is only trustworthy for offsets within the same synchronous tick
+ *  (any await lets human keystrokes land in between). */
+export function openDocContent(projectId: string, branch: string, filePath: string): string | null {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, filePath)) as Y.Doc | undefined;
+  return doc ? doc.getText(TEXT_KEY).toString() : null;
+}
+
+/** Yjs transaction origin stamped on agent (MCP) edits. Origins do not cross
+ *  the wire — remote clients see the provider as origin — so this serves
+ *  server-side attribution; the web fade-highlight needs another signal. */
+export const AGENT_ORIGIN = 'aldine-agent';
+
+/** Reserved agent awareness identity (UX.md): the violet is kept OUT of the
+ *  human color palette — if a human can get agent-violet, the semantics
+ *  collapse. Field shape mirrors what CodePane.tsx sets for humans. */
+export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
+
+/** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
+const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS || '') || 60_000;
+const agentPresenceTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Show the agent in a doc's presence while a tool session is active. MCP
+ * writes run in-process with no Hocuspocus connection, so presence rides the
+ * loaded doc's own awareness instance (the server relays its local state to
+ * clients); no loaded doc → no-op. Expires ~60 s after the last tool call so
+ * an idle agent doesn't permanently haunt the presence chip.
+ */
+export function markAgentPresence(projectId: string, branch: string, filePath: string): void {
+  const name = docName(projectId, branch, filePath);
+  type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void } };
+  const doc = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
+  if (!doc?.awareness) return;
+  // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
+  // local state at doc creation, and y-protocols' setLocalStateField is a
+  // silent no-op on a null state — the agent would never appear.
+  doc.awareness.setLocalState({ user: AGENT_AWARENESS_USER });
+  const prev = agentPresenceTimers.get(name);
+  if (prev) clearTimeout(prev);
+  const timer = setTimeout(() => {
+    agentPresenceTimers.delete(name);
+    const d = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
+    try { d?.awareness?.setLocalState(null); } catch { /* doc unloaded meanwhile */ }
+  }, AGENT_PRESENCE_TTL_MS);
+  timer.unref?.();
+  agentPresenceTimers.set(name, timer);
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */

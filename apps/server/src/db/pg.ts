@@ -1,5 +1,5 @@
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, ProjectMeta, Comment } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, Comment } from './types.js';
 
 /**
  * Postgres DataStore — the horizontally-scalable backend. Multiple app nodes
@@ -65,6 +65,12 @@ export class PgStore implements DataStore {
       CREATE TABLE IF NOT EXISTS resets (
         token text PRIMARY KEY, user_id text NOT NULL, exp bigint NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS tokens (
+        id text PRIMARY KEY, user_id text NOT NULL, name text NOT NULL,
+        hash text UNIQUE NOT NULL, project_ids jsonb, created_at text NOT NULL,
+        last_used_at text, expires_at text, revoked_at text
+      );
+      CREATE INDEX IF NOT EXISTS tokens_user_idx ON tokens(user_id);
       CREATE TABLE IF NOT EXISTS project_meta (
         id text PRIMARY KEY, created_at text NOT NULL, data jsonb NOT NULL
       );
@@ -137,6 +143,43 @@ export class PgStore implements DataStore {
     return rows[0] ? { userId: rows[0].user_id, exp: Number(rows[0].exp) } : null;
   }
   async deleteReset(token: string) { await this.pool.query(`DELETE FROM resets WHERE token=$1`, [token]); }
+
+  // ---- personal access tokens ----
+  private rowToToken(r: any): TokenRecord {
+    return {
+      id: r.id, userId: r.user_id, name: r.name, hash: r.hash,
+      projectIds: r.project_ids ?? null, createdAt: r.created_at,
+      lastUsedAt: r.last_used_at ?? null, expiresAt: r.expires_at ?? null, revokedAt: r.revoked_at ?? null,
+    };
+  }
+  async createToken(t: TokenRecord) {
+    await this.pool.query(
+      `INSERT INTO tokens(id,user_id,name,hash,project_ids,created_at,last_used_at,expires_at,revoked_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [t.id, t.userId, t.name, t.hash, t.projectIds ? jsonb(t.projectIds) : null, t.createdAt, t.lastUsedAt, t.expiresAt, t.revokedAt],
+    );
+  }
+  async getToken(id: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM tokens WHERE id=$1`, [id]);
+    return rows[0] ? this.rowToToken(rows[0]) : null;
+  }
+  async getTokenByHash(hash: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM tokens WHERE hash=$1`, [hash]);
+    return rows[0] ? this.rowToToken(rows[0]) : null;
+  }
+  async listTokensForUser(userId: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM tokens WHERE user_id=$1 ORDER BY created_at DESC`, [userId]);
+    return rows.map((r) => this.rowToToken(r));
+  }
+  async updateToken(t: TokenRecord) {
+    await this.pool.query(
+      `UPDATE tokens SET user_id=$2,name=$3,hash=$4,project_ids=$5,created_at=$6,last_used_at=$7,expires_at=$8,revoked_at=$9 WHERE id=$1`,
+      [t.id, t.userId, t.name, t.hash, t.projectIds ? jsonb(t.projectIds) : null, t.createdAt, t.lastUsedAt, t.expiresAt, t.revokedAt],
+    );
+  }
+  async touchToken(id: string, lastUsedAt: string) {
+    await this.pool.query(`UPDATE tokens SET last_used_at=$2 WHERE id=$1`, [id, lastUsedAt]);
+  }
 
   // ---- project meta ----
   // Same id discipline as the JSON backend: reads treat a malformed id as

@@ -19,12 +19,133 @@ All notable changes to Aldine are documented here. The format follows
   on screen and the SyncTeX file on disk come from different typeset runs,
   instead of landing on the wrong line. Compile results carry a `compileId`
   that the lookup sends back.
+- `GET`/`PUT /api/projects/:id/file` now flush open collaboration documents to
+  disk first, like every other disk-touching route already did. Before, a REST
+  read could be up to ~8 s staler than the editor, and a REST write landing on
+  that stale disk state would silently discard a live collaborator's unflushed
+  keystrokes when the document refreshed.
+- `GET /api/projects/:id/wordcount` (and the `wordcount` MCP tool) no longer
+  serve the previous root file's count after the root file is switched in
+  project settings: the cache is now keyed by root file as well as branch
+  content version, so a switch with no edit is reflected immediately.
+
 
 ### Added
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,
   so a feature branch can be tried at a real URL before it reaches prod. The
   deploy and rollback workflows take a `target` input (production or staging).
+- Optimistic concurrency for REST file access: `GET /file` returns the branch's
+  content version in an `x-aldine-content-version` header, `GET /files` returns
+  `{ files, contentVersion }` (previously a bare array), and `PUT /file` accepts
+  an optional `baseVersion` — when it no longer matches, the write is refused
+  with `409 { error: 'version_conflict', currentVersion }` instead of
+  overwriting newer content.
+- Personal access tokens (auth deployments): headless, revocable credentials
+  for agents and scripts. `POST /api/tokens` mints an `aldn_…` bearer token
+  (shown exactly once; only a SHA-256 digest is stored), optionally scoped to
+  specific projects and with an expiry; `GET /api/tokens` lists names and
+  last-used times; `DELETE /api/tokens/:tokenId` revokes. Bearer requests get
+  the same project-access rules as cookie sessions, project-scoped tokens are
+  refused outside their scope (including the project list), and account
+  surfaces — token management, password/auth changes, the GitHub connection —
+  accept session cookies only, so a leaked token cannot mint tokens, set a
+  password, or reach a stored GitHub credential. A presented bearer is
+  authoritative on the collab websocket exactly as over HTTP: an invalid or
+  revoked token refuses the connection instead of falling back to the browser
+  session.
+- "Agent access" card in account settings: create an access token (name,
+  optional project scope, optional expiry), see its value exactly once with a
+  copy field and the connector URL for Claude, and review existing tokens —
+  name, created, last used — with per-token revoke.
+- MCP endpoint (experimental, off by default): `ALDINE_MCP=1` serves the Model
+  Context Protocol over Streamable HTTP at `POST /mcp`, so MCP clients such as
+  Claude can connect to an Aldine instance directly. Stateless — safe behind a
+  load balancer. Auth is mandatory: with `AUTH_ENABLED`, a personal access
+  token (`Authorization: Bearer aldn_…`, project scope respected); without it,
+  an operator-set `ALDINE_MCP_TOKEN` compared timing-safely. If neither is
+  configured every request gets 401 and the server logs a setup hint at boot —
+  there is no authless mode. The route is rate limited per client IP and per
+  token — both buckets must pass, so rotating bearer guesses cannot mint fresh
+  budgets (60 burst, 1/s sustained, `RL_MCP_BURST` to tune) — and caps request
+  bodies at 2 MB. The
+  same tool registry also runs over stdio for local use:
+  `tsx apps/server/src/mcp/stdio.ts`.
+- MCP tool surface: `list_projects`, `project_structure`, `read_file`,
+  `edit_file`, `write_file`, `batch_write`, `compile`, and `commit` (plus the
+  `ping` reachability check). Tools go through the same access, protected-
+  project, trash, hidden-path, and token-scope guards as the REST API, and
+  every result echoes `{branch, head}`. `edit_file` anchors on exact quotes
+  (≥8 characters, `occurrence` to disambiguate) and applies them to a live
+  collaboration document as CRDT edits that merge with concurrent typing —
+  a drifted anchor returns `stale_anchor` with up to 3 candidate lines and
+  applies nothing. `write_file` honors `base_version` and refuses with
+  `version_conflict` instead of overwriting newer content; `batch_write`
+  lands a multi-file change as ONE named commit and refuses a batch that
+  lists the same path twice (the entries would silently overwrite each
+  other). `compile` returns parsed
+  errors, a ≤4 KB log tail (never the full log), a PDF link, and a deep link,
+  with progress notifications every ~10 s while latexmk runs; agent compiles
+  take at most one of a user's two concurrent typeset slots, so a human
+  always keeps one. Agent mutations are committed as author "Claude" with the
+  stated intent as the message; when human typing and agent edits settle in
+  the same auto-commit window, the agent-touched files commit separately from
+  the anonymous autosave so neither party's work is attributed to the other.
+  Before an agent writes a file, that file's uncommitted state is checkpointed
+  (as an anonymous autosave, or under the agent's own earlier attribution),
+  so a Claude commit's diff is exactly the agent's delta even when a human
+  had been typing in the same file; `batch_write` commits only the paths it
+  wrote; an explicit commit (the Commit button, the `commit` tool, merge and
+  revert checkpoints) consumes any pending agent attribution, so what a human
+  types into that file afterwards is never signed Claude; and an
+  agent-created file deleted before the auto-commit fires no longer makes the
+  other agent-edited files fall into the anonymous autosave.
+  While an agent edits an open document it
+  appears in that document's presence (name "Claude", reserved violet,
+  `isAgent: true`), expiring ~60 s after its last tool call.
+- Agent presence and audit in the editor: agent sessions show up in the
+  presence strip as a violet spark glyph (never an initial) with the session
+  start time in its tooltip; the violet is reserved for agents and removed
+  from the human color palette (existing violet identities are re-rolled).
+  History marks commits authored "Claude" with a violet dot. When an agent
+  session that produced commits ends, a toast ("Claude edited N files" →
+  Review) opens a diff of the session's commits with a "Revert these changes"
+  button — backed by the new `POST /api/projects/:id/revert`, which undoes the
+  given commits as one new commit, never rewriting history. Behind the
+  `aldine.experimental.agentPresence` flag (command palette: "Enable
+  experimental agent edit highlights"), remote edits landing while an agent is
+  present get a violet background that fades over ~4 s.
+- Five more MCP tools wrapping existing server features: `references_add`
+  (DOI / arXiv / OpenAlex id → BibTeX appended to the project's `.bib`,
+  default `references.bib` beside the root file; returns `{key, bibFile,
+  duplicate}`; refuses a non-`.bib` target and an unknown branch before the
+  lookup budget is spent, so a wrong `bibFile` never splices an entry into a
+  `.tex` source and a branch typo is reported as "Branch not found" rather
+  than as an upstream outage; shares the reference-lookup rate limit and
+  lands as an attributed Claude commit), `list_citations` (`[{key, title, author, year,
+  file}]` — the index to consult before writing `\cite`), `list_labels`
+  (`[{label, file}]`), `wordcount` (`{rootFile, total, files}` over the
+  root file's `\input`/`\include` graph), and `create_project` (`{name,
+  template?}`; refused with a plain explanation when the token is
+  project-scoped, since a scope is the token's blast radius). The three
+  index tools carry `readOnlyHint`. The `/bib`, `/labels`, `/wordcount`, and
+  `references/add` routes now share one implementation with the tools
+  (`indexes.ts`, `references.ts`); `references/add` additionally returns
+  `bibFile` on the duplicate path. Tool descriptions were rewritten as the
+  model's API docs: stale-anchor retry etiquette (re-read → re-anchor →
+  at most 2 retries), "prefer `edit_file` for existing and open files",
+  when to compile and the 3-attempt fix-loop cap with narrated attempts,
+  "call `list_citations` before writing `\cite`", and which errors
+  (unreachable, read-only, quota, budget) to relay to the user rather than
+  retry.
+- e2e coverage for the wrapper tools: `15-mcp` seeds an `\input` graph, an
+  orphan `.tex`, and two `.bib` files and checks `list_citations`,
+  `list_labels`, `wordcount` (graph, not tree; commented-out `\input`
+  excluded), and `references_add` against the mock DOI upstream on `:4919`
+  (escaping, duplicate no-write, title refused, explicit `bibFile`,
+  attributed commit); the auth suite covers `create_project` — refused for a
+  project-scoped PAT with nothing created, created and owner-visible for an
+  unscoped one, template and unknown-template paths.
 
 ### Security
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an

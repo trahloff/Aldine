@@ -10,11 +10,10 @@ import * as usage from './usage.js';
 import * as github from './github.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
-import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listTemplates, templateFiles } from './templates.js';
-import { fetchBibEntry, searchWorks } from './references.js';
-import { latexWordCount, documentFiles } from './wordcount.js';
+import { addReference, searchWorks } from './references.js';
+import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, guessRoot } from './unzip.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
@@ -23,7 +22,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, newId, BRANCH_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -70,20 +69,6 @@ const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
 /** Engines the compiler distinguishes; anything else silently became pdflatex. */
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
-
-/** git internals and compile output are never user-addressable — at any depth. */
-function isHiddenPath(rel: string): boolean {
-  // Check every segment: 'sub/.git/config' and 'paper/.aldine-out/x' must be
-  // caught too, not just a leading '.git'. Matches store.listFiles, which skips
-  // these names at every level.
-  return rel.split(/[\\/]/).some((seg) => seg === '.git' || seg.startsWith('.aldine'));
-}
-
-/** "<root file's dir>/<name>" — where \addbibresource{<name>} actually resolves. */
-function rootSiblingPath(rootFile: string, name: string): string {
-  const dir = path.dirname(rootFile || 'main.tex');
-  return dir === '.' ? name : path.posix.join(dir, name);
-}
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, ...rest } = meta;
@@ -285,6 +270,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Resolve the request's user once (awaiting the async datastore) and cache it,
   // so reqUser() is a synchronous read everywhere downstream.
   app.addHook('onRequest', async (req) => {
+    const header = req.headers.authorization;
+    if (auth.AUTH_ENABLED && typeof header === 'string' && header.startsWith(`Bearer ${auth.TOKEN_PREFIX}`)) {
+      // A presented bearer token is authoritative: when it doesn't resolve the
+      // request stays anonymous — an invalid token must not silently borrow
+      // the browser session's identity from the cookie.
+      const t = await auth.userFromToken(header);
+      (req as any)._user = t?.user ?? null;
+      (req as any)._tokenScope = t?.tokenScope ?? null;
+      return;
+    }
     (req as any)._user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
   });
 
@@ -311,6 +306,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const user = reqUser(req);
       if (!user) return reply.code(401).send({ error: 'Sign in required' });
       if (!canAccess(meta, user)) return reply.code(403).send({ error: 'You do not have access to this project' });
+      // Project-scoped tokens: enforce the scope here, in the one shared guard,
+      // so no per-route copy can drift.
+      const scope = (req as any)._tokenScope as auth.TokenScope | null;
+      if (scope?.projectIds && !scope.projectIds.includes(id)) {
+        return reply.code(403).send({ error: 'This token does not have access to this project' });
+      }
       return;
     }
     // non-id routes: require sign-in for the project list / create / import
@@ -318,6 +319,75 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (/^\/api\/projects(\/import|\/trash)?$/.test(path) && !reqUser(req)) {
       return reply.code(401).send({ error: 'Sign in required' });
     }
+    // Bearer tokens are project credentials, not the account. Off the
+    // /api/projects/:id surface (scope-checked above) they reach only
+    // project-neutral read routes. Account surfaces stay session-only:
+    // /api/auth mutations (an OAuth account's empty password hash lets
+    // changePassword skip current-password verification, so a leaked token
+    // could set a password and mint itself a session), the GitHub connection
+    // (stored PAT), and token CRUD. A project-scoped token must not enumerate
+    // projects beyond its scope either (db/types.ts: projectIds restricts the
+    // token to exactly those ids).
+    const scope = (req as any)._tokenScope as auth.TokenScope | null;
+    if (scope && path.startsWith('/api/')) {
+      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(path);
+      const allProjects = !scope.projectIds && /^\/api\/projects(\/import|\/trash)?$/.test(path);
+      if (!neutral && !allProjects) {
+        return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
+      }
+    }
+  });
+
+  // ---------- personal access tokens (agent credentials) ----------
+  // Session-cookie auth ONLY: a leaked token must not be able to mint, list,
+  // or revoke tokens, so bearer-authenticated requests are refused outright.
+  const tokenRouteUser = (req: any, reply: any): auth.PublicUser | null => {
+    if (!auth.AUTH_ENABLED) { reply.code(404).send({ error: 'not found' }); return null; }
+    if ((req as any)._tokenScope) { reply.code(403).send({ error: 'Access tokens cannot manage tokens — sign in to do this' }); return null; }
+    const user = reqUser(req);
+    if (!user) { reply.code(401).send({ error: 'Sign in required' }); return null; }
+    return user;
+  };
+
+  app.get('/api/tokens', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    return auth.listAccessTokens(user.id);
+  });
+
+  app.post<{ Body: { name?: string; projectIds?: string[]; expiresAt?: string } }>('/api/tokens', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    const name = (req.body?.name || '').trim();
+    if (!name) return reply.code(400).send({ error: 'Token name is required' });
+    if (name.length > 100) return reply.code(400).send({ error: 'Token name is too long (max 100 characters)' });
+    let projectIds: string[] | null = null;
+    if (req.body?.projectIds !== undefined) {
+      const ids = req.body.projectIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || ids.some((p) => typeof p !== 'string' || !PROJECT_ID_RE.test(p))) {
+        return reply.code(400).send({ error: 'projectIds must be a list of project ids' });
+      }
+      projectIds = ids;
+    }
+    let expiresAt: string | null = null;
+    if (req.body?.expiresAt !== undefined) {
+      const exp = Date.parse(String(req.body.expiresAt));
+      if (Number.isNaN(exp)) return reply.code(400).send({ error: 'expiresAt must be an ISO 8601 date' });
+      if (exp <= Date.now()) return reply.code(400).send({ error: 'Expiry must be in the future' });
+      expiresAt = new Date(exp).toISOString();
+    }
+    const { token, record } = await auth.createAccessToken(user.id, name, projectIds, expiresAt);
+    // the plaintext token appears in this response and never again
+    return { token, ...record };
+  });
+
+  app.delete<{ Params: { tokenId: string } }>('/api/tokens/:tokenId', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    if (!(await auth.revokeAccessToken(user.id, req.params.tokenId))) {
+      return reply.code(404).send({ error: 'Token not found' });
+    }
+    return { ok: true };
   });
 
   // ---------- projects ----------
@@ -522,7 +592,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const branch = req.query.branch || 'main';
     try {
       await gitops.ensureWorktree(req.params.id, branch);
-      return store.listFiles(req.params.id, branch);
+      // Flush before reading the version so it matches what a subsequent
+      // GET /file (which also flushes) will serve — otherwise a pending edit
+      // would bump the version between the two calls and fake a conflict.
+      flushBranchDocs(req.params.id, branch);
+      return { files: store.listFiles(req.params.id, branch), contentVersion: contentVersion(req.params.id, branch) };
     } catch {
       return reply.code(404).send({ error: 'Project or branch not found' });
     }
@@ -532,6 +606,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
+    // Flush open docs first: the disk copy is up to ~8 s (maxDebounce) behind
+    // the live editor, and REST read-modify-write is racy on a stale read.
+    flushBranchDocs(req.params.id, branch);
     try {
       const buf = store.readFile(req.params.id, branch, rel);
       const ext = path.extname(rel).toLowerCase();
@@ -543,6 +620,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // scripts on top-level navigation, acting as the viewer. nosniff pins the
       // type and the sandbox CSP neutralizes any script while <img> embeds still render.
       return reply
+        .header('x-aldine-content-version', String(contentVersion(req.params.id, branch)))
         .header('X-Content-Type-Options', 'nosniff')
         .header('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox")
         .type(mime).send(buf);
@@ -551,12 +629,25 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean } }>(
+  app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean; baseVersion?: number } }>(
     '/api/projects/:id/file', async (req, reply) => {
-      const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false } = req.body || {};
+      const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false, baseVersion } = req.body || {};
       if (!rel) return reply.code(400).send({ error: 'path required' });
       if (isHiddenPath(rel) || rel.includes('..')) return reply.code(403).send({ error: 'Invalid file path' });
       await gitops.ensureWorktree(req.params.id, branch);
+      // Flush open docs BEFORE writing: the store debounce means up to ~8 s of
+      // a live collaborator's typing exists only in memory, and writing over
+      // the stale disk copy would refresh those keystrokes away.
+      flushBranchDocs(req.params.id, branch);
+      // Optimistic concurrency: a caller that read at baseVersion writes only
+      // if nothing changed since. Checked after the flush so a pending edit
+      // counts as a change, not a silent overwrite. Branch-granular by design.
+      if (baseVersion !== undefined) {
+        const currentVersion = contentVersion(req.params.id, branch);
+        if (baseVersion !== currentVersion) {
+          return reply.code(409).send({ error: 'version_conflict', currentVersion });
+        }
+      }
       // createOnly (new-file flow): never clobber an existing file with empty content
       if (createOnly && store.fileExists(req.params.id, branch, rel)) {
         return reply.code(409).send({ error: 'A file with that name already exists' });
@@ -690,82 +781,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return res;
     });
 
-  // ---------- bib + label indexes (for \cite / \ref autocomplete) ----------
-  // Both walk the whole branch (readdir + read + parse every .bib/.tex), which
-  // used to run on EVERY autocomplete request. Cache per branch, keyed by the
-  // content version that every write path bumps (collab.ts) — a hit costs a
-  // Map lookup, a miss exactly one walk.
-  const bibIndexCache = new Map<string, { v: number; entries: BibEntry[] }>();
-  const labelIndexCache = new Map<string, { v: number; labels: Array<{ label: string; file: string }> }>();
+  // ---------- bib + label indexes (for \cite / \ref autocomplete), word count ----------
+  // Implementations live in indexes.ts, shared with the MCP tools.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/bib', async (req) =>
+    bibIndex(req.params.id, req.query.branch || 'main'));
 
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/bib', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch); // may bump the version (pending edits reach disk)
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = bibIndexCache.get(key);
-    if (hit && hit.v === v) return hit.entries;
-    const entries: BibEntry[] = [];
-    for (const f of store.listFiles(req.params.id, branch)) {
-      if (f.type === 'file' && f.path.endsWith('.bib')) {
-        try {
-          entries.push(...parseBib(store.readFile(req.params.id, branch, f.path).toString('utf8'), f.path));
-        } catch { /* skip broken bib */ }
-      }
-    }
-    bibIndexCache.set(key, { v, entries });
-    return entries;
-  });
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/labels', async (req) =>
+    labelIndex(req.params.id, req.query.branch || 'main'));
 
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/labels', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch);
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = labelIndexCache.get(key);
-    if (hit && hit.v === v) return hit.labels;
-    const labels: Array<{ label: string; file: string }> = [];
-    const re = /\\label\{([^}]+)\}/g;
-    for (const f of store.listFiles(req.params.id, branch)) {
-      if (f.type !== 'file' || !f.path.endsWith('.tex')) continue;
-      try {
-        const text = store.readFile(req.params.id, branch, f.path).toString('utf8');
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(text))) labels.push({ label: m[1], file: f.path });
-      } catch { /* skip */ }
-    }
-    labelIndexCache.set(key, { v, labels });
-    return labels;
-  });
-
-  // Whole-document word count: the status bar's per-file count is misleading
-  // for multi-file projects (the root is mostly preamble + \input lines), so
-  // the client sums the include graph via this endpoint. Same cache discipline
-  // as /bib and /labels.
-  const wordCountCache = new Map<string, { v: number; body: { rootFile: string; total: number; files: Record<string, number> } }>();
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/wordcount', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch);
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = wordCountCache.get(key);
-    if (hit && hit.v === v) return hit.body;
-    const meta = await store.readMeta(req.params.id);
-    const read = (p: string): string | null => {
-      if (isHiddenPath(p)) return null;
-      try { return store.readFile(req.params.id, branch, p).toString('utf8'); } catch { return null; }
-    };
-    const files: Record<string, number> = {};
-    let total = 0;
-    for (const f of documentFiles(meta.rootFile, read)) {
-      const n = latexWordCount(read(f) ?? '');
-      files[f] = n;
-      total += n;
-    }
-    const body = { rootFile: meta.rootFile, total, files };
-    wordCountCache.set(key, { v, body });
-    return body;
-  });
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/wordcount', async (req) =>
+    wordCount(req.params.id, req.query.branch || 'main'));
 
   // ---------- git ----------
   app.get<{ Params: { id: string } }>('/api/projects/:id/branches', async (req) => gitops.listBranches(req.params.id));
@@ -806,6 +831,24 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { branch = 'main', message = 'aldine: manual commit', author } = req.body || {};
       flushBranchDocs(req.params.id, branch);
       return gitops.commitAll(req.params.id, branch, message, author);
+    });
+
+  // Revert a set of commits (newest-first) as one new commit — the session
+  // toast's "Revert these changes". Additive history only, never a rewrite.
+  app.post<{ Params: { id: string }; Body: { branch?: string; hashes?: string[]; message?: string; author?: string } }>(
+    '/api/projects/:id/revert', async (req, reply) => {
+      const { branch = 'main', hashes, message = 'Revert agent changes', author } = req.body || {};
+      if (!Array.isArray(hashes) || hashes.length === 0) return reply.code(400).send({ error: 'hashes required' });
+      // capture pending edits first so the revert never collides with a dirty tree
+      flushBranchDocs(req.params.id, branch);
+      await gitops.commitAll(req.params.id, branch, 'aldine: checkpoint before revert', author).catch(() => {});
+      try {
+        const result = await gitops.revertCommits(req.params.id, branch, hashes, message, author);
+        if (result.ok) refreshBranchDocsFromDisk(req.params.id, branch);
+        return result;
+      } catch (err) {
+        return reply.code(409).send({ error: (err as Error).message });
+      }
     });
 
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/log', async (req) => {
@@ -908,6 +951,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- reference lookup (DOI / arXiv → BibTeX) ----------
+  // Implementation in references.ts (addReference), shared with the MCP tool.
   app.post<{ Params: { id: string }; Body: { query: string; branch?: string; bibFile?: string } }>(
     '/api/projects/:id/references/add', async (req, reply) => {
       const { query, branch = 'main' } = req.body || {};
@@ -918,23 +962,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         // land in a .bib the document actually reads
         const bibFile = req.body?.bibFile || rootSiblingPath((await store.readMeta(req.params.id)).rootFile, 'references.bib');
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
-        const entry = await fetchBibEntry(query.trim());
-        if (!entry) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
-        // append to the .bib (create if missing), skipping duplicate keys
-        await gitops.ensureWorktree(req.params.id, branch);
-        let existing = '';
-        try { existing = store.readFile(req.params.id, branch, bibFile).toString('utf8'); } catch { /* new file */ }
-        // key-only dedup via the shared bibKeys scanner — consistent with the
-        // /bib index (skips @comment/@string) but without parsing every field
-        // of every existing entry just to compare keys.
-        const key = [...bibKeys(entry)][0];
-        if (key && bibKeys(existing).has(key)) {
-          return { ok: true, key, duplicate: true };
-        }
-        store.writeFile(req.params.id, branch, bibFile, existing.trimEnd() + '\n\n' + entry.trim() + '\n');
-        refreshBranchDocsFromDisk(req.params.id, branch);
-        scheduleCommit(req.params.id, branch);
-        return { ok: true, key, bibFile };
+        const added = await addReference(req.params.id, branch, query, bibFile);
+        if (!added) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
+        return { ok: true, ...added };
       } catch (err: any) {
         return reply.code(502).send({ error: err.message });
       }

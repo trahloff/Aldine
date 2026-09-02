@@ -69,6 +69,24 @@ export interface ProjectMeta {
 export interface SessionRow { userId: string; exp: number }
 
 /**
+ * Personal access token (headless agent credential). `hash` is the SHA-256
+ * digest of the secret — the plaintext token is never stored. `projectIds:
+ * null` means all of the user's projects; a non-null list restricts the token
+ * to exactly those ids.
+ */
+export interface TokenRecord {
+  id: string;
+  userId: string;
+  name: string;
+  hash: string;
+  projectIds: string[] | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+/**
  * Every method is async so a network-backed implementation (Postgres) is a
  * drop-in for the file-backed one. Implementations must be safe for concurrent
  * callers (the JSON backend writes atomically; Postgres is transactional).
@@ -94,6 +112,16 @@ export interface DataStore {
   createReset(token: string, userId: string, exp: number): Promise<void>;
   getReset(token: string): Promise<SessionRow | null>;
   deleteReset(token: string): Promise<void>;
+
+  // personal access tokens (looked up by SHA-256 digest on every bearer request)
+  createToken(t: TokenRecord): Promise<void>;
+  getToken(id: string): Promise<TokenRecord | null>;
+  getTokenByHash(hash: string): Promise<TokenRecord | null>;
+  listTokensForUser(userId: string): Promise<TokenRecord[]>;
+  updateToken(t: TokenRecord): Promise<void>;
+  /** Set lastUsedAt alone. Bearer-request bookkeeping must not write a whole
+   *  (possibly stale) record back — that could erase a concurrent revocation. */
+  touchToken(id: string, lastUsedAt: string): Promise<void>;
 
   // project metadata
   readMeta(id: string): Promise<ProjectMeta | null>;

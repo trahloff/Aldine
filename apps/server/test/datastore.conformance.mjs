@@ -67,6 +67,37 @@ async function runSuite(store, label) {
   await store.deleteReset(token);
   check((await store.getReset(token)) === null, `${label}: deleteReset`);
 
+  // ---- personal access tokens ----
+  const tok = { id: `pat1-${t}`, userId: user.id, name: 'Agent', hash: `digest-${t}`, projectIds: null, createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: null, expiresAt: null, revokedAt: null };
+  const tok2 = { id: `pat2-${t}`, userId: user.id, name: 'Scoped', hash: `digest2-${t}`, projectIds: [`p1${t}`], createdAt: '2026-06-01T00:00:00.000Z', lastUsedAt: null, expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null };
+  await store.createToken(tok);
+  await store.createToken(tok2);
+  eq(await store.getToken(tok.id), tok, `${label}: getToken roundtrip`);
+  check((await store.getToken(`missing-${t}`)) === null, `${label}: getToken missing → null`);
+  eq(await store.getTokenByHash(tok.hash), tok, `${label}: getTokenByHash`);
+  eq(await store.getTokenByHash(tok2.hash), tok2, `${label}: getTokenByHash keeps projectIds/expiresAt`);
+  check((await store.getTokenByHash(`missing-${t}`)) === null, `${label}: getTokenByHash missing → null`);
+
+  const mine = (await store.listTokensForUser(user.id)).filter((x) => [tok.id, tok2.id].includes(x.id));
+  eq(mine.map((x) => x.id), [tok2.id, tok.id], `${label}: listTokensForUser newest-first`);
+  eq(await store.listTokensForUser(`nobody-${t}`), [], `${label}: listTokensForUser unknown user → []`);
+
+  const tAlias = await store.getToken(tok.id);
+  tAlias.hash = 'TAMPERED';
+  eq((await store.getToken(tok.id)).hash, tok.hash, `${label}: getToken result is a copy`);
+
+  await store.updateToken({ ...tok, lastUsedAt: '2026-07-01T00:00:00.000Z', revokedAt: '2026-07-02T00:00:00.000Z' });
+  const revoked = await store.getToken(tok.id);
+  eq(revoked.lastUsedAt, '2026-07-01T00:00:00.000Z', `${label}: updateToken lastUsedAt`);
+  eq(revoked.revokedAt, '2026-07-02T00:00:00.000Z', `${label}: updateToken revokedAt`);
+
+  await store.touchToken(tok.id, '2026-07-03T00:00:00.000Z');
+  const touched = await store.getToken(tok.id);
+  eq(touched.lastUsedAt, '2026-07-03T00:00:00.000Z', `${label}: touchToken sets lastUsedAt`);
+  eq(touched.revokedAt, '2026-07-02T00:00:00.000Z', `${label}: touchToken leaves revokedAt intact`);
+  await store.touchToken(`missing-${t}`, '2026-07-03T00:00:00.000Z');
+  check((await store.getToken(`missing-${t}`)) === null, `${label}: touchToken on a missing id is a no-op`);
+
   // ---- project meta ----
   const older = { id: `p1${t}`, name: 'Older', rootFile: 'main.tex', engine: 'pdf', createdAt: '2026-01-01T00:00:00.000Z' };
   const newer = { id: `p2${t}`, name: 'Newer', rootFile: 'main.tex', engine: 'pdf', createdAt: '2026-06-01T00:00:00.000Z' };

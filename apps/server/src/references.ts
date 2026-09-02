@@ -1,3 +1,8 @@
+import * as store from './store.js';
+import { ensureWorktree, checkpointPaths } from './gitops.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, scheduleCommit } from './collab.js';
+import { bibKeys } from './bib.js';
+
 /**
  * Resolve a DOI, doi.org URL, or arXiv id to a BibTeX entry using free public
  * endpoints — no account, complements the Zotero integration.
@@ -162,4 +167,38 @@ async function fetchArxiv(id: string): Promise<string | null> {
   archivePrefix = {arXiv},
   url          = {https://arxiv.org/abs/${id}},
 }`;
+}
+
+export interface AddedReference { key: string; bibFile: string; duplicate: boolean }
+
+/**
+ * Look a query up and append the entry to `bibFile` on the branch (created
+ * if missing), skipping a key that is already there. Shared by the REST
+ * route and the MCP tool — the caller validates `bibFile` and takes the
+ * rate-limit token. Returns null when nothing resolves; upstream failures
+ * throw with a user-readable message. With `author` set the write is
+ * checkpointed and attributed like every other agent mutation, so the
+ * attributed commit carries only the new entry.
+ */
+export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string): Promise<AddedReference | null> {
+  const entry = await fetchBibEntry(query.trim());
+  if (!entry) return null;
+  await ensureWorktree(projectId, branch);
+  if (author) {
+    flushBranchDocs(projectId, branch);
+    await checkpointPaths(projectId, branch, [bibFile]);
+    flushBranchDocs(projectId, branch);
+  }
+  let existing = '';
+  try { existing = store.readFile(projectId, branch, bibFile).toString('utf8'); } catch { /* new file */ }
+  // key-only dedup via the shared bibKeys scanner — consistent with the
+  // /bib index (skips @comment/@string) but without parsing every field
+  // of every existing entry just to compare keys.
+  const key = [...bibKeys(entry)][0] ?? '';
+  if (key && bibKeys(existing).has(key)) return { key, bibFile, duplicate: true };
+  store.writeFile(projectId, branch, bibFile, existing.trimEnd() + '\n\n' + entry.trim() + '\n');
+  refreshBranchDocsFromDisk(projectId, branch);
+  if (author) scheduleCommit(projectId, branch, `Add reference ${key || bibFile}`, author, [bibFile]);
+  else scheduleCommit(projectId, branch);
+  return { key, bibFile, duplicate: false };
 }

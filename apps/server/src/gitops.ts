@@ -66,6 +66,34 @@ function ensureOutputExcluded(id: string): void {
   } catch { /* best-effort; commit path must not fail on this */ }
 }
 
+/** Attributed (agent) work awaiting the debounced auto-commit of a branch:
+ *  the touched paths and the stated intent. Lives next to the commit
+ *  primitives because a whole-tree commit must consume it — after
+ *  commitAll the tree is clean, so a surviving entry would attribute whatever
+ *  a human types into those files NEXT to the agent (HistoryPanel/session
+ *  review key on the author string, and "Revert these changes" would undo
+ *  the human's work). */
+export interface PendingAttributedCommit { message: string; author: string; paths: Set<string> }
+const pendingAttributed = new Map<string, PendingAttributedCommit>();
+const attributionKey = (id: string, branch: string) => `${id}::${branch}`;
+
+export function registerAttributedPaths(id: string, branch: string, message: string, author: string, paths: string[]): void {
+  const key = attributionKey(id, branch);
+  const cur = pendingAttributed.get(key) || { message, author, paths: new Set<string>() };
+  cur.message = message; // latest intent wins within one author's window
+  cur.author = author;
+  for (const p of paths) cur.paths.add(p);
+  pendingAttributed.set(key, cur);
+}
+
+/** Remove and return the pending attribution for a branch (the debounce fire). */
+export function takeAttributedPaths(id: string, branch: string): PendingAttributedCommit | undefined {
+  const key = attributionKey(id, branch);
+  const cur = pendingAttributed.get(key);
+  pendingAttributed.delete(key);
+  return cur;
+}
+
 export async function commitAll(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
   const dir = await ensureWorktree(id, branch);
   const g = git(dir);
@@ -75,11 +103,78 @@ export async function commitAll(id: string, branch: string, message: string, aut
   await g.raw(['rm', '-r', '--cached', '--ignore-unmatch', '--quiet', '--', '.aldine-out', '.papyr-out']).catch(() => {});
   await g.add(['-A']);
   const status = await g.status();
-  if (status.staged.length === 0 && status.files.length === 0) return { committed: false };
+  // Consumed only once the tree is known clean (or committed below): a failed
+  // add/status must leave the attribution for the debounce to retry.
+  if (status.staged.length === 0 && status.files.length === 0) {
+    pendingAttributed.delete(attributionKey(id, branch));
+    return { committed: false };
+  }
   const opts: Record<string, string | null> = {};
   if (author) opts['--author'] = `${author} <${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local>`;
   const res = await g.commit(message, undefined, opts);
+  pendingAttributed.delete(attributionKey(id, branch));
   return { committed: true, hash: res.commit };
+}
+
+/**
+ * Commit ONLY the given paths (already-written files or their deletions).
+ * Used by the debounced auto-commit to keep agent-attributed work out of the
+ * anonymous autosave sweep and vice versa — a whole-tree commit here would
+ * attribute a human collaborator's concurrent edits to the agent.
+ * Paths that are neither changed nor untracked are dropped before the add:
+ * a single `git add` with one unmatched pathspec (an agent-created file a
+ * human deleted before the debounce fired) stages NOTHING, which would push
+ * every other agent path in the window into the anonymous sweep.
+ */
+export async function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+  if (!paths.length) return { committed: false };
+  const dir = await ensureWorktree(id, branch);
+  const g = git(dir);
+  ensureOutputExcluded(id);
+  const changed = new Set((await g.status()).files.flatMap((f) => (f.from ? [f.path, f.from] : [f.path])));
+  const present = paths.filter((p) => changed.has(p));
+  if (!present.length) return { committed: false };
+  await g.raw(['add', '--', ...present]);
+  const status = await g.status();
+  const staged = new Set(status.staged);
+  if (!present.some((p) => staged.has(p))) return { committed: false };
+  const opts: Record<string, string | null> = {};
+  if (author) opts['--author'] = `${author} <${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local>`;
+  // Committing the explicit pathspec (not the whole index) keeps anything else
+  // that happens to be staged out of the attributed commit.
+  const res = await g.commit(message, present, opts);
+  return { committed: true, hash: res.commit };
+}
+
+/**
+ * Commit the current on-disk state of `paths` BEFORE an agent overwrites
+ * them, so the attributed commit that follows carries exactly the agent's
+ * delta. Without this the human's uncommitted edits to the same file — up to
+ * a whole session's worth, since continuous typing keeps resetting the
+ * autosave debounce — would land under author Claude. A path already pending
+ * under an agent attribution checkpoints under THAT attribution (an
+ * anonymous checkpoint would bury the agent's earlier edit in an autosave);
+ * the rest checkpoint as an anonymous autosave. Callers flush open docs
+ * first so unflushed keystrokes are part of the checkpoint.
+ */
+export async function checkpointPaths(id: string, branch: string, paths: string[]): Promise<void> {
+  const key = attributionKey(id, branch);
+  const pending = pendingAttributed.get(key);
+  const attributed = pending ? paths.filter((p) => pending.paths.has(p)) : [];
+  const anonymous = pending ? paths.filter((p) => !pending.paths.has(p)) : paths;
+  if (pending && attributed.length) {
+    await commitPaths(id, branch, attributed, pending.message, pending.author);
+    for (const p of attributed) pending.paths.delete(p);
+    if (!pending.paths.size) pendingAttributed.delete(key);
+  }
+  if (anonymous.length) await commitPaths(id, branch, anonymous, 'aldine: autosave');
+}
+
+/** Short HEAD of a branch — the `{branch, head}` echo every MCP tool result
+ *  carries so the agent can narrate what it touched. '' when the ref cannot
+ *  be resolved (echo is informational; it must never fail the tool call). */
+export async function branchShortHead(id: string, branch: string): Promise<string> {
+  try { return (await git(repoDir(id)).revparse(['--short', branch])).trim(); } catch { return ''; }
 }
 
 export interface LogEntry { hash: string; date: string; message: string; author: string }
@@ -108,6 +203,30 @@ export async function merge(id: string, from: string, into: string, author?: str
   }
   if (mergeErr) return { ok: false, message: String((mergeErr as Error)?.message || mergeErr) };
   return { ok: true };
+}
+
+/**
+ * Revert the given commits as ONE new commit — session "undo" is additive
+ * history, never a rewrite. Hashes must arrive newest-first so each revert
+ * applies against the state it expects. On conflict the revert is aborted and
+ * nothing is committed.
+ */
+export async function revertCommits(id: string, branch: string, hashes: string[], message: string, author?: string): Promise<{ ok: boolean; hash?: string }> {
+  if (!hashes.length || hashes.some((h) => !/^[0-9a-f]{4,40}$/.test(h))) throw new Error('bad commit hash');
+  const dir = await ensureWorktree(id, branch);
+  const g = git(dir);
+  try {
+    await g.raw(['revert', '--no-commit', ...hashes]);
+  } catch {
+    await g.raw(['revert', '--abort']).catch(() => {});
+    throw new Error('Could not revert cleanly — later edits overlap these changes');
+  }
+  const status = await g.status();
+  if (status.staged.length === 0 && status.files.length === 0) return { ok: false };
+  const opts: Record<string, string | null> = {};
+  if (author) opts['--author'] = `${author} <${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local>`;
+  const res = await g.commit(message, undefined, opts);
+  return { ok: true, hash: res.commit };
 }
 
 /** Unified patch for a single commit (handles root commits, which have no parent). */
