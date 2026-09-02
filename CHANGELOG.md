@@ -6,30 +6,6 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
-- Typesetting runs to the end of the document by default instead of stopping
-  at the first error: the preview shows the complete PDF and the errors sit in
-  the list beside it, like Overleaf. The old behaviour is a per-project setting,
-  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
-  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
-  on screen as before.
-
-### Fixed
-- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
-  on screen and the SyncTeX file on disk come from different typeset runs,
-  instead of landing on the wrong line. Compile results carry a `compileId`
-  that the lookup sends back.
-- `GET`/`PUT /api/projects/:id/file` now flush open collaboration documents to
-  disk first, like every other disk-touching route already did. Before, a REST
-  read could be up to ~8 s staler than the editor, and a REST write landing on
-  that stale disk state would silently discard a live collaborator's unflushed
-  keystrokes when the document refreshed.
-- `GET /api/projects/:id/wordcount` (and the `wordcount` MCP tool) no longer
-  serve the previous root file's count after the root file is switched in
-  project settings: the cache is now keyed by root file as well as branch
-  content version, so a switch with no edit is reflected immediately.
-
-
 ### Added
 - OAuth 2.1 for the MCP connector (auth deployments): claude.ai and Claude
   Code now connect with a Connect button instead of a pasted token. Aldine
@@ -177,17 +153,42 @@ All notable changes to Aldine are documented here. The format follows
   project-scoped PAT with nothing created, created and owner-visible for an
   unscoped one, template and unknown-template paths.
 
-### Security
-- The minimal `docker-compose.yml` carries the compiler sandbox again: an
-  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
-  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
-  in `docker-compose.full.yml` while SECURITY.md and the README went on
-  promising it, so quick-start instances were compiling untrusted LaTeX in a
-  container with full egress and every capability. The README quick start is the
-  same file, verbatim, including the `name: aldine` line that fixes the volume
-  names.
+- Download PDF button in the preview toolbar — saves the compiled PDF named
+  after the project.
+- Public-demo hardening: `ALDINE_PROTECTED_PROJECTS` serves listed projects
+  read-only (HTTP and collab socket) so a showcase paper survives a
+  world-writable demo, and `ALDINE_COMPILE_PER_MIN` caps each visitor's
+  typesets per minute. The demo stack enables the cap by default.
+- Search and AI discoverability for aldine.dev: `robots.txt` (all crawlers
+  welcome, AI crawlers included), `sitemap.xml`, a canonical URL, JSON-LD
+  software metadata, and a curated `llms.txt` overview for LLMs and agents.
+  The page title now says what people search for: "open-source Overleaf
+  alternative".
+- `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
+  `CLAUDE.md` now imports it instead of carrying its own copy.
+
+- An About dialog, from the home screen and the command palette, naming the
+  licence and linking to the source, stamped with the version and the commit
+  the bundle was built from. AGPL section 13 requires a network instance to
+  offer its users the corresponding source, and every public deployment had
+  been serving a UI that mentioned neither.
+- [`CLA.md`](CLA.md) and a signing workflow: contributors keep their copyright
+  and grant the right to distribute, including under different licence terms
+  later, so the project keeps the option of a commercially licensed edition.
+- [`TRADEMARK.md`](TRADEMARK.md): the AGPL covers the code, not the name. Run
+  and rebrand freely; don't ship a modified Aldine under the Aldine name.
+- The README states plainly that a hosted service is planned, that the
+  self-hosted edition stays AGPL, and that no feature that works today moves
+  behind a paid tier.
 
 ### Changed
+- Typesetting runs to the end of the document by default instead of stopping
+  at the first error: the preview shows the complete PDF and the errors sit in
+  the list beside it, like Overleaf. The old behaviour is a per-project setting,
+  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
+  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
+  on screen as before.
+
 - The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
   script and language compiles out of the box. The `medium` scheme stays for
   constrained hosts and now includes the publisher classes and the Arabic/Persian,
@@ -206,37 +207,27 @@ All notable changes to Aldine are documented here. The format follows
   `MAX_CONCURRENT_COMPILES` through from `.env` instead of hardcoding the
   timeout.
 
-### Added
-- Download PDF button in the preview toolbar — saves the compiled PDF named
-  after the project.
-- Public-demo hardening: `ALDINE_PROTECTED_PROJECTS` serves listed projects
-  read-only (HTTP and collab socket) so a showcase paper survives a
-  world-writable demo, and `ALDINE_COMPILE_PER_MIN` caps each visitor's
-  typesets per minute. The demo stack enables the cap by default.
-- Search and AI discoverability for aldine.dev: `robots.txt` (all crawlers
-  welcome, AI crawlers included), `sitemap.xml`, a canonical URL, JSON-LD
-  software metadata, and a curated `llms.txt` overview for LLMs and agents.
-  The page title now says what people search for: "open-source Overleaf
-  alternative".
-- `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
-  `CLAUDE.md` now imports it instead of carrying its own copy.
-
-### Added
-- An About dialog, from the home screen and the command palette, naming the
-  licence and linking to the source, stamped with the version and the commit
-  the bundle was built from. AGPL section 13 requires a network instance to
-  offer its users the corresponding source, and every public deployment had
-  been serving a UI that mentioned neither.
-- [`CLA.md`](CLA.md) and a signing workflow: contributors keep their copyright
-  and grant the right to distribute, including under different licence terms
-  later, so the project keeps the option of a commercially licensed edition.
-- [`TRADEMARK.md`](TRADEMARK.md): the AGPL covers the code, not the name. Run
-  and rebrand freely; don't ship a modified Aldine under the Aldine name.
-- The README states plainly that a hosted service is planned, that the
-  self-hosted edition stays AGPL, and that no feature that works today moves
-  behind a paid tier.
+- App instances send `noindex`: an Aldine box holds private documents, and
+  the public face for search engines is aldine.dev. This covers the demo and
+  every self-hosted install; remove the tag in `apps/web/index.html` if you
+  want your instance indexed.
 
 ### Fixed
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
+- `GET`/`PUT /api/projects/:id/file` now flush open collaboration documents to
+  disk first, like every other disk-touching route already did. Before, a REST
+  read could be up to ~8 s staler than the editor, and a REST write landing on
+  that stale disk state would silently discard a live collaborator's unflushed
+  keystrokes when the document refreshed.
+- `GET /api/projects/:id/wordcount` (and the `wordcount` MCP tool) no longer
+  serve the previous root file's count after the root file is switched in
+  project settings: the cache is now keyed by root file as well as branch
+  content version, so a switch with no edit is reflected immediately.
+
+
 - Importing a ZIP larger than about 24 MB no longer fails with a bare
   "Payload Too Large": the import route now accepts the 60 MB the dialog
   promises (the ZIP travels base64-encoded inside JSON, so the global 32 MB
@@ -297,24 +288,6 @@ All notable changes to Aldine are documented here. The format follows
   the demo answers no TLS handshake at all until the window rolls over. The
   wipe now drops the data volumes by name and leaves `aldine_caddy-data` alone.
 
-### Changed
-- App instances send `noindex`: an Aldine box holds private documents, and
-  the public face for search engines is aldine.dev. This covers the demo and
-  every self-hosted install; remove the tag in `apps/web/index.html` if you
-  want your instance indexed.
-
-### Security
-- Accepting a review suggestion now applies to the live collaborative
-  document on the server. The old client-side path read the disk copy,
-  string-replaced, and wrote the whole file back — silently destroying every
-  collaborator's not-yet-autosaved edits, and failing with a misleading
-  "commented text has changed" toast whenever the target text was younger
-  than the autosave debounce.
-- Renaming a file flushes pending collaborative edits to disk first. The
-  rename endpoint evicted the live document before moving the file, so
-  keystrokes from the last few seconds were silently lost.
-
-### Fixed
 - Renaming the typeset root keeps it the root (the setting follows the new
   name; deleting the root already re-derived it). Renaming a missing file now
   returns 404 instead of 500, and a rename conflict from the command palette
@@ -357,7 +330,6 @@ All notable changes to Aldine are documented here. The format follows
   row, menu hover, primary button) use a fill that carries white text at
   4.5:1.
 
-### Fixed
 - The word count now covers the whole document (the root file plus everything
   it `\input`s/`\include`s), keeping the open file's share live while typing.
   It used to count only the open file, which for a multi-file project meant
@@ -421,6 +393,26 @@ All notable changes to Aldine are documented here. The format follows
   described resizing a server type that is no longer the default.
 - The landing page announced "Typeset in 0.4s" a paragraph above "about two
   seconds"; the README says ~2s, so the page does now too.
+
+### Security
+- The minimal `docker-compose.yml` carries the compiler sandbox again: an
+  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
+  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
+  in `docker-compose.full.yml` while SECURITY.md and the README went on
+  promising it, so quick-start instances were compiling untrusted LaTeX in a
+  container with full egress and every capability. The README quick start is the
+  same file, verbatim, including the `name: aldine` line that fixes the volume
+  names.
+
+- Accepting a review suggestion now applies to the live collaborative
+  document on the server. The old client-side path read the disk copy,
+  string-replaced, and wrote the whole file back — silently destroying every
+  collaborator's not-yet-autosaved edits, and failing with a misleading
+  "commented text has changed" toast whenever the target text was younger
+  than the autosave debounce.
+- Renaming a file flushes pending collaborative edits to disk first. The
+  rename endpoint evicted the live document before moving the file, so
+  keystrokes from the last few seconds were silently lost.
 
 ## [0.3.0] — 2026-08-03
 
