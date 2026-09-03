@@ -33,9 +33,9 @@ docker buildx build --platform "${PLATFORM}" \
   -f "${REPO_ROOT}/apps/server/Dockerfile" \
   -t "${SERVER_REPO}:${TAG}" --push "${REPO_ROOT}"
 
-echo "→ Building + pushing compiler image (${COMPILER_REPO}:${TAG}, scheme ${ALDINE_TEXLIVE_SCHEME:-medium})"
+echo "→ Building + pushing compiler image (${COMPILER_REPO}:${TAG}, scheme ${ALDINE_TEXLIVE_SCHEME:-full})"
 docker buildx build --platform "${PLATFORM}" \
-  --build-arg "TEXLIVE_SCHEME=${ALDINE_TEXLIVE_SCHEME:-medium}" \
+  --build-arg "TEXLIVE_SCHEME=${ALDINE_TEXLIVE_SCHEME:-full}" \
   -f "${REPO_ROOT}/apps/compiler/Dockerfile" \
   -t "${COMPILER_REPO}:${TAG}" --push "${REPO_ROOT}/apps/compiler"
 

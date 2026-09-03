@@ -102,8 +102,8 @@ services:
       context: apps/compiler
       args:
         # medium (default, ~1 GB + pinned extras) or full (all of CTAN, ~9 GB on disk):
-        #   ALDINE_TEXLIVE_SCHEME=full docker compose up -d --build
-        TEXLIVE_SCHEME: ${ALDINE_TEXLIVE_SCHEME:-medium}
+        #   ALDINE_TEXLIVE_SCHEME=medium docker compose up -d --build
+        TEXLIVE_SCHEME: ${ALDINE_TEXLIVE_SCHEME:-full}
     environment:
       DATA_DIR: /data
       COMPILE_TIMEOUT_MS: ${COMPILE_TIMEOUT_MS:-120000}

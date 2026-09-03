@@ -11,13 +11,26 @@ name: Deploy to AWS
 # `describe-services` always tells you which commit is running.
 # `:latest` is still pushed as a human alias / push-images.sh fallback.
 #
-# Manual trigger only (no surprise deploys/costs on every push). Requires:
+# Manual trigger only (no surprise deploys/costs on every push). `target`
+# picks the service: production (papyr) or staging (papyr-staging — exists
+# only when Terraform's staging_domain_name is set; dispatch it on a feature
+# branch that github_deploy_branches allows). Requires:
 #   - vars.AWS_DEPLOY_ROLE_ARN : an IAM role trusting GitHub OIDC (see
 #     deploy/aws/github-oidc.tf — needs ECR push, task-def registration,
 #     PassRole for the task roles, and service update)
 #   - vars.AWS_REGION          : e.g. eu-west-1
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Service to roll
+        type: choice
+        options: [production, staging]
+        default: production
+
+env:
+  # Task-definition family and service share a name per target.
+  SERVICE: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
 
 permissions:
   id-token: write # OIDC
@@ -70,7 +83,7 @@ jobs:
           REG="${{ steps.ecr.outputs.registry }}"
           SHA="${{ github.sha }}"
           # Current task def → swap both images to the SHA tags → register.
-          aws ecs describe-task-definition --task-definition papyr \
+          aws ecs describe-task-definition --task-definition "$SERVICE" \
             --query taskDefinition --region "${{ vars.AWS_REGION }}" > td.json
           jq --arg s "$REG/papyr-server:$SHA" --arg c "$REG/papyr-compiler:$SHA" '
             .containerDefinitions |= map(
@@ -81,11 +94,11 @@ jobs:
                   .compatibilities, .registeredAt, .registeredBy)' td.json > td-new.json
           REV=$(aws ecs register-task-definition --cli-input-json file://td-new.json \
             --query 'taskDefinition.revision' --output text --region "${{ vars.AWS_REGION }}")
-          echo "Registered task definition papyr:$REV (commit $SHA)"
-          aws ecs update-service --cluster papyr --service papyr \
-            --task-definition "papyr:$REV" --region "${{ vars.AWS_REGION }}"
-          aws ecs wait services-stable --cluster papyr --services papyr \
+          echo "Registered task definition $SERVICE:$REV (commit $SHA)"
+          aws ecs update-service --cluster papyr --service "$SERVICE" \
+            --task-definition "$SERVICE:$REV" --region "${{ vars.AWS_REGION }}"
+          aws ecs wait services-stable --cluster papyr --services "$SERVICE" \
             --region "${{ vars.AWS_REGION }}"
-          echo "## Deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "- task definition: \`papyr:$REV\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Deployed (${{ inputs.target || 'production' }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- task definition: \`$SERVICE:$REV\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- commit: \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"

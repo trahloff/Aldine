@@ -169,7 +169,7 @@ what `deploy/backup.sh` looks for.
   installs LaTeX packages; expect 15–40 minutes.
 - **Need packages beyond the curated set?** Build the full file with all of
   CTAN preinstalled (~9 GB on disk):
-  `ALDINE_TEXLIVE_SCHEME=full docker compose -f docker-compose.full.yml up -d --build`.
+  `ALDINE_TEXLIVE_SCHEME=medium docker compose -f docker-compose.full.yml up -d --build` for a slimmer image (curated packages, no CJK).
 
 ## How Aldine compares
 
@@ -183,7 +183,7 @@ what `deploy/backup.sh` looks for.
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
 | Templates gallery | 4 built-in, **plus your own** from a directory or a GitLab group | Huge community gallery | CTAN / your own |
-| Package coverage | Curated set, or **all of CTAN** (`ALDINE_TEXLIVE_SCHEME=full`) | All of TeX Live | Whatever you install |
+| Package coverage | **All of TeX Live** by default (`ALDINE_TEXLIVE_SCHEME=medium` for a curated slim image) | All of TeX Live | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
 | Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
 | License | AGPL-3.0 | AGPL | MIT/varies |

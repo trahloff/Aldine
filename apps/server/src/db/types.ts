@@ -36,6 +36,10 @@ export interface ProjectMeta {
   name: string;
   rootFile: string;
   engine: 'pdf' | 'xelatex' | 'lualatex';
+  /** Pass -halt-on-error: the run stops at the first error and the preview
+   *  keeps the previous PDF. Off (default) runs to the end and shows the
+   *  complete PDF beside the error list. */
+  stopOnFirstError?: boolean;
   createdAt: string;
   /** Soft-delete marker: set when the project is moved to trash; purged after ~30 days. */
   deletedAt?: string;

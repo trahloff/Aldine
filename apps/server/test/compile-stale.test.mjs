@@ -1,0 +1,123 @@
+/**
+ * Stale-preview honesty: a failed compile must not mint a fresh pdfUrl for
+ * the old PDF the compiler still finds on disk. The client keeps the URL it
+ * already shows and learns it is stale; a later success mints a new one.
+ * The compiler is a mock that answers whatever the test queues next.
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { check, eq } from './assert.mjs';
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-compile-'));
+process.env.DATA_DIR = path.join(tmp, 'data');
+process.env.META_DIR = path.join(tmp, 'secrets');
+process.env.CACHE_DIR = path.join(tmp, 'cache');
+delete process.env.DATABASE_URL;
+delete process.env.REDIS_URL;
+
+const queue = [];
+const requests = [];
+const mock = http.createServer((req, res) => {
+  let raw = '';
+  req.on('data', (d) => { raw += d; });
+  req.on('end', () => {
+    requests.push(JSON.parse(raw));
+    const body = queue.shift() ?? { ok: false, error: 'mock queue empty' };
+    const buf = Buffer.from(JSON.stringify(body));
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': buf.length });
+    res.end(buf);
+  });
+});
+await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+process.env.COMPILER_URL = `http://127.0.0.1:${mock.address().port}`;
+
+const { initDb, closeDb } = await import('../src/db/index.ts');
+const store = await import('../src/store.ts');
+const { compileProject, forgetPdfUrls, synctexLookup } = await import('../src/compile.ts');
+const gitops = await import('../src/gitops.ts');
+
+await initDb();
+const meta = await store.createProject('Stale test');
+const good = { ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: '.aldine-out/main.synctex.gz', synctexFresh: true, log: 'ok', errors: [], durationMs: 5 };
+// Errors, but TeX ran to the end: the PDF and SyncTeX on disk are this run's.
+const errorsFull = { ok: false, exitCode: 12, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: '.aldine-out/main.synctex.gz', synctexFresh: true, log: '! Undefined control sequence.', errors: [{ type: 'error', line: 3, message: 'Undefined control sequence' }], durationMs: 5 };
+// Nothing written (missing root, crash, timeout): whatever is on disk is old.
+const fatal = { ok: false, exitCode: 1, pdf: '.aldine-out/main.pdf', pdfFresh: false, synctex: '.aldine-out/main.synctex.gz', synctexFresh: false, log: '! Emergency stop.', errors: [{ type: 'error', line: null, message: 'Emergency stop' }], durationMs: 5 };
+// A compiler from before pdfFresh existed reports ok only.
+const legacyBad = { ok: false, exitCode: 12, pdf: '.aldine-out/main.pdf', synctex: '.aldine-out/main.synctex.gz', log: '! Undefined control sequence.', errors: [{ type: 'error', line: 3, message: 'Undefined control sequence' }], durationMs: 5 };
+
+try {
+  queue.push({ ...fatal });
+  let r = await compileProject(meta.id, 'main');
+  eq(r.ok, false, 'first run fails');
+  eq(r.pdfUrl, null, 'no previous output → no URL to show, even though the compiler found a PDF');
+  eq(r.pdfStale, false, 'nothing stale when nothing is shown');
+  eq(r.pdf, '.aldine-out/main.pdf', 'the on-disk path is still reported');
+  eq(requests.at(-1).haltOnError, false, 'default: the compiler is asked to run to the end');
+
+  queue.push({ ...good });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, true, 'success');
+  check(typeof r.pdfUrl === 'string' && /[?&]t=\d+/.test(r.pdfUrl), `success mints a cache-busted URL: ${r.pdfUrl}`);
+  eq(r.pdfStale, undefined, 'a fresh result is not stale');
+  eq(typeof r.compileId, 'number', 'a shown run carries its compileId');
+  eq(r.synctex, '.aldine-out/main.synctex.gz', 'synctex path forwarded');
+  const fresh = r.pdfUrl;
+  const freshId = r.compileId;
+
+  queue.push({ ...errorsFull });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, false, 'errors are reported');
+  check(r.pdfUrl !== fresh, 'a run that wrote a complete PDF is shown, errors and all');
+  eq(r.pdfStale, undefined, 'not stale: the PDF on screen is this run\'s');
+  eq(r.errors.length, 1, 'errors pass through');
+  check(r.compileId > freshId, 'compileId increases');
+  const withErrors = r.pdfUrl;
+  const withErrorsId = r.compileId;
+
+  // SyncTeX binding: a lookup for a preview from another run is refused
+  // before the compiler is asked; the current run's id goes through.
+  let sx = await synctexLookup(meta.id, 'main', { direction: 'inverse', page: 1, x: 1, y: 1, compileId: freshId });
+  eq(sx.stale, true, 'lookup with an older compileId is stale');
+  const before = requests.length;
+  queue.push({ ok: true, records: [] });
+  sx = await synctexLookup(meta.id, 'main', { direction: 'inverse', page: 1, x: 1, y: 1, compileId: withErrorsId });
+  eq(sx.ok, true, 'lookup with the current compileId reaches the compiler');
+  eq(requests.length, before + 1, 'exactly one compiler request');
+  eq(requests.at(-1).compileId, undefined, 'compileId is not forwarded to the compiler');
+
+  queue.push({ ...fatal });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, false, 'fatal after output');
+  eq(r.pdfUrl, withErrors, 'pdfUrl is the last shown one, byte-identical');
+  eq(r.pdfStale, true, 'flagged stale');
+
+  queue.push({ ...legacyBad });
+  r = await compileProject(meta.id, 'main');
+  eq(r.pdfUrl, withErrors, 'a legacy compiler without pdfFresh: failure keeps the last URL');
+  eq(r.pdfStale, true, 'still stale');
+
+  // stopOnFirstError: a failing run is truncated, so only ok runs are shown.
+  meta.stopOnFirstError = true;
+  await store.writeMeta(meta);
+  queue.push({ ...errorsFull });
+  r = await compileProject(meta.id, 'main');
+  eq(requests.at(-1).haltOnError, true, 'the compiler is asked to halt');
+  eq(r.pdfUrl, withErrors, 'with stop-on-first-error a failing run keeps the previous PDF');
+  eq(r.pdfStale, true, 'and flags it');
+  meta.stopOnFirstError = false;
+  await store.writeMeta(meta);
+
+  await new Promise((res) => setTimeout(res, 5));
+  queue.push({ ...good });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, true, 'recovered');
+  check(r.pdfUrl !== withErrors, 'a new success mints a new URL');
+} finally {
+  await closeDb();
+  mock.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+process.exit(0);

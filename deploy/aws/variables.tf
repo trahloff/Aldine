@@ -116,3 +116,28 @@ variable "github_deploy_repo" {
   type        = string
   default     = ""
 }
+
+# ---- staging (optional second service on the same ALB; see staging.tf) ----
+variable "staging_domain_name" {
+  description = "Hostname for a staging deployment that shares the ALB with prod (e.g. staging.latex.example.com, in the same Route53 zone). Empty = no staging resources."
+  type        = string
+  default     = ""
+}
+
+variable "staging_image_tag" {
+  description = "Initial image tag for the staging task definition. The deploy workflow (target=staging) registers SHA-pinned revisions afterwards."
+  type        = string
+  default     = "latest"
+}
+
+variable "staging_env" {
+  description = "Extra plain env for the staging server, merged over the prod env (e.g. { ALDINE_MCP = \"1\" } to try the Agent API before it reaches prod)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "github_deploy_branches" {
+  description = "Branches of github_deploy_repo allowed to assume the image-deploy role (main is always included). Add a feature branch here to deploy it to staging from CI."
+  type        = list(string)
+  default     = []
+}

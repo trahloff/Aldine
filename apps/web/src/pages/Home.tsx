@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ProjectSummary, TemplateInfo, RemoteProviderId, RemoteProviderInfo, DeleteResult } from '../api';
+import { api, ApiError, ProjectSummary, TemplateInfo, RemoteProviderId, RemoteProviderInfo, DeleteResult } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -14,6 +14,11 @@ import NamespacePicker from '../components/NamespacePicker';
 import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
+
+/** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
+ *  enforces it; this pre-flight only spares the upload. */
+const IMPORT_MAX_ZIP_MB = 60;
+const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -82,7 +87,8 @@ export default function Home() {
 
   const importZip = async (file: File) => {
     if (!/\.zip$/i.test(file.name)) { toast('Please drop a .zip file', 'error'); return; }
-    if (file.size > 60 * 1024 * 1024) { toast('ZIP is larger than 60 MB', 'error'); return; }
+    const sizeMb = Number((file.size / (1024 * 1024)).toFixed(1));
+    if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     toast('Importing…');
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
@@ -95,6 +101,12 @@ export default function Home() {
       if (p.remoteError) toast(`Imported locally: ${p.remoteError}`, 'error');
       navigate(`/p/${p.id}`);
     } catch (err: any) {
+      // A 413 without the route's own text comes from a proxy or body limit
+      // below what the app allows — the size is the only number worth stating.
+      if (err instanceof ApiError && err.status === 413 && !/limit is/.test(err.message)) {
+        toast(`ZIP too large for this server: ${sizeMb} MB was refused before it reached the app, which allows ${IMPORT_MAX_ZIP_MB} MB`, 'error');
+        return;
+      }
       toast(`Import failed: ${err.message}`, 'error');
     }
   };

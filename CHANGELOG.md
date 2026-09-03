@@ -34,6 +34,10 @@ All notable changes to Aldine are documented here. The format follows
   then the one that created the link, then the service account. Listing and
   importing repos still require a personal connection — the service token there
   would widen which repositories a user can reach, not just how they authenticate.
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
 
 ### Added
 - **Project templates can live in a GitLab group.** Set `GITLAB_TEMPLATE_GROUP`
@@ -77,6 +81,10 @@ All notable changes to Aldine are documented here. The format follows
   a GitHub one opens pull requests. The home screen and first-run onboarding
   offer one import tile per configured host, so a deployment with only GitHub
   configured looks exactly as it did.
+- AWS deployment: an optional staging service on the same load balancer
+  (`staging_domain_name`), with its own filesystem, log group and certificate,
+  so a feature branch can be tried at a real URL before it reaches prod. The
+  deploy and rollback workflows take a `target` input (production or staging).
 
 ### Security
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
@@ -119,6 +127,23 @@ All notable changes to Aldine are documented here. The format follows
   host the project is linked to. Existing projects are read through a
   compatibility shim and upgraded in place on their next write, so no migration
   is needed and a downgrade keeps working until something writes.
+- The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
+  script and language compiles out of the box. The `medium` scheme stays for
+  constrained hosts and now includes the publisher classes and the Arabic/Persian,
+  Cyrillic, Greek and other-script collections (Persian via xepersian or
+  polyglossia verified). Self-hosters: rebuild the compiler image; expect ~9 GB
+  on disk for the default.
+- The compiler image installs `collection-publishers` (elsarticle, IEEEtran,
+  acmart, revtex4-2, agujournal, copernicus, and the other journal and
+  conference classes) on the medium scheme, and the full scheme's base image
+  is pinned by digest like the medium one. Self-hosters must rebuild the
+  compiler image (`docker compose build compiler`) to get the classes.
+- Typesetting runs to the end of the document by default instead of stopping
+  at the first error: the preview shows the complete PDF and the errors sit in
+  the list beside it, like Overleaf. The old behaviour is a per-project setting,
+  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
+  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
+  on screen as before.
 - `deploy/papyr-backup.service` / `.timer` are renamed to `aldine-backup.*`, the
   names the runbook has always used, so the install commands work as written. If
   you installed the old units, disable and delete them or both timers will run.
@@ -173,6 +198,60 @@ All notable changes to Aldine are documented here. The format follows
   behind a paid tier.
 
 ### Fixed
+- Importing a ZIP larger than about 24 MB no longer fails with a bare
+  "Payload Too Large": the import route now accepts the 60 MB the dialog
+  promises (the ZIP travels base64-encoded inside JSON, so the global 32 MB
+  body limit cut it off early), and a ZIP over the limit says so with both
+  numbers ("ZIP is 65 MB; the limit is 60 MB"). The import dialog's own
+  pre-flight toast states both numbers too, and a 413 from a proxy in front of
+  the app is reported as "ZIP too large for this server" with the size rather
+  than as a generic import failure. Self-hosters running their own nginx:
+  raise `client_max_body_size` to 81m as `deploy/nginx.conf` now does
+  (`deploy/README.md` said 32m was the load-bearing value; it names 81m now).
+- A ZIP whose entry names escape the project (`../x`, absolute paths, drive
+  letters) is rejected as a whole before anything is created, and any failure
+  after the project exists removes it again, so a bad import no longer leaves
+  a half-imported project in the list. Names with dots inside (`data..csv`)
+  and Windows-style backslash paths import correctly instead of being dropped
+  or written under a literal backslash name.
+- Root-file detection on import finds the manuscript instead of the largest
+  file: it looks past comment banners longer than 4 KB, prefers a file with
+  `\begin{document}` over a class stub, prefers conventional names
+  (`main`, `paper`, `manuscript`, `ms`, `article`, `thesis`) and the
+  shallowest path, and among equals takes the smaller file rather than a
+  bundled template. Without any `\documentclass` it names a `.tex` that is
+  actually in the archive instead of a non-existent `main.tex`.
+- Setting the typeset engine to anything the compiler cannot run is refused
+  with a 400 naming the valid engines (`pdf`, `xelatex`, `lualatex`); it used
+  to be stored and then silently typeset with pdflatex. The engine is now
+  visible and switchable in the app: a picker in the preview toolbar and
+  "Typeset with pdfLaTeX / XeLaTeX / LuaLaTeX" in the command palette, which
+  re-typeset straight away when a PDF is on screen (before, the only way to
+  change it was the API).
+- Forward SyncTeX (editor to PDF) works when the root file lives in a
+  subdirectory: the compiler now hands `synctex` the file name relative to
+  the compile directory, the way the `.synctex.gz` records it, mirroring the
+  inverse direction. In the app the jump is now discoverable and honest: a
+  "Jump to PDF" button in the editor header with the shortcut, ⌘J / Ctrl+J
+  works from anywhere in the editor page (it used to work only while the code
+  editor had focus), and a jump that cannot land says why ("No PDF location
+  for this line — typeset first" / "Jump unavailable for this file") instead
+  of doing nothing.
+- A failed typeset no longer presents the previous PDF as a fresh result. The
+  compile result keeps the last successful `pdfUrl` unchanged (the preview
+  keeps showing what it showed) and reports `pdfStale: true`, so inverse
+  SyncTeX jumps and the preview can say the PDF is from the last successful
+  typeset instead of quietly landing lines off. The preview pane shows a
+  "Preview is from the last successful typeset" ribbon while the last run
+  failed, a double-click on that stale preview says the jump may be off
+  before attempting it, and a double-click with no source location says so
+  instead of doing nothing. The result also carries the `synctex` path
+  again. Deleting a branch (or the project) forgets its remembered PDF, so a
+  branch recreated under the same name cannot be handed a URL to a file that
+  went with the old worktree; and switching branches empties the preview, so
+  a failed first typeset on the new branch no longer labels the previous
+  branch's pages as its "last successful typeset". ⌘J / Ctrl+J is left alone
+  while typing in a comment, dialog, or palette field.
 - The demo box's nightly wipe no longer destroys Caddy's certificate store. It
   used `docker compose down -v`, so every wipe re-issued a certificate for the
   same hostname; on the fifth day in a rolling week Let's Encrypt refuses, and

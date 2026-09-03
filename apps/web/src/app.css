@@ -640,6 +640,18 @@
 }
 .pdf-status { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-2); font-size: 12px; }
 .pdf-pane__inner { position: relative; }
+/* pinned over the pages while the last typeset failed */
+.pdf-stale {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--warn-text);
+  background: var(--warn-soft);
+  border-bottom: 1px solid var(--hairline);
+}
 .pdf-flash {
   position: absolute;
   background: var(--accent);

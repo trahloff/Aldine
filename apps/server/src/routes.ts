@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, synctexLookup } from './compile.js';
+import { compileProject, synctexLookup, forgetPdfUrls } from './compile.js';
 import * as usage from './usage.js';
 import { getProvider, configuredProviders, getConnection, setConnection, disconnect as disconnectRemote, type RemoteProvider, type RemoteRepo } from './remotes.js';
 import { normaliseBaseUrl, serviceConnection, withinRoot, listNamespaces, createSubgroup } from './gitlab.js';
@@ -27,7 +27,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, newId, BRANCH_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, newId, BRANCH_RE } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -73,6 +73,13 @@ function publicBase(req: FastifyRequest): string {
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
  *  network push. In-memory (single-node); cleared on restart → push-when-unsure. */
 const lastPushedHead = new Map<string, string>();
+
+/** Raw ZIP size the import route accepts; the web import dialog states the same figure. */
+export const IMPORT_MAX_ZIP_BYTES = 60 * 1024 * 1024;
+const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
+
+/** Engines the compiler distinguishes; anything else silently became pdflatex. */
+export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
 
 /** git internals and compile output are never user-addressable — at any depth. */
 function isHiddenPath(rel: string): boolean {
@@ -457,34 +464,51 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/templates', async (req) => listTemplates(connUserId(req)));
 
   // Import an Overleaf/project ZIP (base64) as a new project.
-  app.post<{ Body: { name?: string; zipBase64: string; namespace?: string } }>('/api/projects/import', async (req, reply) => {
+  // The ZIP arrives base64-encoded inside JSON (×4/3 of the raw size), so the
+  // route needs its own body limit: the global 32 MB one would cap imports at
+  // ~24 MB while the UI promises IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's
+  // client_max_body_size must stay ≥ this figure.
+  const importBodyLimit = Math.ceil(IMPORT_MAX_ZIP_BYTES * 4 / 3) + 1024 * 1024;
+  app.post<{ Body: { name?: string; zipBase64: string; namespace?: string } }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
     const { name, zipBase64, namespace } = req.body || {};
     if (!zipBase64) return reply.code(400).send({ error: 'zipBase64 required' });
+    let created: store.ProjectMeta | null = null;
     try {
       const buf = Buffer.from(zipBase64, 'base64');
-      if (buf.length > 60 * 1024 * 1024) return reply.code(413).send({ error: 'ZIP too large (max 60 MB)' });
+      if (buf.length > IMPORT_MAX_ZIP_BYTES) {
+        return reply.code(413).send({ error: `ZIP is ${mb(buf.length)} MB; the limit is ${mb(IMPORT_MAX_ZIP_BYTES)} MB` });
+      }
       const entries = unzip(buf);
-      const paths = Object.keys(entries).filter((p) => !p.includes('..') && !p.startsWith('/') && !p.startsWith('__MACOSX/') && !isHiddenPath(p));
-      if (!paths.length) return reply.code(400).send({ error: 'ZIP had no usable files' });
+      // Every entry is placed (or rejected) before the project exists, so a bad
+      // path can never leave a half-imported project behind.
+      const files: Record<string, Buffer> = {};
+      for (const [entry, data] of Object.entries(entries)) {
+        const p = importPath(entry);
+        if (p === null) return reply.code(400).send({ error: `ZIP entry "${entry}" points outside the project` });
+        if (p.startsWith('__MACOSX/') || isHiddenPath(p)) continue;
+        files[p] = data;
+      }
+      if (!Object.keys(files).length) return reply.code(400).send({ error: 'ZIP had no usable files' });
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
-      for (const p of paths) {
-        const data = entries[p];
+      for (const [p, data] of Object.entries(files)) {
         // treat as text only if the extension says so AND there's no NUL byte in the head
         const looksBinary = data.subarray(0, 8000).includes(0);
         if (isTextFile(p) && !looksBinary) textFiles[p] = data.toString('utf8');
         else binFiles.push(p);
       }
       const meta = await store.createProject(name || 'Imported project', textFiles, reqUser(req)?.id);
-      for (const p of binFiles) store.writeFile(meta.id, 'main', p, entries[p]);
+      created = meta;
+      for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
       if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
-      const root = guessRoot(entries);
+      const root = guessRoot(files);
       if (root) { meta.rootFile = root; await store.writeMeta(meta); }
       // Last, so the push carries the binaries and the detected root file too.
       const remoteError = await mirrorNewProject(meta, req, namespace);
       return { ...(await publicMeta(meta, reqUser(req))), remoteError };
     } catch (err: any) {
+      if (created) await store.deleteProject(created.id).catch(() => {});
       return reply.code(400).send({ error: `Could not import ZIP: ${err.message}` });
     }
   });
@@ -515,18 +539,27 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine'>> }>(
+  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>> }>(
     '/api/projects/:id', async (req, reply) => {
       const meta = await requireMember(req, reply, 'rename or reconfigure this project');
       if (!meta) return;
-      const { name, rootFile, engine } = req.body || {};
+      const { name, rootFile, engine, stopOnFirstError } = req.body || {};
       if (name !== undefined) {
         const named = checkName(name);
         if ('error' in named) return reply.code(400).send({ error: named.error });
         meta.name = named.name;
       }
       if (rootFile) meta.rootFile = rootFile;
-      if (engine) meta.engine = engine;
+      if (engine !== undefined) {
+        if (!(ENGINES as readonly string[]).includes(engine as string)) {
+          return reply.code(400).send({ error: `Unknown engine "${String(engine)}" — use one of ${ENGINES.join(', ')}` });
+        }
+        meta.engine = engine;
+      }
+      if (stopOnFirstError !== undefined) {
+        if (typeof stopOnFirstError !== 'boolean') return reply.code(400).send({ error: 'stopOnFirstError must be true or false' });
+        meta.stopOnFirstError = stopOnFirstError;
+      }
       await store.writeMeta(meta);
       return publicMeta(meta, reqUser(req));
     });
@@ -559,6 +592,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (req.query.permanent === '1') await store.deleteProject(req.params.id);
     else await store.softDeleteProject(req.params.id);
     lastPushedHead.delete(req.params.id); // don't leak the push-dedup entry (or reuse a stale hash)
+    forgetPdfUrls(req.params.id);
     // Deleting revokes access just like un-sharing: drop live collab sessions
     // (here and on peer nodes) so nobody keeps editing a trashed project.
     closeProjectConnections(req.params.id);
@@ -749,9 +783,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post<{ Params: { id: string }; Body: Record<string, unknown> & { branch?: string } }>(
-    '/api/projects/:id/synctex', async (req) => {
+    '/api/projects/:id/synctex', async (req, reply) => {
       const { branch = 'main', ...payload } = req.body || {};
-      return synctexLookup(req.params.id, branch, payload);
+      const res = await synctexLookup(req.params.id, branch, payload);
+      if (res.stale) return reply.code(409).send({ error: res.error });
+      return res;
     });
 
   // ---------- bib + label indexes (for \cite / \ref autocomplete) ----------
@@ -861,6 +897,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       return reply.code(409).send({ error: `Could not delete branch: ${(err as Error).message}` });
     }
+    forgetPdfUrls(req.params.id, name);
     return { ok: true };
   });
 

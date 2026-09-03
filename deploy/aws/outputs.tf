@@ -35,3 +35,8 @@ output "github_deploy_role_arn" {
   description = "Assume this from the app repo's image-deploy workflow (empty github_deploy_repo → null)."
   value       = try(aws_iam_role.github_deploy[0].arn, null)
 }
+
+output "staging_url" {
+  description = "The staging deployment (null when staging_domain_name is empty)."
+  value       = local.staging_enabled ? "https://${var.staging_domain_name}" : null
+}

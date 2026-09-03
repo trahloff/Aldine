@@ -5,6 +5,7 @@ export interface ProjectSummary {
   name: string;
   rootFile: string;
   engine: string;
+  stopOnFirstError?: boolean;
   createdAt: string;
   ownerId?: string;
   ownerName?: string;
@@ -41,6 +42,11 @@ export interface CompileResult {
   timedOut?: boolean;
   pdf: string | null;
   pdfUrl: string | null;
+  /** The run failed and pdfUrl is the last successful one, unchanged. */
+  pdfStale?: boolean;
+  /** The run whose PDF pdfUrl serves; sent back with SyncTeX lookups. */
+  compileId?: number;
+  synctex?: string | null;
   log: string;
   errors: CompileError[];
   durationMs: number;
@@ -63,6 +69,12 @@ export interface Comment {
   replies: CommentReply[];
 }
 
+/** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
+ *  framework, no JSON `error` text worth quoting) from a route's own message. */
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); }
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: init?.body ? { 'content-type': 'application/json' } : undefined,
@@ -71,7 +83,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep */ }
-    throw new Error(msg);
+    throw new ApiError(msg, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -96,7 +108,7 @@ export const api = {
   importZip: (name: string, zipBase64: string, namespace?: string) =>
     req<ProjectSummary>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64, namespace }) }),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
-  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine'>>) =>
+  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteProject: (id: string, permanent = false) => req<DeleteResult>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
