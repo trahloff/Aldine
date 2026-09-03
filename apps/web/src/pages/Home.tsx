@@ -77,10 +77,7 @@ export default function Home() {
     if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     toast('Importing…');
     try {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      let bin = '';
-      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), btoa(bin));
+      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file);
       toast(importSummary(p), 'ok');
       navigate(`/p/${p.id}`, { state: { import: p.import } });
     } catch (err: any) {

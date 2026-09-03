@@ -94,6 +94,11 @@ All notable changes to Aldine are documented here. The format follows
   behind a paid tier.
 
 ### Changed
+- `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
+  part (and an optional `name` field); the web client uploads the file that
+  way, so the browser holds one copy of a 60 MB archive instead of four (file,
+  base64, JSON string, request body). The JSON `{ name, zipBase64 }` body
+  keeps working for API clients. The 60 MB limit and its message are unchanged.
 - Typesetting runs to the end of the document by default instead of stopping
   at the first error: the preview shows the complete PDF and the errors sit in
   the list beside it, like Overleaf. The old behaviour is a per-project setting,
@@ -125,6 +130,21 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
+  end-of-central-directory record), so exports from tools that write ZIP64
+  headers no longer fail as "not a zip file" or import partially. An entry
+  compressed with anything but store or deflate (bzip2, LZMA, zstd, ...) or a
+  password-protected entry (ZipCrypto or AES) is now refused with a message
+  that names the entry and the method, instead of being skipped silently or
+  imported as garbage. Entry names without the UTF-8 flag are decoded as UTF-8
+  when valid, otherwise from the Info-ZIP unicode path field, cp437 or Latin-1,
+  so Windows and 7-Zip archives keep their accented file names.
+- Every failed ZIP import writes one info-level log line (`ZIP import failed`)
+  with the reason, the archive size and its entry count, never file contents,
+  so a hosted instance can be debugged without asking the user for the file.
+  The server now logs at `info` by default (per-request access lines stay off);
+  `LOG_LEVEL=warn` restores the previous quiet.
+
 - A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
   on screen and the SyncTeX file on disk come from different typeset runs,
   instead of landing on the wrong line. Compile results carry a `compileId`
