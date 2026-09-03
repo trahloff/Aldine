@@ -39,7 +39,9 @@ e2e needs the compiler on :4020 **with the e2e data dir**:
 compiler on the default `.data` makes every compile test fail while looking
 healthy. `ALDINE_URL=http://localhost:8080 npm run test:e2e` targets a running
 compose stack instead. Two `07-features` tests need full TeX Live (BasicTeX
-lacks packages); everything else passes locally.
+lacks packages); everything else passes locally. Two checkouts side by side
+(`reuseExistingServer` would otherwise test the other tree's server):
+`E2E_PORT=3101 E2E_MOCK_PORT=4920 E2E_AUTH_PORT=3201 COMPILER_URL=http://localhost:4021 npm run test:e2e`.
 
 ## Conventions
 

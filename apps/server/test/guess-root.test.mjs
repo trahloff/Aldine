@@ -5,7 +5,7 @@
  */
 import { check, eq } from './assert.mjs';
 
-const { guessRoot } = await import('../src/unzip.ts');
+const { guessRoot } = await import('../src/root.ts');
 
 const B = (s) => Buffer.from(s);
 const doc = (extra = '') => `\\documentclass{article}\n${extra}\\begin{document}\nHello\n\\end{document}\n`;

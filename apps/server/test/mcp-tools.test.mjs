@@ -167,8 +167,8 @@ await app.listen({ port: 0, host: '127.0.0.1' });
 const port = app.server.address().port;
 
 const user = await auth.register('ada@example.com', 'password123', 'Ada');
-const p1 = await store.createProject('Agent paper', {}, user.id);
-const p2 = await store.createProject('Other paper', {}, user.id);
+const p1 = await store.createProject('Agent paper', undefined, user.id);
+const p2 = await store.createProject('Other paper', undefined, user.id);
 const { token } = await auth.createAccessToken(user.id, 'Agent', null, null);
 
 const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');

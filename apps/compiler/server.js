@@ -5,7 +5,7 @@
  * Contract:
  *   POST /compile  { projectDir, rootFile, engine? }  ->
  *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs }
- *   GET  /health   -> { ok: true }
+ *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' } }
  *
  * The compiler shares the projects volume (read) and an output cache volume
  * (write) with the app server, so no file transfer is needed.
@@ -24,6 +24,9 @@ const TIMEOUT_MS = Number(process.env.COMPILE_TIMEOUT_MS || 120_000);
 // Aux/PDF output lives inside the project tree (relative path) so TeX path
 // restrictions (openout_any=p) never apply and incremental caches persist.
 const OUT_SUBDIR = '.aldine-out';
+// The Dockerfile writes the build arg TEXLIVE_SCHEME here; a checkout running
+// server.js directly has no such file and reports "unknown".
+const SCHEME_FILE = process.env.TEXLIVE_SCHEME_FILE || path.join(__dirname, 'texlive-scheme');
 
 function json(res, code, body) {
   const buf = Buffer.from(JSON.stringify(body));
@@ -94,6 +97,28 @@ function run(cmd, args, opts, timeoutMs) {
   });
 }
 
+/**
+ * TeX Live release and scheme, resolved once at startup. The release comes
+ * from kpsewhich (the TEXMFDIST path carries the year), falling back to tlmgr;
+ * the scheme from SCHEME_FILE. Neither is worth failing startup over: a host
+ * without TeX Live still answers /health, just with "unknown".
+ */
+const texlive = { release: 'unknown', scheme: 'unknown' };
+async function probeTexLive() {
+  try {
+    const scheme = fs.readFileSync(SCHEME_FILE, 'utf8').trim();
+    if (/^[a-z]+$/.test(scheme)) texlive.scheme = scheme;
+  } catch { /* not built from the Dockerfile */ }
+  const year = (text) => (text.match(/\b(20\d\d)\b/) || [])[1];
+  const dist = await run('kpsewhich', ['-var-value=TEXMFDIST'], {}, 10_000);
+  let release = dist.code === 0 ? year(dist.out) : undefined;
+  if (!release) {
+    const tl = await run('tlmgr', ['--version'], {}, 10_000);
+    release = tl.code === 0 ? year(tl.out) : undefined;
+  }
+  if (release) texlive.release = release;
+}
+
 // Bound concurrent latexmk runs so a burst can't OOM the container.
 let running = 0;
 const waiters = [];
@@ -120,7 +145,7 @@ async function compile(body) {
 async function compileInner(body) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
@@ -159,9 +184,14 @@ async function compileInner(body) {
 
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
-  // max_print_line: TeX wraps log lines at 79 columns otherwise, splitting
-  // "file:line:" errors and "Output written on … (N pages" across lines.
   const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000' } };
+  // Freshness reference on the SAME filesystem clock as the outputs: a file
+  // touched now. Comparing output mtimes against Date.now() needs slack for
+  // coarse or skewed clocks, and that slack lets a run started right after
+  // the last one mistake an untouched PDF for its own output.
+  const sentinel = path.join(outAbs, '.aldine-run');
+  fs.writeFileSync(sentinel, '');
+  const freshSince = fs.statSync(sentinel).mtimeMs;
   const t0 = Date.now();
   let { code, out, timedOut } = await run('latexmk', mkArgs(false), runOpts, TIMEOUT_MS);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {
@@ -194,8 +224,8 @@ async function compileInner(body) {
   const ok = code === 0 && fs.existsSync(pdfPath);
   // A previous run's PDF/SyncTeX stay on disk when this run fails, so existence
   // alone says nothing about which run wrote them. "Fresh" = written by this
-  // run (mtime at or after its start, with slack for coarse filesystem clocks).
-  const freshSince = t0 - 2000;
+  // run: mtime at or after the sentinel's (same clock, second granularity at
+  // worst, and a write in the sentinel's own second still counts).
   const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
@@ -218,7 +248,7 @@ async function compileInner(body) {
 async function synctex(body) {
   const { projectDir, rootFile = 'main.tex', direction, line, column = 0, page, x, y } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   const rootDir = path.dirname(rootFile);
@@ -260,7 +290,7 @@ async function synctex(body) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true });
+  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive });
   if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex')) {
     let raw = '';
     req.on('data', (d) => { raw += d; });
@@ -278,4 +308,6 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { ok: false, error: 'not found' });
 });
 
-server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}`));
+probeTexLive().finally(() => {
+  server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
+});

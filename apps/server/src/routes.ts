@@ -5,16 +5,19 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, synctexLookup, forgetPdfUrls } from './compile.js';
+import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listTemplates, templateFiles } from './templates.js';
-import { addReference, searchWorks } from './references.js';
+import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
-import { unzip, guessRoot } from './unzip.js';
+import { unzip, zipEntryCount, ZipError } from './unzip.js';
+import { guessRoot, detectRoot } from './root.js';
+import { detectEngine, decodeText } from './detect.js';
+import { multipartBoundary, parseMultipart } from './multipart.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
@@ -22,7 +25,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, newId, rootSiblingPath, publicBase, BRANCH_RE, PROJECT_ID_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
@@ -63,6 +66,24 @@ const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
 /** Engines the compiler distinguishes; anything else silently became pdflatex. */
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
+
+/** A project without a typeset root (blank, or its last .tex deleted) adopts
+ *  a root once a .tex appears, ranked like an import (the branch may already
+ *  hold .tex files that arrived through git). The root comes from the file
+ *  listing, never from the request path, so it always matches the tree.
+ *  Returns the new root when one was adopted. */
+async function adoptRootIfUnset(id: string, branch: string, rel: string): Promise<string | undefined> {
+  if (!/\.tex$/i.test(rel)) return undefined;
+  try {
+    const meta = await store.readMeta(id);
+    if (meta.rootFile) return undefined;
+    const root = detectRoot(id, branch);
+    if (!root) return undefined;
+    meta.rootFile = root;
+    await store.writeMeta(meta);
+    return root;
+  } catch { return undefined; }
+}
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, ...rest } = meta;
@@ -406,9 +427,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
   });
 
-  app.post<{ Body: { name?: string; files?: Record<string, string>; template?: string } }>('/api/projects', async (req, reply) => {
+  // No `files` and no `template` seeds the default article; `files: {}` or
+  // `template: "blank"` creates a project with no files at all.
+  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
     const { name = 'Untitled Project', files, template } = req.body || {};
-    let seed = files;
+    let seed: Record<string, string> | undefined;
+    if (files !== undefined && files !== null) {
+      const bad = seedError(files);
+      if (bad) return reply.code(400).send({ error: bad });
+      seed = files;
+    }
     if (template) {
       try {
         seed = templateFiles(template);
@@ -481,51 +509,96 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/templates', async () => listTemplates());
 
-  // Import an Overleaf/project ZIP (base64) as a new project.
-  // The ZIP arrives base64-encoded inside JSON (×4/3 of the raw size), so the
-  // route needs its own body limit: the global 32 MB one would cap imports at
-  // ~24 MB while the UI promises IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's
-  // client_max_body_size must stay ≥ this figure.
+  // What the connected compiler runs. Not project-scoped, so it is not behind
+  // the project auth hook; it discloses nothing beyond a TeX Live release.
+  app.get('/api/compiler', async () => compilerInfo());
+
+  // Import an Overleaf/project ZIP as a new project. Two body shapes: JSON
+  // { name, zipBase64 } for API clients, and multipart/form-data with a `zip`
+  // file part (what the web client sends, so the browser holds one copy of
+  // the archive instead of file + base64 + JSON string + request body).
+  // Base64 is 4/3 of the raw size, so the route needs its own body limit: the
+  // global 32 MB one would cap imports at ~24 MB while the UI promises
+  // IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's client_max_body_size must stay
+  // >= this figure.
   const importBodyLimit = Math.ceil(IMPORT_MAX_ZIP_BYTES * 4 / 3) + 1024 * 1024;
-  app.post<{ Body: { name?: string; zipBase64: string } }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
-    const { name, zipBase64 } = req.body || {};
-    if (!zipBase64) return reply.code(400).send({ error: 'zipBase64 required' });
+  app.addContentTypeParser('multipart/form-data', { parseAs: 'buffer' }, (req, body: Buffer, done) => {
+    try {
+      const boundary = multipartBoundary(req.headers['content-type']);
+      if (!boundary) throw new Error('multipart/form-data without a boundary');
+      const parsed: ImportBody = {};
+      for (const part of parseMultipart(body, boundary)) {
+        if (part.filename !== undefined || part.name === 'zip') { parsed.zip = part.data; parsed.zipName = part.filename; }
+        else if (part.name === 'name') parsed.name = part.data.toString('utf8');
+      }
+      done(null, parsed);
+    } catch (err: any) {
+      done(Object.assign(err, { statusCode: 400 }), undefined);
+    }
+  });
+  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string };
+  app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
+    const body = req.body || {};
+    let buf: Buffer;
+    if (Buffer.isBuffer(body.zip)) buf = body.zip;
+    else if (typeof body.zipBase64 === 'string' && body.zipBase64) buf = Buffer.from(body.zipBase64, 'base64');
+    else return reply.code(400).send({ error: 'zipBase64 (JSON) or a zip file part (multipart/form-data) required' });
+    const name = body.name || (body.zipName ? body.zipName.replace(/\.zip$/i, '') : '') || 'Imported project';
+    // Every failure is one info line with what a self-hoster needs to debug an
+    // import without the archive: the reason, its size and entry count. Never
+    // an entry's contents.
+    let entryCount: number | null | undefined;
+    const fail = (status: number, error: string) => {
+      if (entryCount === undefined) entryCount = zipEntryCount(buf);
+      req.log.info({ import: { reason: error, zipBytes: buf.length, entries: entryCount, multipart: Buffer.isBuffer(body.zip) } }, 'ZIP import failed');
+      return reply.code(status).send({ error });
+    };
+    if (buf.length > IMPORT_MAX_ZIP_BYTES) {
+      return fail(413, `ZIP is ${mb(buf.length)} MB; the limit is ${mb(IMPORT_MAX_ZIP_BYTES)} MB`);
+    }
     let created: store.ProjectMeta | null = null;
     try {
-      const buf = Buffer.from(zipBase64, 'base64');
-      if (buf.length > IMPORT_MAX_ZIP_BYTES) {
-        return reply.code(413).send({ error: `ZIP is ${mb(buf.length)} MB; the limit is ${mb(IMPORT_MAX_ZIP_BYTES)} MB` });
-      }
       const entries = unzip(buf);
+      entryCount = Object.keys(entries).length;
       // Every entry is placed (or rejected) before the project exists, so a bad
       // path can never leave a half-imported project behind.
       const files: Record<string, Buffer> = {};
       for (const [entry, data] of Object.entries(entries)) {
         const p = importPath(entry);
-        if (p === null) return reply.code(400).send({ error: `ZIP entry "${entry}" points outside the project` });
+        if (p === null) return fail(400, `ZIP entry "${entry}" points outside the project`);
         if (p.startsWith('__MACOSX/') || isHiddenPath(p)) continue;
         files[p] = data;
       }
-      if (!Object.keys(files).length) return reply.code(400).send({ error: 'ZIP had no usable files' });
+      if (!Object.keys(files).length) return fail(400, 'ZIP had no usable files');
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
+      const transcoded: string[] = [];
       for (const [p, data] of Object.entries(files)) {
         // treat as text only if the extension says so AND there's no NUL byte in the head
         const looksBinary = data.subarray(0, 8000).includes(0);
-        if (isTextFile(p) && !looksBinary) textFiles[p] = data.toString('utf8');
-        else binFiles.push(p);
+        if (isTextFile(p) && !looksBinary) {
+          const decoded = decodeText(data);
+          textFiles[p] = decoded.text;
+          if (decoded.transcoded) transcoded.push(p);
+        } else binFiles.push(p);
       }
-      const meta = await store.createProject(name || 'Imported project', textFiles, reqUser(req)?.id);
+      const meta = await store.createProject(name, textFiles, reqUser(req)?.id);
       created = meta;
       for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
       if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
       const root = guessRoot(files);
-      if (root) { meta.rootFile = root; await store.writeMeta(meta); }
-      return publicMeta(meta, reqUser(req));
+      // Detection reads the archive bytes, not the transcoded text: the package
+      // names it looks for are ASCII either way, and the latexmkrc is never transcoded.
+      const detected = detectEngine(files, root);
+      if (root) meta.rootFile = root;
+      meta.engine = detected.engine;
+      await store.writeMeta(meta);
+      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded } };
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
-      return reply.code(400).send({ error: `Could not import ZIP: ${err.message}` });
+      if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
+      return fail(400, `Could not import ZIP: ${err.message}`);
     }
   });
 
@@ -661,7 +734,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       refreshBranchDocsFromDisk(req.params.id, branch);
       scheduleCommit(req.params.id, branch); // non-collab write → still reach git history
-      return { ok: true };
+      const newRoot = await adoptRootIfUnset(req.params.id, branch, rel);
+      return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
 
   app.post<{ Params: { id: string }; Body: { branch?: string; from: string; to: string } }>(
@@ -687,14 +761,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       bumpContentVersion(req.params.id, branch); // bib/label indexes carry file paths
       scheduleCommit(req.params.id, branch);
       // The typeset root keeps its designation through a rename (deletion
-      // already re-derives it; a rename must not orphan it).
+      // already re-derives it; a rename must not orphan it). A rename that
+      // produces the project's first .tex adopts it, as creation would. The
+      // stored path is the normalised one: "./a.tex" must match the tree.
       let newRoot: string | undefined;
       try {
         const meta = await store.readMeta(req.params.id);
-        if (meta.rootFile === from) {
-          meta.rootFile = to;
+        const normTo = importPath(to);
+        if (meta.rootFile && meta.rootFile === importPath(from) && normTo) {
+          meta.rootFile = normTo;
           await store.writeMeta(meta);
-          newRoot = to;
+          newRoot = normTo;
+        } else if (!meta.rootFile) {
+          newRoot = await adoptRootIfUnset(req.params.id, branch, to);
         }
       } catch { /* meta unreadable — leave as-is */ }
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -708,14 +787,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     store.deleteFile(req.params.id, branch, rel);
     bumpContentVersion(req.params.id, branch);
     scheduleCommit(req.params.id, branch);
-    // If the typeset root was deleted, re-point it at another .tex so the next
-    // compile doesn't fail with "root file not found".
+    // If the typeset root was deleted, re-point it at the best remaining .tex
+    // so the next compile doesn't fail with "root file not found". With no
+    // .tex left the root is unset, so the next .tex created becomes it.
     let newRoot: string | undefined;
     try {
       const meta = await store.readMeta(req.params.id);
-      if (meta.rootFile === rel) {
-        const tex = store.listFiles(req.params.id, branch).find((f) => f.type === 'file' && f.path.endsWith('.tex'));
-        if (tex) { meta.rootFile = tex.path; await store.writeMeta(meta); newRoot = tex.path; }
+      if (meta.rootFile && meta.rootFile === importPath(rel)) {
+        const root = detectRoot(req.params.id, branch);
+        meta.rootFile = root;
+        await store.writeMeta(meta);
+        newRoot = root || undefined;
       }
     } catch { /* meta unreadable — leave as-is */ }
     return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -1193,8 +1275,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const id = newId();
     try {
       const { remoteBranch } = await gitops.cloneRepo(id, github.tokenUrl(info.cloneUrl, conn.token));
-      const files = store.listFiles(id, 'main').filter((f) => f.type === 'file').map((f) => f.path);
-      const rootFile = detectRootFile(id, files);
+      const rootFile = detectRoot(id, 'main');
       const meta: store.ProjectMeta = {
         id, name: info.name, rootFile, engine: 'pdf', createdAt: new Date().toISOString(),
         github: { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) },
@@ -1208,24 +1289,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: `Import failed: ${err.message}` });
     }
   });
-
-  // Pick the typeset root: the .tex that actually has \documentclass (a repo's
-  // real main file may live in a subdir like paper/main.tex), preferring main.tex
-  // and shallower paths. Falls back gracefully when nothing declares a class.
-  function detectRootFile(id: string, files: string[]): string {
-    const tex = files.filter((f) => f.endsWith('.tex'));
-    const rank = (arr: string[]) => arr.slice().sort((a, b) => {
-      const am = /(^|\/)main\.tex$/.test(a), bm = /(^|\/)main\.tex$/.test(b);
-      if (am !== bm) return am ? -1 : 1;
-      const ad = a.split('/').length, bd = b.split('/').length;
-      return ad !== bd ? ad - bd : a.localeCompare(b);
-    })[0];
-    const withClass = tex.filter((f) => {
-      try { return /\\documentclass/.test(store.readFile(id, 'main', f).subarray(0, 4096).toString('utf8')); }
-      catch { return false; }
-    });
-    return rank(withClass) || rank(tex) || 'main.tex';
-  }
 
   // Sync a linked project with its GitHub remote (uses the acting user's token).
   // Syncing pushes the project into the OWNER's repo and can pull remote state

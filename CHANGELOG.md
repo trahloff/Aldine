@@ -88,6 +88,59 @@ All notable changes to Aldine are documented here. The format follows
   Connect carry a "via Connect" badge, and the manual token section is kept
   for scripts. Signing in on the consent page through an SSO provider resumes
   the consent afterwards.
+- Blank projects: a "Blank" tile leads the template grid and creates a project
+  with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
+  does the same. The editor's empty state says "Create a file to start writing"
+  with a New file button that suggests `main.tex`. A project without a `.tex`
+  file has no typeset root and is not auto-typeset; the first `.tex` created,
+  renamed in, or found at typeset time (files can arrive through git) becomes
+  the root, and deleting the last `.tex` unsets it again. Typesetting a project
+  with no `.tex` answers 400 "No .tex file to typeset" instead of reaching the
+  compiler, and the PDF pane says so instead of suggesting the shortcut. A root
+  derived from the tree (at typeset time, on the first `.tex`, after the root
+  is deleted) is ranked like an import: `main.tex` at the top level over a
+  nested one, a file with `\documentclass` over one without.
+- `POST /api/projects` validates `files`: a key that would land in `.git` or
+  `.aldine*`, escapes the project, is empty, is both a file and a directory, or
+  carries non-string content answers 400 and no project is created (previously
+  a seeded `.git/config` reached the fresh repo before its initial commit ran
+  git). Keys are normalised like ZIP entries (`./a.tex`, backslashes), as are
+  roots adopted from a file write or rename. `.git` and `.aldine*` are screened
+  without regard to letter case or a trailing dot or space (`.GIT/config`,
+  `.git./config`), which reach `.git/config` on macOS and Windows; the same
+  screen guards file writes, renames, ZIP imports and the file listing. A seed
+  that makes `.gitignore` a directory is refused with 400 rather than failing
+  the write of the project's own `.gitignore`.
+- The New project dialog only posts a template id the server listed; on a
+  server without a templates directory the pick stays empty and Create seeds
+  the default article, with the Blank tile still there to choose.
+- Project settings dialog (toolbar "Settings", command palette) with a
+  Compiler section: main document, compiler (pdfLaTeX, XeLaTeX, LuaLaTeX),
+  the connected compiler's TeX Live release and scheme ("2026, full"), "Stop
+  on first error" and "Auto-typeset". The preview-header engine picker and
+  the log dialog's checkbox stay as shortcuts to the same settings. The
+  project name is editable there too. (#7)
+- Engine detection on ZIP import: a `latexmkrc` in the archive (`$pdf_mode`
+  4 or 5, or a `$pdflatex`/`$xelatex`/`$lualatex` line), a `% !TEX program`
+  line, or a root file using fontspec, unicode-math, polyglossia, xepersian,
+  bidi or luacode sets the project to XeLaTeX or LuaLaTeX; the import toast
+  says which and why, and the settings panel repeats the reason. A
+  `$pdflatex` line that only passes flags to pdflatex (the Overleaf
+  `-shell-escape` idiom), or an rc that assigns all three engine commands,
+  chooses nothing, so the root file still decides.
+  Sources that are not UTF-8 are transcoded to UTF-8: Windows-1252 (a
+  superset of Latin-1, so Word-era quotes and dashes survive), or Latin-9 /
+  Mac Roman when the inputenc option names them; the option is switched to
+  `utf8` and the file is named in the toast. A UTF-8 file with a stray byte
+  is left as it was, multibyte characters intact. Overleaf exports that need
+  XeLaTeX now typeset on first open. (#7)
+- The compiler reports its TeX Live release and scheme at `GET /health`
+  (`texlive: { release, scheme }`; "unknown" outside the image), and the
+  server exposes it, cached, at `GET /api/compiler`. Switching between
+  several TeX Live versions (`ALDINE_COMPILERS`) is not part of this change;
+  the panel displays the one compiler the server is connected to.
+- The e2e suites take `E2E_PORT`, `E2E_MOCK_PORT` and `E2E_AUTH_PORT` so two
+  checkouts can run side by side (see AGENTS.md).
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,
   so a feature branch can be tried at a real URL before it reaches prod. The
@@ -235,6 +288,11 @@ All notable changes to Aldine are documented here. The format follows
   behind a paid tier.
 
 ### Changed
+- `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
+  part (and an optional `name` field); the web client uploads the file that
+  way, so the browser holds one copy of a 60 MB archive instead of four (file,
+  base64, JSON string, request body). The JSON `{ name, zipBase64 }` body
+  keeps working for API clients. The 60 MB limit and its message are unchanged.
 - Typesetting runs to the end of the document by default instead of stopping
   at the first error: the preview shows the complete PDF and the errors sit in
   the list beside it, like Overleaf. The old behaviour is a per-project setting,
@@ -266,6 +324,21 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
+  end-of-central-directory record), so exports from tools that write ZIP64
+  headers no longer fail as "not a zip file" or import partially. An entry
+  compressed with anything but store or deflate (bzip2, LZMA, zstd, ...) or a
+  password-protected entry (ZipCrypto or AES) is now refused with a message
+  that names the entry and the method, instead of being skipped silently or
+  imported as garbage. Entry names without the UTF-8 flag are decoded as UTF-8
+  when valid, otherwise from the Info-ZIP unicode path field, cp437 or Latin-1,
+  so Windows and 7-Zip archives keep their accented file names.
+- Every failed ZIP import writes one info-level log line (`ZIP import failed`)
+  with the reason, the archive size and its entry count, never file contents,
+  so a hosted instance can be debugged without asking the user for the file.
+  The server now logs at `info` by default (per-request access lines stay off);
+  `LOG_LEVEL=warn` restores the previous quiet.
+
 - A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
   on screen and the SyncTeX file on disk come from different typeset runs,
   instead of landing on the wrong line. Compile results carry a `compileId`

@@ -13,6 +13,8 @@ import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
+import { pickTemplate, templateToPost } from '../util/templates';
+import { importSummary } from '../util/engines';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */
@@ -61,12 +63,17 @@ export default function Home() {
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  useEffect(() => { api.templates().then(setTemplates).catch(() => setTemplates([])); }, []);
+  useEffect(() => {
+    api.templates().then((list) => {
+      setTemplates(list);
+      setTemplate((cur) => pickTemplate(list, cur));
+    }).catch(() => setTemplates([]));
+  }, []);
 
   const create = async () => {
     const name = newName.trim() || 'Untitled Project';
     try {
-      const p = await api.createProject(name, undefined, templates.length ? template : undefined);
+      const p = await api.createProject(name, undefined, templateToPost(templates, template));
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
@@ -79,11 +86,9 @@ export default function Home() {
     if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     toast('Importing…');
     try {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      let bin = '';
-      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), btoa(bin));
-      navigate(`/p/${p.id}`);
+      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file);
+      toast(importSummary(p), 'ok');
+      navigate(`/p/${p.id}`, { state: { import: p.import } });
     } catch (err: any) {
       // A 413 without the route's own text comes from a proxy or body limit
       // below what the app allows — the size is the only number worth stating.
