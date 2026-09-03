@@ -12,7 +12,8 @@ import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, c
 import { publishProjectEvent } from './events.js';
 import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
-import { listTemplates, templateFiles } from './templates.js';
+import { listAllTemplates, resolveTemplateFiles } from './templates.js';
+import { warmVenueCache } from './catalog.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
@@ -351,15 +352,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // `template: "blank"` creates a project with no files at all.
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
     const { name = 'Untitled Project', files, template } = req.body || {};
-    let seed: Record<string, string> | undefined;
+    let seed: Record<string, string | Buffer> | undefined;
     if (files !== undefined && files !== null) {
       const bad = seedError(files);
       if (bad) return reply.code(400).send({ error: bad });
       seed = files;
-    }
-    if (template) {
+    }    if (template) {
       try {
-        seed = templateFiles(template);
+        seed = await resolveTemplateFiles(template);
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
       }
@@ -427,7 +427,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     });
   }
 
-  app.get('/api/templates', async () => listTemplates());
+  // Asked for at boot so the first gallery request is served from the cache
+  // instead of waiting on the compiler.
+  warmVenueCache();
+  app.get('/api/templates', async () => listAllTemplates());
 
   // What the connected compiler runs. Not project-scoped, so it is not behind
   // the project auth hook; it discloses nothing beyond a TeX Live release.

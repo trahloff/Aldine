@@ -50,6 +50,12 @@ jobs:
       # edition. Same command checks both.
       - name: Third-party notices and licence gate
         run: npm run notices:check
+      # A starter file whose licence nobody recorded is one nobody can safely
+      # copy into a paper, and the gallery shows a licence on every tile.
+      - name: Template licence gate
+        run: npm run templates:check
+      - name: Server unit tests
+        run: npm run test:unit -w apps/server
 
   compose:
     name: docker compose config is valid

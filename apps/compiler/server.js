@@ -6,6 +6,7 @@
  *   POST /compile  { projectDir, rootFile, engine? }  ->
  *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs }
  *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' } }
+ *   GET  /catalog  -> { ok, generatedAt, classes: [{ id, cls, kind, license, sample }] }
  *
  * The compiler shares the projects volume (read) and an output cache volume
  * (write) with the app server, so no file transfer is needed.
@@ -17,6 +18,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { getCatalog } = require('./catalog.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4020;
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../.data');
@@ -375,6 +377,10 @@ async function synctex(body) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive });
+  if (req.method === 'GET' && (req.url === '/catalog' || req.url.startsWith('/catalog?'))) {
+    return getCatalog().then((c) => json(res, 200, c), (err) => json(res, 500, { ok: false, error: String(err && err.message || err) }));
+  }
+
   if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex')) {
     let raw = '';
     req.on('data', (d) => { raw += d; });

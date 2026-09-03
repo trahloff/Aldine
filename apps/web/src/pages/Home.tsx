@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, TemplateInfo } from '../api';
+import { api, ApiError, ProjectSummary, TemplateCategory, TemplateInfo } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -20,14 +20,23 @@ import { importSummary } from '../util/engines';
 const IMPORT_MAX_ZIP_MB = 60;
 const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 
+/** Gallery order; a category with no template in it is not drawn. */
+const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
+
+function matchesQuery(t: TemplateInfo, q: string): boolean {
+  const hay = [t.name, t.description, t.category, t.documentClass, t.id].join(' ').toLowerCase();
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}
+
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
-  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [template, setTemplate] = useState('article');
+  const [templateQuery, setTemplateQuery] = useState('');
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
   const [showGithub, setShowGithub] = useState(false);
@@ -61,11 +70,15 @@ export default function Home() {
     }).catch(() => setTemplates([]));
   }, []);
 
+  // The gallery keeps its choice while the search narrows it, so the tile that
+  // Create will actually use is often filtered away: name it in the dialog.
+  const chosen = templates?.find((t) => t.id === template) ?? null;
+  const closeCreate = () => { setCreating(false); setTemplateQuery(''); };
+
   const create = async () => {
     const name = newName.trim() || 'Untitled Project';
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates, template));
-      navigate(`/p/${p.id}`);
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], template));      navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
     }
@@ -291,7 +304,7 @@ export default function Home() {
       )}
 
       {creating && (
-        <Modal onClose={() => setCreating(false)} label="New project">
+        <Modal onClose={closeCreate} label="New project">
           <div>
             <h2>New project</h2>
             <p className="modal__sub">Name it, pick a starting point, start writing.</p>
@@ -302,27 +315,75 @@ export default function Home() {
               value={newName}
               data-testid="new-project-name"
               onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating(false); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             />
-            {templates.length > 0 && (
-              <div className="tpl-grid" data-testid="template-grid">
-                {templates.map((t) => (
-                  <button
-                    key={t.id}
-                    className={`tpl ${template === t.id ? 'tpl--active' : ''}`}
-                    data-testid={`template-${t.id}`}
-                    onClick={() => setTemplate(t.id)}
-                    title={t.description}
-                  >
-                    <span className="tpl__icon">{t.icon || '📄'}</span>
-                    <span className="tpl__name">{t.name}</span>
-                    <span className="tpl__desc">{t.description}</span>
-                  </button>
-                ))}
-              </div>
+            {templates === null && <p className="tpl-empty">Loading templates…</p>}
+            {templates !== null && templates.length > 0 && (
+              <>
+                <div className="tpl-search">
+                  <input
+                    className="input"
+                    placeholder="Search templates, for example IEEE or NeurIPS"
+                    aria-label="Search templates"
+                    value={templateQuery}
+                    data-testid="template-search"
+                    onChange={(e) => setTemplateQuery(e.target.value)}
+                  />
+                  {/* Escape belongs to the dialog: the modal closes on it before
+                      any handler here could clear the query. */}
+                  {templateQuery && (
+                    <button
+                      className="tpl-search__clear"
+                      aria-label="Clear the template search"
+                      data-testid="template-search-clear"
+                      onClick={() => setTemplateQuery('')}
+                    >
+                      <IconX />
+                    </button>
+                  )}
+                </div>
+                <div className="tpl-gallery" data-testid="template-grid">
+                  {(() => {
+                    const q = templateQuery.trim().toLowerCase();
+                    const shown = q ? templates.filter((t) => matchesQuery(t, q)) : templates;
+                    if (!shown.length) {
+                      return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
+                    }
+                    return TEMPLATE_CATEGORIES.map((cat) => {
+                      const group = shown.filter((t) => (t.category || 'General') === cat);
+                      if (!group.length) return null;
+                      return (
+                        <div key={cat} className="tpl-group" data-testid={`template-category-${cat}`}>
+                          <div className="tpl-group__label">{cat}</div>
+                          <div className="tpl-grid">
+                            {group.map((t) => (
+                              <button
+                                key={t.id}
+                                className={`tpl ${template === t.id ? 'tpl--active' : ''}`}
+                                data-testid={`template-${t.id}`}
+                                onClick={() => setTemplate(t.id)}
+                                title={t.description}
+                              >
+                                <span className="tpl__icon">{t.icon || '📄'}</span>
+                                <span className="tpl__name">{t.name}</span>
+                                <span className="tpl__desc">{t.description}</span>
+                                {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+                <p className="tpl-choice" data-testid="template-choice">
+                  Starting from {chosen ? chosen.name : 'the built-in article'}
+                  {chosen?.license ? ` (${chosen.license})` : ''}
+                </p>
+              </>
             )}
             <div className="modal__row">
-              <button className="btn" onClick={() => setCreating(false)}>Cancel</button>
+              <button className="btn" onClick={closeCreate}>Cancel</button>
               <button className="btn btn--primary" onClick={create} data-testid="create-project">Create</button>
             </div>
           </div>

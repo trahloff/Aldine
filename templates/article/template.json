@@ -3,5 +3,12 @@
   "name": "Article",
   "description": "A clean article with biblatex — the right default for most papers.",
   "icon": "📄",
-  "order": 1
+  "order": 1,
+  "category": "General",
+  "license": "MIT",
+  "licenseUrl": "https://opensource.org/license/mit",
+  "source": {
+    "url": "https://github.com/trahloff/Aldine/tree/main/templates/article",
+    "version": "0.3.0"
+  }
 }

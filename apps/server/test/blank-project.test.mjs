@@ -42,6 +42,14 @@ const mock = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (d) => { raw += d; });
   req.on('end', () => {
+    // The template gallery asks this compiler for its class catalog (GET, no
+    // body); every other call is a compile request.
+    if (req.method === 'GET') {
+      const cat = Buffer.from(JSON.stringify({ ok: true, generatedAt: new Date(0).toISOString(), classes: [] }));
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': cat.length });
+      res.end(cat);
+      return;
+    }
     requests.push(JSON.parse(raw));
     const buf = Buffer.from(JSON.stringify({ ok: false, pdf: null, log: 'mock', errors: [], durationMs: 1 }));
     res.writeHead(200, { 'content-type': 'application/json', 'content-length': buf.length });
