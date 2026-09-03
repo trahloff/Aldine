@@ -19,12 +19,18 @@ interface Props {
   hasErrors?: boolean;
   /** The last run failed: whatever is on screen is from the last successful typeset. */
   stale?: boolean;
+  /** onFirstOpen waits for this: the parent knows what the project holds only
+   *  after its file listing arrives. */
+  ready?: boolean;
+  /** No .tex on the branch: the idle copy must not invite a typeset that
+   *  would only fail. */
+  hasTex?: boolean;
   onFirstOpen(): void;
   /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
   onInverse?(page: number, x: number, y: number): void;
 }
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, onFirstOpen, onInverse }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
@@ -54,11 +60,11 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
 
   // auto-typeset once when the pane first mounts with no pdf
   useEffect(() => {
-    if (!firstOpenFired.current && !pdfUrl && status === 'idle') {
+    if (!firstOpenFired.current && ready && !pdfUrl && status === 'idle') {
       firstOpenFired.current = true;
       onFirstOpen();
     }
-  }, [pdfUrl, status, onFirstOpen]);
+  }, [pdfUrl, status, ready, onFirstOpen]);
 
   // Zoom clicks arrive in bursts; debounce so three +10% clicks trigger one
   // re-layout instead of three full render passes.
@@ -221,6 +227,8 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
             // run without parsed errors (missing root, server trouble) isn't
             // the user's LaTeX.
             <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
+          ) : ready && !hasTex ? (
+            <p data-testid="pdf-empty-no-tex">Create a .tex file to typeset and preview.</p>
           ) : (
             <p>Press <span className="kbd">{shortcut('S')}</span> to typeset and preview.</p>
           )}

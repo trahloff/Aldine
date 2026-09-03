@@ -15,7 +15,8 @@ import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listTemplates, templateFiles } from './templates.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
-import { unzip, guessRoot } from './unzip.js';
+import { unzip } from './unzip.js';
+import { guessRoot, detectRoot } from './root.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
@@ -23,7 +24,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, newId, BRANCH_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, seedError, newId, BRANCH_RE } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -71,12 +72,22 @@ const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 /** Engines the compiler distinguishes; anything else silently became pdflatex. */
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
 
-/** git internals and compile output are never user-addressable — at any depth. */
-function isHiddenPath(rel: string): boolean {
-  // Check every segment: 'sub/.git/config' and 'paper/.aldine-out/x' must be
-  // caught too, not just a leading '.git'. Matches store.listFiles, which skips
-  // these names at every level.
-  return rel.split(/[\\/]/).some((seg) => seg === '.git' || seg.startsWith('.aldine'));
+/** A project without a typeset root (blank, or its last .tex deleted) adopts
+ *  a root once a .tex appears, ranked like an import (the branch may already
+ *  hold .tex files that arrived through git). The root comes from the file
+ *  listing, never from the request path, so it always matches the tree.
+ *  Returns the new root when one was adopted. */
+async function adoptRootIfUnset(id: string, branch: string, rel: string): Promise<string | undefined> {
+  if (!/\.tex$/i.test(rel)) return undefined;
+  try {
+    const meta = await store.readMeta(id);
+    if (meta.rootFile) return undefined;
+    const root = detectRoot(id, branch);
+    if (!root) return undefined;
+    meta.rootFile = root;
+    await store.writeMeta(meta);
+    return root;
+  } catch { return undefined; }
 }
 
 /** "<root file's dir>/<name>" — where \addbibresource{<name>} actually resolves. */
@@ -334,9 +345,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
   });
 
-  app.post<{ Body: { name?: string; files?: Record<string, string>; template?: string } }>('/api/projects', async (req, reply) => {
+  // No `files` and no `template` seeds the default article; `files: {}` or
+  // `template: "blank"` creates a project with no files at all.
+  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
     const { name = 'Untitled Project', files, template } = req.body || {};
-    let seed = files;
+    let seed: Record<string, string> | undefined;
+    if (files !== undefined && files !== null) {
+      const bad = seedError(files);
+      if (bad) return reply.code(400).send({ error: bad });
+      seed = files;
+    }
     if (template) {
       try {
         seed = templateFiles(template);
@@ -568,7 +586,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       refreshBranchDocsFromDisk(req.params.id, branch);
       scheduleCommit(req.params.id, branch); // non-collab write → still reach git history
-      return { ok: true };
+      const newRoot = await adoptRootIfUnset(req.params.id, branch, rel);
+      return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
 
   app.post<{ Params: { id: string }; Body: { branch?: string; from: string; to: string } }>(
@@ -594,14 +613,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       bumpContentVersion(req.params.id, branch); // bib/label indexes carry file paths
       scheduleCommit(req.params.id, branch);
       // The typeset root keeps its designation through a rename (deletion
-      // already re-derives it; a rename must not orphan it).
+      // already re-derives it; a rename must not orphan it). A rename that
+      // produces the project's first .tex adopts it, as creation would. The
+      // stored path is the normalised one: "./a.tex" must match the tree.
       let newRoot: string | undefined;
       try {
         const meta = await store.readMeta(req.params.id);
-        if (meta.rootFile === from) {
-          meta.rootFile = to;
+        const normTo = importPath(to);
+        if (meta.rootFile && meta.rootFile === importPath(from) && normTo) {
+          meta.rootFile = normTo;
           await store.writeMeta(meta);
-          newRoot = to;
+          newRoot = normTo;
+        } else if (!meta.rootFile) {
+          newRoot = await adoptRootIfUnset(req.params.id, branch, to);
         }
       } catch { /* meta unreadable — leave as-is */ }
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -615,14 +639,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     store.deleteFile(req.params.id, branch, rel);
     bumpContentVersion(req.params.id, branch);
     scheduleCommit(req.params.id, branch);
-    // If the typeset root was deleted, re-point it at another .tex so the next
-    // compile doesn't fail with "root file not found".
+    // If the typeset root was deleted, re-point it at the best remaining .tex
+    // so the next compile doesn't fail with "root file not found". With no
+    // .tex left the root is unset, so the next .tex created becomes it.
     let newRoot: string | undefined;
     try {
       const meta = await store.readMeta(req.params.id);
-      if (meta.rootFile === rel) {
-        const tex = store.listFiles(req.params.id, branch).find((f) => f.type === 'file' && f.path.endsWith('.tex'));
-        if (tex) { meta.rootFile = tex.path; await store.writeMeta(meta); newRoot = tex.path; }
+      if (meta.rootFile && meta.rootFile === importPath(rel)) {
+        const root = detectRoot(req.params.id, branch);
+        meta.rootFile = root;
+        await store.writeMeta(meta);
+        newRoot = root || undefined;
       }
     } catch { /* meta unreadable — leave as-is */ }
     return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -1126,8 +1153,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const id = newId();
     try {
       const { remoteBranch } = await gitops.cloneRepo(id, github.tokenUrl(info.cloneUrl, conn.token));
-      const files = store.listFiles(id, 'main').filter((f) => f.type === 'file').map((f) => f.path);
-      const rootFile = detectRootFile(id, files);
+      const rootFile = detectRoot(id, 'main');
       const meta: store.ProjectMeta = {
         id, name: info.name, rootFile, engine: 'pdf', createdAt: new Date().toISOString(),
         github: { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) },
@@ -1141,24 +1167,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: `Import failed: ${err.message}` });
     }
   });
-
-  // Pick the typeset root: the .tex that actually has \documentclass (a repo's
-  // real main file may live in a subdir like paper/main.tex), preferring main.tex
-  // and shallower paths. Falls back gracefully when nothing declares a class.
-  function detectRootFile(id: string, files: string[]): string {
-    const tex = files.filter((f) => f.endsWith('.tex'));
-    const rank = (arr: string[]) => arr.slice().sort((a, b) => {
-      const am = /(^|\/)main\.tex$/.test(a), bm = /(^|\/)main\.tex$/.test(b);
-      if (am !== bm) return am ? -1 : 1;
-      const ad = a.split('/').length, bd = b.split('/').length;
-      return ad !== bd ? ad - bd : a.localeCompare(b);
-    })[0];
-    const withClass = tex.filter((f) => {
-      try { return /\\documentclass/.test(store.readFile(id, 'main', f).subarray(0, 4096).toString('utf8')); }
-      catch { return false; }
-    });
-    return rank(withClass) || rank(tex) || 'main.tex';
-  }
 
   // Sync a linked project with its GitHub remote (uses the acting user's token).
   // Syncing pushes the project into the OWNER's repo and can pull remote state

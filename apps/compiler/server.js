@@ -120,7 +120,7 @@ async function compile(body) {
 async function compileInner(body) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
@@ -223,7 +223,7 @@ async function compileInner(body) {
 async function synctex(body) {
   const { projectDir, rootFile = 'main.tex', direction, line, column = 0, page, x, y } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   const rootDir = path.dirname(rootFile);

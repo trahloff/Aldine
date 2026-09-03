@@ -12,6 +12,7 @@ import GithubImport from '../components/GithubImport';
 import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
+import { pickTemplate, templateToPost } from '../util/templates';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */
@@ -52,12 +53,17 @@ export default function Home() {
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  useEffect(() => { api.templates().then(setTemplates).catch(() => setTemplates([])); }, []);
+  useEffect(() => {
+    api.templates().then((list) => {
+      setTemplates(list);
+      setTemplate((cur) => pickTemplate(list, cur));
+    }).catch(() => setTemplates([]));
+  }, []);
 
   const create = async () => {
     const name = newName.trim() || 'Untitled Project';
     try {
-      const p = await api.createProject(name, undefined, templates.length ? template : undefined);
+      const p = await api.createProject(name, undefined, templateToPost(templates, template));
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');

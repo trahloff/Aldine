@@ -34,6 +34,61 @@ export function importPath(entry: string): string | null {
   return segments.join('/');
 }
 
+/** A path segment that names git internals or compile output. Compared
+ *  case-insensitively and without trailing dots or spaces: on macOS and
+ *  Windows `.GIT/config` and `.git./config` open `.git/config`, and the
+ *  initial commit runs git on whatever the seed wrote there. `.gitignore` is
+ *  not hidden. */
+export function isHiddenName(seg: string): boolean {
+  const s = seg.toLowerCase().replace(/[. ]+$/, '');
+  return s === '.git' || s.startsWith('.aldine');
+}
+
+/** git internals and compile output are never user-addressable, at any depth:
+ *  'sub/.git/config' and 'paper/.aldine-out/x' are caught, not just a leading
+ *  '.git'. Matches store.listFiles, which skips these names at every level. */
+export function isHiddenPath(rel: string): boolean {
+  return rel.split(/[\\/]/).some(isHiddenName);
+}
+
+export const SEED_MAX_FILES = 1000;
+export const SEED_MAX_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Why a `files` map cannot seed a project, or null when it can. Keys are
+ * written to a fresh repo before its first commit runs git, so a key that
+ * reaches `.git/` (config, hooks) would execute on the server; the file
+ * routes screen the same names. A key that is both a file and a directory
+ * (`a` and `a/b`) would fail halfway through the write.
+ */
+export function seedError(files: unknown): string | null {
+  if (typeof files !== 'object' || files === null || Array.isArray(files)) return '`files` must be an object mapping paths to contents';
+  const entries = Object.entries(files);
+  if (entries.length > SEED_MAX_FILES) return `Too many files (${entries.length}); the limit is ${SEED_MAX_FILES}`;
+  const paths = new Set<string>();
+  let total = 0;
+  for (const [rel, content] of entries) {
+    const norm = importPath(rel);
+    if (norm === null || isHiddenPath(norm)) return `File path "${rel}" is not allowed`;
+    if (typeof content !== 'string') return `Content of "${rel}" must be a string`;
+    total += Buffer.byteLength(content);
+    if (total > SEED_MAX_BYTES) return `Files total more than ${Math.round(SEED_MAX_BYTES / (1024 * 1024))} MB`;
+    if (paths.has(norm)) return `File path "${rel}" is given twice`;
+    paths.add(norm);
+  }
+  // createProject writes `.gitignore` after the seed files, so a seed that
+  // makes `.gitignore` a directory fails at that write.
+  const taken = new Set([...paths, '.gitignore']);
+  for (const p of paths) {
+    const segs = p.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const dir = segs.slice(0, i).join('/');
+      if (taken.has(dir)) return `"${dir}" cannot be both a file and a directory`;
+    }
+  }
+  return null;
+}
+
 export function isTextFile(p: string): boolean {
   return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|json|yml|yaml|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
 }

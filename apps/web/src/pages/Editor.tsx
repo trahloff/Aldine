@@ -52,6 +52,10 @@ export default function Editor() {
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [files, setFiles] = useState<TreeEntry[]>([]);
+  // The on-open typeset waits for the first file listing: before it, every
+  // project looks empty and a blank one must not compile at all.
+  const [filesLoaded, setFilesLoaded] = useState(false);
+  const [newFileRequest, setNewFileRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
@@ -92,6 +96,13 @@ export default function Editor() {
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRef = useRef(auto);
   autoRef.current = auto;
+  // Every project carries a .gitignore; dotfiles are not what the user wrote,
+  // so they neither open on load nor count against the empty state.
+  const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
+  const hasFiles = files.some(isUserFile);
+  const hasTex = files.some((f) => f.type === 'file' && f.path.endsWith('.tex'));
+  const hasTexRef = useRef(hasTex);
+  hasTexRef.current = hasTex;
 
   const loadProject = useCallback(async () => {
     try {
@@ -137,8 +148,9 @@ export default function Editor() {
       const p = await loadProject();
       if (!p) return;
       const f = await loadFiles();
-      const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => e.type === 'file' && !e.binary);
+      const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
+      setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
       // this server until it's published to GitHub. Only the owner can publish,
       // so only the owner is nudged.
@@ -189,7 +201,8 @@ export default function Editor() {
   const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
-    if (!local || !autoRef.current) return;
+    // Nothing to typeset until the project has a .tex file.
+    if (!local || !autoRef.current || !hasTexRef.current) return;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     autoTimer.current = setTimeout(() => doCompile(), 2000);
   }, [doCompile, refreshDocWords]);
@@ -552,8 +565,8 @@ export default function Editor() {
       <div className="workspace">
         <aside className="pane sidebar">
           <div className="sidebar__tabs" role="tablist">
-            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab">Files</button>
-            <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab">History</button>
+            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
+            <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab" data-testid="tab-history">History</button>
             <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" data-testid="tab-review">
               Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
             </button>
@@ -572,10 +585,13 @@ export default function Editor() {
                 projectId={id}
                 branch={branch}
                 onOpen={setActiveFile}
+                newFileRequest={newFileRequest}
+                onNewFileHandled={() => setNewFileRequest(0)}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
                     await loadFiles();
+                    loadProject(); // the first .tex of a rootless project becomes its root
                     setActiveFile(path);
                   } catch (err: any) {
                     if (/already exists/i.test(err?.message)) { toast(`"${path}" already exists`, 'error'); setActiveFile(path); }
@@ -589,6 +605,7 @@ export default function Editor() {
                 onDelete={async (path) => {
                   await api.deleteFile(id, branch, path);
                   await loadFiles();
+                  loadProject(); // deleting the root re-derives (or unsets) it
                   if (activeFile === path) setActiveFile(null);
                 }}
                 onRename={async (from, to) => {
@@ -626,7 +643,7 @@ export default function Editor() {
           </div>
         </aside>
 
-        <main className="pane" style={{ flex: 1 }}>
+        <main className="pane pane--editor" style={{ flex: 1 }}>
           {activeFile ? (
             <>
               <div className="pane__header">
@@ -675,6 +692,11 @@ export default function Editor() {
                 mode={mode}
               />
             </>
+          ) : filesLoaded && !hasFiles ? (
+            <div className="pdf-empty" data-testid="empty-project">
+              <p>Create a file to start writing.</p>
+              <button className="btn btn--primary" data-testid="empty-new-file" onClick={() => { setTab('files'); setNewFileRequest((n) => n + 1); }}>New file</button>
+            </div>
           ) : (
             <div className="pdf-empty"><p>Select a file to start writing.</p></div>
           )}
@@ -807,7 +829,10 @@ export default function Editor() {
             stale={pdfStale}
             // The on-open typeset is auto-typeset's job — a user who turned the
             // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
-            onFirstOpen={() => { if (autoRef.current) doCompile(); }}
+            // A project without a .tex has nothing to typeset.
+            ready={filesLoaded}
+            hasTex={hasTex}
+            onFirstOpen={() => { if (autoRef.current && hasTexRef.current) doCompile(); }}
             onInverse={onPdfInverse}
           />
         </section>

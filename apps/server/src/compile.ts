@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { config } from './config.js';
-import { branchDir, readMeta } from './store.js';
+import { branchDir, readMeta, writeMeta } from './store.js';
+import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
 import { flushBranchDocs } from './collab.js';
 
@@ -84,6 +85,15 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
+  // A rootless project (blank, or its last .tex deleted) adopts a .tex here as
+  // well as on file creation: files also arrive through git (pull, GitHub
+  // sync) without passing the file routes.
+  if (!meta.rootFile) {
+    const root = detectRoot(projectId, branch);
+    if (!root) throw new Error('No .tex file to typeset. Create one to start writing.');
+    meta.rootFile = root;
+    await writeMeta(meta);
+  }
 
   const res = await fetch(`${config.compilerUrl}/compile`, {
     method: 'POST',

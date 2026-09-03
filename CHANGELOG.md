@@ -21,6 +21,32 @@ All notable changes to Aldine are documented here. The format follows
   that the lookup sends back.
 
 ### Added
+- Blank projects: a "Blank" tile leads the template grid and creates a project
+  with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
+  does the same. The editor's empty state says "Create a file to start writing"
+  with a New file button that suggests `main.tex`. A project without a `.tex`
+  file has no typeset root and is not auto-typeset; the first `.tex` created,
+  renamed in, or found at typeset time (files can arrive through git) becomes
+  the root, and deleting the last `.tex` unsets it again. Typesetting a project
+  with no `.tex` answers 400 "No .tex file to typeset" instead of reaching the
+  compiler, and the PDF pane says so instead of suggesting the shortcut. A root
+  derived from the tree (at typeset time, on the first `.tex`, after the root
+  is deleted) is ranked like an import: `main.tex` at the top level over a
+  nested one, a file with `\documentclass` over one without.
+- `POST /api/projects` validates `files`: a key that would land in `.git` or
+  `.aldine*`, escapes the project, is empty, is both a file and a directory, or
+  carries non-string content answers 400 and no project is created (previously
+  a seeded `.git/config` reached the fresh repo before its initial commit ran
+  git). Keys are normalised like ZIP entries (`./a.tex`, backslashes), as are
+  roots adopted from a file write or rename. `.git` and `.aldine*` are screened
+  without regard to letter case or a trailing dot or space (`.GIT/config`,
+  `.git./config`), which reach `.git/config` on macOS and Windows; the same
+  screen guards file writes, renames, ZIP imports and the file listing. A seed
+  that makes `.gitignore` a directory is refused with 400 rather than failing
+  the write of the project's own `.gitignore`.
+- The New project dialog only posts a template id the server listed; on a
+  server without a templates directory the pick stays empty and Create seeds
+  the default article, with the Blank tile still there to choose.
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,
   so a feature branch can be tried at a real URL before it reaches prod. The
