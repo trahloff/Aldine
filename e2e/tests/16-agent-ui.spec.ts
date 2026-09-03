@@ -13,7 +13,7 @@ import { createProject, openProject, cleanup } from './helpers';
  */
 
 const MCP_TOKEN = process.env.ALDINE_MCP_TOKEN || 'aldine-e2e-mcp';
-const BASE = process.env.ALDINE_URL || 'http://localhost:3100';
+const BASE = process.env.ALDINE_URL || `http://localhost:${process.env.E2E_PORT || 3100}`;
 
 const MAIN = [
   '\\documentclass{article}',
