@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, synctexLookup, forgetPdfUrls } from './compile.js';
+import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
@@ -17,6 +17,7 @@ import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip } from './unzip.js';
 import { guessRoot, detectRoot } from './root.js';
+import { detectEngine, decodeText } from './detect.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
@@ -427,6 +428,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/templates', async () => listTemplates());
 
+  // What the connected compiler runs. Not project-scoped, so it is not behind
+  // the project auth hook; it discloses nothing beyond a TeX Live release.
+  app.get('/api/compiler', async () => compilerInfo());
+
   // Import an Overleaf/project ZIP (base64) as a new project.
   // The ZIP arrives base64-encoded inside JSON (×4/3 of the raw size), so the
   // route needs its own body limit: the global 32 MB one would cap imports at
@@ -456,19 +461,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
+      const transcoded: string[] = [];
       for (const [p, data] of Object.entries(files)) {
         // treat as text only if the extension says so AND there's no NUL byte in the head
         const looksBinary = data.subarray(0, 8000).includes(0);
-        if (isTextFile(p) && !looksBinary) textFiles[p] = data.toString('utf8');
-        else binFiles.push(p);
+        if (isTextFile(p) && !looksBinary) {
+          const decoded = decodeText(data);
+          textFiles[p] = decoded.text;
+          if (decoded.transcoded) transcoded.push(p);
+        } else binFiles.push(p);
       }
       const meta = await store.createProject(name || 'Imported project', textFiles, reqUser(req)?.id);
       created = meta;
       for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
       if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
       const root = guessRoot(files);
-      if (root) { meta.rootFile = root; await store.writeMeta(meta); }
-      return publicMeta(meta, reqUser(req));
+      // Detection reads the archive bytes, not the transcoded text: the package
+      // names it looks for are ASCII either way, and the latexmkrc is never transcoded.
+      const detected = detectEngine(files, root);
+      if (root) meta.rootFile = root;
+      meta.engine = detected.engine;
+      await store.writeMeta(meta);
+      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded } };
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
       return reply.code(400).send({ error: `Could not import ZIP: ${err.message}` });

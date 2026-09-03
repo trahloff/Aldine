@@ -5,6 +5,7 @@
  *  - a base64 body past the global 32 MB limit is accepted on the import route
  *  - a ZIP over the limit gets the honest size message, not a bare 413
  *  - PATCH engine rejects anything the compiler cannot run
+ *  - engine detection: latexmkrc, xepersian root, Latin-1 transcode, reported in the response
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -92,6 +93,30 @@ try {
   res = await app.inject({ method: 'PATCH', url: `/api/projects/${id}`, payload: { name: 'Renamed' } });
   eq(res.statusCode, 200, 'PATCH without engine still works');
   eq((await store.readMeta(id)).engine, 'xelatex', 'engine untouched by a name-only patch');
+
+  // ---- engine detection on import ----
+  res = await importZip({ 'latexmkrc': '$pdf_mode = 4;\n', 'main.tex': doc });
+  eq(res.statusCode, 200, 'latexmkrc archive imports');
+  eq(res.json().engine, 'xelatex', 'engine set from latexmkrc');
+  eq(res.json().import, { engine: 'xelatex', engineReason: 'latexmkrc in the archive', transcoded: [] }, 'response says why');
+  eq((await store.readMeta(res.json().id)).engine, 'xelatex', 'engine persisted in meta');
+
+  const persian = '\\documentclass{article}\n\\usepackage{xepersian}\n\\begin{document}\nسلام\n\\end{document}\n';
+  res = await importZip({ 'main.tex': persian, 'refs.bib': '' });
+  eq(res.json().engine, 'xelatex', 'xepersian root selects XeLaTeX');
+  eq(res.json().import.engineReason, 'the xepersian package in the main document', 'reason names the package');
+
+  res = await importZip({ 'main.tex': doc });
+  eq(res.json().engine, 'pdf', 'plain archive stays on pdflatex');
+  eq(res.json().import, { engine: 'pdf', engineReason: null, transcoded: [] }, 'nothing to explain');
+
+  const latin1Doc = Buffer.concat([Buffer.from('\\documentclass{article}\n\\usepackage[latin1]{inputenc}\n\\begin{document}\ncaf'), Buffer.from([0xe9]), Buffer.from('\n\\end{document}\n')]);
+  res = await importZip({ 'main.tex': latin1Doc, 'notes.txt': 'plain ascii' });
+  eq(res.statusCode, 200, 'Latin-1 archive imports');
+  eq(res.json().import.transcoded, ['main.tex'], 'the transcoded file is named');
+  const text = store.readFile(res.json().id, 'main', 'main.tex').toString('utf8');
+  check(text.includes('café'), `file is UTF-8 on disk: ${JSON.stringify(text)}`);
+  check(text.includes('[utf8]{inputenc}'), 'inputenc switched to utf8 with the transcode');
 
   console.log('import route: all checks passed');
 } finally {
