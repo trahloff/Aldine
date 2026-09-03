@@ -57,6 +57,10 @@ RUN tlmgr conf texmf shell_escape p
 
 WORKDIR /srv
 COPY server.js .
+# server.js reports the scheme at GET /health; the ARG must be re-declared
+# after FROM to be visible in this stage.
+ARG TEXLIVE_SCHEME
+RUN echo "${TEXLIVE_SCHEME}" > /srv/texlive-scheme
 
 ENV PORT=4020 \
     DATA_DIR=/data \

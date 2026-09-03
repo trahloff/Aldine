@@ -179,7 +179,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
       {menu && (
         <div className="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()}>
-          <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as typeset root</button>
+          <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as main document</button>
           <button className="menu__item" onClick={() => {
             const to = window.prompt('Rename to', menu.path);
             if (to && to !== menu.path) onRename(menu.path, to);

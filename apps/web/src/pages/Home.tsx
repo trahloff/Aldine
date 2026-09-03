@@ -13,6 +13,7 @@ import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
 import { pickTemplate, templateToPost } from '../util/templates';
+import { importSummary } from '../util/engines';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */
@@ -80,7 +81,8 @@ export default function Home() {
       let bin = '';
       for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
       const p = await api.importZip(file.name.replace(/\.zip$/i, ''), btoa(bin));
-      navigate(`/p/${p.id}`);
+      toast(importSummary(p), 'ok');
+      navigate(`/p/${p.id}`, { state: { import: p.import } });
     } catch (err: any) {
       // A 413 without the route's own text comes from a proxy or body limit
       // below what the app allows — the size is the only number worth stating.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -25,15 +25,10 @@ import Modal from '../components/Modal';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
+import ProjectSettings from '../components/ProjectSettings';
+import { ENGINES } from '../util/engines';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
-
-/** The engines the server accepts (PATCH rejects anything else with 400). */
-const ENGINES: Array<{ id: string; label: string }> = [
-  { id: 'pdf', label: 'pdfLaTeX' },
-  { id: 'xelatex', label: 'XeLaTeX' },
-  { id: 'lualatex', label: 'LuaLaTeX' },
-];
 
 /** A text field that is not the code editor (whose own keymap owns Mod-j). */
 function inTextField(target: EventTarget | null): boolean {
@@ -48,6 +43,9 @@ export default function Editor() {
   const [params, setParams] = useSearchParams();
   const branch = params.get('branch') || 'main';
   const navigate = useNavigate();
+  // Home hands the import result over in history state so the settings
+  // panel can say where the compiler choice came from.
+  const imported = (useLocation().state as { import?: ImportedProject['import'] } | null)?.import;
   const toast = useToast();
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
@@ -79,6 +77,7 @@ export default function Editor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled } = useAuth();
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
@@ -223,18 +222,33 @@ export default function Editor() {
     setCompile({ status: 'idle', result: null });
   };
 
-  const renameProject = async (el: HTMLElement, name: string) => {
-    if (!project || !name.trim() || name === project.name) return;
+  const saveName = useCallback(async (name: string) => {
     try {
       const p = await api.patchProject(id, { name: name.trim() });
       setProject((prev) => (prev ? { ...prev, name: p.name } : prev));
     } catch (err: any) {
-      // The name lives in a contentEditable React doesn't control, so a
-      // rejected rename would otherwise leave the refused text on screen.
-      el.textContent = project.name;
       toast(`Could not rename: ${err.message}`, 'error');
+      throw err;
     }
+  }, [id, toast]);
+
+  const renameProject = async (el: HTMLElement, name: string) => {
+    if (!project || !name.trim() || name === project.name) return;
+    // The name lives in a contentEditable React doesn't control, so a
+    // rejected rename would otherwise leave the refused text on screen.
+    await saveName(name).catch(() => { el.textContent = project.name; });
   };
+
+  const setRootFile = useCallback(async (path: string) => {
+    if (!project || path === project.rootFile) return;
+    try {
+      await api.patchProject(id, { rootFile: path });
+      await loadProject();
+      toast(`Main document is now ${path}`, 'ok');
+    } catch (err: any) {
+      toast(`Could not change the main document: ${err.message}`, 'error');
+    }
+  }, [id, project, loadProject, toast]);
 
   const setStopOnFirstError = useCallback(async (on: boolean) => {
     if (!project || on === !!project.stopOnFirstError) return;
@@ -445,6 +459,7 @@ export default function Editor() {
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
+      { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
@@ -546,6 +561,7 @@ export default function Editor() {
         {authEnabled && project.isOwner && (
           <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title="Invite collaborators or share by link">Share</button>
         )}
+        <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
         <button className="btn" onClick={startComment} data-testid="add-comment" title="Comment on the selected text">Comment</button>
         <Presence users={users} />
         <div className="toolbar__group">
@@ -618,11 +634,7 @@ export default function Editor() {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
                   }
                 }}
-                onSetRoot={async (path) => {
-                  await api.patchProject(id, { rootFile: path });
-                  await loadProject();
-                  toast(`Typeset root is now ${path}`, 'ok');
-                }}
+                onSetRoot={setRootFile}
               />
             )}
             {tab === 'history' && <HistoryPanel projectId={id} branch={branch} />}
@@ -849,6 +861,21 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+
+      {settingsOpen && (
+        <ProjectSettings
+          project={project}
+          files={files}
+          autoTypeset={auto}
+          importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
+          onClose={() => setSettingsOpen(false)}
+          onRename={saveName}
+          onSetRoot={setRootFile}
+          onSetEngine={setEngine}
+          onSetStopOnFirstError={setStopOnFirstError}
+          onToggleAutoTypeset={toggleAuto}
+        />
+      )}
 
       {shareOpen && (
         <ShareModal

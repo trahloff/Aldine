@@ -79,6 +79,11 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export interface TemplateInfo { id: string; name: string; description?: string; icon?: string }
+/** What /api/projects/import decided while placing the archive. */
+export interface ImportedProject extends ProjectSummary {
+  import: { engine: string; engineReason: string | null; transcoded: string[] };
+}
+export interface CompilerInfo { ok: boolean; texlive: { release: string; scheme: string } }
 
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),
@@ -86,7 +91,8 @@ export const api = {
     req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
   importZip: (name: string, zipBase64: string) =>
-    req<ProjectSummary>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64 }) }),
+    req<ImportedProject>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64 }) }),
+  compilerInfo: () => req<CompilerInfo>('/api/compiler'),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
   patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
