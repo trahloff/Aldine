@@ -2,6 +2,10 @@ node_modules/
 dist/
 .data/
 .data-e2e/
+.data-e2e-gitlab/
+.data-e2e-prov/
+.secrets-e2e-prov/
+.secrets-e2e/
 .data-auth/
 .data-shots/
 .secrets/
@@ -35,3 +39,6 @@ deploy/demo/*.pub
 
 # local tooling
 .entire/
+
+# claude plugins
+docs/superpowers/*

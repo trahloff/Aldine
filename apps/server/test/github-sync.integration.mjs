@@ -30,36 +30,36 @@ const { registerRoutes } = await import('../src/routes.ts');
 const app = Fastify(); await registerRoutes(app);
 const J = (r)=>{ try{return JSON.parse(r.body)}catch{return r.body} };
 
-let r = await app.inject({method:'POST',url:'/api/github/connect',payload:{token:'fake'}});
+let r = await app.inject({method:'POST',url:'/api/remotes/github/connect',payload:{token:'fake'}});
 check(r.statusCode===200 && J(r).login==='tester', 'connect ok: '+r.body);
-r = await app.inject({url:'/api/github/status'});
+r = await app.inject({url:'/api/remotes/github/status'});
 check(J(r).connected===true, 'status connected');
-r = await app.inject({url:'/api/github/repos'});
+r = await app.inject({url:'/api/remotes/github/repos'});
 check(Array.isArray(J(r)) && J(r)[0].fullName==='octocat/hello', 'repos list');
-r = await app.inject({method:'POST',url:'/api/github/import',payload:{fullName:'octocat/hello'}});
+r = await app.inject({method:'POST',url:'/api/remotes/github/import',payload:{fullName:'octocat/hello'}});
 check(r.statusCode===200, 'import status '+r.body);
 const pid = J(r).id; check(pid, 'got project id');
-check(J(r).github?.fullName==='octocat/hello', 'meta has github link');
+check(J(r).remote?.fullName==='octocat/hello' && J(r).remote?.provider==='github', 'meta has the github remote link');
 check(fs.existsSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex')),'imported main.tex present');
 
 // edit + push
 fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'\\documentclass{article}\\begin{document}EDITED IN ALDINE\\end{document}\n');
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/push`});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/push`});
 check(r.statusCode===200, 'push status '+r.body);
 const onRemote = execSync(`git --git-dir="${bare}" show main:main.tex`).toString();
 check(onRemote.includes('EDITED IN ALDINE'),'push reached the remote');
 
 // external change on remote → status behind, pull catches up
 execSync(`cd "${seed}" && git pull -q && printf 'EXTERNAL\\n' >> main.tex && git commit -qam ext && git push -q`);
-r = await app.inject({url:`/api/projects/${pid}/github/status`});
+r = await app.inject({url:`/api/projects/${pid}/remote/status`});
 check(J(r).behind===1, 'behind 1 after external push: '+r.body);
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/pull`});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/pull`});
 check(r.statusCode===200, 'pull ok '+r.body);
 check(fs.readFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'utf8').includes('EXTERNAL'),'pulled external change');
 
 // push with a custom commit message → the remote commit subject matches
 fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'v2\n');
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/push`,payload:{message:'my custom message'}});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/push`,payload:{message:'my custom message'}});
 check(r.statusCode===200,'push2 '+r.body);
 check(execSync(`git --git-dir="${bare}" log -1 --format=%s main`).toString().trim()==='my custom message','custom commit message on remote');
 
@@ -67,28 +67,28 @@ check(execSync(`git --git-dir="${bare}" log -1 --format=%s main`).toString().tri
 execSync(`cd "${seed}" && git pull -q && printf 'REMOTE VERSION\\n' > main.tex && git commit -qam remoteedit && git push -q`);
 fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'LOCAL VERSION\n');
 const prepo = path.join(process.env.DATA_DIR,'projects',pid);
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/pull`});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/pull`});
 check(r.statusCode===409,'pull conflicts with 409 (got '+r.statusCode+')');
 check(Array.isArray(J(r).conflicts) && J(r).conflicts.includes('main.tex'),'conflict lists main.tex');
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/reset-to-remote`});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/reset-to-remote`});
 check(r.statusCode===200,'reset-to-remote ok '+r.body);
 check(fs.readFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'utf8').trim()==='REMOTE VERSION','took the remote version');
 
 // branch-level: create a branch → it appears on the remote and becomes current
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/create-branch`,payload:{name:'feature-x'}});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/create-branch`,payload:{name:'feature-x'}});
 check(r.statusCode===200,'create-branch '+r.body);
 check(execSync(`git --git-dir="${bare}" for-each-ref --format='%(refname:short)' refs/heads`).toString().includes('feature-x'),'remote has feature-x');
-r = await app.inject({url:`/api/projects/${pid}/github/branches`});
+r = await app.inject({url:`/api/projects/${pid}/remote/branches`});
 check(J(r).current==='feature-x' && J(r).branches.includes('main') && J(r).branches.includes('feature-x'),'branches list + current: '+r.body);
 
 // open a PR from the feature branch
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/pr`,payload:{title:'My PR'}});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/change-request`,payload:{title:'My PR'}});
 check(r.statusCode===200 && J(r).url.includes('/pull/7'),'PR opened: '+r.body);
 
 // switch back to main
-r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/switch-branch`,payload:{branch:'main'}});
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/remote/switch-branch`,payload:{branch:'main'}});
 check(r.statusCode===200 && J(r).branch==='main','switch back to main '+r.body);
-r = await app.inject({url:`/api/projects/${pid}/github/branches`});
+r = await app.inject({url:`/api/projects/${pid}/remote/branches`});
 check(J(r).current==='main','current is main after switch');
 
 mock.close(); await app.close(); fs.rmSync(tmp,{recursive:true,force:true});

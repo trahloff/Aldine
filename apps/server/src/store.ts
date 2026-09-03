@@ -42,7 +42,47 @@ export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
 }
 
-export async function createProject(name: string, files: Record<string, string> = {}, ownerId?: string): Promise<ProjectMeta> {
+export type RemoteLink = NonNullable<ProjectMeta['remote']>;
+
+/**
+ * The project's remote, falling back to the legacy `meta.github` when
+ * `meta.remote` is absent. Every consumer must go through this — a direct
+ * `meta.remote` read treats every pre-existing GitHub project as unlinked.
+ */
+export function remoteLink(meta: ProjectMeta): RemoteLink | undefined {
+  if (meta.remote) return meta.remote;
+  return meta.github ? { provider: 'github', ...meta.github } : undefined;
+}
+
+/**
+ * Set the remote and drop the legacy field, so pre-existing projects upgrade on
+ * their next write. Both fields present would leave two candidates for a reader.
+ */
+export function setRemoteLink(meta: ProjectMeta, link: RemoteLink): void {
+  meta.remote = link;
+  delete meta.github;
+}
+
+const GITIGNORE_LINES = [
+  '.aldine-out/', '*.aux', '*.log', '*.out', '*.toc', '*.bbl', '*.bcf',
+  '*.blg', '*.synctex.gz', '*.fls', '*.fdb_latexmk', '*.run.xml',
+];
+
+/**
+ * Every project must ignore build artefacts, or a compile turns into a commit of
+ * its own droppings. A seed (template) may ship its own .gitignore, so keep that
+ * file and append only the lines it is missing rather than overwriting it.
+ */
+function writeGitignore(dir: string, seeded?: string | Buffer): void {
+  const existing = seeded === undefined ? '' : seeded.toString('utf8');
+  const have = new Set(existing.split(/\r?\n/).map((l) => l.trim()));
+  const missing = GITIGNORE_LINES.filter((l) => !have.has(l));
+  if (!missing.length) return;
+  const prefix = existing && !existing.endsWith('\n') ? `${existing}\n` : existing;
+  fs.writeFileSync(path.join(dir, '.gitignore'), `${prefix}${missing.join('\n')}\n`);
+}
+
+export async function createProject(name: string, files: Record<string, string | Buffer> = {}, ownerId?: string): Promise<ProjectMeta> {
   const id = newId();
   const dir = repoDir(id);
   fs.mkdirSync(dir, { recursive: true });
@@ -51,7 +91,7 @@ export async function createProject(name: string, files: Record<string, string> 
   await g.addConfig('user.name', 'Aldine');
   await g.addConfig('user.email', 'aldine@localhost');
 
-  const seed = Object.keys(files).length ? files : {
+  const seed: Record<string, string | Buffer> = Object.keys(files).length ? files : {
     'main.tex': DEFAULT_MAIN_TEX(name),
     'references.bib': DEFAULT_BIB,
   };
@@ -60,7 +100,7 @@ export async function createProject(name: string, files: Record<string, string> 
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  fs.writeFileSync(path.join(dir, '.gitignore'), '.aldine-out/\n*.aux\n*.log\n*.out\n*.toc\n*.bbl\n*.bcf\n*.blg\n*.synctex.gz\n*.fls\n*.fdb_latexmk\n*.run.xml\n');
+  writeGitignore(dir, seed['.gitignore']);
   await g.add(['-A']);
   await g.commit('Initial commit');
 
@@ -93,12 +133,22 @@ export async function restoreProject(id: string): Promise<ProjectMeta> {
   return meta;
 }
 
-/** Hard-delete trashed projects older than `days`. Returns the ids purged. */
-export async function purgeExpiredTrash(days: number): Promise<string[]> {
+/**
+ * Hard-delete trashed projects older than `days`. Returns the ids purged.
+ *
+ * `beforeDelete` runs per project while its metadata still exists — the caller
+ * uses it to clean up a remote mirror whose delete failed at trash time. It must
+ * not throw; a purge that stops halfway leaves the trash never draining.
+ */
+export async function purgeExpiredTrash(
+  days: number,
+  beforeDelete?: (meta: ProjectMeta) => Promise<void>,
+): Promise<string[]> {
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const purged: string[] = [];
   for (const m of await listProjects()) {
     if (m.deletedAt && Date.parse(m.deletedAt) < cutoff) {
+      if (beforeDelete) await beforeDelete(m).catch(() => {});
       await deleteProject(m.id);
       purged.push(m.id);
     }

@@ -51,7 +51,11 @@ export interface ProjectMeta {
     bibFile: string;
     lastSyncedAt?: string;
   };
-  /** GitHub remote link (present when the project was imported from / pushed to GitHub). */
+  /**
+   * DEPRECATED — written only by projects created before multi-provider support.
+   * Never read this directly: go through store.remoteLink(), which falls back to
+   * it. A direct read treats every pre-existing GitHub project as unlinked.
+   */
   github?: {
     fullName: string;   // owner/repo
     owner: string;
@@ -60,6 +64,31 @@ export interface ProjectMeta {
     cloneUrl: string;     // credential-free https URL
     connectedBy?: string; // user id whose token created the link (for reference)
   };
+  /** Remote link: present when the project was imported from / published to a host. */
+  remote?: {
+    provider: 'github' | 'gitlab';
+    fullName: string;     // owner/repo, or a nested group path on GitLab
+    owner: string;
+    repo: string;
+    remoteBranch: string; // the remote branch that local `main` maps to
+    cloneUrl: string;     // credential-free https URL
+    connectedBy?: string; // user id whose token created the link (for reference)
+    /**
+     * Aldine created this repo (auto-provisioned, or published from a local
+     * project) rather than importing an existing one. Only these are deleted
+     * when the project is trashed — deleting a repo a user merely imported
+     * would destroy work Aldine never owned.
+     */
+    createdByAldine?: boolean;
+  };
+  /** Set when auto-provisioning was attempted and failed; drives the retry banner. */
+  remotePending?: { provider: 'gitlab'; namespace?: string };
+  /**
+   * Server-side autopush after autocommit. Defaults on for auto-provisioned
+   * projects, off for everything else — an existing GitHub-linked project must
+   * not start pushing unbidden.
+   */
+  autopush?: boolean;
 }
 
 export interface SessionRow { userId: string; exp: number }

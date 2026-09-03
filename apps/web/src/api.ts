@@ -16,11 +16,21 @@ export interface ProjectSummary {
    *  disclose other people's invite list). */
   share?: { mode: 'private' | 'link'; collaborators: string[] } | null;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
-  github?: { fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string } | null;
+  remote?: RemoteInfo | null;
+  /** Server-side autopush after autocommit. Shared by the project's collaborators. */
+  autopush?: boolean;
+  /** Set when auto-provisioning to a git host failed; drives the retry banner. */
+  remotePending?: { provider: RemoteProviderId; namespace?: string } | null;
+  /** Response-only, on create: why the host link could not be made. Never persisted. */
+  remoteError?: string;
 }
 
-export interface GithubRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
-export interface GithubStatus { connected: boolean; login?: string; oauth: boolean }
+export type RemoteProviderId = 'github' | 'gitlab';
+export interface RemoteInfo { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string }
+export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
+export interface RemoteStatus { connected: boolean; login?: string; oauth: boolean; baseUrl?: string }
+export interface RemoteProviderInfo { id: RemoteProviderId; label: string; oauth: boolean }
+export interface GitlabNamespace { id: number; fullPath: string; name: string }
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
@@ -66,19 +76,29 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface TemplateInfo { id: string; name: string; description?: string; icon?: string }
+export interface TemplateInfo { id: string; name: string; description?: string; icon?: string; order?: number; source: 'local' | 'gitlab' }
+
+/**
+ * A delete also removes the remote repo Aldine created. `remoteDelete` is absent
+ * for an unlinked project; when it reports a failure the local project is gone
+ * either way, so the UI has to say so rather than swallow it.
+ */
+export interface DeleteResult {
+  ok: boolean;
+  remoteDelete?: { deleted: boolean; scheduledFor?: string; reason?: string };
+}
 
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),
-  createProject: (name: string, files?: Record<string, string>, template?: string) =>
-    req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
+  createProject: (name: string, files?: Record<string, string>, template?: string, namespace?: string) =>
+    req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template, namespace }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
-  importZip: (name: string, zipBase64: string) =>
-    req<ProjectSummary>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64 }) }),
+  importZip: (name: string, zipBase64: string, namespace?: string) =>
+    req<ProjectSummary>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64, namespace }) }),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
   patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  deleteProject: (id: string, permanent = false) => req<{ ok: boolean }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
+  deleteProject: (id: string, permanent = false) => req<DeleteResult>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
   claimProject: (id: string) => req<ProjectSummary>(`/api/projects/${id}/claim`, { method: 'POST' }),
   listTrash: () => req<{ id: string; name: string; deletedAt: string }[]>('/api/projects/trash'),
@@ -117,28 +137,55 @@ export const api = {
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
 
-  // GitHub sync
-  githubStatus: () => req<GithubStatus>('/api/github/status'),
-  githubConnect: (token: string) => req<{ connected: boolean; login: string }>('/api/github/connect', { method: 'POST', body: JSON.stringify({ token }) }),
-  githubDisconnect: () => req<{ ok: boolean }>('/api/github/disconnect', { method: 'POST' }),
-  githubRepos: () => req<GithubRepo[]>('/api/github/repos'),
-  githubImport: (fullName: string) => req<ProjectSummary>('/api/github/import', { method: 'POST', body: JSON.stringify({ fullName }) }),
-  projectGithubStatus: (id: string) => req<{ linked: boolean; ahead: number; behind: number; fullName: string }>(`/api/projects/${id}/github/status`),
-  githubLink: (id: string, name?: string, priv?: boolean) => req<{ ok: boolean; github: { fullName: string } }>(`/api/projects/${id}/github/link`, { method: 'POST', body: JSON.stringify({ name, private: priv }) }),
-  githubPush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean }>(`/api/projects/${id}/github/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
+  // Remote sync (GitHub / GitLab)
+  remotes: () => req<RemoteProviderInfo[]>('/api/remotes'),
+  remoteStatus: (p: RemoteProviderId) => req<RemoteStatus>(`/api/remotes/${p}/status`),
+  remoteConnect: (p: RemoteProviderId, token: string, baseUrl?: string) =>
+    req<{ connected: boolean; login: string }>(`/api/remotes/${p}/connect`, { method: 'POST', body: JSON.stringify({ token, baseUrl }) }),
+  remoteDisconnect: (p: RemoteProviderId) => req<{ ok: boolean }>(`/api/remotes/${p}/disconnect`, { method: 'POST' }),
+  /** Throws with `.tokenInvalid` set when the stored token was revoked, so the UI can prompt a reconnect. */
+  remoteRepos: async (p: RemoteProviderId): Promise<RemoteRepo[]> => {
+    const res = await fetch(`/api/remotes/${p}/repos`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(body.error || `HTTP ${res.status}`) as Error & { tokenInvalid?: boolean };
+      if (body.reason === 'token-invalid') err.tokenInvalid = true;
+      throw err;
+    }
+    return body as RemoteRepo[];
+  },
+  remoteImport: (p: RemoteProviderId, fullName: string) =>
+    req<ProjectSummary>(`/api/remotes/${p}/import`, { method: 'POST', body: JSON.stringify({ fullName }) }),
+  projectRemoteStatus: (id: string) => req<{ linked: boolean; ahead: number; behind: number; fullName: string }>(`/api/projects/${id}/remote/status`),
+  /** Omit `provider` to retry a pending auto-provision — the server then sends the
+   *  project to the group it was originally meant for, not a fresh personal repo. */
+  remoteLink: (id: string, provider?: RemoteProviderId, name?: string, priv?: boolean) =>
+    req<{ ok: boolean; remote: RemoteInfo }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv }) }),
+  remotePush: (id: string, message?: string, auto?: boolean) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/remote/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing
-  githubPull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
-    const res = await fetch(`/api/projects/${id}/github/pull`, { method: 'POST' });
+  remotePull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
+    const res = await fetch(`/api/projects/${id}/remote/pull`, { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     return { ok: true };
   },
-  githubResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/github/reset-to-remote`, { method: 'POST' }),
-  githubBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/github/branches`),
-  githubSwitchBranch: (id: string, branch: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/github/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
-  githubCreateBranch: (id: string, name: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/github/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
-  githubOpenPR: (id: string, title?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/github/pr`, { method: 'POST', body: JSON.stringify({ title }) }),
+  remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
+  remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),
+  remoteSwitchBranch: (id: string, branch: string) =>
+    req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  remoteCreateBranch: (id: string, name: string) =>
+    req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
+  remoteOpenChangeRequest: (id: string, title?: string) =>
+    req<{ url: string; number: number }>(`/api/projects/${id}/remote/change-request`, { method: 'POST', body: JSON.stringify({ title }) }),
+  remoteAutopush: (id: string, enabled: boolean) =>
+    req<{ ok: boolean; autopush: boolean }>(`/api/projects/${id}/remote/autopush`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  // GitLab-only: group nesting has no GitHub analogue. 404 means the deployment
+  // has no default group, which the picker reads as "don't render".
+  gitlabNamespaces: () => req<{ root: string; namespaces: GitlabNamespace[] }>('/api/remotes/gitlab/namespaces'),
+  gitlabCreateSubgroup: (parentPath: string, name: string) =>
+    req<{ id: number; fullPath: string }>('/api/remotes/gitlab/subgroups', { method: 'POST', body: JSON.stringify({ parentPath, name }) }),
   merge: (id: string, from: string, into: string, author?: string) =>
     req<{ ok: boolean; conflicts?: string[]; message?: string }>(`/api/projects/${id}/merge`, { method: 'POST', body: JSON.stringify({ from, into, author }) }),
 

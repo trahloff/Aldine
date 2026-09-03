@@ -33,6 +33,25 @@ services:
       # GitHub sync (repo import/push/pull) — OAuth app with repo scope.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # GitLab sync — OAuth application with scope `api`. Users can also connect
+      # with a personal access token, which needs none of these.
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      # Instance for self-hosted GitLab (default gitlab.com).
+      GITLAB_URL: ${GITLAB_URL:-}
+      # GitLab as the home for new projects: set TOKEN *and* DEFAULT_GROUP to
+      # switch it on. The token is a service-account PAT and stays in the
+      # process environment — it is never written to /data, which the compiler
+      # container also mounts.
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_DEFAULT_GROUP: ${GITLAB_DEFAULT_GROUP:-}
+      GITLAB_DEFAULT_VISIBILITY: ${GITLAB_DEFAULT_VISIBILITY:-}
+      # A GitLab group of template projects, offered in the New project dialog.
+      # Independent of DEFAULT_GROUP; reuses GITLAB_TOKEN to read the group.
+      GITLAB_TEMPLATE_GROUP: ${GITLAB_TEMPLATE_GROUP:-}
+      # Templates on disk. The image ships four at /srv/templates; point this at
+      # a mounted directory (see the commented volume below) to use your own.
+      TEMPLATES_DIR: ${TEMPLATES_DIR:-/srv/templates}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       # Optional outbound email for password resets: SMTP (any provider) or AWS
       # SES (SES_FROM + AWS_REGION). Without a transport, reset tokens are
@@ -59,6 +78,9 @@ services:
     volumes:
       - aldine-data:/data
       - aldine-secrets:/secrets
+      # Your own project templates: uncomment, and set TEMPLATES_DIR=/templates
+      # in .env. Read-only — Aldine only ever copies out of this directory.
+      # - ./templates:/templates:ro
     depends_on:
       compiler:
         condition: service_healthy
