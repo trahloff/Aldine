@@ -22,10 +22,11 @@ const pkg = createRequire(import.meta.url)('../../package.json') as { version: s
 /** Global body limit is 32 MB — far too generous for JSON-RPC tool calls. */
 const MCP_BODY_LIMIT = 2 * 1024 * 1024;
 
-/** One server per identity per request/process; tools.ts owns the registry. */
-export function createMcpServer(identity: McpIdentity): McpServer {
+/** One server per identity per request/process; tools.ts owns the registry.
+ *  `base` is the instance origin links and the viewer's CSP allowlist name. */
+export function createMcpServer(identity: McpIdentity, base: string): McpServer {
   const server = new McpServer({ name: 'aldine', version: pkg.version });
-  registerTools(server, identity);
+  registerTools(server, identity, { publicBase: base });
   return server;
 }
 
@@ -73,7 +74,7 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
 
   app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: guard }, async (req, reply) => {
     const identity = (req as any)._mcpIdentity as McpIdentity;
-    const server = createMcpServer(identity);
+    const server = createMcpServer(identity, publicBase(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     // The SDK writes directly to the Node response; Fastify must not touch it again.
     reply.hijack();

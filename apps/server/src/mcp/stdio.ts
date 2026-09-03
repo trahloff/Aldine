@@ -28,10 +28,24 @@ if (expected) {
 
 const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
 const { initDb } = await import('../db/index.js');
+const { ensureSigningSecret } = await import('../output-signing.js');
 const { createMcpServer } = await import('./server.js');
 
 // Tools go through the datastore exactly like the HTTP path.
 await initDb();
-const server = createMcpServer({ user: null, tokenScope: null });
+// The signer is checked at start, as index.ts does: inside the compile tool
+// its failure would surface as "the compiler may not be responding".
+try {
+  ensureSigningSecret();
+} catch (err) {
+  console.error(`aldine-mcp: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+// No request to derive the origin from: links are absolute only with ALDINE_PUBLIC_URL.
+const publicBase = (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '');
+if (!publicBase) {
+  console.error(`aldine-mcp: ALDINE_PUBLIC_URL is not set — pdfUrl and deepLink are root-relative and the inline PDF viewer is off (set it to the instance origin, e.g. http://localhost:${process.env.PORT || 3000})`);
+}
+const server = createMcpServer({ user: null, tokenScope: null }, publicBase);
 await server.connect(new StdioServerTransport());
 console.error('aldine-mcp: ready (stdio)');

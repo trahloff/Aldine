@@ -159,7 +159,9 @@ async function compileInner(body) {
 
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
-  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp' } };
+  // max_print_line: TeX wraps log lines at 79 columns otherwise, splitting
+  // "file:line:" errors and "Output written on … (N pages" across lines.
+  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000' } };
   const t0 = Date.now();
   let { code, out, timedOut } = await run('latexmk', mkArgs(false), runOpts, TIMEOUT_MS);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {

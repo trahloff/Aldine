@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc && node viewer/build.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p viewer",
     "test:github": "tsx test/github-sync.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
-    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs && tsx test/import-path.test.mjs && tsx test/guess-root.test.mjs && tsx test/import-route.test.mjs && tsx test/compile-stale.test.mjs && tsx test/tokens.test.mjs && tsx test/mcp.test.mjs && tsx test/mcp-static.test.mjs && tsx test/mcp-tools.test.mjs && tsx test/autocommit-split.test.mjs && tsx test/oauth.test.mjs"
+    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs && tsx test/import-path.test.mjs && tsx test/guess-root.test.mjs && tsx test/import-route.test.mjs && tsx test/compile-stale.test.mjs && tsx test/tokens.test.mjs && tsx test/mcp.test.mjs && tsx test/mcp-static.test.mjs && tsx test/mcp-tools.test.mjs && tsx test/output-signing.test.mjs && tsx test/signed-url.test.mjs && tsx test/autocommit-split.test.mjs && tsx test/oauth.test.mjs",
+    "build:viewer": "node viewer/build.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -25,8 +26,11 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@types/node": "^22.15.21",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.1",
+    "pdfjs-dist": "^4.10.38",
     "typescript": "^5.8.3"
   },
   "optionalDependencies": {

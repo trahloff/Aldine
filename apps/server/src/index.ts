@@ -12,6 +12,7 @@ import * as store from './store.js';
 import { initObservability, captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
+import { ensureSigningSecret } from './output-signing.js';
 
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
@@ -20,6 +21,8 @@ process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandled
 await initDb();
 // Connect Redis for cross-node rate limiting if REDIS_URL is set (else in-memory).
 await initRateLimit();
+// The PDF-link signer: a weak ALDINE_SIGNING_SECRET must not reach the first compile.
+ensureSigningSecret();
 // Cross-node revocation: when a peer node changes a project's access, close
 // our local collab sockets for it so clients re-authenticate. No-op without Redis.
 initProjectEvents({ onAccessChanged: closeProjectConnections });

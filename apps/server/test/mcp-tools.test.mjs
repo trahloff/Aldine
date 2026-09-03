@@ -35,21 +35,57 @@ process.env.ARXIV_API_BASE = upstreamBase;
 process.env.OPENALEX_API_BASE = upstreamBase;
 process.env.RL_REF_BURST = '3';
 
+// Mock compiler: answers with the next queued body and, when that body names
+// a PDF, writes it (plus a .log) into the project dir the server asked for —
+// compile.ts reads COMPILER_URL at import time, so this sits before any import.
+const compilerQueue = [];
+const compilerRequests = [];
+const mockCompiler = http.createServer((req, res) => {
+  let raw = '';
+  req.on('data', (d) => { raw += d; });
+  req.on('end', () => {
+    const body = JSON.parse(raw);
+    compilerRequests.push(body);
+    const reply = compilerQueue.shift() ?? { ok: false, error: 'mock compiler queue empty' };
+    if (reply.pdf) {
+      const outDir = path.join(process.env.DATA_DIR, body.projectDir, path.dirname(reply.pdf));
+      fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(path.join(outDir, path.basename(reply.pdf)), reply.pdfBytes ?? '%PDF-1.7\n% mock compiler\n%%EOF\n');
+      fs.writeFileSync(path.join(outDir, path.basename(reply.pdf).replace(/\.pdf$/, '.log')), reply.log ?? '');
+    }
+    // What pdfTeX does under -halt-on-error: the PDF is removed, the log stays.
+    if (reply.deletePdf) {
+      const abs = path.join(process.env.DATA_DIR, body.projectDir, reply.deletePdf);
+      fs.rmSync(abs, { force: true });
+      fs.writeFileSync(abs.replace(/\.pdf$/, '.log'), reply.log ?? '');
+    }
+    const buf = Buffer.from(JSON.stringify(reply));
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': buf.length });
+    res.end(buf);
+  });
+});
+await new Promise((r) => mockCompiler.listen(0, '127.0.0.1', r));
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-mcp-tools-'));
 process.env.AUTH_ENABLED = '1';
 process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 process.env.RL_MCP_BURST = '500';
+process.env.COMPILER_URL = `http://127.0.0.1:${mockCompiler.address().port}`;
 delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
 delete process.env.ALDINE_MCP_TOKEN;
 delete process.env.ALDINE_PROTECTED_PROJECTS;
 delete process.env.ALDINE_PUBLIC_URL;
 delete process.env.ALDINE_COMPILE_PER_MIN;
+// The viewer asset is built separately; the path is pointed at a file this
+// test writes later, so both the not-built and the built states are covered.
+process.env.ALDINE_PDF_VIEWER_HTML = path.join(tmp, 'pdf-viewer.html');
 
 const { resolveEdits, spliceEdits, nearestCandidates, logTail, LOG_TAIL_BYTES, MIN_QUOTE_LEN } =
   await import('../src/mcp/tools.ts');
+const { forgetPdfUrls } = await import('../src/compile.ts');
 
 // ---- quote→offset resolution (pure) ----
 const doc = [
@@ -121,7 +157,7 @@ const auth = await import('../src/auth.ts');
 const store = await import('../src/store.ts');
 const gitops = await import('../src/gitops.ts');
 const { registerRoutes } = await import('../src/routes.ts');
-const { registerMcp } = await import('../src/mcp/server.ts');
+const { registerMcp, createMcpServer } = await import('../src/mcp/server.ts');
 const Fastify = (await import('fastify')).default;
 
 const app = Fastify();
@@ -156,13 +192,52 @@ const call = async (name, args = {}) => {
 const listed = (await client.listTools()).tools;
 const names = listed.map((t) => t.name).sort();
 const expected = [
-  'batch_write', 'commit', 'compile', 'create_project', 'edit_file', 'list_citations', 'list_labels',
+  'batch_write', 'commit', 'compile', 'create_project', 'edit_file', 'get_pdf_url', 'list_citations', 'list_labels',
   'list_projects', 'ping', 'project_structure', 'read_file', 'references_add', 'wordcount', 'write_file',
 ];
-check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly the 13 spec tools + ping (got ${names.join(',')})`);
+check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly the 13 spec tools + get_pdf_url + ping (got ${names.join(',')})`);
 for (const t of listed) {
-  const ro = ['list_projects', 'project_structure', 'read_file', 'ping', 'list_citations', 'list_labels', 'wordcount'].includes(t.name);
+  const ro = ['list_projects', 'project_structure', 'read_file', 'ping', 'list_citations', 'list_labels', 'wordcount', 'get_pdf_url'].includes(t.name);
   check((t.annotations?.readOnlyHint === true) === ro, `${t.name} readOnlyHint ${ro ? 'present' : 'absent'}`);
+}
+// The viewer resource is listed whether or not the asset is built, but
+// tools only point at it once it is (no host renders a broken frame).
+const { PDF_VIEWER_URI, MCP_APP_MIME } = await import('../src/mcp/tools.ts');
+check(PDF_VIEWER_URI === 'ui://aldine/pdf-viewer' && MCP_APP_MIME === 'text/html;profile=mcp-app', 'viewer URI and MIME are the SEP-1865 values');
+let resources = (await client.listResources()).resources;
+let viewer = resources.find((r) => r.uri === PDF_VIEWER_URI);
+check(viewer && viewer.mimeType === MCP_APP_MIME, `the viewer resource is listed with the mcp-app MIME (got ${JSON.stringify(resources)})`);
+check(viewer._meta?.ui?.csp?.connectDomains?.length === 1 && /^http:\/\/127\.0\.0\.1:\d+$/.test(viewer._meta.ui.csp.connectDomains[0]), `the resource CSP allowlists exactly the instance origin (got ${JSON.stringify(viewer._meta)})`);
+check(listed.every((t) => t._meta?.ui === undefined), 'no tool references the viewer while the asset is not built');
+let readErr = null;
+try { await client.readResource({ uri: PDF_VIEWER_URI }); } catch (err) { readErr = err; }
+check(readErr && /not built/.test(readErr.message) && /pdf-viewer\.html/.test(readErr.message), `reading an unbuilt viewer fails with a clear message (got ${readErr?.message})`);
+fs.writeFileSync(process.env.ALDINE_PDF_VIEWER_HTML, '<!doctype html><title>viewer fixture</title>');
+const listedBuilt = (await client.listTools()).tools;
+for (const name of ['compile', 'get_pdf_url']) {
+  const t = listedBuilt.find((x) => x.name === name);
+  check(t._meta?.ui?.resourceUri === PDF_VIEWER_URI, `${name} carries _meta.ui.resourceUri once the asset exists`);
+}
+check(listedBuilt.filter((t) => t._meta?.ui).length === 2, 'only compile and get_pdf_url reference the viewer');
+const read = await client.readResource({ uri: PDF_VIEWER_URI });
+check(read.contents.length === 1 && read.contents[0].mimeType === MCP_APP_MIME && read.contents[0].text.includes('viewer fixture'), 'resources/read returns the built HTML as text');
+check(read.contents[0]._meta?.ui?.csp?.connectDomains?.length === 1, 'the read contents repeat the CSP metadata');
+// stdio without ALDINE_PUBLIC_URL: no absolute origin, so pdfUrl/deepLink are
+// root-relative and the sandbox could not fetch them — the tools must not
+// advertise the viewer (the text result still carries the links).
+{
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const local = createMcpServer({ user: null, tokenScope: null }, '');
+  await local.connect(serverSide);
+  const c = new Client({ name: 'aldine-test-stdio', version: '0.0.0' });
+  await c.connect(clientSide);
+  const tools = (await c.listTools()).tools;
+  check(tools.every((t) => t._meta?.ui === undefined), 'with no public origin (stdio, ALDINE_PUBLIC_URL unset) no tool references the viewer even though the asset is built');
+  const res = (await c.listResources()).resources.find((r) => r.uri === PDF_VIEWER_URI);
+  check(res && res._meta?.ui === undefined, 'and the viewer resource carries no CSP allowlist');
+  await c.close();
+  await local.close();
 }
 // descriptions are the model's API docs: the etiquette the spec requires
 // must be stated where the model reads it
@@ -171,6 +246,8 @@ check(/re-read/.test(desc.edit_file) && /2 retries/.test(desc.edit_file), 'edit_
 check(/prefer edit_file/i.test(desc.write_file), 'write_file steers to edit_file for existing files');
 check(/3 times/.test(desc.compile) && /attempt 2 of 3/.test(desc.compile), 'compile states the 3-attempt fix-loop cap with narration');
 check(/relay/.test(desc.compile), 'compile tells the model to relay quota/unreachable errors instead of retrying');
+check(/15 minutes/.test(desc.compile) && /get_pdf_url/.test(desc.compile) && /pdfStale/.test(desc.compile), 'compile explains the signed link, its expiry, the re-fetch tool and pdfStale');
+check(/without recompiling/.test(desc.get_pdf_url) && /compile first/.test(desc.get_pdf_url), 'get_pdf_url says it does not recompile and what to do with no output');
 check(/before writing a \\cite/.test(desc.list_citations) && /never invent/.test(desc.list_citations), 'list_citations demands a call before any \\cite');
 
 // list_projects
@@ -384,6 +461,130 @@ check(body.files.some((f) => f.path.endsWith('.tex')), 'the template seeded .tex
 res = await call('create_project', { name: 'Nope', template: 'no-such-template' });
 check(res.isError === true && /Unknown template/.test(res.body) && /article/.test(res.body), `an unknown template is refused and the available ids are named (got ${JSON.stringify(res.body)})`);
 
+// get_pdf_url: nothing typeset yet → told to compile; with a PDF on disk →
+// a signed absolute link that serves with no cookie, page count from the
+// engine log, typesetAt, and the viewer's structuredContent
+res = await call('get_pdf_url', { project: p1.id });
+check(res.isError === true && /compile first/.test(res.body), `get_pdf_url with no output says to compile first (got ${JSON.stringify(res.body)})`);
+const outDir = path.join(store.branchDir(p1.id, 'main'), '.aldine-out');
+fs.mkdirSync(outDir, { recursive: true });
+const fakePdf = Buffer.from('%PDF-1.7\n% fixture\n%%EOF\n');
+fs.writeFileSync(path.join(outDir, 'main.pdf'), fakePdf);
+fs.writeFileSync(path.join(outDir, 'main.log'), 'This is pdfTeX\nOutput written on main.pdf (1 page, 100 bytes).\nOutput written on main.pdf (3 pages, 12345 bytes).\nTranscript written on main.log.\n');
+const pdfRes = await client.callTool({ name: 'get_pdf_url', arguments: { project: p1.id } });
+check(!pdfRes.isError, `get_pdf_url succeeds with output on disk (got ${pdfRes.content[0].text})`);
+const pdfBody = JSON.parse(pdfRes.content[0].text);
+check(JSON.stringify(pdfRes.structuredContent) === JSON.stringify(pdfBody), 'structuredContent mirrors the text result for the viewer');
+check(pdfBody.pdfUrl.startsWith(`http://127.0.0.1:${port}/api/projects/${p1.id}/output?`) && /[?&]sig=/.test(pdfBody.pdfUrl) && /[?&]exp=\d+/.test(pdfBody.pdfUrl), `pdfUrl is absolute and signed (got ${pdfBody.pdfUrl})`);
+check(pdfBody.pdfFile === 'main.pdf' && pdfBody.pages === 3 && pdfBody.pdfStale === false && typeof pdfBody.typesetAt === 'string' && !Number.isNaN(Date.parse(pdfBody.typesetAt)), `get_pdf_url carries pdfFile, pages (last "Output written" wins), pdfStale, typesetAt (got ${JSON.stringify(pdfBody)})`);
+check(pdfBody.deepLink === `http://127.0.0.1:${port}/p/${p1.id}` && pdfBody.project === p1.id && pdfBody.projectName === 'Agent paper' && pdfBody.branch === 'main' && typeof pdfBody.head === 'string', 'get_pdf_url echoes deepLink, project, projectName, {branch, head}');
+const fetched = await fetch(pdfBody.pdfUrl);
+check(fetched.status === 200 && fetched.headers.get('content-type').startsWith('application/pdf') && fetched.headers.get('access-control-allow-origin') === '*', `the signed link serves the PDF with no cookie (got ${fetched.status})`);
+check(Buffer.compare(Buffer.from(await fetched.arrayBuffer()), fakePdf) === 0, 'the served bytes are the PDF on disk');
+const unsignedPdf = await fetch(pdfBody.pdfUrl.replace(/&exp=.*$/, ''));
+check(unsignedPdf.status === 401, `the same link without its signature needs a session (got ${unsignedPdf.status})`);
+res = await call('get_pdf_url', { project: p1.id, branch: 'no-such-branch' });
+check(res.isError === true, 'get_pdf_url on a missing branch is an error, not a crash');
+
+// compile over the mock compiler: the result hands out the
+// SIGNED absolute link, never the cookie-auth /output path, with pages from
+// the engine log and structuredContent for the viewer; a later run that
+// writes no PDF keeps the previous link and flags it stale; parsed errors
+// are capped at MAX_RESULT_ERRORS with errorsTotal carrying the real count.
+const compileDef = listedBuilt.find((t) => t.name === 'compile');
+check(compileDef._meta?.ui?.resourceUri === PDF_VIEWER_URI, 'compile is declared with the viewer resource for the host');
+const mockPdf = '%PDF-1.7\n% compiled by the mock\n%%EOF\n';
+compilerQueue.push({ ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: null, log: 'This is pdfTeX\nOutput written on main.pdf (2 pages, 4321 bytes).\nTranscript written on main.log.\n', errors: [], durationMs: 5, pdfBytes: mockPdf });
+let cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+check(!cRes.isError, `compile succeeds over the mock compiler (got ${cRes.content[0].text})`);
+let cBody = JSON.parse(cRes.content[0].text);
+check(JSON.stringify(cRes.structuredContent) === JSON.stringify(cBody), 'compile: structuredContent mirrors the text result');
+check(cBody.ok === true && cBody.errors.length === 0 && cBody.errorsTotal === 0 && cBody.timedOut === false && typeof cBody.durationMs === 'number', `compile echoes ok/errors/errorsTotal/timedOut/durationMs (got ${JSON.stringify(cBody)})`);
+check(typeof cBody.pdfUrl === 'string' && cBody.pdfUrl.startsWith(`http://127.0.0.1:${port}/api/projects/${p1.id}/output?`), `compile pdfUrl is absolute and targets /output (got ${cBody.pdfUrl})`);
+const cq = Object.fromEntries(new URL(cBody.pdfUrl).searchParams);
+check(cq.branch === 'main' && cq.path === '.aldine-out/main.pdf' && /^\d+$/.test(cq.exp) && /^[A-Za-z0-9_-]{43}$/.test(cq.sig) && /^\d+$/.test(cq.t), `compile pdfUrl is signed (branch, path, exp, sig, cache-buster) (got ${JSON.stringify(cq)})`);
+check(Number(cq.exp) - Math.floor(Date.now() / 1000) <= 900 && Number(cq.exp) - Math.floor(Date.now() / 1000) > 800, 'compile pdfUrl expires in ~15 minutes');
+check(cBody.pdfFile === 'main.pdf' && cBody.pages === 2 && cBody.pdfStale === false && typeof cBody.typesetAt === 'string', `compile carries pdfFile, pages from the log, pdfStale:false, typesetAt (got ${JSON.stringify(cBody)})`);
+check(cBody.deepLink === `http://127.0.0.1:${port}/p/${p1.id}` && cBody.projectName === 'Agent paper' && typeof cBody.contentVersion === 'number', 'compile carries deepLink, projectName, contentVersion');
+const cFetched = await fetch(cBody.pdfUrl);
+check(cFetched.status === 200 && (await cFetched.text()) === mockPdf, `the compile result's signed link serves this run's PDF with no cookie (got ${cFetched.status})`);
+check(compilerRequests.at(-1)?.rootFile === 'main.tex', 'the compiler was asked for the project root file');
+
+// The same document compiled again: latexmk finds nothing to redo (ok, the
+// PDF on disk, not rewritten). That is a success with this run's PDF under
+// the same link, never a stale "previous" one.
+compilerQueue.push({ ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: false, synctex: null, log: 'This is pdfTeX\nOutput written on main.pdf (2 pages, 4321 bytes).\nTranscript written on main.log.\n', errors: [], durationMs: 1, pdfBytes: mockPdf });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.ok === true && cBody.pdfStale === false && typeof cBody.pdfUrl === 'string', `an up-to-date recompile is ok with a link and NOT stale (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl })})`);
+check(new URL(cBody.pdfUrl).searchParams.get('t') === cq.t, 'an up-to-date recompile keeps the first run\'s cache-buster (same file, same SyncTeX)');
+check(cBody.pages === 2 && cBody.pdfFile === 'main.pdf' && typeof cBody.typesetAt === 'string', `an up-to-date recompile carries pages and typesetAt (got ${JSON.stringify({ pages: cBody.pages, typesetAt: cBody.typesetAt })})`);
+
+// A failed run: no PDF from this run → the previous link, flagged stale, the
+// parsed errors with file/line for the viewer's deep links, pages unknown.
+const manyErrors = Array.from({ length: 60 }, (_, i) => ({ type: 'error', file: './main.tex', line: i + 1, message: `Undefined control sequence ${i}` }));
+compilerQueue.push({ ok: false, exitCode: 12, pdf: null, pdfFresh: false, log: '! Undefined control sequence.\nl.3 \\thisisnotacommand\nNo pages of output.\n', errors: manyErrors, durationMs: 4 });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+check(!cRes.isError, 'a failed typeset is a normal result, not a tool error');
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.ok === false && cBody.pdfStale === true && typeof cBody.pdfUrl === 'string' && /[?&]sig=/.test(cBody.pdfUrl), `failed run keeps the previous PDF link and flags pdfStale (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl })})`);
+check(cBody.errors.length === 50 && cBody.errorsTotal === 60, `errors are capped at 50 with errorsTotal 60 (got ${cBody.errors.length}/${cBody.errorsTotal})`);
+check(cBody.errors[0].file === './main.tex' && cBody.errors[0].line === 1 && cBody.errors[0].type === 'error', 'each error carries {type,file,line,message} for the viewer deep links');
+check(/No pages of output/.test(cBody.logTail), 'the log tail reaches the model');
+check(JSON.stringify(cRes.structuredContent) === JSON.stringify(cBody), 'failed run: structuredContent still mirrors the text');
+
+// Box reports never reach the result and cannot crowd out the one real error:
+// a long document logs dozens of Overfull lines before the first "!".
+const boxes = Array.from({ length: 55 }, (_, i) => ({ type: 'typesetting', line: i + 1, message: `Overfull \\hbox (${i}pt too wide) in paragraph at lines ${i + 1}--${i + 2}` }));
+const oneError = { type: 'error', file: './main.tex', line: 70, message: 'Undefined control sequence' };
+const twoWarnings = [{ type: 'warning', line: 2, message: 'LaTeX Warning: Citation `nothing\' undefined' }, { type: 'warning', line: null, message: 'LaTeX Warning: There were undefined references.' }];
+compilerQueue.push({ ok: false, exitCode: 12, pdf: null, pdfFresh: false, log: '! Undefined control sequence.\nl.70 \\thisisnotacommand\nNo pages of output.\n', errors: [twoWarnings[0], ...boxes, oneError, twoWarnings[1]], durationMs: 4 });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.errors.length === 3 && cBody.errorsTotal === 3, `Overfull/Underfull rows are dropped from errors and errorsTotal (got ${cBody.errors.length}/${cBody.errorsTotal})`);
+check(cBody.errors[0].type === 'error' && cBody.errors[0].line === 70, `the real error is ranked first, ahead of earlier warnings (got ${JSON.stringify(cBody.errors.map((e) => e.type))})`);
+check(cBody.errors[1].line === 2 && cBody.errors[2].line === null, 'warnings keep their log order after the errors');
+
+// pdfTeX under -halt-on-error deletes the PDF of a run that fails after the
+// first page shipped out: the "previous" file is gone, so the result must
+// not link to it — and get_pdf_url has nothing to hand out until a compile.
+compilerQueue.push({ ok: false, exitCode: 12, pdf: null, pdfFresh: false, deletePdf: '.aldine-out/main.pdf', log: '! Undefined control sequence.\nl.30 \\thisisnotacommand\n==> Fatal error occurred, no output PDF file produced!\n', errors: [{ type: 'error', file: './main.tex', line: 30, message: 'Undefined control sequence' }], durationMs: 4 });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.ok === false && cBody.pdfStale === true && cBody.pdfUrl === null && cBody.pdfFile === null && cBody.typesetAt === null && cBody.pages === null, `a failed run whose engine removed the PDF: pdfStale with no link to the missing file (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl, pages: cBody.pages })})`);
+res = await call('get_pdf_url', { project: p1.id });
+check(res.isError === true && /compile first/.test(res.body), `get_pdf_url after the engine removed the PDF says to compile first (got ${JSON.stringify(res.body)})`);
+compilerQueue.push({ ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: null, log: 'Output written on main.pdf (2 pages, 4321 bytes).\n', errors: [], durationMs: 5, pdfBytes: mockPdf });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.ok === true && cBody.pdfStale === false && typeof cBody.pdfUrl === 'string', 'a later success hands out a link again');
+
+// stop-on-first-error: the failed run overwrote the PDF with a truncated one,
+// so the "previous PDF" no longer exists on disk — no link, still flagged.
+const p1Meta = await store.readMeta(p1.id);
+p1Meta.stopOnFirstError = true;
+await store.writeMeta(p1Meta);
+await new Promise((r) => setTimeout(r, 20));
+const truncatingRun = { ok: false, exitCode: 12, pdf: '.aldine-out/main.pdf', pdfFresh: true, log: '! Undefined control sequence.\nl.30 \\thisisnotacommand\nOutput written on main.pdf (1 page, 999 bytes).\n', errors: [{ type: 'error', file: './main.tex', line: 30, message: 'Undefined control sequence' }], durationMs: 4, pdfBytes: '%PDF-1.7\n% truncated at the first error\n%%EOF\n' };
+compilerQueue.push({ ...truncatingRun });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(compilerRequests.at(-1)?.haltOnError === true, 'the compiler was asked to halt on the first error');
+check(cBody.ok === false && cBody.pdfStale === true && cBody.pdfUrl === null && cBody.pdfFile === null && cBody.typesetAt === null, `halt-on-error failure that overwrote the PDF: pdfStale with no link to the truncated file (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl })})`);
+// The torso is on disk with a log that says the run stopped: get_pdf_url
+// must not present it as the branch's PDF.
+res = await call('get_pdf_url', { project: p1.id });
+check(res.isError === true && /stopped on an error/.test(res.body) && /compile/.test(res.body), `get_pdf_url refuses the truncated file of a halted run (got ${JSON.stringify(res.body)})`);
+// After a restart compile.ts remembers no previous link; the same halted run
+// still must not fall back to the torso it just wrote.
+forgetPdfUrls(p1.id);
+compilerQueue.push({ ...truncatingRun });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.ok === false && cBody.pdfStale === true && cBody.pdfUrl === null && cBody.typesetAt === null, `halt-on-error truncation right after a restart: still no link (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl })})`);
+p1Meta.stopOnFirstError = false;
+await store.writeMeta(p1Meta);
+
 // project-scoped token: cross-project access refused, project param optional,
 // and no project creation (the scope is the token's blast radius)
 const { token: scopedTok } = await auth.createAccessToken(user.id, 'Scoped', [p1.id], null);
@@ -404,6 +605,7 @@ await scoped.close();
 await client.close();
 await app.close();
 upstream.close();
+mockCompiler.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('MCP tools: ALL PASSED');
 process.exit(0);

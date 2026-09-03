@@ -1,9 +1,13 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import * as store from '../store.js';
 import * as gitops from '../gitops.js';
 import * as usage from '../usage.js';
-import { compileProject } from '../compile.js';
+import { compileProject, outputOnDisk, type CompileError } from '../compile.js';
+import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, bumpContentVersion,
   scheduleCommit, applySuggestionToDoc, openDocContent, markAgentPresence, AGENT_ORIGIN,
@@ -27,7 +31,8 @@ import {
  *
  * Surface is the 8 tools of spec 1.3 (names are API), the 5 wrappers of
  * spec 2.1 (references_add, list_citations, list_labels, wordcount,
- * create_project), plus the ping reachability check. Deliberately absent
+ * create_project), get_pdf_url, plus the ping reachability
+ * check. Deliberately absent
  * (threat model rank #1 — the tools must not exist server-side): delete/purge,
  * share management, GitHub push, token management, branch create/merge.
  *
@@ -176,12 +181,63 @@ function snippetAround(content: string, offset: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// PDF viewer (MCP App, spec §3.2 / SEP-1865)
+// ---------------------------------------------------------------------------
+
+/** The viewer's resource URI — API for hosts; the HTML behind it is apps/server/assets/pdf-viewer.html. */
+export const PDF_VIEWER_URI = 'ui://aldine/pdf-viewer';
+/** MIME the ext `io.modelcontextprotocol/ui` negotiates (ext-apps RESOURCE_MIME_TYPE). */
+export const MCP_APP_MIME = 'text/html;profile=mcp-app';
+/** Built, self-contained viewer page; same path from src/ and dist/. */
+export const PDF_VIEWER_ASSET = process.env.ALDINE_PDF_VIEWER_HTML
+  || fileURLToPath(new URL('../../assets/pdf-viewer.html', import.meta.url));
+
+let viewerCache: { mtimeMs: number; html: string } | null = null;
+
+/** The viewer HTML, re-read when the asset changes; null when it is not built. */
+export function loadViewerHtml(): string | null {
+  let st: fs.Stats;
+  try { st = fs.statSync(PDF_VIEWER_ASSET); } catch { return null; }
+  if (!viewerCache || viewerCache.mtimeMs !== st.mtimeMs) {
+    viewerCache = { mtimeMs: st.mtimeMs, html: fs.readFileSync(PDF_VIEWER_ASSET, 'utf8') };
+  }
+  return viewerCache.html;
+}
+
+/** Sandbox CSP: exactly the instance origin, for the signed PDF fetch. */
+function viewerCsp(publicBase: string): { connectDomains: string[] } | undefined {
+  try { return { connectDomains: [new URL(publicBase).origin] }; } catch { return undefined; }
+}
+
+/** Parsed errors are capped so the result stays far under the ~150k-char
+ *  limit past which hosts spill it to a file and the viewer never hydrates. */
+export const MAX_RESULT_ERRORS = 50;
+const MAX_ERROR_MESSAGE = 500;
+/** Overfull/Underfull boxes are dropped (as the editor drops them) and errors
+ *  are ranked ahead of warnings before the cap, so a long document's box
+ *  warnings can never push the one fixable error out of the result. */
+export function reportableErrors(errors: CompileError[]): CompileError[] {
+  const rank = (e: CompileError) => (e.type === 'error' ? 0 : 1);
+  return errors.filter((e) => e.type !== 'typesetting').sort((a, b) => rank(a) - rank(b));
+}
+function capErrors(errors: CompileError[]): CompileError[] {
+  return errors.slice(0, MAX_RESULT_ERRORS).map((e) =>
+    e.message.length > MAX_ERROR_MESSAGE ? { ...e, message: e.message.slice(0, MAX_ERROR_MESSAGE) + '…' } : e);
+}
+
+/** Options the transports pass in: the instance origin for absolute links
+ *  and the viewer's CSP allowlist (ALDINE_PUBLIC_URL, else request-derived). */
+export interface ToolContext { publicBase: string }
+
+// ---------------------------------------------------------------------------
 // Tool plumbing
 // ---------------------------------------------------------------------------
 
-type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+type ToolResult = { content: Array<{ type: 'text'; text: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
 
 const ok = (body: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(body) }] });
+/** Tools with a viewer: the app hydrates from structuredContent, the model reads the text. */
+const okApp = (body: Record<string, unknown>): ToolResult => ({ ...ok(body), structuredContent: body });
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 /** Every result echoes {branch, head} so the model can narrate what it touched. */
@@ -211,7 +267,59 @@ const editShape = {
 // Registry
 // ---------------------------------------------------------------------------
 
-export function registerTools(server: McpServer, identity: McpIdentity): void {
+export function registerTools(server: McpServer, identity: McpIdentity, ctx: ToolContext = { publicBase: (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '') }): void {
+  const base = ctx.publicBase.replace(/\/$/, '');
+  const csp = viewerCsp(base);
+  const resourceMeta = csp ? { ui: { csp } } : undefined;
+
+  // The resource is always listed so the contract is stable; the tools point
+  // at it only while the built asset exists AND the instance origin is known:
+  // without ALDINE_PUBLIC_URL (stdio) pdfUrl and deepLink are root-relative,
+  // which the sandbox would resolve against its own origin — a broken frame.
+  // Either way the text result still carries the links.
+  server.registerResource('pdf-viewer', PDF_VIEWER_URI, {
+    title: 'Aldine PDF viewer',
+    description: 'Renders the typeset PDF from a compile or get_pdf_url result inline (MCP App).',
+    mimeType: MCP_APP_MIME,
+    ...(resourceMeta ? { _meta: resourceMeta } : {}),
+  }, async (uri) => {
+    const html = loadViewerHtml();
+    if (html === null) {
+      throw new Error(`The PDF viewer is not built on this Aldine server (expected ${path.basename(PDF_VIEWER_ASSET)} under apps/server/assets — run the viewer build). The compile and get_pdf_url tools still return a PDF link.`);
+    }
+    return { contents: [{ uri: uri.href, mimeType: MCP_APP_MIME, text: html, ...(resourceMeta ? { _meta: resourceMeta } : {}) }] };
+  });
+  const uiMeta = loadViewerHtml() !== null && csp ? { _meta: { ui: { resourceUri: PDF_VIEWER_URI } } } : {};
+
+  /** Result keys the viewer hydrates from — shared by compile and get_pdf_url. */
+  const pdfResult = async (meta: store.ProjectMeta, branch: string, pdfRel: string | null, opts: { pdfStale: boolean; pages: number | null; t?: number; writtenAt?: number; truncated?: boolean }) => {
+    const disk = outputOnDisk(meta.id, branch, meta.rootFile);
+    // No PDF known for this run but one on disk (a failed run after a restart
+    // emptied compile.ts's memory): it is some earlier run's, so it is stale —
+    // unless this run halted while writing it, then it is nobody's to see.
+    let rel = pdfRel ?? (disk && !opts.truncated ? disk.pdf : null);
+    // A stale link points at nothing the user should see when its file is
+    // gone (pdfTeX deletes the output of a halted run), was replaced by this
+    // run's partial output, or was rewritten since it was last shown (another
+    // node's halted run): no link at all rather than a 404 or a torso.
+    if (rel && opts.pdfStale && (!disk || opts.truncated || (opts.writtenAt !== undefined && Date.parse(disk.typesetAt) > opts.writtenAt + 1))) rel = null;
+    const onDisk = rel !== null && disk !== null && rel === disk.pdf;
+    return {
+      pdfUrl: rel ? signOutputUrl({ projectId: meta.id, branch, path: rel, base, t: opts.t }) : null,
+      pdfFile: rel ? path.posix.basename(rel) : null,
+      pdfStale: opts.pdfStale || !!opts.truncated || (pdfRel === null && rel !== null),
+      // This run's count, else the log beside the linked file when the link is
+      // this run's (an unchanged document recompiled: latexmk skipped the
+      // engine and the log is the last run's); a stale link's log is a failed run's.
+      pages: opts.pages ?? (onDisk && !opts.pdfStale ? disk.pages : null),
+      typesetAt: onDisk ? disk.typesetAt : null,
+      deepLink: `${base}/p/${meta.id}${branch !== 'main' ? `?branch=${encodeURIComponent(branch)}` : ''}`,
+      project: meta.id,
+      projectName: meta.name,
+      ...(await echo(meta.id, branch)),
+    };
+  };
+
   server.registerTool('ping', {
     description: 'Check that the Aldine connector is reachable and authenticated. If it fails, tell the user their Aldine instance is not responding or the connector needs reconnecting — do not go on to other tools.',
     annotations: { readOnlyHint: true },
@@ -450,8 +558,9 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
   });
 
   server.registerTool('compile', {
-    description: 'Typeset the project with latexmk: parsed errors [{type,file,line,message}] (errors first, then warnings), a ≤4 KB log tail on failure, a PDF link with its page count, pdfStale (true = this run wrote no PDF, the link is the previous one), and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A compiler-not-responding, quota, or typeset-already-running error is for the user to act on — relay it, do not retry.',
+    description: `Typeset the project with latexmk: parsed errors [{type,file,line,message}] (errors before warnings, first ${MAX_RESULT_ERRORS}; errorsTotal has the count; box warnings are omitted), a ≤4 KB log tail on failure, pages, and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. pdfUrl is a signed link to this run's PDF that anyone can open for ${OUTPUT_URL_TTL_S / 60} minutes — hand it to the user as the way to see the result, and call get_pdf_url for a fresh link later instead of recompiling. pdfStale:true means this run wrote no PDF: pdfUrl shows the previous one, or is null when that no longer exists. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A compiler-not-responding, quota, or typeset-already-running error is for the user to act on — relay it, do not retry.`,
     inputSchema: { project: projectParam, branch: branchParam },
+    ...uiMeta,
   }, async ({ project, branch = 'main' }, extra) => {
     let key: string | null = null;
     // Slots are released ONLY when their tryAcquire succeeded: a refusal path
@@ -497,27 +606,20 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
       }
       const result = await compileProject(meta.id, branch);
       if (user) await usage.recordCompile(user.id, result.durationMs || 0);
-      const base = (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '');
-      const deepLink = `${base}/p/${meta.id}${branch !== 'main' ? `?branch=${encodeURIComponent(branch)}` : ''}`;
-      // Errors before warnings: the model acts on the first item, and in log
-      // order the one real error can sit behind a dozen rerun warnings.
-      const rank = (t: string) => (t === 'error' ? 0 : t === 'typesetting' ? 1 : 2);
-      const errors = [...result.errors].sort((x, y) => rank(x.type) - rank(y.type));
-      const pages = /Output written on .*\((\d+) pages?,/.exec(result.log);
-      return ok({
+      // result.pdfUrl is the cookie-auth path; the tool hands out the signed
+      // form of the same artifact instead (the viewer has no cookie).
+      const pdfRel = result.pdfUrl ? new URL(result.pdfUrl, 'http://x').searchParams.get('path') : null;
+      const errors = reportableErrors(result.errors);
+      return okApp({
         ok: result.ok,
-        errors,
+        errors: capErrors(errors),
+        errorsTotal: errors.length,
         // A clean run's tail is font-loading noise; only a failed run needs it.
         logTail: result.ok ? '' : logTail(result.log),
-        pdfUrl: result.pdfUrl ? `${base}${result.pdfUrl}` : null,
-        // True when this run wrote no PDF and pdfUrl is the previous one.
-        pdfStale: !!result.pdfStale,
-        pages: pages ? Number(pages[1]) : null,
-        deepLink,
         durationMs: result.durationMs,
         timedOut: !!result.timedOut,
         contentVersion: contentVersion(meta.id, branch),
-        ...(await echo(meta.id, branch)),
+        ...(await pdfResult(meta, branch, pdfRel, { pdfStale: !!result.pdfStale, pages: result.pages ?? null, t: result.compileId, writtenAt: result.pdfWrittenAt, truncated: !!result.pdfTruncated })),
       });
     } catch (err) {
       if (err instanceof McpDenied) return fail(err.message);
@@ -529,6 +631,24 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
         if (agentSlot) agentCompileGate.release(key);
       }
     }
+  });
+
+  server.registerTool('get_pdf_url', {
+    description: `A fresh signed link to the branch's most recent typeset PDF, without recompiling — use it when a compile result's pdfUrl has expired (${OUTPUT_URL_TTL_S / 60} minutes) or the user asks to see the PDF again. Returns {pdfUrl, pdfFile, pages, typesetAt, deepLink}; the PDF is whatever the last typeset wrote, by anyone, so compare typesetAt with your edits and call compile when it is older than they are. No output yet → compile first.`,
+    annotations: { readOnlyHint: true },
+    inputSchema: { project: projectParam, branch: branchParam },
+    ...uiMeta,
+  }, async ({ project, branch = 'main' }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      await gitops.ensureWorktree(meta.id, branch);
+      const disk = outputOnDisk(meta.id, branch, meta.rootFile);
+      if (!disk) return fail(`No typeset output on ${branch} yet — call compile first`);
+      // With stop-on-first-error the file a halted run wrote is a torso; there
+      // is no previous PDF to fall back to (the run overwrote it).
+      if (meta.stopOnFirstError && disk.partial) return fail(`The last typeset on ${branch} stopped on an error, so the PDF on disk is incomplete — fix the error and call compile`);
+      return okApp({ ok: true, ...(await pdfResult(meta, branch, disk.pdf, { pdfStale: false, pages: disk.pages })) });
+    } catch (err) { return toolError(err); }
   });
 
   server.registerTool('commit', {
@@ -650,7 +770,6 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
         }
       }
       const meta = await store.createProject(name, seed, identity.user?.id);
-      const base = (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '');
       return ok({ id: meta.id, name: meta.name, rootFile: meta.rootFile, engine: meta.engine, deepLink: `${base}/p/${meta.id}`, ...(await echo(meta.id, 'main')) });
     } catch (err) { return toolError(err); }
   });

@@ -245,8 +245,13 @@ is not `1`, so auth silently stays off.
 ```dotenv
 # app on loopback only; your reverse proxy fronts it
 ALDINE_APP_BIND=127.0.0.1
-# absolute origin used in OAuth callbacks and password-reset links
+# absolute origin used in OAuth callbacks, password-reset links and the
+# PDF links the MCP connector hands out
 ALDINE_PUBLIC_URL=https://aldine.example.com
+# signs the connector's 15-minute PDF links; generated into META_DIR when
+# unset — set it explicitly when several nodes do not share that volume.
+# At least 32 characters (`openssl rand -base64 32`); shorter values refuse to boot
+ALDINE_SIGNING_SECRET=
 
 # Everything below is optional and off unless set.
 # multi-user login, ownership and sharing (unset = single-tenant)

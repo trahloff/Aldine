@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -24,6 +24,7 @@ import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, newId, rootSiblingPath, publicBase, BRANCH_RE, PROJECT_ID_RE } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
+import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -291,6 +292,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'project not found' });
       }
     }
+    // A signed /output link authorized itself in the route's onRequest hook
+    // (output-signing.ts) — the only route where the cookie guard yields.
+    if ((req as any)._signedOutput) return;
     if (!auth.AUTH_ENABLED) return;
     const id = reqId;
     if (id !== undefined) {
@@ -717,11 +721,34 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, ...(newRoot ? { newRoot } : {}) };
   });
 
+  /**
+   * Signed-link authorization for /output ONLY (SECURITY.md risk #5). Runs in
+   * onRequest, before the global preHandler's cookie/token guard, and only
+   * when the link carries a signature: a valid one marks the request so the
+   * guard yields; a bad or expired one is refused here rather than falling
+   * through to cookie auth, so a tampered link never quietly succeeds on a
+   * signed-in browser. Links without a signature take the cookie path as
+   * before. The MCP App viewer fetches from a sandboxed origin, so signed
+   * responses also answer CORS — the link is the credential, `*` adds no
+   * exposure a curl of the same URL would not have.
+   */
+  type OutputQ = Q & { exp?: string; sig?: string };
+  const verifySignedOutput = async (req: FastifyRequest<{ Params: { id: string }; Querystring: OutputQ }>, reply: FastifyReply) => {
+    const { branch = 'main', path: rel = '', exp, sig } = req.query;
+    if (exp === undefined && sig === undefined) return;
+    const status = verifyOutputSignature(req.params.id, branch, rel, exp, sig);
+    // The refusals answer CORS as well: without the header a cross-origin
+    // fetch rejects opaquely and the viewer cannot tell "expired" from "down".
+    reply.header('access-control-allow-origin', '*');
+    if (status === 'expired') return reply.code(403).send({ error: 'This PDF link has expired — typeset again or ask for a fresh link' });
+    if (status !== 'ok') return reply.code(403).send({ error: 'invalid signature' });
+    (req as any)._signedOutput = true;
+  };
+
   /** Serve compile artifacts (PDF, synctex) from the branch's .aldine-out. */
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/output', async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: OutputQ }>('/api/projects/:id/output', { onRequest: verifySignedOutput }, async (req, reply) => {
     const { branch = 'main', path: rel } = req.query;
-    // artifacts live in a .aldine-out dir (at the project root or beside a subdir'd root file)
-    if (!rel || rel.includes('..') || !/(^|\/)\.aldine-out\/[^/]+$/.test(rel)) return reply.code(400).send({ error: 'bad output path' });
+    if (!rel || !isOutputPath(rel)) return reply.code(400).send({ error: 'bad output path' });
     try {
       const abs = safeJoin(store.branchDir(req.params.id, branch), rel);
       fs.accessSync(abs); // throws → 404 below if the artifact is missing
@@ -734,6 +761,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(404).send({ error: 'artifact not found' });
     }
+  });
+
+  // CORS preflight for signed links only: pdf.js probes with a Range header,
+  // which is not a safelisted header and so triggers one. An unsigned
+  // preflight has nothing to allow.
+  app.options<{ Params: { id: string }; Querystring: OutputQ }>('/api/projects/:id/output', { onRequest: verifySignedOutput }, async (req, reply) => {
+    if (!(req as any)._signedOutput) return reply.code(403).send({ error: 'invalid signature' });
+    return reply.code(204)
+      .header('access-control-allow-methods', 'GET')
+      .header('access-control-allow-headers', 'range')
+      .header('access-control-max-age', '600')
+      .send();
   });
 
   // ---------- compile ----------
