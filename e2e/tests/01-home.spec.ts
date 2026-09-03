@@ -17,6 +17,30 @@ test.describe('home', () => {
     await expect(page.getByTestId('project-grid')).toContainText('My First Paper');
   });
 
+  test('a project cannot be created without a name', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('new-project').click();
+    // Nothing typed yet: Create is inert rather than silently making an
+    // "Untitled Project" nobody chose.
+    await expect(page.getByTestId('create-project')).toBeDisabled();
+
+    // Enter bypasses the disabled button, so it must be told why nothing happened.
+    await page.getByTestId('new-project-name').press('Enter');
+    await expect(page.getByTestId('new-project-name-error')).toBeVisible();
+    await expect(page).not.toHaveURL(/\/p\//);
+
+    // Whitespace is not a name.
+    await page.getByTestId('new-project-name').fill('   ');
+    await expect(page.getByTestId('create-project')).toBeDisabled();
+
+    // Typing clears the complaint and enables Create.
+    await page.getByTestId('new-project-name').fill('Named At Last');
+    await expect(page.getByTestId('new-project-name-error')).toHaveCount(0);
+    await expect(page.getByTestId('create-project')).toBeEnabled();
+    await page.getByTestId('create-project').click();
+    await expect(page.getByTestId('project-name')).toContainText('Named At Last');
+  });
+
   test('delete moves to trash; restore and delete-forever work', async ({ page, request }) => {
     const res = await request.post('/api/projects', { data: { name: 'Doomed Project' } });
     const { id } = await res.json();

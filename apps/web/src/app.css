@@ -142,6 +142,9 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 12px;
+  /* A GitLab templates group can hold dozens; keep the Create button reachable. */
+  max-height: 46vh;
+  overflow-y: auto;
 }
 .tpl {
   display: flex;
@@ -161,6 +164,7 @@
 .tpl__icon { font-size: 16px; }
 .tpl__name { font-weight: 600; font-size: 13px; }
 .tpl__desc { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.tpl__src { margin-top: 4px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3, var(--text-2)); }
 
 /* ---------- login ---------- */
 .login { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -179,10 +183,11 @@
 .login__submit { width: 100%; height: 34px; justify-content: center; margin-top: 4px; }
 .login__switch { width: 100%; justify-content: center; margin-top: 8px; color: var(--text-2); }
 .login__error { color: var(--error); font-size: 12.5px; margin: 2px 0 8px; }
+.field-error { color: var(--error); font-size: 12.5px; margin: 4px 0 0; }
 .login__info { color: var(--ok-text); font-size: 12.5px; margin: 2px 0 8px; }
 /* first-run onboarding */
 .onboard { width: 100%; text-align: center; }
-.onboard__tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.onboard__tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .onboard__tile { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; padding: 12px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--bg-inset); cursor: pointer; transition: border-color 0.12s, transform 0.12s; }
 .onboard__tile:hover { border-color: var(--accent); transform: translateY(-1px); }
 .onboard__tile-title { font-weight: 600; font-size: 13.5px; }
@@ -191,6 +196,20 @@
 .onboard__points li { font-size: 12.5px; color: var(--text-2); line-height: 1.45; padding-left: 18px; position: relative; }
 .onboard__points li::before { content: '›'; position: absolute; left: 4px; color: var(--accent); font-weight: 700; }
 @media (max-width: 560px) { .onboard__tiles { grid-template-columns: 1fr; } }
+
+/* non-blocking notice strip above the editor */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-2);
+}
+.banner > span { flex: 1; }
+.banner--warn { background: var(--warn-soft, var(--bg-inset)); color: var(--text); }
 
 /* comment composer */
 .composer__quote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg-inset); border-radius: 0 var(--radius-s) var(--radius-s) 0; color: var(--text-2); font-size: 12.5px; max-height: 84px; overflow-y: auto; white-space: pre-wrap; }

@@ -7,6 +7,7 @@ import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
 import { commitAll, ensureWorktree } from './gitops.js';
+import { scheduleAutopush } from './autopush.js';
 import { safeJoin, debouncePerKey } from './util.js';
 import { AUTH_ENABLED, userFromRequest } from './auth.js';
 import { canAccess } from './authz.js';
@@ -66,7 +67,13 @@ function deleteSnapshot(name: string): void {
 /** Debounced auto-commit per project::branch after edits settle. */
 const scheduleAutoCommit = debouncePerKey(20_000, (key: string) => {
   const [projectId, branch] = key.split('::');
-  commitAll(projectId, branch, 'aldine: autosave').catch((err) => console.error('[collab] autocommit failed', err.message));
+  commitAll(projectId, branch, 'aldine: autosave')
+    .then((res) => {
+      // Only `main` is mirrored: a link's remoteBranch maps to local main by
+      // contract, so other branches have nowhere to go.
+      if (res.committed && branch === 'main') scheduleAutopush(projectId);
+    })
+    .catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file

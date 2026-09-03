@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ProjectSummary, TemplateInfo } from '../api';
+import { api, ProjectSummary, TemplateInfo, RemoteProviderId, RemoteProviderInfo, DeleteResult } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -8,7 +8,9 @@ import ShareModal from '../components/ShareModal';
 import { IconDoc, IconLink, IconX } from '../components/Icons';
 import AccountSettings from '../components/AccountSettings';
 import { getTheme, toggleTheme } from '../theme';
-import GithubImport from '../components/GithubImport';
+import RemoteImport from '../components/RemoteImport';
+import { REMOTES } from '../remotes';
+import NamespacePicker from '../components/NamespacePicker';
 import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
@@ -19,11 +21,14 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState('');
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-  const [template, setTemplate] = useState('article');
+  const [template, setTemplate] = useState('');
+  const [namespace, setNamespace] = useState('');
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
-  const [showGithub, setShowGithub] = useState(false);
+  const [importing, setImporting] = useState<RemoteProviderId | null>(null);
+  const [remoteProviders, setRemoteProviders] = useState<RemoteProviderInfo[]>([]);
   const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -40,19 +45,35 @@ export default function Home() {
       .catch(() => { setLoadFailed(true); setProjects((cur) => cur ?? []); });
   };
   useEffect(() => { load(); }, []);
-  // returning from GitHub OAuth connect → reopen the import flow (now connected)
+  useEffect(() => { api.remotes().then(setRemoteProviders).catch(() => setRemoteProviders([])); }, []);
+  // returning from an OAuth connect → reopen that provider's import flow (now connected)
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('github') === 'connected') {
-      setShowGithub(true);
+    const p = new URLSearchParams(location.search).get('remote');
+    if (p === 'github' || p === 'gitlab') {
+      setImporting(p);
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  useEffect(() => { api.templates().then(setTemplates).catch(() => setTemplates([])); }, []);
+  // Re-listed each time the dialog opens, so a template added to the GitLab
+  // group (or dropped into TEMPLATES_DIR) shows up without a reload.
+  const loadTemplates = () => api.templates().then((list) => {
+    setTemplates(list);
+    // Never hardcode an id: on a custom templates directory 'article' does not
+    // exist, and Create would post an unknown template and fail.
+    setTemplate((cur) => (list.some((t) => t.id === cur) ? cur : list[0]?.id || ''));
+  }).catch(() => setTemplates([]));
+  useEffect(() => { loadTemplates(); }, []);
+  useEffect(() => { if (creating) { loadTemplates(); setNameError(''); } }, [creating]);
 
   const create = async () => {
-    const name = newName.trim() || 'Untitled Project';
+    const name = newName.trim();
+    // Reachable via Enter even while the button is disabled, so it is the guard
+    // that matters — and the only place that can explain why nothing happened.
+    if (!name) { setNameError('Give the project a name to continue.'); return; }
     try {
-      const p = await api.createProject(name, undefined, templates.length ? template : undefined);
+      const p = await api.createProject(name, undefined, template || undefined, namespace || undefined);
+      // The project exists either way — a host failure is a warning, not an error.
+      if (p.remoteError) toast(`Created locally: ${p.remoteError}`, 'error');
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
@@ -67,19 +88,33 @@ export default function Home() {
       const buf = new Uint8Array(await file.arrayBuffer());
       let bin = '';
       for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), btoa(bin));
+      // ZIP import has no modal to pick a group in, so reuse the last one chosen
+      // in the New project dialog; the server falls back to the root group.
+      const remembered = localStorage.getItem('aldine.gitlab.namespace') || undefined;
+      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), btoa(bin), remembered);
+      if (p.remoteError) toast(`Imported locally: ${p.remoteError}`, 'error');
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Import failed: ${err.message}`, 'error');
     }
   };
 
+  // A remote left behind is the user's to know about: the repo is still on the
+  // host, still counting against their group, and only they can remove it.
+  const remoteToast = (res: DeleteResult) => {
+    const r = res.remoteDelete;
+    if (!r || r.deleted) return;
+    if (r.scheduledFor) toast(`The remote repository is scheduled for deletion on ${r.scheduledFor}`, 'ok');
+    else toast(`The remote repository was kept: ${r.reason}`, 'error');
+  };
+
   const remove = async (e: React.MouseEvent, p: ProjectSummary) => {
     e.stopPropagation();
     if (!window.confirm(`Move “${p.name}” to the trash? You can restore it for 30 days.`)) return;
     try {
-      await api.deleteProject(p.id);
+      const res = await api.deleteProject(p.id);
       toast(`Moved ${p.name} to the trash`, 'ok');
+      remoteToast(res);
       load();
     } catch (err: any) {
       toast(`Could not delete ${p.name}: ${err.message}`, 'error');
@@ -101,8 +136,12 @@ export default function Home() {
 
   const purge = async (id: string, name: string) => {
     if (!window.confirm(`Permanently delete “${name}”? This cannot be undone.`)) return;
-    try { await api.deleteProject(id, true); toast(`Deleted ${name} forever`, 'ok'); load(); }
-    catch (err: any) { toast(err.message, 'error'); }
+    try {
+      const res = await api.deleteProject(id, true);
+      toast(`Deleted ${name} forever`, 'ok');
+      remoteToast(res);
+      load();
+    } catch (err: any) { toast(err.message, 'error'); }
   };
 
   const [dragOver, setDragOver] = useState(false);
@@ -146,9 +185,11 @@ export default function Home() {
               <input type="file" accept=".zip" hidden data-testid="import-input" aria-label="Import a project from a ZIP file"
                 onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
             </label>
-            <button className="btn" onClick={() => setShowGithub(true)} data-testid="new-from-github">
-              From GitHub
-            </button>
+            {remoteProviders.map((p) => (
+              <button key={p.id} className="btn" onClick={() => setImporting(p.id)} data-testid={`new-from-${p.id}`}>
+                From {p.label}
+              </button>
+            ))}
             <button className="btn btn--primary" onClick={() => setCreating(true)} data-testid="new-project">
               New project
             </button>
@@ -167,7 +208,9 @@ export default function Home() {
             <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
-              <button className="btn" onClick={() => setShowGithub(true)}>Import from GitHub</button>
+              {remoteProviders.map((p) => (
+                <button key={p.id} className="btn" onClick={() => setImporting(p.id)} data-testid={`empty-from-${p.id}`}>Import from {p.label}</button>
+              ))}
               <label className="btn">Import a ZIP
                 <input type="file" accept=".zip" hidden onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
               </label>
@@ -266,11 +309,11 @@ export default function Home() {
       {showAccount && user && (
         <AccountSettings user={user} onClose={() => setShowAccount(false)} />
       )}
-      {showGithub && (
-        <GithubImport onClose={() => setShowGithub(false)} onImported={(id) => navigate(`/p/${id}`)} />
+      {importing && (
+        <RemoteImport provider={importing} onClose={() => setImporting(null)} onImported={(id: string) => navigate(`/p/${id}`)} />
       )}
       {showOnboarding && (
-        <Onboarding onNew={() => setCreating(true)} onGithub={() => setShowGithub(true)} onImportZip={importZip} onClose={dismissOnboarding} />
+        <Onboarding providers={remoteProviders} onNew={() => setCreating(true)} onImportRemote={(p) => setImporting(p)} onImportZip={importZip} onClose={dismissOnboarding} />
       )}
 
       {creating && (
@@ -284,9 +327,15 @@ export default function Home() {
               placeholder="Project name"
               value={newName}
               data-testid="new-project-name"
-              onChange={(e) => setNewName(e.target.value)}
+              aria-invalid={!!nameError}
+              aria-describedby={nameError ? 'new-project-name-error' : undefined}
+              onChange={(e) => { setNewName(e.target.value); if (nameError) setNameError(''); }}
               onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating(false); }}
             />
+            {nameError && (
+              <p className="field-error" id="new-project-name-error" role="alert" data-testid="new-project-name-error">{nameError}</p>
+            )}
+            <NamespacePicker value={namespace} onChange={setNamespace} />
             {templates.length > 0 && (
               <div className="tpl-grid" data-testid="template-grid">
                 {templates.map((t) => (
@@ -300,13 +349,20 @@ export default function Home() {
                     <span className="tpl__icon">{t.icon || '📄'}</span>
                     <span className="tpl__name">{t.name}</span>
                     <span className="tpl__desc">{t.description}</span>
+                    {t.source === 'gitlab' && <span className="tpl__src">From GitLab</span>}
                   </button>
                 ))}
               </div>
             )}
             <div className="modal__row">
               <button className="btn" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="btn btn--primary" onClick={create} data-testid="create-project">Create</button>
+              <button
+                className="btn btn--primary"
+                onClick={create}
+                disabled={!newName.trim()}
+                title={newName.trim() ? undefined : 'Name the project first'}
+                data-testid="create-project"
+              >Create</button>
             </div>
           </div>
         </Modal>

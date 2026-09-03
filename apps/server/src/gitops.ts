@@ -45,9 +45,9 @@ export async function ensureWorktree(id: string, name: string): Promise<string> 
 }
 
 /**
- * Compile output must never enter git history (or get pushed to GitHub). New
+ * Compile output must never enter git history (or get pushed to a remote). New
  * projects get `.aldine-out/` in their generated .gitignore; this covers
- * pre-existing and GitHub-cloned repos via the shared .git/info/exclude
+ * pre-existing and cloned repos via the shared .git/info/exclude
  * (worktrees read the common dir's exclude file, so one write covers all branches).
  */
 function ensureOutputExcluded(id: string): void {
@@ -119,14 +119,26 @@ export async function commitDiff(id: string, hash: string): Promise<{ patch: str
   return { patch: patch.replace(/^\n+/, ''), stat: stat.replace(/^\n+/, '') };
 }
 
-// ---------- remote sync (GitHub) ----------
+// ---------- remote sync ----------
 // SECURITY: the projects dir is shared with the compiler, so the auth token must
 // never land in .git/config. We pass a tokenized URL inline per network op and
 // keep only a credential-free URL as `origin`.
+// Everything below is host-agnostic: it takes an already-tokenized URL and never
+// touches a host API, which is why a new provider costs no changes here.
 
 /** Strip any `user:token@` credentials from an http(s) URL. */
 export function stripCreds(url: string): string {
   return url.replace(/(https?:\/\/)[^@/]+@/i, '$1');
+}
+
+/**
+ * Inverse of stripCreds: inject a token for a single network op. Non-http URLs
+ * (a local path in tests) are returned unchanged. Providers differ only in the
+ * username half — GitHub wants x-access-token, GitLab wants oauth2.
+ */
+export function injectToken(cloneUrl: string, user: string, token: string): string {
+  if (!/^https?:\/\//i.test(cloneUrl)) return cloneUrl;
+  return cloneUrl.replace(/^(https?:\/\/)/i, `$1${user}:${token}@`);
 }
 
 /**

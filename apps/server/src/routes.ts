@@ -7,12 +7,16 @@ import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { compileProject, synctexLookup } from './compile.js';
 import * as usage from './usage.js';
-import * as github from './github.js';
+import { getProvider, configuredProviders, getConnection, setConnection, disconnect as disconnectRemote, type RemoteProvider, type RemoteRepo } from './remotes.js';
+import { normaliseBaseUrl, serviceConnection, withinRoot, listNamespaces, createSubgroup } from './gitlab.js';
+import { gitlabConfig } from './config.js';
+import { autoProvisionEnabled } from './gitlab.js';
+import { provisionProject, deleteRemoteRepo, type RemoteDeleteOutcome } from './provision.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
-import { listTemplates, templateFiles } from './templates.js';
+import { listTemplates, templateFiles, templateVars } from './templates.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip, guessRoot } from './unzip.js';
@@ -34,6 +38,12 @@ type Q = { branch?: string; path?: string; name?: string; force?: string };
  */
 function reqUser(req: any): auth.PublicUser | null {
   return req._user ?? null;
+}
+
+/** Whose remote-host connections to use. In no-auth (single-tenant) mode there's
+ *  no user, so connections hang off a fixed 'local' id. */
+function connUserId(req: any): string {
+  return reqUser(req)?.id || 'local';
 }
 
 /** Validate an email/password body before it reaches auth (avoids leaking
@@ -327,18 +337,62 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
   });
 
-  app.post<{ Body: { name?: string; files?: Record<string, string>; template?: string } }>('/api/projects', async (req, reply) => {
-    const { name = 'Untitled Project', files, template } = req.body || {};
-    let seed = files;
+  /**
+   * Send a freshly created project to its GitLab home, when a deployment has
+   * nominated one. Call this only once the project's content is fully written
+   * and committed — it pushes `main`, so anything committed afterwards would be
+   * missing from the mirror until the next push.
+   *
+   * Returns a message to hand back to the caller, or undefined on success.
+   * Never throws: the project already exists locally, so a host failure must
+   * degrade to local-only rather than fail the request.
+   */
+  async function mirrorNewProject(meta: store.ProjectMeta, req: any, namespace?: string): Promise<string | undefined> {
+    if (!autoProvisionEnabled()) return undefined;
+    const res = await provisionProject(meta, { userId: connUserId(req), namespace });
+    if (res.ok) return undefined;
+    // Only mark pending when nothing was linked. A failed *first push* has a
+    // link already and is the sync UI's Push to retry, not the banner's.
+    if (!store.remoteLink(meta)) {
+      meta.remotePending = { provider: 'gitlab', namespace };
+      await store.writeMeta(meta);
+    }
+    console.warn(`[gitlab] provisioning ${meta.id} failed: ${res.error}`);
+    return res.error;
+  }
+
+  /**
+   * One rule for creating and renaming: a project must be named. Creation used
+   * to default to "Untitled Project", which is a name nobody chose and everybody
+   * then had to fix — and a template's {{PROJECT_NAME}} would bake it in.
+   */
+  function checkName(raw: unknown): { name: string } | { error: string } {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return { error: 'Project name cannot be empty' };
+    if (trimmed.length > 200) return { error: 'Project name is too long (max 200 characters)' };
+    return { name: trimmed };
+  }
+
+  app.post<{ Body: { name?: string; files?: Record<string, string>; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
+    const { files, template, namespace } = req.body || {};
+    const named = checkName(req.body?.name);
+    if ('error' in named) return reply.code(400).send({ error: named.error });
+    const { name } = named;
+    let seed: Record<string, string | Buffer> | undefined = files;
     if (template) {
+      // Before createProject, so a template that can't be read fails the request
+      // outright instead of leaving a blank project behind under its name.
       try {
-        seed = templateFiles(template);
+        seed = await templateFiles(template, connUserId(req), templateVars(name, reqUser(req)?.name));
       } catch (err: any) {
-        return reply.code(400).send({ error: err.message });
+        return reply.code(400).send({ error: `Could not read the template: ${err.message}` });
       }
     }
+    // The local project is created first and never skipped: GitLab is a mirror,
+    // so a provisioning failure must degrade to local-only, never lose work.
     const meta = await store.createProject(name, seed, reqUser(req)?.id);
-    return publicMeta(meta, reqUser(req));  // Promise; Fastify awaits
+    const remoteError = await mirrorNewProject(meta, req, namespace);
+    return { ...(await publicMeta(meta, reqUser(req))), remoteError };
   });
 
   // ---------- sharing (owner only) ----------
@@ -400,11 +454,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     });
   }
 
-  app.get('/api/templates', async () => listTemplates());
+  app.get('/api/templates', async (req) => listTemplates(connUserId(req)));
 
   // Import an Overleaf/project ZIP (base64) as a new project.
-  app.post<{ Body: { name?: string; zipBase64: string } }>('/api/projects/import', async (req, reply) => {
-    const { name, zipBase64 } = req.body || {};
+  app.post<{ Body: { name?: string; zipBase64: string; namespace?: string } }>('/api/projects/import', async (req, reply) => {
+    const { name, zipBase64, namespace } = req.body || {};
     if (!zipBase64) return reply.code(400).send({ error: 'zipBase64 required' });
     try {
       const buf = Buffer.from(zipBase64, 'base64');
@@ -427,16 +481,34 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
       const root = guessRoot(entries);
       if (root) { meta.rootFile = root; await store.writeMeta(meta); }
-      return publicMeta(meta, reqUser(req));
+      // Last, so the push carries the binaries and the detected root file too.
+      const remoteError = await mirrorNewProject(meta, req, namespace);
+      return { ...(await publicMeta(meta, reqUser(req))), remoteError };
     } catch (err: any) {
       return reply.code(400).send({ error: `Could not import ZIP: ${err.message}` });
     }
   });
 
+  /** Projects this process has already retried provisioning for. Retry-on-open
+   *  is a convenience, not a queue — the banner's explicit Retry is the real
+   *  path, and without this guard a reload loop hammers the GitLab API. */
+  const provisionRetried = new Set<string>();
+
+  function retryProvisionOnOpen(meta: store.ProjectMeta, userId: string): void {
+    if (!meta.remotePending || !autoProvisionEnabled()) return;
+    if (provisionRetried.has(meta.id)) return;
+    provisionRetried.add(meta.id);
+    // Fire-and-forget: opening a project must never wait on GitLab.
+    void provisionProject(meta, { userId, namespace: meta.remotePending.namespace })
+      .then((res) => { if (!res.ok) console.warn(`[gitlab] retry for ${meta.id} failed: ${res.error}`); })
+      .catch((err) => console.warn(`[gitlab] retry for ${meta.id} threw: ${err.message}`));
+  }
+
   app.get<{ Params: { id: string } }>('/api/projects/:id', async (req, reply) => {
     try {
       const meta = await store.readMeta(req.params.id);
       const branches = await gitops.listBranches(meta.id);
+      retryProvisionOnOpen(meta, connUserId(req));
       return { ...(await publicMeta(meta, reqUser(req))), branches };
     } catch {
       return reply.code(404).send({ error: 'project not found' });
@@ -449,10 +521,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (!meta) return;
       const { name, rootFile, engine } = req.body || {};
       if (name !== undefined) {
-        const trimmed = String(name).trim();
-        if (!trimmed) return reply.code(400).send({ error: 'Project name cannot be empty' });
-        if (trimmed.length > 200) return reply.code(400).send({ error: 'Project name is too long (max 200 characters)' });
-        meta.name = trimmed;
+        const named = checkName(name);
+        if ('error' in named) return reply.code(400).send({ error: named.error });
+        meta.name = named.name;
       }
       if (rootFile) meta.rootFile = rootFile;
       if (engine) meta.engine = engine;
@@ -465,6 +536,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{ Params: { id: string }; Querystring: { permanent?: string } }>('/api/projects/:id', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
+    // Remove the mirror before the local record, so the group doesn't collect
+    // repos for projects nobody can see. Only repos Aldine created; best-effort,
+    // so a refusing or unreachable host never blocks the delete. Restore
+    // re-creates it from the local repo, which survives the trash intact.
+    const link = store.remoteLink(meta);
+    let remoteDelete: RemoteDeleteOutcome | undefined;
+    if (link) {
+      remoteDelete = await deleteRemoteRepo(meta);
+      // Scheduled counts as gone: the host has accepted it and will not hand the
+      // repo back, so leaving the link would only offer a dead sync target.
+      if (remoteDelete.deleted || remoteDelete.scheduledFor) {
+        // Clear the now-dangling link, and remember the group so a restore goes back there.
+        delete meta.remote;
+        delete meta.github;
+        meta.remotePending = { provider: 'gitlab', namespace: link.owner };
+        await store.writeMeta(meta);
+      } else {
+        console.warn(`[remote] not deleting ${link.fullName} for ${req.params.id}: ${remoteDelete.reason}`);
+      }
+    }
     if (req.query.permanent === '1') await store.deleteProject(req.params.id);
     else await store.softDeleteProject(req.params.id);
     lastPushedHead.delete(req.params.id); // don't leak the push-dedup entry (or reuse a stale hash)
@@ -472,14 +563,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // (here and on peer nodes) so nobody keeps editing a trashed project.
     closeProjectConnections(req.params.id);
     publishProjectEvent({ type: 'access-changed', projectId: req.params.id });
-    return { ok: true };
+    // Reported, not just logged: a remote left behind is the user's problem to
+    // see — silently succeeding is what made this look like it worked.
+    return { ok: true, ...(remoteDelete ? { remoteDelete } : {}) };
   });
 
   app.post<{ Params: { id: string } }>('/api/projects/:id/restore', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can restore this project' });
     if (!meta.deletedAt) return reply.code(400).send({ error: 'Project is not in the trash' });
-    await store.restoreProject(req.params.id);
+    const restored = await store.restoreProject(req.params.id);
+    // Trashing deleted the mirror, so put it back — the local repo is intact, so
+    // the content returns. GitLab-side metadata (merge requests, issues, CI
+    // history) does not, and cannot.
+    if (restored.remotePending && autoProvisionEnabled()) {
+      const res = await provisionProject(restored, { userId: connUserId(req), namespace: restored.remotePending.namespace });
+      if (!res.ok) console.warn(`[gitlab] re-provisioning restored ${req.params.id} failed: ${res.error}`);
+    }
     return { ok: true };
   });
 
@@ -1005,95 +1105,167 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // ---------- GitHub integration (per-user connection) ----------
-  // In no-auth (single-tenant) mode there's no user, so connections hang off a
-  // fixed 'local' id. github.enabled reports whether OAuth connect is available.
-  const ghUserId = (req: any) => reqUser(req)?.id || 'local';
-  // When auth is on, GitHub connections are per signed-in user; without this the
+  // ---------- remote hosts (per-user, per-provider connection) ----------
+  // When auth is on, connections are per signed-in user; without this the
   // anonymous fallback ('local') would let unauthenticated callers share one
   // connection bucket — one user's PAT readable by the next. Mirrors /oauth + /import.
   const requireSignIn = (req: any, reply: any): boolean => {
     if (auth.AUTH_ENABLED && !reqUser(req)) { reply.code(401).send({ error: 'Sign in required' }); return true; }
     return false;
   };
+  const reqProvider = (req: any, reply: any): RemoteProvider | null => {
+    const p = getProvider(req.params?.provider);
+    if (!p) { reply.code(404).send({ error: 'Unknown remote provider' }); return null; }
+    return p;
+  };
+  /** A revoked token reads as a 401 from every host; the UI prompts a reconnect. */
+  const isUnauthorized = (err: Error) => / 401:/.test(err.message);
 
-  app.get('/api/github/status', async (req, reply) => {
+  app.get('/api/remotes', async () =>
+    configuredProviders().map((p) => ({ id: p.id, label: p.label, oauth: p.oauthEnabled() })));
+
+  app.get<{ Params: { provider: string } }>('/api/remotes/:provider/status', async (req, reply) => {
     if (requireSignIn(req, reply)) return;
-    const conn = await github.getConnection(ghUserId(req));
-    return { connected: !!conn, login: conn?.login, oauth: github.oauthEnabled() };
+    const prov = reqProvider(req, reply); if (!prov) return;
+    const conn = await getConnection(connUserId(req), prov.id);
+    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, oauth: prov.oauthEnabled() };
   });
 
-  app.post<{ Body: { token?: string } }>('/api/github/connect', async (req, reply) => {
+  app.post<{ Params: { provider: string }; Body: { token?: string; baseUrl?: string } }>(
+    '/api/remotes/:provider/connect', async (req, reply) => {
     if (requireSignIn(req, reply)) return;
+    const prov = reqProvider(req, reply); if (!prov) return;
     const token = (req.body?.token || '').trim();
-    if (!token) return reply.code(400).send({ error: 'A GitHub token is required' });
+    if (!token) return reply.code(400).send({ error: `A ${prov.label} token is required` });
+    let baseUrl: string | undefined;
+    // Reject a bad instance URL here rather than on the first API call — the
+    // user is still looking at the field they typed it into.
+    if (prov.id === 'gitlab') {
+      try { baseUrl = normaliseBaseUrl(req.body?.baseUrl); }
+      catch (err: any) { return reply.code(400).send({ error: err.message }); }
+    }
     try {
-      const me = await github.whoami(token);
-      await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
+      const me = await prov.whoami({ token, login: '', baseUrl });
+      await setConnection(connUserId(req), prov.id, { token, login: me.login, name: me.name, baseUrl });
       return { connected: true, login: me.login };
     } catch {
-      return reply.code(400).send({ error: 'That token was rejected by GitHub. Check it has repo scope.' });
+      const scope = prov.id === 'gitlab' ? 'api scope' : 'repo scope';
+      return reply.code(400).send({ error: `That token was rejected by ${prov.label}. Check it has ${scope}.` });
     }
   });
 
-  app.post('/api/github/disconnect', async (req, reply) => {
+  app.post<{ Params: { provider: string } }>('/api/remotes/:provider/disconnect', async (req, reply) => {
     if (requireSignIn(req, reply)) return;
-    await github.disconnect(ghUserId(req));
+    const prov = reqProvider(req, reply); if (!prov) return;
+    await disconnectRemote(connUserId(req), prov.id);
     return { ok: true };
   });
 
-  // OAuth "Connect with GitHub" (repo scope) — links the signed-in user's account.
-  app.get('/api/github/oauth', async (req, reply) => {
-    if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+  // OAuth connect — links the signed-in user's account with write scope.
+  app.get<{ Params: { provider: string } }>('/api/remotes/:provider/oauth', async (req, reply) => {
+    const prov = reqProvider(req, reply); if (!prov) return;
+    if (!prov.oauthEnabled()) return reply.code(404).send({ error: `${prov.label} OAuth is not configured` });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
-    return reply.redirect(github.connectUrl(state, `${publicBase(req)}/api/github/oauth/callback`));
+    // Per-provider cookie: connecting to one host must not invalidate an
+    // in-flight connect to the other.
+    reply.header('set-cookie', `aldine_remote_state_${prov.id}=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    return reply.redirect(prov.connectUrl(state, `${publicBase(req)}/api/remotes/${prov.id}/oauth/callback`));
   });
 
-  app.get<{ Querystring: { code?: string; state?: string } }>('/api/github/oauth/callback', async (req, reply) => {
-    if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string } }>(
+    '/api/remotes/:provider/oauth/callback', async (req, reply) => {
+    const prov = reqProvider(req, reply); if (!prov) return;
+    if (!prov.oauthEnabled()) return reply.code(404).send({ error: `${prov.label} OAuth is not configured` });
     const cookies = auth.parseCookies(req.headers.cookie);
-    if (!req.query.code || !req.query.state || req.query.state !== cookies.aldine_gh_state) {
+    const expected = cookies[`aldine_remote_state_${prov.id}`];
+    if (!req.query.code || !req.query.state || req.query.state !== expected) {
       return reply.code(400).send({ error: 'OAuth state mismatch — please try again' });
     }
     try {
-      const token = await github.exchangeCode(req.query.code, `${publicBase(req)}/api/github/oauth/callback`);
-      const me = await github.whoami(token);
-      await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
-      reply.header('set-cookie', 'aldine_gh_state=; Path=/; Max-Age=0');
-      return reply.redirect('/?github=connected');
+      const token = await prov.exchangeCode(req.query.code, `${publicBase(req)}/api/remotes/${prov.id}/oauth/callback`);
+      const baseUrl = prov.id === 'gitlab' ? normaliseBaseUrl(process.env.GITLAB_URL) : undefined;
+      const me = await prov.whoami({ token, login: '', baseUrl });
+      await setConnection(connUserId(req), prov.id, { token, login: me.login, name: me.name, baseUrl });
+      reply.header('set-cookie', `aldine_remote_state_${prov.id}=; Path=/; Max-Age=0`);
+      return reply.redirect(`/?remote=${prov.id}`);
     } catch (err: any) {
-      return reply.code(400).send({ error: `GitHub connect failed: ${err.message}` });
+      return reply.code(400).send({ error: `${prov.label} connect failed: ${err.message}` });
     }
   });
 
-  app.get('/api/github/repos', async (req, reply) => {
+  app.get<{ Params: { provider: string } }>('/api/remotes/:provider/repos', async (req, reply) => {
     if (requireSignIn(req, reply)) return;
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'GitHub is not connected' });
-    try { return await github.listRepos(conn.token); }
+    const prov = reqProvider(req, reply); if (!prov) return;
+    const conn = await getConnection(connUserId(req), prov.id);
+    if (!conn) return reply.code(400).send({ error: `${prov.label} is not connected` });
+    try { return await prov.listRepos(conn); }
+    catch (err: any) {
+      if (isUnauthorized(err)) {
+        return reply.code(401).send({ error: `That ${prov.label} token is no longer valid.`, reason: 'token-invalid' });
+      }
+      return reply.code(502).send({ error: err.message });
+    }
+  });
+
+  // ---------- GitLab groups ----------
+  // GitLab-only: group nesting has no GitHub analogue, so these 404 for any
+  // other provider rather than pretending to be part of the generic surface.
+  // Either connection works — the user's own token if they have one, else the
+  // service account — matching the resolution order used at creation time.
+  const gitlabConn = async (req: any) =>
+    (await getConnection(connUserId(req), 'gitlab')) || serviceConnection();
+
+  app.get('/api/remotes/gitlab/namespaces', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    if (!gitlabConfig.defaultGroup) return reply.code(404).send({ error: 'No default GitLab group is configured' });
+    const conn = await gitlabConn(req);
+    if (!conn) return reply.code(400).send({ error: 'Connect GitLab first' });
+    try { return { root: gitlabConfig.defaultGroup, namespaces: await listNamespaces(conn, gitlabConfig.defaultGroup) }; }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
   });
 
-  // Import a GitHub repo as a new project (the primary create-project flow).
-  app.post<{ Body: { fullName?: string } }>('/api/github/import', async (req, reply) => {
+  app.post<{ Body: { parentPath?: string; name?: string } }>('/api/remotes/gitlab/subgroups', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    if (!gitlabConfig.defaultGroup) return reply.code(404).send({ error: 'No default GitLab group is configured' });
+    const parentPath = (req.body?.parentPath || gitlabConfig.defaultGroup).trim();
+    // Privilege boundary: without this the endpoint creates groups anywhere on
+    // the instance, for any signed-in Aldine user.
+    if (!withinRoot(gitlabConfig.defaultGroup, parentPath)) {
+      return reply.code(400).send({ error: `The parent group must be inside ${gitlabConfig.defaultGroup}` });
+    }
+    const conn = await gitlabConn(req);
+    if (!conn) return reply.code(400).send({ error: 'Connect GitLab first' });
+    try { return await createSubgroup(conn, parentPath, req.body?.name || ''); }
+    catch (err: any) { return reply.code(400).send({ error: `Could not create the subgroup: ${err.message}` }); }
+  });
+
+  // Import a repo as a new project (the primary create-project flow).
+  app.post<{ Params: { provider: string }; Body: { fullName?: string } }>(
+    '/api/remotes/:provider/import', async (req, reply) => {
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'Connect GitHub first' });
-    const [owner, repo] = (req.body?.fullName || '').trim().split('/');
-    if (!owner || !repo) return reply.code(400).send({ error: 'Expected "owner/repo"' });
-    let info: github.Repo;
-    try { info = await github.getRepo(conn.token, owner, repo); }
+    const prov = reqProvider(req, reply); if (!prov) return;
+    const conn = await getConnection(connUserId(req), prov.id);
+    if (!conn) return reply.code(400).send({ error: `Connect ${prov.label} first` });
+    const fullName = (req.body?.fullName || '').trim();
+    if (fullName.split('/').filter(Boolean).length < 2) return reply.code(400).send({ error: 'Expected "owner/repo"' });
+    let info: RemoteRepo;
+    try { info = await prov.getRepo(conn, fullName); }
     catch (err: any) { return reply.code(400).send({ error: `Repo not found or no access: ${err.message}` }); }
     const id = newId();
     try {
-      const { remoteBranch } = await gitops.cloneRepo(id, github.tokenUrl(info.cloneUrl, conn.token));
+      const { remoteBranch } = await gitops.cloneRepo(id, prov.tokenUrl(info.cloneUrl, conn.token));
       const files = store.listFiles(id, 'main').filter((f) => f.type === 'file').map((f) => f.path);
       const rootFile = detectRootFile(id, files);
       const meta: store.ProjectMeta = {
         id, name: info.name, rootFile, engine: 'pdf', createdAt: new Date().toISOString(),
-        github: { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) },
+        remote: {
+          provider: prov.id, fullName: info.fullName, owner: info.owner, repo: info.name,
+          remoteBranch, cloneUrl: info.cloneUrl, connectedBy: connUserId(req),
+          // Explicit false, not absent: an absent flag has to be guessed at on
+          // delete, and the guess is what leaked repos in the first place.
+          createdByAldine: false,
+        },
       };
       const ownerId = reqUser(req)?.id;
       if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
@@ -1123,64 +1295,92 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return rank(withClass) || rank(tex) || 'main.tex';
   }
 
-  // Sync a linked project with its GitHub remote (uses the acting user's token).
+  // Sync a linked project with its remote (uses the acting user's token).
   // Syncing pushes the project into the OWNER's repo and can pull remote state
   // over everyone's work, so every remote operation is members-only: link mode
   // grants editing, not control of where the project is mirrored.
   const linkedRemote = async (req: any, reply: any, action = 'sync this project') => {
     const meta = await requireMember(req, reply, action);
     if (!meta) return null;
-    if (!meta.github) { reply.code(400).send({ error: 'This project is not linked to GitHub' }); return null; }
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) { reply.code(400).send({ error: 'Connect GitHub to sync' }); return null; }
-    return { meta, token: conn.token, owner: meta.github.owner, repo: meta.github.repo, url: github.tokenUrl(meta.github.cloneUrl, conn.token), remoteBranch: meta.github.remoteBranch };
+    const link = store.remoteLink(meta);
+    if (!link) { reply.code(400).send({ error: 'This project is not linked to a remote' }); return null; }
+    // The provider comes from the stored link, never the request: a project has
+    // exactly one remote, and trusting the caller would allow a mismatched pair.
+    const prov = getProvider(link.provider);
+    if (!prov) { reply.code(400).send({ error: `Unknown remote provider: ${link.provider}` }); return null; }
+    // The same ladder autopush uses: the caller's own token first, so GitLab
+    // attributes the push to a real person; then the token that created the
+    // link; then the instance service account. Without the fallback a
+    // deployment whose users never connect GitLab personally can create and
+    // auto-push projects but cannot sync one by hand — the same token, accepted
+    // at one door and refused at the next. Bounded by requireMember above, so
+    // the service token only ever acts on a project the caller can already edit.
+    const conn = await getConnection(connUserId(req), prov.id)
+      || (link.connectedBy ? await getConnection(link.connectedBy, prov.id) : null)
+      || (prov.id === 'gitlab' ? serviceConnection() : null);
+    if (!conn) { reply.code(400).send({ error: `Connect ${prov.label} to sync` }); return null; }
+    return { meta, link, prov, conn, url: prov.tokenUrl(link.cloneUrl, conn.token), remoteBranch: link.remoteBranch };
   };
 
-  // Publish a locally-created project to a fresh GitHub repo. This is the only
+  // Publish a locally-created project to a fresh remote repo. This is the only
   // way an unlinked project gains an off-server copy, so the editor nudges
   // toward it. Creates the repo under the connected account, commits the
   // current state, pushes main, and stores the link (same shape as an import).
-  app.post<{ Params: { id: string }; Body: { name?: string; private?: boolean } }>('/api/projects/:id/github/link', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { provider?: string; name?: string; private?: boolean } }>(
+    '/api/projects/:id/remote/link', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (auth.AUTH_ENABLED && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can publish this project' });
-    if (meta.github) return reply.code(400).send({ error: 'This project is already linked to GitHub' });
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'Connect GitHub first' });
+    if (store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is already linked to a remote' });
+    // Retry path: a project whose auto-provisioning failed goes back to the
+    // group it was meant for, not to a fresh repo under the caller's account.
+    if (meta.remotePending?.provider === 'gitlab' && autoProvisionEnabled() && !req.body?.provider) {
+      const res = await provisionProject(meta, { userId: connUserId(req), namespace: meta.remotePending.namespace });
+      if (!res.ok) return reply.code(502).send({ error: res.error });
+      return { ok: true, remote: meta.remote };
+    }
+    const prov = getProvider(req.body?.provider || 'github');
+    if (!prov) return reply.code(400).send({ error: 'Unknown remote provider' });
+    const conn = await getConnection(connUserId(req), prov.id);
+    if (!conn) return reply.code(400).send({ error: `Connect ${prov.label} first` });
     const name = (req.body?.name || meta.name).trim()
       .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
     if (!name) return reply.code(400).send({ error: 'Repository name required' });
-    let info: github.Repo;
-    try { info = await github.createRepo(conn.token, name, req.body?.private !== false); }
+    let info: RemoteRepo;
+    try { info = await prov.createRepo(conn, name, { private: req.body?.private !== false }); }
     catch (err: any) { return reply.code(400).send({ error: `Could not create repo: ${err.message}` }); }
     flushBranchDocs(req.params.id, 'main');
-    await gitops.commitAll(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
-    meta.github = { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) };
+    await gitops.commitAll(req.params.id, 'main', `aldine: publish to ${prov.label}`, reqUser(req)?.name).catch(() => {});
+    store.setRemoteLink(meta, {
+      provider: prov.id, fullName: info.fullName, owner: info.owner, repo: info.name,
+      remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: connUserId(req),
+      createdByAldine: true,
+    });
     await store.writeMeta(meta);
-    try { await gitops.pushToRemote(req.params.id, 'main', github.tokenUrl(info.cloneUrl, conn.token)); }
+    try { await gitops.pushToRemote(req.params.id, 'main', prov.tokenUrl(info.cloneUrl, conn.token)); }
     catch (err: any) {
       // repo exists and the link is stored — the user can retry the push from the sync UI
-      return reply.code(502).send({ error: `Repo created but the first push failed: ${err.message}. Use Push to retry.`, github: meta.github });
+      return reply.code(502).send({ error: `Repo created but the first push failed: ${err.message}. Use Push to retry.`, remote: meta.remote });
     }
-    return { ok: true, github: meta.github };
+    return { ok: true, remote: meta.remote };
   });
 
-  app.get<{ Params: { id: string } }>('/api/projects/:id/github/status', async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/api/projects/:id/remote/status', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
-    try { return { linked: true, ...link.meta.github, ...(await gitops.remoteStatus(req.params.id, link.remoteBranch, link.url)) }; }
+    try { return { linked: true, ...link.link, ...(await gitops.remoteStatus(req.params.id, link.remoteBranch, link.url)) }; }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
   });
 
-  app.post<{ Params: { id: string }; Body: { message?: string; auto?: boolean } }>('/api/projects/:id/github/push', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { message?: string; auto?: boolean } }>('/api/projects/:id/remote/push', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing
     const message = (req.body?.message || '').trim() || 'Update from Aldine';
     const commit = await gitops.commitAll(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
     // HEAD is the commit hash we just made (when we committed), else look it up.
     const head = commit.committed ? commit.hash ?? null : await gitops.headCommit(req.params.id).catch(() => null);
-    // Auto-sync (client sends auto:true, fires ~every 20s) skips the full git-push
-    // round-trip when nothing was committed and HEAD is unchanged since our last
-    // successful push. A MANUAL push always pushes — so a user pushing to restore
-    // content after a remote-side rollback isn't wrongly skipped. In-memory,
+    // Auto-sync (client sends auto:true) skips the full git-push round-trip when
+    // nothing was committed and HEAD is unchanged since our last successful
+    // push. A MANUAL push always pushes — so a user pushing to restore content
+    // after a remote-side rollback isn't wrongly skipped. In-memory,
     // single-node (see docs/SCALING); defaults to pushing whenever unsure.
     if (req.body?.auto && !commit.committed && head && lastPushedHead.get(req.params.id) === head) {
       return { ok: true, skipped: true };
@@ -1192,7 +1392,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) { return reply.code(400).send({ error: `Push failed: ${err.message}` }); }
   });
 
-  app.post<{ Params: { id: string } }>('/api/projects/:id/github/pull', async (req, reply) => {
+  // Auto-sync is a project setting, not a per-browser one: the push happens on
+  // the server after autocommit, so it must hold for everyone and survive the
+  // tab closing.
+  app.post<{ Params: { id: string }; Body: { enabled?: boolean } }>('/api/projects/:id/remote/autopush', async (req, reply) => {
+    const link = await linkedRemote(req, reply, 'change auto-sync'); if (!link) return;
+    link.meta.autopush = req.body?.enabled !== false;
+    await store.writeMeta(link.meta);
+    return { ok: true, autopush: link.meta.autopush };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/projects/:id/remote/pull', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main');
     await gitops.commitAll(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
@@ -1204,9 +1414,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) { return reply.code(400).send({ error: `Pull failed: ${err.message}` }); }
   });
 
-  // Conflict escape hatch: discard local changes and take the GitHub version.
+  // Conflict escape hatch: discard local changes and take the remote version.
   // Destroys everyone's unpushed work, so it is the owner's call alone.
-  app.post<{ Params: { id: string } }>('/api/projects/:id/github/reset-to-remote', async (req, reply) => {
+  app.post<{ Params: { id: string } }>('/api/projects/:id/remote/reset-to-remote', async (req, reply) => {
     if (!(await requireOwner(req, reply, 'discard local changes'))) return;
     const link = await linkedRemote(req, reply); if (!link) return;
     try {
@@ -1216,23 +1426,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) { return reply.code(400).send({ error: `Reset failed: ${err.message}` }); }
   });
 
-  // ---------- GitHub branches + PRs ----------
-  app.get<{ Params: { id: string } }>('/api/projects/:id/github/branches', async (req, reply) => {
+  // ---------- remote branches + change requests ----------
+  app.get<{ Params: { id: string } }>('/api/projects/:id/remote/branches', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     try {
       const [branches, repo] = await Promise.all([
-        github.listBranches(link.token, link.owner, link.repo),
-        github.getRepo(link.token, link.owner, link.repo),
+        link.prov.listBranches(link.conn, link.link.fullName),
+        link.prov.getRepo(link.conn, link.link.fullName),
       ]);
       return { branches, current: link.remoteBranch, default: repo.defaultBranch };
     } catch (err: any) { return reply.code(502).send({ error: err.message }); }
   });
 
-  // Switch which GitHub branch this project tracks. Saves current work (commit +
+  // Switch which remote branch this project tracks. Saves current work (commit +
   // push) first so nothing is lost, then checks out the target branch.
-  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/github/switch-branch', async (req, reply) => {
-    // Persists meta.github.remoteBranch — repoints the project for everyone.
-    if (!(await requireOwner(req, reply, 'change the tracked GitHub branch'))) return;
+  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/remote/switch-branch', async (req, reply) => {
+    // Persists the link's remoteBranch — repoints the project for everyone.
+    if (!(await requireOwner(req, reply, 'change the tracked remote branch'))) return;
     const link = await linkedRemote(req, reply); if (!link) return;
     const target = (req.body?.branch || '').trim();
     if (!target) return reply.code(400).send({ error: 'branch required' });
@@ -1242,14 +1452,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await gitops.commitAll(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url).catch(() => {}); // best-effort save
       await gitops.resetToRemote(req.params.id, target, link.url);
-      const meta = link.meta; meta.github!.remoteBranch = target; await store.writeMeta(meta);
+      store.setRemoteLink(link.meta, { ...link.link, remoteBranch: target });
+      await store.writeMeta(link.meta);
       refreshBranchDocsFromDisk(req.params.id, 'main');
       return { ok: true, branch: target };
     } catch (err: any) { return reply.code(400).send({ error: `Switch failed: ${err.message}` }); }
   });
 
-  // Create a new GitHub branch from the current content and switch to it.
-  app.post<{ Params: { id: string }; Body: { name?: string } }>('/api/projects/:id/github/create-branch', async (req, reply) => {
+  // Create a new remote branch from the current content and switch to it.
+  app.post<{ Params: { id: string }; Body: { name?: string } }>('/api/projects/:id/remote/create-branch', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     const name = (req.body?.name || '').trim();
     // Use the same BRANCH_RE gitops enforces on push/pull, so a name the UI
@@ -1259,27 +1470,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     try {
       await gitops.commitAll(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, name, link.url); // push creates the remote branch
-      const meta = link.meta; meta.github!.remoteBranch = name; await store.writeMeta(meta);
+      store.setRemoteLink(link.meta, { ...link.link, remoteBranch: name });
+      await store.writeMeta(link.meta);
       return { ok: true, branch: name };
     } catch (err: any) { return reply.code(400).send({ error: `Create branch failed: ${err.message}` }); }
   });
 
-  // Open a pull request from the current branch into the repo's default branch.
-  app.post<{ Params: { id: string }; Body: { title?: string } }>('/api/projects/:id/github/pr', async (req, reply) => {
+  // Open a pull request / merge request from the current branch into the default.
+  app.post<{ Params: { id: string }; Body: { title?: string } }>('/api/projects/:id/remote/change-request', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
+    const noun = link.prov.changeRequestLabel;
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.commitAll(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
+      await gitops.commitAll(req.params.id, 'main', `Update before ${noun}`, reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url);
-      const repo = await github.getRepo(link.token, link.owner, link.repo);
+      const repo = await link.prov.getRepo(link.conn, link.link.fullName);
       if (link.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });
-      const pr = await github.createPullRequest(link.token, link.owner, link.repo, {
+      return await link.prov.createChangeRequest(link.conn, link.link.fullName, {
         title: (req.body?.title || '').trim() || `Update ${link.remoteBranch}`,
         head: link.remoteBranch,
         base: repo.defaultBranch,
       });
-      return pr;
-    } catch (err: any) { return reply.code(400).send({ error: `Could not open PR: ${err.message}` }); }
+    } catch (err: any) { return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` }); }
   });
 
   // ---------- AI error fix ----------

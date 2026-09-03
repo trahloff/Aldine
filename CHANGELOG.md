@@ -6,6 +6,78 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Deleting a project now really deletes its GitLab project.** One `DELETE` is
+  not enough: GitLab only *marks* a project and keeps it in the group for the
+  instance's retention period (30 days on GitLab.com, and the default on every
+  tier since GitLab 18.0), so the repo outlived the project it belonged to.
+  Aldine now follows up with the immediate purge, addressing the project by id
+  because marking it renames its path. Where an instance reserves immediate
+  deletion for admins, the delete reports the date GitLab will remove it rather
+  than claiming success. A delete against an unreachable GitLab no longer counts
+  as done — it keeps the link so the purge sweep retries it.
+- **Projects mirrored by an earlier build no longer leak their GitLab project.**
+  Their stored link predates the flag recording that Aldine created the repo, and
+  the absent flag was read as "imported, leave it alone" — so their repos were
+  never deleted, and the log blamed an import that never happened. An unflagged
+  link inside the configured group is now recognised as Aldine's; imports record
+  the flag explicitly, so an absent one only ever means an older build.
+- **The result of the remote delete is reported.** It was only ever a server log
+  line, which made a repo left behind look identical to a successful delete. The
+  home screen now says when the remote was kept, and why.
+- **Syncing works on a service-token deployment.** Push, pull, branch switching
+  and merge requests demanded a *personal* GitLab connection, while project
+  creation, autopush and templates all fall back to `GITLAB_TOKEN` — so a
+  deployment whose users never connect GitLab individually could create and
+  auto-push projects but got "Connect GitLab to sync" from every button in the
+  sync UI. Sync now uses the same ladder as autopush: the caller's own token,
+  then the one that created the link, then the service account. Listing and
+  importing repos still require a personal connection — the service token there
+  would widen which repositories a user can reach, not just how they authenticate.
+
+### Added
+- **Project templates can live in a GitLab group.** Set `GITLAB_TEMPLATE_GROUP`
+  and every project in that group (and its subgroups) is offered as a starting
+  point in the New project dialog, cloned to seed the new project. Templates get
+  version control and merge requests, and the dialog re-reads the group each time
+  it opens, so a template pushed to the group is available immediately. The tile
+  takes its label and description from the GitLab project, or from an optional
+  `template.json` committed at the repo root. Independent of
+  `GITLAB_DEFAULT_GROUP`: templates can come from GitLab whether or not new
+  projects are mirrored there. Copies, never links — the new project keeps no
+  connection to the template repo, so editing a template never rewrites projects
+  made from it. An unreachable GitLab leaves the dialog usable with whatever
+  local templates exist.
+- **Templates can fill in the project name, author and date.** A template may
+  use `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}` and `{{YEAR}}` in its text
+  files; anything else in braces is left alone, so ordinary LaTeX passes through
+  untouched.
+- **A GitLab group can be the home for new projects.** Set `GITLAB_TOKEN` and
+  `GITLAB_DEFAULT_GROUP` and every new project is created inside that group and
+  pushed there, with a "Save in" picker in the New project modal for choosing or
+  creating a subgroup without leaving Aldine. GitLab is a **mirror**, not the
+  store: the local repository stays authoritative, so a GitLab outage never
+  blocks anyone — creation degrades to a local project with a Retry banner, and
+  the next attempt sends it to the group it was meant for. Off unless both
+  variables are set. ZIP imports (an Overleaf export, say) are uploaded the same
+  way, after their binary assets are committed, so the mirror is complete rather
+  than short a figure.
+- **Trashing a project deletes its GitLab project**, so a nominated group doesn't
+  collect repos for projects nobody can see. Only repos Aldine created are ever
+  deleted — one imported from GitLab is left alone. Restoring from the trash
+  re-creates the project from the local repository, which survives intact, so the
+  content comes back; GitLab-side merge requests, issues and CI history do not.
+  The delete is best-effort and never blocks trashing, and the 30-day purge
+  sweep retries any that failed. Renaming a project still does not rename it in
+  GitLab — that would break existing clone URLs.
+- **Import from GitLab**, with the same push/pull/branch parity as GitHub, for
+  both gitlab.com and self-hosted instances. Connect with a personal access
+  token (scope `api`) or, if the deployment sets `GITLAB_CLIENT_ID`/`SECRET`, a
+  one-click OAuth connect. A GitLab-linked project opens *merge requests* where
+  a GitHub one opens pull requests. The home screen and first-run onboarding
+  offer one import tile per configured host, so a deployment with only GitHub
+  configured looks exactly as it did.
+
 ### Security
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
   `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
@@ -17,12 +89,58 @@ All notable changes to Aldine are documented here. The format follows
   names.
 
 ### Changed
+- **A new project must be named.** The New project dialog's Create button stays
+  disabled until you type one, and `POST /api/projects` rejects a blank name
+  instead of defaulting to "Untitled Project" — a name nobody chose, that
+  everybody then renamed, and that a template's `{{PROJECT_NAME}}` would have
+  baked into the document. Names are trimmed and capped at 200 characters, the
+  same rules rename has always used. ZIP and repository imports are unaffected:
+  they take their name from the file or repo. Scripted callers that relied on the
+  default now need to send a `name`.
+- **Breaking (HTTP API).** The remote-sync endpoints moved from
+  `/api/github/*` to `/api/remotes/:provider/*`, and from
+  `/api/projects/:id/github/*` to `/api/projects/:id/remote/*` (`…/pr` is now
+  `…/change-request`). The old paths are gone, so anything scripting against
+  them needs updating. The OAuth connect callback now returns to
+  `/?remote=<provider>` rather than `/?github=connected`.
+- **Action required if you use GitHub sync OAuth.** The callback path moved from
+  `/api/github/oauth/callback` to `/api/remotes/github/oauth/callback`, so the
+  authorization callback URL registered in your GitHub OAuth app must be
+  updated or "Connect with GitHub" will fail. Personal access tokens are
+  unaffected.
+- **Auto-sync moved from per-browser to per-project.** It was a `localStorage`
+  flag driving a timer in the browser, which stopped when the tab closed; the
+  push now happens on the server after the debounced autocommit, and the setting
+  is shared by the project's collaborators. Anyone who had it enabled in their
+  browser will find it off after upgrading — enable it once per project instead.
+  It defaults on only for auto-provisioned projects, so existing GitHub-linked
+  projects never start pushing unbidden.
+- Project metadata gained `remote`, which replaces `github` and records which
+  host the project is linked to. Existing projects are read through a
+  compatibility shim and upgraded in place on their next write, so no migration
+  is needed and a downgrade keeps working until something writes.
 - `deploy/papyr-backup.service` / `.timer` are renamed to `aldine-backup.*`, the
   names the runbook has always used, so the install commands work as written. If
   you installed the old units, disable and delete them or both timers will run.
 - `docker-compose.full.yml` passes `COMPILE_TIMEOUT_MS` and
   `MAX_CONCURRENT_COMPILES` through from `.env` instead of hardcoding the
   timeout.
+- `template.json` is now optional in `TEMPLATES_DIR`: any subdirectory holding a
+  `.tex` file is a template, named after its folder, so a directory of papers
+  works as-is. A folder that *is* skipped now says why in the log instead of
+  vanishing silently. `docker-compose.full.yml` passes `TEMPLATES_DIR` through
+  and carries a commented mount for it, so a container deploy can use its own
+  templates without rebuilding the image.
+
+### Fixed
+- A custom `TEMPLATES_DIR` without a template named `article` made **New
+  project** fail outright: the dialog's selection was hardcoded to that id, so
+  Create posted a template the server had never heard of. The dialog now selects
+  the first template a deployment actually offers.
+- Binary files in a template (a logo, a bundled PDF) were read as UTF-8 and
+  written back corrupted. Templates now carry bytes through untouched.
+- A template shipping its own `.gitignore` had it overwritten by Aldine's. Both
+  are kept now: Aldine appends only the build-artefact lines that are missing.
 
 ### Added
 - Download PDF button in the preview toolbar — saves the compiled PDF named

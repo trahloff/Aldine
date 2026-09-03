@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test:github": "tsx test/github-sync.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
-    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs"
+    "test:unit": "tsx test/redis-client.test.mjs && tsx test/wordcount.test.mjs && tsx test/gitlab-client.test.mjs && tsx test/remote-link.test.mjs && tsx test/gitlab-service.test.mjs && tsx test/autopush.test.mjs && tsx test/project-name.test.mjs",
+    "test:gitlab": "tsx test/gitlab-sync.integration.mjs && tsx test/gitlab-namespaces.integration.mjs && tsx test/gitlab-autoprovision.integration.mjs && tsx test/gitlab-templates.integration.mjs && tsx test/gitlab-delete.integration.mjs",
+    "test": "npm run test:unit && npm run test:github && npm run test:gitlab && npm run test:db"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
