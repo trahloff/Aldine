@@ -67,7 +67,7 @@ export class ApiError extends Error {
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+    headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
     ...init,
   });
   if (!res.ok) {
@@ -90,8 +90,14 @@ export const api = {
   createProject: (name: string, files?: Record<string, string>, template?: string) =>
     req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
-  importZip: (name: string, zipBase64: string) =>
-    req<ImportedProject>('/api/projects/import', { method: 'POST', body: JSON.stringify({ name, zipBase64 }) }),
+  /** Multipart so the browser streams the File itself; the JSON + base64
+   *  shape stays on the server for API clients. */
+  importZip: (name: string, zip: File) => {
+    const form = new FormData();
+    form.append('name', name);
+    form.append('zip', zip, zip.name);
+    return req<ImportedProject>('/api/projects/import', { method: 'POST', body: form });
+  },
   compilerInfo: () => req<CompilerInfo>('/api/compiler'),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
   patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>>) =>

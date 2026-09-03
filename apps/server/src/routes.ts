@@ -15,9 +15,10 @@ import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listTemplates, templateFiles } from './templates.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
-import { unzip } from './unzip.js';
+import { unzip, zipEntryCount, ZipError } from './unzip.js';
 import { guessRoot, detectRoot } from './root.js';
 import { detectEngine, decodeText } from './detect.js';
+import { multipartBoundary, parseMultipart } from './multipart.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
@@ -432,32 +433,63 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // the project auth hook; it discloses nothing beyond a TeX Live release.
   app.get('/api/compiler', async () => compilerInfo());
 
-  // Import an Overleaf/project ZIP (base64) as a new project.
-  // The ZIP arrives base64-encoded inside JSON (×4/3 of the raw size), so the
-  // route needs its own body limit: the global 32 MB one would cap imports at
-  // ~24 MB while the UI promises IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's
-  // client_max_body_size must stay ≥ this figure.
+  // Import an Overleaf/project ZIP as a new project. Two body shapes: JSON
+  // { name, zipBase64 } for API clients, and multipart/form-data with a `zip`
+  // file part (what the web client sends, so the browser holds one copy of
+  // the archive instead of file + base64 + JSON string + request body).
+  // Base64 is 4/3 of the raw size, so the route needs its own body limit: the
+  // global 32 MB one would cap imports at ~24 MB while the UI promises
+  // IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's client_max_body_size must stay
+  // >= this figure.
   const importBodyLimit = Math.ceil(IMPORT_MAX_ZIP_BYTES * 4 / 3) + 1024 * 1024;
-  app.post<{ Body: { name?: string; zipBase64: string } }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
-    const { name, zipBase64 } = req.body || {};
-    if (!zipBase64) return reply.code(400).send({ error: 'zipBase64 required' });
+  app.addContentTypeParser('multipart/form-data', { parseAs: 'buffer' }, (req, body: Buffer, done) => {
+    try {
+      const boundary = multipartBoundary(req.headers['content-type']);
+      if (!boundary) throw new Error('multipart/form-data without a boundary');
+      const parsed: ImportBody = {};
+      for (const part of parseMultipart(body, boundary)) {
+        if (part.filename !== undefined || part.name === 'zip') { parsed.zip = part.data; parsed.zipName = part.filename; }
+        else if (part.name === 'name') parsed.name = part.data.toString('utf8');
+      }
+      done(null, parsed);
+    } catch (err: any) {
+      done(Object.assign(err, { statusCode: 400 }), undefined);
+    }
+  });
+  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string };
+  app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
+    const body = req.body || {};
+    let buf: Buffer;
+    if (Buffer.isBuffer(body.zip)) buf = body.zip;
+    else if (typeof body.zipBase64 === 'string' && body.zipBase64) buf = Buffer.from(body.zipBase64, 'base64');
+    else return reply.code(400).send({ error: 'zipBase64 (JSON) or a zip file part (multipart/form-data) required' });
+    const name = body.name || (body.zipName ? body.zipName.replace(/\.zip$/i, '') : '') || 'Imported project';
+    // Every failure is one info line with what a self-hoster needs to debug an
+    // import without the archive: the reason, its size and entry count. Never
+    // an entry's contents.
+    let entryCount: number | null | undefined;
+    const fail = (status: number, error: string) => {
+      if (entryCount === undefined) entryCount = zipEntryCount(buf);
+      req.log.info({ import: { reason: error, zipBytes: buf.length, entries: entryCount, multipart: Buffer.isBuffer(body.zip) } }, 'ZIP import failed');
+      return reply.code(status).send({ error });
+    };
+    if (buf.length > IMPORT_MAX_ZIP_BYTES) {
+      return fail(413, `ZIP is ${mb(buf.length)} MB; the limit is ${mb(IMPORT_MAX_ZIP_BYTES)} MB`);
+    }
     let created: store.ProjectMeta | null = null;
     try {
-      const buf = Buffer.from(zipBase64, 'base64');
-      if (buf.length > IMPORT_MAX_ZIP_BYTES) {
-        return reply.code(413).send({ error: `ZIP is ${mb(buf.length)} MB; the limit is ${mb(IMPORT_MAX_ZIP_BYTES)} MB` });
-      }
       const entries = unzip(buf);
+      entryCount = Object.keys(entries).length;
       // Every entry is placed (or rejected) before the project exists, so a bad
       // path can never leave a half-imported project behind.
       const files: Record<string, Buffer> = {};
       for (const [entry, data] of Object.entries(entries)) {
         const p = importPath(entry);
-        if (p === null) return reply.code(400).send({ error: `ZIP entry "${entry}" points outside the project` });
+        if (p === null) return fail(400, `ZIP entry "${entry}" points outside the project`);
         if (p.startsWith('__MACOSX/') || isHiddenPath(p)) continue;
         files[p] = data;
       }
-      if (!Object.keys(files).length) return reply.code(400).send({ error: 'ZIP had no usable files' });
+      if (!Object.keys(files).length) return fail(400, 'ZIP had no usable files');
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
@@ -471,7 +503,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           if (decoded.transcoded) transcoded.push(p);
         } else binFiles.push(p);
       }
-      const meta = await store.createProject(name || 'Imported project', textFiles, reqUser(req)?.id);
+      const meta = await store.createProject(name, textFiles, reqUser(req)?.id);
       created = meta;
       for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
       if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
@@ -485,7 +517,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded } };
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
-      return reply.code(400).send({ error: `Could not import ZIP: ${err.message}` });
+      if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
+      return fail(400, `Could not import ZIP: ${err.message}`);
     }
   });
 

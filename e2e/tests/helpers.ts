@@ -1,7 +1,6 @@
 import { APIRequestContext, Page, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 
 export const PAPER_DIR = process.env.PAPER_DIR || path.resolve(__dirname, '..', 'fixtures', 'demo-paper');
 
@@ -66,45 +65,6 @@ export async function cleanup(request: APIRequestContext, id: string): Promise<v
   await request.delete(`/api/projects/${id}?permanent=1`).catch(() => {});
 }
 
-/**
- * A stored (method 0) ZIP with entry names written verbatim — the `zip` CLI
- * refuses the `../x` names an import test needs to send.
- */
-export function buildZip(entries: Record<string, Buffer | string>): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-  for (const [name, raw] of Object.entries(entries)) {
-    const data = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-    const nameBuf = Buffer.from(name, 'utf8');
-    const crc = zlib.crc32(data);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(data.length, 20);
-    central.writeUInt32LE(data.length, 24);
-    central.writeUInt16LE(nameBuf.length, 28);
-    central.writeUInt32LE(offset, 42);
-    locals.push(local, nameBuf, data);
-    centrals.push(central, nameBuf);
-    offset += local.length + nameBuf.length + data.length;
-  }
-  const count = Object.keys(entries).length;
-  const cdSize = centrals.reduce((n, b) => n + b.length, 0);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(count, 8);
-  eocd.writeUInt16LE(count, 10);
-  eocd.writeUInt32LE(cdSize, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, ...centrals, eocd]);
-}
+/** ZIP fixtures built in-test (raw names, foreign methods, encryption flag,
+ *  ZIP64): the server unit tests own the builder. */
+export { buildZip, unicodePathExtra } from '../../apps/server/test/zip.mjs';
