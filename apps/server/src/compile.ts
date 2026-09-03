@@ -119,12 +119,23 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   // end, so the document is complete and the errors sit in the list beside
   // it. With stopOnFirstError the PDF on disk is truncated at the first error,
   // so only an error-free run is shown and the previous one stays on screen.
+  const previous = lastGoodPdfUrl.get(key) ?? null;
   if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
     const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
     lastGoodPdfUrl.set(key, { url: pdfUrl, compileId });
     return { ...body, pdfUrl, compileId };
   }
-  const previous = lastGoodPdfUrl.get(key) ?? null;
+  // latexmk found nothing to redo: the PDF on disk is this run's result even
+  // though nothing was rewritten. It keeps its URL and compileId — a fresh
+  // cache-buster would refetch identical bytes and unbind SyncTeX, and
+  // calling it stale would flag every typeset of an unchanged document.
+  if (body.ok && body.pdf) {
+    const id = previous?.compileId ?? compileId;
+    const pdfUrl = previous?.url ?? `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
+    if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id });
+    if (!lastSynctexId.has(key) && body.synctex) lastSynctexId.set(key, id);
+    return { ...body, pdfUrl, compileId: id };
+  }
   return { ...body, pdfUrl: previous?.url ?? null, pdfStale: previous !== null, compileId: previous?.compileId };
 }
 
