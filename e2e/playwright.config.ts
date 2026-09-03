@@ -42,7 +42,9 @@ export default defineConfig({
       // in this suite, so /mcp runs in static-token mode).
       // ALDINE_AGENT_PRESENCE_TTL_MS shortens the 60 s agent-presence expiry so
       // the session-review toast test (16-agent-ui) doesn't idle for a minute.
-      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp ALDINE_AGENT_PRESENCE_TTL_MS=5000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      // build:viewer emits apps/server/assets/pdf-viewer.html, which
+      // 18-pdf-viewer loads directly.
+      command: `npm run build -w apps/web && npm run build:viewer -w apps/server && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp ALDINE_AGENT_PRESENCE_TTL_MS=5000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,

@@ -134,6 +134,21 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(okCompile.isError).toBeFalsy();
       expect(okCompile.body.ok).toBe(true);
       expect(okCompile.body.pdfUrl).toContain(`/api/projects/${id}/output`);
+      // The link is signed, absolute, and opens with no session —
+      // the MCP App viewer fetches it from a cookieless sandbox.
+      expect(okCompile.body.pdfUrl).toMatch(/^https?:\/\/.+[?&]sig=/);
+      expect(okCompile.body.pdfStale).toBe(false);
+      expect(okCompile.body.pages).toBeGreaterThan(0);
+      expect(okCompile.body.pdfFile).toBe('main.pdf');
+      expect(Date.parse(okCompile.body.typesetAt)).toBeGreaterThan(0);
+      const anon = await fetch(okCompile.body.pdfUrl);
+      expect(anon.status).toBe(200);
+      expect(anon.headers.get('content-type')).toContain('application/pdf');
+      expect(anon.headers.get('access-control-allow-origin')).toBe('*');
+      const again = await call(client, 'get_pdf_url', { project: id });
+      expect(again.isError).toBeFalsy();
+      expect(again.body.pages).toBe(okCompile.body.pages);
+      expect((await fetch(again.body.pdfUrl)).status).toBe(200);
       expect(okCompile.body.deepLink).toContain(`/p/${id}`);
       expect(typeof okCompile.body.durationMs).toBe('number');
       expect(okCompile.body.timedOut).toBe(false);
