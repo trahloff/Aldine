@@ -1,6 +1,13 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 
-export interface ToastAction { label: string; onClick: () => void; testId?: string }
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+  testId?: string;
+  /** Stay until acted on or dismissed — for a review prompt that arrives
+   *  when nobody is looking at the screen. */
+  sticky?: boolean;
+}
 
 interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok'; action?: ToastAction }
 
@@ -15,7 +22,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const push = useCallback((text: string, kind: Toast['kind'] = 'info', action?: ToastAction) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind, action }]);
-    // a toast carrying an action needs time to be acted on
+    // a toast carrying an action needs time to be acted on; a sticky one waits
+    if (action?.sticky) return;
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : 3400);
   }, []);
   return (
@@ -37,6 +45,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               >
                 {t.action.label}
               </button>
+            )}
+            {t.action?.sticky && (
+              <button className="btn btn--ghost btn--small" aria-label="Dismiss" data-testid="toast-dismiss" onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}>×</button>
             )}
           </div>
         ))}

@@ -450,7 +450,7 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
   });
 
   server.registerTool('compile', {
-    description: 'Typeset the project with latexmk: parsed errors [{type,file,line,message}], a ≤4 KB log tail, a PDF link, and a deep link into Aldine. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A compiler-not-responding, quota, or typeset-already-running error is for the user to act on — relay it, do not retry.',
+    description: 'Typeset the project with latexmk: parsed errors [{type,file,line,message}] (errors first, then warnings), a ≤4 KB log tail on failure, a PDF link with its page count, pdfStale (true = this run wrote no PDF, the link is the previous one), and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A compiler-not-responding, quota, or typeset-already-running error is for the user to act on — relay it, do not retry.',
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }, extra) => {
     let key: string | null = null;
@@ -499,11 +499,20 @@ export function registerTools(server: McpServer, identity: McpIdentity): void {
       if (user) await usage.recordCompile(user.id, result.durationMs || 0);
       const base = (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '');
       const deepLink = `${base}/p/${meta.id}${branch !== 'main' ? `?branch=${encodeURIComponent(branch)}` : ''}`;
+      // Errors before warnings: the model acts on the first item, and in log
+      // order the one real error can sit behind a dozen rerun warnings.
+      const rank = (t: string) => (t === 'error' ? 0 : t === 'typesetting' ? 1 : 2);
+      const errors = [...result.errors].sort((x, y) => rank(x.type) - rank(y.type));
+      const pages = /Output written on .*\((\d+) pages?,/.exec(result.log);
       return ok({
         ok: result.ok,
-        errors: result.errors,
-        logTail: logTail(result.log),
+        errors,
+        // A clean run's tail is font-loading noise; only a failed run needs it.
+        logTail: result.ok ? '' : logTail(result.log),
         pdfUrl: result.pdfUrl ? `${base}${result.pdfUrl}` : null,
+        // True when this run wrote no PDF and pdfUrl is the previous one.
+        pdfStale: !!result.pdfStale,
+        pages: pages ? Number(pages[1]) : null,
         deepLink,
         durationMs: result.durationMs,
         timedOut: !!result.timedOut,

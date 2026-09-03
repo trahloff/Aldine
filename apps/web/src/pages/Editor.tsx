@@ -236,6 +236,9 @@ export default function Editor() {
         toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
+          // Arrives a minute after the last edit, when the person has usually
+          // looked away — it must wait for them.
+          sticky: true,
           onClick: () => setAgentReview({ patch, files, hashes: session.map((c) => c.hash) }),
         });
       } catch { /* history unavailable — nothing to review */ }

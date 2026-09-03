@@ -132,6 +132,51 @@ Operational:
 - [ ] `RL_OAUTH_*` defaults were not hit during the manual run (no 429 in
       the logs).
 
+## Observed in real sessions
+
+### 2026-09-03 · session 1 · Claude Code → staging (OAuth, loopback) · project "Dogfood: Agent API session 1"
+
+Loop: create_project (article) → structure/read/list_citations/list_labels →
+references_add (arXiv id) ∥ edit_file (5 edits) → compile → inject an error →
+compile → fix → batch_write (new sections/ file + \input) → compile. Wall time
+about four minutes; compiles 4–9 s.
+
+Worked first time: anchored edits with a snippet back; stale_anchor with three
+ranked candidates; references_add resolved the arXiv id to `vaswani2017`;
+wordcount; labels picked up the new file after batch_write; batch_write landed
+as one named commit; ping reports the user.
+
+Friction, ranked:
+1. `contentVersion` is per branch, not per file. references_add wrote
+   references.bib and bumped it, so a simultaneous edit_file on main.tex with
+   the version from its own read got `version_conflict` although main.tex had
+   not changed. A model working two tools in parallel hits this every time.
+   Options: per-file versions in the read result, or a conflict check on the
+   file's own hash. (Design change; not applied.)
+2. A clean compile returned 4 KB of font-loading log as `logTail`. Applied:
+   empty tail on success.
+3. `errors` came in log order; the one real error was item four behind rerun
+   and citation warnings. Applied: errors first, then warnings.
+4. With errors present the PDF is the whole document (run-to-end is on) but
+   latexmk skips biber and the reruns, so citations and cross-references are
+   undefined and the bibliography is empty. The result gave no hint. Applied:
+   description tells the model to say so; `pdfStale` and `pages` added to the
+   result so a model can report "2 pages, bibliography not rebuilt".
+5. Every result echoes the ≤4 KB tail even when the model only wants the
+   parsed errors; with 2 above this is now only on failure.
+
+Presence and review, observed with the editor open in Chrome (afternoon):
+- The violet spark avatar joins the header the moment an edit lands and
+  leaves 60 s after the last one (presence TTL). Edits show live in the
+  editor; the History tab lists them as Claude with the violet dot.
+- The session-review toast ("Claude edited 1 file · Review") DID appear —
+  64 s after the last edit, for 8 s, bottom centre. Toby missed it in his
+  own test and so did the first screenshot pass here; only a screenshot at
+  t+64 s caught it. Applied: the review toast is sticky (stays until Review
+  or × is clicked). Still open: 64 s is long for "the session ended" in a
+  chat flow; a 30 s TTL would halve it but a compile in the same turn can
+  take longer than that, which would split one turn into two reviews.
+
 ## Applied tuning
 
 - 2026-09-02 · all tool descriptions · Rewritten as the model's API docs
