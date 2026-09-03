@@ -7,6 +7,59 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Signed PDF links for the MCP connector: `compile` now returns a `pdfUrl`
+  that opens without a session for 15 minutes (HMAC-signed, one artifact on
+  one branch, `no-store`), plus `pages`, `typesetAt`, `pdfFile` and
+  `pdfStale`; parsed errors are capped at 50 with `errorsTotal`. A new
+  read-only `get_pdf_url` tool hands out a fresh link for the last typeset
+  PDF without recompiling. A failed run whose engine removed the PDF (what
+  pdfTeX does under stop-on-first-error once a page has shipped out), or
+  that halted while writing it, reports `pdfStale:true` and no link rather
+  than a 404 or the truncated file — also right after a server restart —
+  and `get_pdf_url` refuses a halted run's partial file until the next
+  compile. Compiling an unchanged document is a success under the same
+  link, not a "previous PDF". Overfull/Underfull box reports are left out
+  of `errors` and real errors are listed before warnings, so a long
+  document's box reports can never push the fixable error past the cap.
+  The signing secret comes from `ALDINE_SIGNING_SECRET`
+  (at least 32 characters, checked at boot by the server and by the stdio
+  transport) or is generated once into `META_DIR` (published atomically,
+  with an exclusive-create fallback on volumes without hard links);
+  verification applies to `GET /api/projects/:id/output` only,
+  signed responses (refusals included) answer CORS for the viewer's sandbox,
+  and a bad or expired signature is refused even on a signed-in browser. The server lists the MCP App viewer resource
+  `ui://aldine/pdf-viewer` (served from `apps/server/assets/pdf-viewer.html`
+  when built; `compile` and `get_pdf_url` point at it only then).
+- The PDF viewer itself (MCP App): `compile` and `get_pdf_url` results now
+  render inline in hosts that speak `io.modelcontextprotocol/ui` (claude.ai,
+  Claude Desktop, Cowork; other hosts get the link in the text result). One
+  self-contained HTML file
+  (`npm run build:viewer -w apps/server`, part of `npm run build`; ~2.1 MB
+  with pdf.js and its worker inlined, the worker running on the main thread
+  because the sandbox CSP allows no blob: scripts or external origins) with a
+  status row (file · branch · typeset time · pages, plus a "previous PDF"
+  marker when a failed run wrote none; the error count is errors only,
+  never warnings), a collapsed amber error strip whose
+  `file:line` rows deep-link into Aldine, a fit-width page well that
+  rasterizes only the pages near the viewport (page 1 first), page and zoom
+  controls, a fullscreen toggle where the host offers one, and "Open in
+  Aldine" as the single exit. A run that logged errors but still wrote the
+  PDF shows that PDF with the error strip open and the error count in the
+  status row; a run that wrote none shows status, errors and the exit, with
+  the previous PDF one click away — never a blank frame; an expired link
+  says so. Chrome follows the host theme
+  (its CSS variables, then `prefers-color-scheme`); pages stay white. Loaded
+  outside a host it takes the same tool result from `?payload=<base64 JSON>`
+  or `postMessage({ type: 'aldine-pdf-viewer/tool-result', result })`, which
+  is how `e2e/tests/18-pdf-viewer.spec.ts` drives it against a real signed
+  link. PDFs over 50 MB are not fetched into the chat column.
+- Deep links into the editor: `/p/<id>?file=<path>&line=<n>` opens that
+  file (exact path first, then a suffix match, `./` prefixes tolerated),
+  scrolls the line into view and flashes it once the collab doc has synced,
+  then drops the two params from the URL so a reload or a shared link does
+  not replay the jump. A file that is not in the project gets a toast and
+  the root file; a `line` alone means the root file. This is what the PDF
+  viewer's error rows and "Open in Aldine" point at.
 - OAuth 2.1 for the MCP connector (auth deployments): claude.ai and Claude
   Code now connect with a Connect button instead of a pasted token. Aldine
   serves the RFC 9728 / RFC 8414 discovery documents, a consent page at

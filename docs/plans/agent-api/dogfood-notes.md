@@ -176,6 +176,62 @@ Presence and review, observed with the editor open in Chrome (afternoon):
   or × is clicked). Still open: 64 s is long for "the session ended" in a
   chat flow; a 30 s TTL would halve it but a compile in the same turn can
   take longer than that, which would split one turn into two reviews.
+## PDF in chat (Phase 3, 04-phase3-pdf-app.md §3.4) — manual matrix
+
+The viewer needs an Aldine the host sandbox can reach: the iframe's fetch
+goes to `ALDINE_PUBLIC_URL`, so `localhost` never works from claude.ai —
+use staging or a tunnel, and set `ALDINE_PUBLIC_URL` to that origin (the
+CSP allowlists exactly it). Tick with the date; a failure becomes an
+"Observed" bullet with the exact symptom and the host.
+
+claude.ai web (Chrome + Safari):
+- [ ] "Typeset my paper" → the compile card renders the PDF inline: status
+      row shows `main.pdf · main · typeset <time> · N pages`, page 1 within
+      ~2 s of the card appearing, pages white in both the light and dark
+      claude.ai themes.
+- [ ] Scroll the well → later pages rasterize on approach, none stay blank;
+      ‹ › and the page counter track the scroll.
+- [ ] Zoom − / + → 100 % is fit-width in the ~750 px column; 125 % adds a
+      horizontal scroll inside the well, never on the chat page.
+- [ ] "Open in Aldine" opens the project in a new tab (host link flow), the
+      chat stays put.
+- [ ] Ask for the PDF again 20 min later → the model calls `get_pdf_url`
+      (not `compile`), the new card renders; the old card shows "This PDF
+      link has expired" with a working Open in Aldine, not a blank frame.
+- [ ] Failing compile (add `\thisisnotacommand`): the card shows
+      "Typesetting failed", the amber strip is expanded with `main.tex:N`
+      rows, no canvas; a row click opens Aldine at that line, flashes it,
+      and the URL drops `?file=&line=`; "Show the previous PDF" (when one
+      exists) loads it in place with the "previous PDF" marker.
+- [ ] Figure-heavy ~10 MB PDF (the demo paper with the full-resolution
+      figures, or a scanned appendix): first page still within ~3 s,
+      scrolling stays smooth, memory in the tab does not climb page by page
+      (bitmaps are released off-screen); note the actual size and timing.
+- [ ] Mobile web (or the narrowest window claude.ai allows): the well
+      shrinks with `containerDimensions`, controls stay reachable; if the
+      host offers no app frame, the text result with `pdfUrl` + `deepLink`
+      is what the model shows.
+- [ ] Two compiles in one conversation → each card keeps its own PDF (the
+      second card must not hydrate the first).
+
+Claude Desktop (macOS):
+- [ ] Same first three rows as web; note whether the app frame is offered at
+      all and whether the fullscreen toggle (`viewer-expand`) appears.
+- [ ] Open in Aldine hands off to the default browser.
+
+Cowork:
+- [ ] Compile from a Cowork task → the card renders; error-row deep link
+      opens the browser at the line.
+
+Server side, once per host:
+- [ ] The compile card's `pdfUrl` fetch shows in the server log as an
+      anonymous `GET /output` with `sig`, `access-control-allow-origin: *`,
+      one request per card (no retry storm); nothing else in the log carries
+      `sig=`.
+- [ ] `ALDINE_SIGNING_SECRET` unset → `META_DIR/output-signing-secret`
+      exists (0600) and survives a redeploy; set → no file.
+- [ ] Record the GIF (web, light theme): typeset → card → scroll → error
+      strip → deep link.
 
 ## Applied tuning
 

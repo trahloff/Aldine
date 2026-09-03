@@ -775,6 +775,14 @@
   to { background: rgba(167, 139, 250, 0); }
 }
 
+/* Deep-link flash (?file=&line=): the line decoration is removed after ~1.6 s,
+   the animation fades the accent tint out before that. */
+.cm-deeplink-flash { animation: deeplink-flash 1.6s var(--ease) forwards; }
+@keyframes deeplink-flash {
+  from { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+  to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
 /* review panel */
 .review__item { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
 .review__item--resolved { opacity: 0.62; }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -136,6 +137,45 @@ export default function Editor() {
     }
   }, [id, branch, toast, refreshDocWords]);
 
+  // Deep link (/p/:id?file=<path>&line=<n>, the PDF viewer's click-throughs):
+  // open the file at that line and flash it, then drop the two params so a
+  // reload or a shared URL does not replay the jump. Read once at mount; the
+  // pane defers the jump until its collab doc has synced.
+  const deepLinkRef = useRef(params.has('file') || params.has('line')
+    ? { file: params.get('file') || '', line: Math.floor(Number(params.get('line'))) || null }
+    : null);
+  const applyDeepLink = (p: ProjectDetail, f: TreeEntry[]) => {
+    const dl = deepLinkRef.current;
+    if (!dl) return;
+    deepLinkRef.current = null;
+    const norm = normalizeDeepLinkPath(dl.file);
+    const match = resolveDeepLinkFile(f, norm);
+    const target = match && 'path' in match ? match.path : null;
+    if (norm && !target) {
+      toast(match && 'ambiguous' in match
+        ? `"${norm}" matches ${match.ambiguous.length} files (${match.ambiguous.join(', ')}) — pick one in the file tree`
+        : `"${norm}" is not in this project`, 'error');
+    }
+    const open = target ?? (dl.line != null ? p.rootFile : null);
+    if (open && f.some((e) => e.type === 'file' && e.path === open)) setActiveFile(open);
+    // A line without a file means the root file; a line for a file that is
+    // not here means nothing (line 12 of a missing chapter is not line 12 of main).
+    const line = target || !norm ? dl.line : null;
+    if (line != null && line > 0) {
+      // The pane for `open` mounts on the next render; poll briefly for it.
+      const jump = (tries: number) => {
+        const code = codeRef.current;
+        if (code) code.gotoLine(line, { flash: true });
+        else if (tries < 40) setTimeout(() => jump(tries + 1), 50);
+      };
+      requestAnimationFrame(() => jump(0));
+    }
+    const next = new URLSearchParams(params);
+    next.delete('file');
+    next.delete('line');
+    setParams(next, { replace: true });
+  };
+
   useEffect(() => {
     (async () => {
       const p = await loadProject();
@@ -143,6 +183,7 @@ export default function Editor() {
       const f = await loadFiles();
       const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => e.type === 'file' && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
+      applyDeepLink(p, f);
       // One-time nudge per project: work on an unlinked project exists only on
       // this server until it's published to GitHub. Only the owner can publish,
       // so only the owner is nudged.

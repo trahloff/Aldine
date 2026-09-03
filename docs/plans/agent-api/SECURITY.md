@@ -46,6 +46,49 @@ Mitigations (all server-side):
   enforced, 15-min TTL, no-store. The signer must never generalize to arbitrary
   files — that would bypass authz one convenience at a time. Signing secret lives
   in META_DIR/env, never DATA_DIR (compiler must not read it).
+- Implemented (`output-signing.ts`): the signer itself refuses non-`.aldine-out`
+  paths; a link that carries a signature is judged by the signature alone —
+  a bad or expired one is 403 even on a signed-in browser (no fall-through to
+  the cookie), so a tampered link can never borrow a session. Signed
+  responses (their preflight and the 403 refusals included, so the sandboxed
+  viewer can tell "expired" from "unreachable") answer CORS with `*`: the
+  URL is the credential, and `*` adds nothing a curl of the same URL lacks;
+  the cookie path gets no CORS header.
+- Threat rows (Phase 3, with the test that pins each):
+  - **Leaked signed URL** (chat transcript, host logs, screenshot, a shared
+    conversation). Blast radius: read of one compile artifact on one branch
+    for ≤15 min, `no-store`, no session, no write path, nothing else on the
+    server accepts the signature. Accepted; the link is meant to be handed to
+    the user. Mitigation if it ever matters: `ALDINE_SIGNING_SECRET` rotation
+    invalidates every outstanding link at once. Pinned by
+    `test/output-signing.test.mjs` (TTL, wrong branch/project/artifact,
+    tampered/extended `exp`) and `test/signed-url.test.mjs` (`exp`/`sig` on
+    `/file`, `/files`, the project route, `compile` and `DELETE` are never an
+    authorization; an empty `sig` does not fall through to anonymous).
+  - **Signer generalization.** The only way to get a signature is
+    `signOutputUrl`, which throws on any path outside `.aldine-out` and is
+    called from the two PDF tools only; `verifyOutputSignature` re-checks
+    the path rule before comparing. A future "signed link for any file"
+    convenience must be refused in review. Pinned by both tests above
+    (signer refuses `main.tex` and `.aldine-out/../main.tex`; a hand-signed
+    query for `main.tex` on `/output` is 403 with no bytes served).
+  - **Viewer CSP / origin.** The resource declares
+    `_meta.ui.csp.connectDomains = [<instance origin>]` and nothing else
+    (`test/mcp-tools.test.mjs`); the viewer is one inlined file with no
+    external scripts, fonts or images, the worker runs on the main thread
+    (no `blob:`), and the PDF fetch is `credentials: 'omit'`, so a
+    compromised chat page learns nothing beyond the link it already holds.
+    `ALDINE_PUBLIC_URL` must be the real public origin on a deployment —
+    a wrong value makes the fetch fail closed (CSP), never open.
+  - **Secret at rest / strength.** Generated into
+    `META_DIR/output-signing-secret` (0600, never `DATA_DIR`) via a private
+    temp file + atomic `link()`, so two nodes booting on one volume never
+    read a half-written file; a restart reuses it, a different `META_DIR`
+    is a different signer. An explicit `ALDINE_SIGNING_SECRET` under 32
+    characters refuses to boot (`ensureSigningSecret()` in `index.ts`) —
+    one captured link would otherwise brute-force a short key offline and
+    mint 15-minute reads of any artifact by id. Both pinned by
+    `test/signed-url.test.mjs`.
 
 ### 6. OAuth 2.1 surface (Phase 2.5, 06-oauth.md)
 Aldine is its own authorization server; every endpoint is anonymous-reachable.
