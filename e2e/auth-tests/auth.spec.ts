@@ -269,7 +269,7 @@ test.describe('auth depth', () => {
     await ctx.request.post('/api/auth/logout');
     // replay the stale cookie in a fresh context → must be rejected (revoked)
     const stale = await browser.newContext();
-    await stale.addCookies([{ name: 'aldine_session', value: session!.value, url: 'http://localhost:3200' }]);
+    await stale.addCookies([{ name: 'aldine_session', value: session!.value, url: `http://localhost:${process.env.E2E_AUTH_PORT || 3200}` }]);
     const me = await (await stale.request.get('/api/auth/me')).json();
     expect(me.user).toBeNull();
     await ctx.close(); await stale.close();

@@ -127,6 +127,17 @@ test.describe('compile to completion', () => {
       await expectTypesetOk(page);
       const pagesBefore = await page.locator('canvas.pdf-page').count();
 
+      // typesetting an unchanged document is not a failure and not stale:
+      // latexmk rewrites nothing, the PDF keeps its link
+      const again = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const unchanged = await (await again).json();
+      expect(unchanged.ok).toBe(true);
+      expect(unchanged.pdfStale).toBeFalsy();
+      expect(unchanged.pdfUrl).toBe(ok.pdfUrl);
+      await expectTypesetOk(page);
+      await expect(page.getByTestId('pdf-stale')).toHaveCount(0);
+
       // an undefined macro inside the second section: TeX reports it and carries on
       const content = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex',

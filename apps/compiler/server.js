@@ -160,6 +160,13 @@ async function compileInner(body) {
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
   const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp' } };
+  // Freshness reference on the SAME filesystem clock as the outputs: a file
+  // touched now. Comparing output mtimes against Date.now() needs slack for
+  // coarse or skewed clocks, and that slack lets a run started right after
+  // the last one mistake an untouched PDF for its own output.
+  const sentinel = path.join(outAbs, '.aldine-run');
+  fs.writeFileSync(sentinel, '');
+  const freshSince = fs.statSync(sentinel).mtimeMs;
   const t0 = Date.now();
   let { code, out, timedOut } = await run('latexmk', mkArgs(false), runOpts, TIMEOUT_MS);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {
@@ -192,8 +199,8 @@ async function compileInner(body) {
   const ok = code === 0 && fs.existsSync(pdfPath);
   // A previous run's PDF/SyncTeX stay on disk when this run fails, so existence
   // alone says nothing about which run wrote them. "Fresh" = written by this
-  // run (mtime at or after its start, with slack for coarse filesystem clocks).
-  const freshSince = t0 - 2000;
+  // run: mtime at or after the sentinel's (same clock, second granularity at
+  // worst, and a write in the sentinel's own second still counts).
   const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {

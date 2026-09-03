@@ -103,4 +103,5 @@ const server = http.createServer((req, res) => {
   send(404, { error: 'not found' });
 });
 
-server.listen(4919, () => console.log('[mock-zotero] on :4919'));
+const port = Number(process.env.E2E_MOCK_PORT || 4919);
+server.listen(port, () => console.log(`[mock-zotero] on :${port}`));
