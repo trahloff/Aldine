@@ -415,7 +415,7 @@ licensed edition is possible in future. What will not change: the self-hosted
 edition stays AGPL-3.0, and no feature that works today moves behind a paid
 tier. The name is handled separately in [TRADEMARK.md](TRADEMARK.md).
 
-## Bubble Server Setup
+## Authentification and Gitlab Server Setup
 
 How the bubble-robotics instance is deployed, start to finish. It is a slightly
 awkward shape — Aldine shares a box with GitLab, so it cannot own ports 80/443
