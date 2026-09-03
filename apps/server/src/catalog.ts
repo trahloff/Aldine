@@ -57,8 +57,13 @@ interface VenueMeta {
   front?: 'frontmatter' | 'inbody' | 'abstract-first' | 'acm';
 }
 
-/** Display metadata per venue id from the compiler's allowlist. */
-const VENUES: Record<string, VenueMeta> = {
+/**
+ * Display metadata per venue id from the compiler's allowlist. Exported so the
+ * registry test can hold these descriptions and templates/venues.json to one
+ * story: a venue named here that also has a fetched tile would be two tiles for
+ * the same submission with nothing to choose between them.
+ */
+export const INSTALLED_VENUES: Record<string, VenueMeta> = {
   elsarticle: { name: 'Elsevier journal', category: 'Journals', description: 'Elsevier submission with the elsarticle class.', icon: '📗', options: 'preprint,review,12pt', bibStyle: 'elsarticle-num', front: 'frontmatter' },
   ieeetran: { name: 'IEEE Transactions', category: 'Journals', description: 'IEEE journal submission with the IEEEtran class.', icon: '📘', options: 'journal', bibStyle: 'IEEEtran' },
   ieeeconf: { name: 'IEEE conference', category: 'Conferences', description: 'IEEE conference paper with the IEEEconf class.', icon: '📙', bibStyle: 'IEEEtran' },
@@ -85,8 +90,8 @@ const VENUES: Record<string, VenueMeta> = {
   iclr: { name: 'ICLR', category: 'Conferences', description: 'International Conference on Learning Representations submission.', icon: '🧩', bibStyle: 'plainnat' },
   acl: { name: 'ACL', category: 'Conferences', description: 'ACL, EMNLP and NAACL submission.', icon: '💬', bibStyle: 'acl_natbib' },
   aaai: { name: 'AAAI', category: 'Conferences', description: 'AAAI conference submission.', icon: '🎓', bibStyle: 'aaai' },
-  usenix: { name: 'USENIX', category: 'Conferences', description: 'USENIX Security, OSDI and ATC submission.', icon: '🔐', bibStyle: 'plain' },
-  cvpr: { name: 'CVPR', category: 'Conferences', description: 'CVPR, ICCV and ECCV submission.', icon: '👁', bibStyle: 'ieee_fullname' },
+  usenix: { name: 'USENIX', category: 'Conferences', description: 'USENIX ATC, OSDI, NSDI and FAST submission.', icon: '🔐', bibStyle: 'plain' },
+  cvpr: { name: 'CVPR', category: 'Conferences', description: 'CVPR submission.', icon: '👁', bibStyle: 'ieee_fullname' },
 };
 
 /** TeX Live license ids → the text everyone links to. */
@@ -226,7 +231,7 @@ export function resetVenueCache(): void {
 }
 
 export function venueTemplateInfo(c: CatalogClass): TemplateInfo | null {
-  const meta = own(VENUES, c.id);
+  const meta = own(INSTALLED_VENUES, c.id);
   if (!meta) return null;
   const info: TemplateInfo = {
     id: VENUE_PREFIX + c.id,
@@ -257,7 +262,7 @@ export async function venueTemplates(waitMs?: number): Promise<TemplateInfo[]> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-const REFERENCES_BIB = `@article{knuth1984,
+export const REFERENCES_BIB = `@article{knuth1984,
   author  = {Knuth, Donald E.},
   title   = {Literate Programming},
   journal = {The Computer Journal},
@@ -367,7 +372,7 @@ export function sampleIsSelfContained(content: string): boolean {
  */
 export async function venueTemplateFiles(id: string): Promise<Record<string, Buffer>> {
   const key = id.slice(VENUE_PREFIX.length);
-  const meta = own(VENUES, key);
+  const meta = own(INSTALLED_VENUES, key);
   // Resolve against the same list the gallery was served from (CATALOG_WAIT_MS,
   // last-good on a slow or failing compiler): a tile the user can see must not
   // 400 because the catalog fetch happened to fail between listing and create.

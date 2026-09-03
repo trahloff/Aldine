@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { CATALOG_WAIT_MS, VENUE_PREFIX, venueTemplateFiles, venueTemplates } from './catalog.js';
+import { CATALOG_WAIT_MS, VENUE_PREFIX, venueClasses, venueTemplateFiles, venueTemplates } from './catalog.js';
+import { venueKit, venueKitSeed, venueKitTemplates, type VenueKitStatus } from './venuekits.js';
 
 export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' | 'General';
 
@@ -28,6 +29,8 @@ export interface TemplateInfo {
   license?: string;
   licenseUrl?: string;
   source?: TemplateSource;
+  /** Fetched-kit venues: the publisher the kit is downloaded from at create time. */
+  kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
 }
 
 const CATEGORIES: TemplateCategory[] = ['Journals', 'Conferences', 'Theses', 'Slides', 'General'];
@@ -58,13 +61,23 @@ export function listTemplates(): TemplateInfo[] {
 
 /** All files of a template (except template.json), as relative-path → content. */
 /**
- * Folder templates plus every venue class the compiler image carries. The
- * folder half never waits on the network: a compiler that is reachable but
- * silent costs CATALOG_WAIT_MS and an empty venue half, not an empty gallery.
+ * Folder templates, every venue class the compiler image carries, and every
+ * venue whose kit Aldine fetches from the publisher. The folder half never
+ * waits on the network: a compiler that is reachable but silent costs
+ * CATALOG_WAIT_MS and an empty venue half, not an empty gallery.
+ *
+ * A venue in both halves is listed once, as the installed class: that seeds a
+ * project with no download at all, so it is the better of the two.
  */
 export async function listAllTemplates(): Promise<TemplateInfo[]> {
   const folders = listTemplates();
-  const venues = await venueTemplates(CATALOG_WAIT_MS);
+  const installed = await venueTemplates(CATALOG_WAIT_MS);
+  const seen = new Set(installed.map((t) => t.id));
+  const fetched = venueKitTemplates().filter((t) => !seen.has(t.id));
+  // One alphabet across both halves: a category that lists the installed venues
+  // A-Z and then starts over with the fetched ones reads as if the second half
+  // is not there. Folder templates keep their curated order, blank first.
+  const venues = [...installed, ...fetched].sort((a, b) => a.name.localeCompare(b.name));
   return [...folders, ...venues];
 }
 
@@ -93,8 +106,26 @@ export function templateFiles(id: string): Record<string, Buffer> {
   return files;
 }
 
-/** Seed files for any gallery id: a folder template or a `venue:` catalog entry. */
-export async function resolveTemplateFiles(id: string): Promise<Record<string, Buffer>> {
-  if (id.startsWith(VENUE_PREFIX)) return venueTemplateFiles(id);
-  return templateFiles(id);
+/** What a template id seeds a project with, and how the venue kit went. */
+export interface TemplateSeed {
+  files: Record<string, Buffer>;
+  /** Fetched-kit venues only. `ok: false` means the project is a skeleton. */
+  venueKit?: VenueKitStatus;
+}
+
+/**
+ * Seed files for any gallery id: a folder template, an installed venue class,
+ * or a venue whose kit is fetched from the publisher. The installed class wins
+ * the same way it does in the listing, so the tile the user saw is the one
+ * they get.
+ */
+export async function resolveTemplateSeed(id: string): Promise<TemplateSeed> {
+  if (!id.startsWith(VENUE_PREFIX)) return { files: templateFiles(id) };
+  const key = id.slice(VENUE_PREFIX.length);
+  const installed = (await venueClasses(CATALOG_WAIT_MS)).some((c) => c.id === key);
+  if (!installed) {
+    const entry = venueKit(key);
+    if (entry) return venueKitSeed(entry);
+  }
+  return { files: await venueTemplateFiles(id) };
 }

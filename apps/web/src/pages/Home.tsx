@@ -24,7 +24,7 @@ const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
 
 function matchesQuery(t: TemplateInfo, q: string): boolean {
-  const hay = [t.name, t.description, t.category, t.documentClass, t.id].join(' ').toLowerCase();
+  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host].join(' ').toLowerCase();
   return q.split(/\s+/).every((word) => hay.includes(word));
 }
 
@@ -78,7 +78,11 @@ export default function Home() {
   const create = async () => {
     const name = newName.trim() || 'Untitled Project';
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], template));      navigate(`/p/${p.id}`);
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], template));
+      if (p.venueKit && !p.venueKit.ok) {
+        toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
+      }
+      navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
     }
@@ -367,6 +371,13 @@ export default function Home() {
                                 <span className="tpl__icon">{t.icon || '📄'}</span>
                                 <span className="tpl__name">{t.name}</span>
                                 <span className="tpl__desc">{t.description}</span>
+                                {/* The kit is downloaded when the project is created, not now:
+                                    say so before the user picks the tile. */}
+                                {t.kit && (
+                                  <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
+                                    Downloads the official kit from {t.kit.host}
+                                  </span>
+                                )}
                                 {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
                               </button>
                             ))}
@@ -379,6 +390,7 @@ export default function Home() {
                 <p className="tpl-choice" data-testid="template-choice">
                   Starting from {chosen ? chosen.name : 'the built-in article'}
                   {chosen?.license ? ` (${chosen.license})` : ''}
+                  {chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
                 </p>
               </>
             )}

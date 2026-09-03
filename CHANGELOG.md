@@ -7,6 +7,33 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Venue kits fetched from the publisher: 25 more venues in the template
+  gallery (NeurIPS, ICLR, ICML, AISTATS, AAAI, IJCAI, ECAI, ACL/EMNLP/NAACL,
+  COLING, CVPR, ICCV, ECCV, USENIX and USENIX Security, SIAM, MDPI,
+  Copernicus, Springer Nature, IOP, Taylor and Francis, Frontiers, eLife,
+  Wiley, Optica, Cell Press) whose class files TeX Live does not carry. The
+  tile says "Downloads the official kit from <host>"; picking it downloads the
+  publisher's own kit when the project is created, takes only the files the
+  registry names, and starts the paper from the kit's own document. Aldine
+  redistributes nothing: no publisher file is stored in the repo, and each
+  tile links the venue's terms instead of claiming a licence.
+  `templates/venues.json` is the only source of kit URLs, so no request can
+  influence what is fetched; an entry that is not https, or points off the
+  host it declares, is dropped when the registry loads. Caps are 20 seconds,
+  25 MB and three same-host redirects, and a successful kit is cached under
+  `CACHE_DIR/venue-kits/` for 7 days (and used at any age when the publisher
+  is down); the cache is keyed to the registry entry, so changing a venue's
+  kit URL or file list refetches instead of serving last year's files. A kit
+  that cannot be downloaded never fails project creation: the project is
+  created from a skeleton plus a `README-venue.md` naming the kit and what to
+  do, and a toast says so. That skeleton typesets as it stands: it stands on
+  `article`, keeps the venue's page options where those are article's own (the
+  two-column 10pt letterpaper CVPR and USENIX ask for), and leaves the class
+  and style lines the kit was going to bring as comments, because the one thing
+  a failed kit did not deliver is the venue's class. A venue the
+  compiler image already has installed is listed once, as the installed class,
+  which needs no download, and the installed and fetched venues are listed in
+  one alphabet inside each category.
 - Blank projects: a "Blank" tile leads the template grid and creates a project
   with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
   does the same. The editor's empty state says "Create a file to start writing"
@@ -172,6 +199,12 @@ All notable changes to Aldine are documented here. The format follows
   user cannot open, and identical error rows are listed once.
 - A failed typeset always says why: a run whose logs parse to no error at all
   falls back to latexmk's own summary rather than an unexplained "Failed".
+- `POST /api/projects` rejects a seed whose file name is longer than the 255
+  bytes a filesystem accepts, naming the path, instead of failing halfway
+  through the write. A creation that fails for any other reason is now a 500
+  saying "Could not create the project", with the reason in the server log:
+  a full disk or a read-only data directory is this server's fault, not a bad
+  request, and its error text names the data directory.
 - Templates are read as bytes instead of UTF-8 text, so a template carrying a
   logo, a figure or any other binary file reaches the new project intact.
 - A SyncTeX jump from the PDF is refused (409, with a toast) when the preview

@@ -73,7 +73,7 @@ try {
   const bin = Buffer.concat([Buffer.from([0, 1, 2, 3]), crypto.randomBytes(64)]);
   res = await importZip({ 'main.tex': doc, 'figs': 'a text file named like the dir', 'figs/plot.png': bin });
   eq(res.statusCode, 400, 'collision → 400');
-  check(res.json().error.startsWith('Could not import ZIP'), `collision reports the import failure: ${res.json().error}`);
+  check(/both a file and a directory/.test(res.json().error), `collision names the clashing entry: ${res.json().error}`);
   eq(await projectIds(), before, 'half-imported project removed');
   eq(fs.readdirSync(path.join(process.env.DATA_DIR, 'projects')), [], 'orphan repo dir removed');
 
