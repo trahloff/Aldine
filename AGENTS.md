@@ -62,7 +62,16 @@ lacks packages); everything else passes locally. Two checkouts side by side
 - Yjs docs reload from binary snapshots (`META_DIR` sidecar); never reseed
   open docs from plain text — that duplicates content on reconnect.
 - `META_DIR` is deliberately outside `DATA_DIR` so the compiler container can
-  never read API keys — don't "simplify" them onto one volume.
+  never read API keys — don't "simplify" them onto one volume. Every test runner
+  that starts a server must set **both**: `META_DIR` defaults to the repo's real
+  `.secrets`, so a runner that sets only `DATA_DIR` writes into the developer's
+  own credential store — and `14-remotes.spec.ts` disconnects GitLab as user
+  `local`, which silently wiped the real connection.
+- Connection lookups follow a deliberate ladder, and which paths get the service
+  token is a privilege decision, not an oversight. Sync, autopush and
+  provisioning fall back to `serviceConnection()`; `/api/remotes/:provider/repos`,
+  `/import` and `/status` never do — there the bot's token would change *which
+  repositories a user can reach*, not just how the request is authenticated.
 - The file tree defaults to source-only view; e2e that asserts non-source
   files must toggle to "All" first.
 - Dark theme is the app default (stamped pre-paint in `index.html`);
@@ -70,5 +79,54 @@ lacks packages); everything else passes locally. Two checkouts side by side
   drive `localStorage['aldine.theme']` instead.
 - git tokens are passed inline per operation, never written to `.git/config`
   (the compiler can read project dirs).
+- Never read `meta.remote` directly — go through `store.remoteLink()`, which
+  falls back to the legacy `meta.github`. A direct read treats every project
+  created before multi-provider support as unlinked. Write through
+  `store.setRemoteLink()`, which drops the legacy field.
+- A project's remote provider comes from its stored link, never from the request
+  path: `/api/projects/:id/remote/*` has no `:provider` segment on purpose.
+- GitLab (when `GITLAB_DEFAULT_GROUP` is set) is a **mirror**, not the store. The
+  local per-project repo is load-bearing: the compiler mounts it, branches are
+  worktrees, collab autocommits into it, Yjs snapshots sit beside it. "Just keep
+  projects in GitLab" is not a simplification available here.
+- Project creation must never fail on GitLab. `store.createProject` runs first
+  and unconditionally; a provisioning failure sets `meta.remotePending` and
+  degrades to local-only.
+- Trashing a project deletes its remote repo, but only when
+  `meta.remote.createdByAldine` is set. Deleting a repo a user merely imported
+  would destroy work Aldine never owned — never widen this without being asked.
+  The delete is best-effort: it must never block the local delete, and the purge
+  sweep retries it for the ones that failed.
+- One `DELETE /projects/:id` does not delete a GitLab project — it marks it and
+  keeps it for the instance's retention period. The purge is a second delete with
+  `permanently_remove` **addressed by numeric id**, because marking renames the
+  path: keyed by path, the follow-up 404s and reads as success. A 404 means "not
+  there"; any other error must not, or a delete against a down GitLab reports
+  success and drops the link the purge sweep would have retried.
+- `createdByAldine` is three-valued on purpose. `true`/`false` are recorded by
+  provisioning and by import; **absent** means a link written before the flag
+  existed, and treating that as `false` silently leaves those repos on GitLab
+  forever. `provision.ts` resolves an absent flag by group membership.
+- The service token needs **Owner** on the group, not Maintainer. Maintainer
+  creates projects and subgroups fine, so the deployment looks healthy right up
+  to the first delete, which 403s.
+- The subgroup endpoint's `withinRoot` check is a privilege boundary, not
+  validation politeness — without the `/` in its prefix test it creates groups
+  anywhere on the instance.
+- Templates invert the mirror rule. Auto-provisioning must never fail project
+  creation, but a *template* is the content the caller asked for: if the chosen
+  template can't be read, the request fails with 400 and no project is created.
+  Only the template *listing* degrades (to whatever local templates exist).
+- A project from a template is a copy, not a child: the clone is detached, so the
+  template repo is never a remote of the new project and never its git parent.
+  Making the template `origin` would send everyone's first push at the template.
+- Never hardcode a template id in the UI. `TEMPLATES_DIR` and
+  `GITLAB_TEMPLATE_GROUP` mean a deployment's templates may share no id with the
+  four Aldine ships — the dialog selects the first template the server returns.
+- `store.createProject` takes `string | Buffer` values. Reading a template file
+  as utf8 silently corrupts logos and bundled PDFs; go through `isTextFile`.
+- e2e provisioning tests run against a second server on `:3101`
+  (`--project=provisioning`); the main suite deliberately runs with
+  auto-provisioning off so the default path stays covered.
 - Playwright `webServer` timeouts are long on purpose; kill stray
   `tsx watch` processes if local ports hang.

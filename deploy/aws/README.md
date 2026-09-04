@@ -69,7 +69,8 @@ on first apply). When it's stable, open **https://latex.example.com**.
 Update the Google / GitHub OAuth apps so their callback URLs point at the new host:
 
 - Google:  `https://latex.example.com/api/auth/oauth/google/callback`
-- GitHub sync: `https://latex.example.com/api/github/oauth/callback`
+- GitHub sync: `https://latex.example.com/api/remotes/github/oauth/callback`
+- GitLab sync: `https://latex.example.com/api/remotes/gitlab/oauth/callback`
 
 Set the corresponding client id/secret in `secret_env`.
 

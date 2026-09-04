@@ -83,7 +83,10 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   write into the editor. Zotero, references, and AI-fix ship as plugins;
   write your own.
 - **Templates & import**: article, IAC conference paper, beamer,
-  report/thesis; or import an existing project from an Overleaf ZIP.
+  report/thesis; or import an existing project from an Overleaf ZIP. Bring your
+  own templates from a directory (`TEMPLATES_DIR`) or a GitLab group
+  (`GITLAB_TEMPLATE_GROUP`), with `{{PROJECT_NAME}}`-style placeholders filled
+  in at creation.
 - **Editor niceties**: auto-typeset on idle, live whole-document word count,
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
@@ -179,7 +182,7 @@ what `deploy/backup.sh` looks for.
 | GitHub sync + PRs from the editor | ✅ | Paid tiers | ✅ natively |
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
-| Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
+| Templates gallery | 4 built-in, **plus your own** from a directory or a GitLab group | Huge community gallery | CTAN / your own |
 | Package coverage | **All of TeX Live** by default (`ALDINE_TEXLIVE_SCHEME=medium` for a curated slim image) | All of TeX Live | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
 | Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
@@ -260,6 +263,43 @@ GITHUB_LOGIN_CLIENT_SECRET=
 # GitHub repo sync: a separate OAuth app with repo scope
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+# GitLab repo sync OAuth app (scope: api). A personal access token with api
+# scope always works without any of these — OAuth is only for one-click connect.
+GITLAB_CLIENT_ID=
+GITLAB_CLIENT_SECRET=
+# self-hosted GitLab: the instance the OAuth app lives on (default gitlab.com)
+GITLAB_URL=
+# GitLab as the home for new projects: set BOTH to switch it on. Every new
+# project is created inside this group and pushed there. GitLab is a mirror,
+# not the store — the local repo stays authoritative, so an outage degrades
+# creation to a local project rather than blocking it.
+# The token is a service-account PAT with api scope, on an account that is an
+# Owner of the group — Maintainer can create projects but GitLab lets only an
+# Owner delete one. Note that this means every Aldine user effectively gains
+# write access to the group through it (git commit authorship is still the real
+# user — only the push is the bot). Leave GITLAB_TOKEN unset if you need exact
+# GitLab-side attribution, and have users connect their own accounts instead.
+# Trashing a project in Aldine deletes the GitLab project too, so the group
+# doesn't collect repos nobody can see — but only repos Aldine created, never
+# one a user imported. Restoring from the trash re-creates it from the local
+# repo, which survives intact; GitLab-side merge requests, issues and CI
+# history do not come back. GitLab holds a deleted project for its retention
+# period, so Aldine purges it immediately; instances that reserve that for
+# admins keep it until their own schedule, and Aldine reports the date.
+# Renaming a project does NOT rename it in GitLab: a path change would break
+# clone URLs for everyone who cloned it.
+GITLAB_TOKEN=
+GITLAB_DEFAULT_GROUP=
+# private (default) | internal | public — visibility of auto-created projects
+GITLAB_DEFAULT_VISIBILITY=private
+# A GitLab group of template projects, offered as starting points in the New
+# project dialog. One project per template; subgroups are included. Independent
+# of GITLAB_DEFAULT_GROUP, and reuses GITLAB_TOKEN to read the group.
+GITLAB_TEMPLATE_GROUP=
+# Templates on disk, offered alongside the GitLab ones. Any subdirectory holding
+# a .tex file counts; template.json is optional. Defaults to the four Aldine
+# ships — point it at a mounted directory to use your own.
+TEMPLATES_DIR=
 # AI error fix, bring your own key
 OPENROUTER_API_KEY=
 # password-reset email: SMTP, or SES_FROM + AWS_REGION instead

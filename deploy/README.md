@@ -40,10 +40,30 @@ GITHUB_LOGIN_CLIENT_ID=...
 GITHUB_LOGIN_CLIENT_SECRET=...
 
 # GitHub sync (import repos as projects, push/pull) — a SEPARATE OAuth app with
-# repo scope. Callback: <ALDINE_PUBLIC_URL>/api/github/oauth/callback
+# repo scope. Callback: <ALDINE_PUBLIC_URL>/api/remotes/github/oauth/callback
 # (users can also connect with a Personal Access Token, no app needed).
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
+
+# GitLab sync — an OAuth application with scope `api`.
+# Callback: <ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback
+# (a Personal Access Token with api scope also works, no app needed).
+GITLAB_CLIENT_ID=...
+GITLAB_CLIENT_SECRET=...
+# self-hosted GitLab only — the instance the app lives on (default gitlab.com)
+GITLAB_URL=https://gitlab.example.com
+
+# GitLab as the home for new projects — set BOTH to switch it on. GitLab is a
+# MIRROR, not the store: the local repo stays authoritative, so an outage
+# degrades project creation to local-only rather than blocking it. The token is
+# a secret and belongs here in .env, never in a compose file.
+# Trade-off: every Aldine user effectively gains write access to the group
+# through the service account. Commit authorship is still the real user; only
+# the push is the bot. Leave GITLAB_TOKEN unset for exact GitLab-side
+# attribution and let users connect their own accounts.
+GITLAB_TOKEN=glpat-...
+GITLAB_DEFAULT_GROUP=research/latex
+GITLAB_DEFAULT_VISIBILITY=private
 
 # AI error-fix (bring your own key; unset = feature off). If several are set,
 # precedence is OPENROUTER > OPENAI > ANTHROPIC. Leave ALDINE_AI_MODEL unset to
@@ -231,6 +251,11 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login |
+| `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth app (scope `api`). A PAT with `api` scope works without it |
+| `GITLAB_URL` | Self-hosted GitLab instance for the OAuth app (default `https://gitlab.com`) |
+| `GITLAB_TOKEN` | Service-account PAT (`api` scope). With `GITLAB_DEFAULT_GROUP`, new projects are auto-created in that group |
+| `GITLAB_DEFAULT_GROUP` | Full path of the group that hosts new projects, e.g. `research/latex`. Both vars required |
+| `GITLAB_DEFAULT_VISIBILITY` | `private` (default), `internal` or `public` for auto-created projects |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |
 | `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |

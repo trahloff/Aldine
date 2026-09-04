@@ -23,6 +23,28 @@ export const config = {
   webDist: process.env.WEB_DIST || path.join(repoRoot, 'apps/web/dist'),
 };
 
+/**
+ * GitLab auto-provisioning: a nominated group becomes the home for new projects.
+ * Read lazily through getters so tests (and a late dotenv load) see current env.
+ * GITLAB_TOKEN is a secret and stays in process env — never written to disk, so
+ * it cannot reach dataDir, which the compiler container mounts.
+ */
+export const gitlabConfig = {
+  get url() { return process.env.GITLAB_URL || 'https://gitlab.com'; },
+  get token() { return process.env.GITLAB_TOKEN || ''; },
+  get defaultGroup() { return process.env.GITLAB_DEFAULT_GROUP || ''; },
+  /**
+   * Group whose projects are offered as templates in the New project dialog.
+   * Independent of defaultGroup: a deployment can serve templates from GitLab
+   * without making GitLab the home for new projects, or the reverse.
+   */
+  get templateGroup() { return process.env.GITLAB_TEMPLATE_GROUP || ''; },
+  get visibility(): 'private' | 'internal' | 'public' {
+    const v = process.env.GITLAB_DEFAULT_VISIBILITY;
+    return v === 'internal' || v === 'public' ? v : 'private';
+  },
+};
+
 export const projectsDir = path.join(config.dataDir, 'projects');
 export const worktreesDir = path.join(config.dataDir, 'worktrees');
 export const metaDir = path.join(config.metaRoot, 'meta');

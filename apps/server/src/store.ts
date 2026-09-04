@@ -42,16 +42,56 @@ export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
 }
 
-/** `files` omitted seeds the default article; `{}` is a blank project (no
- *  files, rootFile '' until the first .tex appears). Keys are normalised like
- *  ZIP entries and may not reach `.git` or `.aldine*`: the initial commit runs
- *  git on the fresh repo, so a seeded `.git/config` would execute on the
- *  server. A rejected key or a failed write leaves no repo dir behind. */
-export async function createProject(name: string, files?: Record<string, string>, ownerId?: string): Promise<ProjectMeta> {
+export type RemoteLink = NonNullable<ProjectMeta['remote']>;
+
+/**
+ * The project's remote, falling back to the legacy `meta.github` when
+ * `meta.remote` is absent. Every consumer must go through this — a direct
+ * `meta.remote` read treats every pre-existing GitHub project as unlinked.
+ */
+export function remoteLink(meta: ProjectMeta): RemoteLink | undefined {
+  if (meta.remote) return meta.remote;
+  return meta.github ? { provider: 'github', ...meta.github } : undefined;
+}
+
+/**
+ * Set the remote and drop the legacy field, so pre-existing projects upgrade on
+ * their next write. Both fields present would leave two candidates for a reader.
+ */
+export function setRemoteLink(meta: ProjectMeta, link: RemoteLink): void {
+  meta.remote = link;
+  delete meta.github;
+}
+
+const GITIGNORE_LINES = [
+  '.aldine-out/', '*.aux', '*.log', '*.out', '*.toc', '*.bbl', '*.bcf',
+  '*.blg', '*.synctex.gz', '*.fls', '*.fdb_latexmk', '*.run.xml',
+];
+
+/**
+ * Every project must ignore build artefacts, or a compile turns into a commit of
+ * its own droppings. A seed (template) may ship its own .gitignore, so keep that
+ * file and append only the lines it is missing rather than overwriting it.
+ */
+function writeGitignore(dir: string, seeded?: string | Buffer): void {
+  const existing = seeded === undefined ? '' : seeded.toString('utf8');
+  const have = new Set(existing.split(/\r?\n/).map((l) => l.trim()));
+  const missing = GITIGNORE_LINES.filter((l) => !have.has(l));
+  if (!missing.length) return;
+  const prefix = existing && !existing.endsWith('\n') ? `${existing}\n` : existing;
+  fs.writeFileSync(path.join(dir, '.gitignore'), `${prefix}${missing.join('\n')}\n`);
+}
+
+export async function createProject(name: string, files: Record<string, string | Buffer> = {}, ownerId?: string): Promise<ProjectMeta> {
   const id = newId();
   const dir = repoDir(id);
   fs.mkdirSync(dir, { recursive: true });
-  const seed = files ?? {
+  const g = git(dir);
+  await g.init(['--initial-branch=main']);
+  await g.addConfig('user.name', 'Aldine');
+  await g.addConfig('user.email', 'aldine@localhost');
+
+  const seed: Record<string, string | Buffer> = Object.keys(files).length ? files : {
     'main.tex': DEFAULT_MAIN_TEX(name),
     'references.bib': DEFAULT_BIB,
   };
@@ -77,6 +117,9 @@ export async function createProject(name: string, files?: Record<string, string>
     fs.rmSync(dir, { recursive: true, force: true });
     throw err;
   }
+  writeGitignore(dir, seed['.gitignore']);
+  await g.add(['-A']);
+  await g.commit('Initial commit');
 
   const rootFile = written.includes('main.tex') ? 'main.tex' : written.find((f) => f.endsWith('.tex')) || '';
   const meta: ProjectMeta = { id, name, rootFile, engine: 'pdf', createdAt: new Date().toISOString() };
@@ -106,12 +149,22 @@ export async function restoreProject(id: string): Promise<ProjectMeta> {
   return meta;
 }
 
-/** Hard-delete trashed projects older than `days`. Returns the ids purged. */
-export async function purgeExpiredTrash(days: number): Promise<string[]> {
+/**
+ * Hard-delete trashed projects older than `days`. Returns the ids purged.
+ *
+ * `beforeDelete` runs per project while its metadata still exists — the caller
+ * uses it to clean up a remote mirror whose delete failed at trash time. It must
+ * not throw; a purge that stops halfway leaves the trash never draining.
+ */
+export async function purgeExpiredTrash(
+  days: number,
+  beforeDelete?: (meta: ProjectMeta) => Promise<void>,
+): Promise<string[]> {
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const purged: string[] = [];
   for (const m of await listProjects()) {
     if (m.deletedAt && Date.parse(m.deletedAt) < cutoff) {
+      if (beforeDelete) await beforeDelete(m).catch(() => {});
       await deleteProject(m.id);
       purged.push(m.id);
     }

@@ -8,7 +8,7 @@ services:
   app:
     image: ghcr.io/trahloff/aldine-app:latest
     ports:
-      - "8080:3000"
+      - "8090:3000"
     volumes:
       - aldine-data:/data
       - aldine-secrets:/secrets

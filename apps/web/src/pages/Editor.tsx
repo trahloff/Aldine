@@ -18,8 +18,9 @@ import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
-import GithubSync from '../components/GithubSync';
-import GithubPublish from '../components/GithubPublish';
+import RemoteSync from '../components/RemoteSync';
+import RemotePublish from '../components/RemotePublish';
+import RemotePendingBanner from '../components/RemotePendingBanner';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
 import FormatToolbar from '../components/FormatToolbar';
@@ -151,12 +152,12 @@ export default function Editor() {
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
-      // this server until it's published to GitHub. Only the owner can publish,
-      // so only the owner is nudged.
+      // this server until it's published. Only the owner can publish, so only
+      // the owner is nudged.
       const owner = !authEnabled || !!p.isOwner;
-      if (owner && !p.github && !localStorage.getItem(`aldine.ghNudged.${id}`)) {
-        localStorage.setItem(`aldine.ghNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to GitHub to keep a synced copy.');
+      if (owner && !p.remote && !p.remotePending && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
+        localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
+        toast('This project lives only on this server — publish it to keep a synced copy.');
       }
     })();
   }, [id, branch]);
@@ -522,6 +523,9 @@ export default function Editor() {
   return (
     <div className="editor-shell" data-testid="editor-shell">
       <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} />
+      {project.remotePending && isProjectOwner && (
+        <RemotePendingBanner projectId={id} provider={project.remotePending.provider} onLinked={() => loadProject()} />
+      )}
       <header className="toolbar">
         <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
@@ -549,12 +553,12 @@ export default function Editor() {
         <div className="toolbar__spacer" />
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
-        {project.github ? (
-          canSync && <GithubSync projectId={id} fullName={project.github.fullName} onPulled={() => { loadFiles(); loadProject(); }} />
+        {project.remote ? (
+          canSync && <RemoteSync projectId={id} provider={project.remote.provider} fullName={project.remote.fullName} autopush={project.autopush} onPulled={() => { loadFiles(); loadProject(); }} />
         ) : (
           isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="github-publish-open" title="Publish this project to a GitHub repo — backup + sync">
-              Publish to GitHub
+            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to a git repository — backup + sync">
+              Publish
             </button>
           )
         )}
@@ -857,7 +861,7 @@ export default function Editor() {
       )}
 
       {publishOpen && project && (
-        <GithubPublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
+        <RemotePublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
