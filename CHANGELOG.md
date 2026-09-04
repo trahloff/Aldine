@@ -179,6 +179,17 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- A dialog taller than the window no longer hides its own buttons. The panel
+  caps at 70% of the window height and scrolls; the action row scrolled away
+  with the content, so on a laptop-sized window the New project dialog showed
+  no Create button and Project settings no Close. The row is pinned to the
+  bottom of the panel now, in every dialog.
+- The editor no longer scrolls sideways. The preview toolbar (status, engine,
+  zoom, Download, Auto) is wider than a narrow preview pane, and it pushed the
+  page out instead of fitting: the app toolbar slid off the right edge and the
+  Auto switch went with it. The toolbar wraps instead, and shrinking the window
+  now pulls an over-wide preview pane back with it rather than leaving it at
+  the width it had when the tab was opened.
 - Typesetting now really runs to completion: latexmk is forced past a failing
   pass, so bibtex and the reruns that resolve citations and cross-references
   still happen. Dropping `-halt-on-error` alone was not enough — latexmk gave
