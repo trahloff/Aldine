@@ -130,6 +130,26 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- Typesetting now really runs to completion: latexmk is forced past a failing
+  pass, so bibtex and the reruns that resolve citations and cross-references
+  still happen. Dropping `-halt-on-error` alone was not enough — latexmk gave
+  up after the pass that errored ("Errors, so I did not complete making
+  targets"), and a paper with one bad macro or one malformed `.bib` entry
+  rendered with every `\cite` as `[?]` and every `\ref` as `??`. Two real
+  papers that used to typeset that way now come out complete (one grew from 41
+  pages to 53 once its bibliography returned). "Stop on first error" keeps the
+  old behaviour.
+- Bibliography errors are reported with the file and line to fix. bibtex and
+  biber write them to the `.blg`, never the LaTeX log, so a malformed entry
+  used to surface only as hundreds of "Citation undefined" warnings and a
+  preview header that said "Failed" with nothing in the problems list. A
+  broken `.bib` now lists rows like "refs.bib · line 42 — BibTeX: I was
+  expecting a `,' or a `}'" that jump straight to the entry.
+- An error inside a generated file (the `.bbl` bibtex just wrote) says which
+  file it came from instead of offering a link into the output directory the
+  user cannot open, and identical error rows are listed once.
+- A failed typeset always says why: a run whose logs parse to no error at all
+  falls back to latexmk's own summary rather than an unexplained "Failed".
 - ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
   end-of-central-directory record), so exports from tools that write ZIP64
   headers no longer fail as "not a zip file" or import partially. An entry

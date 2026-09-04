@@ -659,7 +659,7 @@ export default function Editor() {
           {activeFile ? (
             <>
               <div className="pane__header">
-                <span className="statusbar__file">{activeFile}</span>
+                <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
                 <span className="toolbar__spacer" />
                 <button
