@@ -363,10 +363,14 @@ Copyright (C) 2026 Tobias Rahloff.
 
 [AGPL-3.0](LICENSE): self-host freely; if you offer a modified Aldine as a
 service, share your changes. Third-party plugins interact with Aldine over its
-plugin API and may use any license. `templates/iac-paper/iac.cls` is LPPL-1.3c,
-the customary license for a LaTeX class file. Overleaf is a trademark of its
-owners; Aldine is an independent project, not affiliated with or endorsed by
-Overleaf.
+plugin API and may use any license. Each folder under `templates/` carries its
+own `LICENSE` and states it in `template.json` (the gallery shows it on the
+tile): the generic templates are MIT, and `templates/iac-paper` is LPPL-1.3c,
+the customary license for a LaTeX class file. Venue templates are generated
+from the classes installed in the compiler image, with the license `tlmgr`
+reports; no publisher file is stored in this repository. Overleaf is a
+trademark of its owners; Aldine is an independent project, not affiliated with
+or endorsed by Overleaf.
 
 Two things stated plainly, because finding them out later feels like a
 bait-and-switch. **A hosted Aldine service is planned**, and contributions are

@@ -161,6 +161,36 @@
 .tpl__icon { font-size: 16px; }
 .tpl__name { font-weight: 600; font-size: 13px; }
 .tpl__desc { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.tpl__license { font-size: 10px; color: var(--text-2); opacity: 0.8; margin-top: 4px; }
+.tpl-search { position: relative; margin-top: 12px; }
+.tpl-search .input { padding-right: 30px; }
+.tpl-search__clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tpl-search__clear:hover { background: var(--bg-hover); color: var(--text); }
+.tpl-choice { font-size: 11px; color: var(--text-2); margin: 8px 0 0; }
+/* The gallery grows with the compiler image (hundreds of venues); the modal must not. */
+.tpl-gallery { max-height: 44vh; overflow-y: auto; margin-top: 4px; }
+.tpl-group + .tpl-group { margin-top: 10px; }
+.tpl-group__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-top: 10px;
+}
+.tpl-empty { font-size: 12px; color: var(--text-2); margin: 12px 0 0; }
 
 /* ---------- login ---------- */
 .login { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }

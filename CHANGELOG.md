@@ -93,6 +93,27 @@ All notable changes to Aldine are documented here. The format follows
   self-hosted edition stays AGPL, and that no feature that works today moves
   behind a paid tier.
 
+- Template gallery: the New project dialog groups templates by category
+  (Journals, Conferences, Theses, Slides, General), has a search box, and shows
+  each template's licence. Beside the four templates in `templates/`, the
+  gallery now offers a template per venue class installed in the compiler image
+  (fifteen on the full TeX Live image: Elsevier, IEEE Transactions and
+  conference, ACM, REVTeX, Springer LNCS, JMLR, AMS, MNRAS, APA 7, ACS, AIAA,
+  ASCE, ASME conference and SPIE): the compiler
+  answers `GET /catalog` with the classes it actually
+  has, their licence from `tlmgr`, and the class's own sample document when the
+  image ships one; where it does not, Aldine generates a skeleton with the
+  title block, abstract, a section and the class's usual bibliography style. No
+  publisher file is vendored into the repo, and an image without those classes
+  (or an older compiler) simply shows the four folder templates.
+- Every template folder carries a `LICENSE` file, and `template.json` carries
+  `license`, `licenseUrl` and `source` (upstream URL and version). `npm run
+  templates:check` fails on a template missing either, and CI runs it.
+- AWS deployment: an optional staging service on the same load balancer
+  (`staging_domain_name`), with its own filesystem, log group and certificate,
+  so a feature branch can be tried at a real URL before it reaches prod. The
+  deploy and rollback workflows take a `target` input (production or staging).
+
 ### Changed
 - `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
   part (and an optional `name` field); the web client uploads the file that
@@ -105,6 +126,7 @@ All notable changes to Aldine are documented here. The format follows
   "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
   `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
   on screen as before.
+
 
 - The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
   script and language compiles out of the box. The `medium` scheme stays for
@@ -150,6 +172,12 @@ All notable changes to Aldine are documented here. The format follows
   user cannot open, and identical error rows are listed once.
 - A failed typeset always says why: a run whose logs parse to no error at all
   falls back to latexmk's own summary rather than an unexplained "Failed".
+- Templates are read as bytes instead of UTF-8 text, so a template carrying a
+  logo, a figure or any other binary file reaches the new project intact.
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
 - ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
   end-of-central-directory record), so exports from tools that write ZIP64
   headers no longer fail as "not a zip file" or import partially. An entry
@@ -337,6 +365,15 @@ All notable changes to Aldine are documented here. The format follows
   seconds"; the README says ~2s, so the page does now too.
 
 ### Security
+- The minimal `docker-compose.yml` carries the compiler sandbox again: an
+  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
+  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
+  in `docker-compose.full.yml` while SECURITY.md and the README went on
+  promising it, so quick-start instances were compiling untrusted LaTeX in a
+  container with full egress and every capability. The README quick start is the
+  same file, verbatim, including the `name: aldine` line that fixes the volume
+  names.
+
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
   `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
   `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it

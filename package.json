@@ -14,6 +14,7 @@
     "build": "npm run build -w apps/web && npm run build -w apps/server",
     "notices": "node scripts/gen-notices.mjs",
     "notices:check": "node scripts/gen-notices.mjs --check",
+    "templates:check": "node scripts/check-templates.mjs",
     "test:e2e": "npx playwright test -c e2e",
     "test:e2e:auth": "npx playwright test -c e2e/playwright.auth.config.ts"
   },

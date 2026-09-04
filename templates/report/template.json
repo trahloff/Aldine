@@ -3,5 +3,12 @@
   "name": "Report / Thesis",
   "description": "Chapters, table of contents, and a bibliography — for longer documents.",
   "icon": "📚",
-  "order": 4
+  "order": 4,
+  "category": "General",
+  "license": "MIT",
+  "licenseUrl": "https://opensource.org/license/mit",
+  "source": {
+    "url": "https://github.com/trahloff/Aldine/tree/main/templates/report",
+    "version": "0.3.0"
+  }
 }

@@ -78,7 +78,19 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface TemplateInfo { id: string; name: string; description?: string; icon?: string }
+export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' | 'General';
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  category?: TemplateCategory;
+  documentClass?: string;
+  license?: string;
+  licenseUrl?: string;
+  source?: { url: string; version?: string };
+}
+
 /** What /api/projects/import decided while placing the archive. */
 export interface ImportedProject extends ProjectSummary {
   import: { engine: string; engineReason: string | null; transcoded: string[] };
