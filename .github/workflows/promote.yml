@@ -55,16 +55,20 @@ jobs:
             *[!0-9.]*|'') echo "::error::version must look like 0.4.0, got '$VERSION'"; exit 1 ;;
           esac
           minor="${VERSION%.*}"
-          for name in app compiler; do
-            image="ghcr.io/${{ github.repository_owner }}/aldine-$name"
+          owner="ghcr.io/${{ github.repository_owner }}"
+          # image:suffix pairs; the compiler ships a medium (default) and a
+          # -full variant, promoted together so latest and latest-full agree.
+          targets=("aldine-app:" "aldine-compiler:" "aldine-compiler:-full")
+          for t in "${targets[@]}"; do
+            image="$owner/${t%%:*}"; suffix="${t#*:}"
             # A version that was never built (or never finished building) must
             # not become latest.
-            docker buildx imagetools inspect "$image:$VERSION" >/dev/null
+            docker buildx imagetools inspect "$image:$VERSION$suffix" >/dev/null
           done
-          for name in app compiler; do
-            image="ghcr.io/${{ github.repository_owner }}/aldine-$name"
-            docker buildx imagetools create -t "$image:latest" -t "$image:$minor" "$image:$VERSION"
-            echo "$image:latest -> $VERSION ($(docker buildx imagetools inspect "$image:latest" --format '{{json .Manifest.Digest}}'))" >> "$GITHUB_STEP_SUMMARY"
+          for t in "${targets[@]}"; do
+            image="$owner/${t%%:*}"; suffix="${t#*:}"
+            docker buildx imagetools create -t "$image:latest$suffix" -t "$image:$minor$suffix" "$image:$VERSION$suffix"
+            echo "$image:latest$suffix -> $VERSION$suffix ($(docker buildx imagetools inspect "$image:latest$suffix" --format '{{json .Manifest.Digest}}'))" >> "$GITHUB_STEP_SUMMARY"
           done
       - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v2

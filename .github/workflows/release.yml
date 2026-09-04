@@ -62,6 +62,8 @@ jobs:
       version: ${{ needs.preflight.outputs.version }}
     secrets: inherit
 
+  # The published default: scheme medium (curated packages, publisher classes,
+  # most scripts). What `aldine-compiler:<version>` and `:latest` point at.
   build-compiler:
     needs: [preflight, verify]
     uses: ./.github/workflows/build-image.yml
@@ -70,15 +72,39 @@ jobs:
       context: apps/compiler
       dockerfile: apps/compiler/Dockerfile
       version: ${{ needs.preflight.outputs.version }}
+      build-args: TEXLIVE_SCHEME=medium
+    secrets: inherit
+
+  # All of TeX Live, published as `<version>-full` / `latest-full`; a
+  # self-hoster opts in with ALDINE_TEXLIVE=-full.
+  build-compiler-full:
+    needs: [preflight, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: compiler
+      context: apps/compiler
+      dockerfile: apps/compiler/Dockerfile
+      version: ${{ needs.preflight.outputs.version }}
+      build-args: TEXLIVE_SCHEME=full
+      tag-suffix: -full
       free-disk: true
     secrets: inherit
 
   smoke:
-    needs: [preflight, build-app, build-compiler]
+    needs: [preflight, build-app, build-compiler, build-compiler-full]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: medium
+            compiler: ${{ needs.build-compiler.outputs.digest }}
+          - variant: full
+            compiler: ${{ needs.build-compiler-full.outputs.digest }}
+    name: smoke (${{ matrix.variant }})
     env:
       ALDINE_APP_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-app@${{ needs.build-app.outputs.digest }}
-      ALDINE_COMPILER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler.outputs.digest }}
+      ALDINE_COMPILER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -92,7 +118,7 @@ jobs:
         run: node scripts/smoke-image.mjs
         env:
           ALDINE_URL: http://localhost:8080
-          EXPECT_SCHEME: full
+          EXPECT_SCHEME: ${{ matrix.variant }}
       - name: Container logs
         if: failure()
         run: docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml logs --no-color | tail -200
