@@ -133,7 +133,22 @@
 }
 .modal h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .modal p.modal__sub { margin: 0 0 14px; color: var(--text-2); }
-.modal__row { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
+/* The action row stays put while a long dialog scrolls under it. The template
+   gallery and the settings list are both taller than the 70vh cap, and a
+   Create button that has scrolled out of sight reads as a dialog with no way
+   to finish. `bottom` cancels the panel's own bottom padding so the row sits
+   flush with the panel edge. */
+.modal__row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: -20px;
+  z-index: 1;
+  margin: 14px -20px -20px;
+  padding: 12px 20px 20px;
+  background: var(--bg-panel);
+}
 .modal .input { width: 100%; }
 
 /* template picker */
@@ -424,13 +439,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  min-height: 34px;
   padding: 0 10px;
   border-bottom: 1px solid var(--hairline);
   color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
   flex: none;
+  /* The preview pane is resizable and its toolbar is the widest thing in it.
+     Wrapping keeps every control reachable; without this the row overflows the
+     pane and widens the whole page, which scrolls the app toolbar off-screen. */
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .sidebar { width: 230px; flex: none; background: var(--bg-inset); }
