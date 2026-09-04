@@ -71,6 +71,54 @@ function parseLog(log) {
   return errors;
 }
 
+/**
+ * Parse the bibliography log (.blg, written by both bibtex and biber) for
+ * errors. They never reach the LaTeX log: a malformed .bib entry makes bibtex
+ * write no .bbl at all, and the LaTeX log then shows only the fallout — one
+ * "Citation undefined" warning per citation, hundreds of them, none of which
+ * names the file and line to fix. bibtex's own `Warning--` lines are the noise
+ * the user cannot act on and stay out.
+ */
+function parseBibLog(log) {
+  const errors = [];
+  for (const line of log.split('\n')) {
+    // bibtex: "I was expecting a `,' or a `}'---line 42 of file refs.bib".
+    // A `Warning--` continuation is "--line N of file X" (two dashes) and so
+    // does not match.
+    const located = line.match(/^(.*\S)---line (\d+) of file (\S+)/);
+    if (located) {
+      errors.push({ type: 'error', file: located[3], line: Number(located[2]), message: `BibTeX: ${located[1].trim()}` });
+      continue;
+    }
+    // bibtex failures with no place to point at: a missing .bst or .bib file.
+    if (/^(I couldn't open|Sorry---you)/.test(line)) {
+      errors.push({ type: 'error', line: null, message: `BibTeX: ${line.trim()}` });
+      continue;
+    }
+    // biber: "[0] ... ERROR - Cannot find 'refs.bib'!"
+    const biber = line.match(/\b(ERROR|WARN) - (.*\S)/);
+    if (biber) errors.push({ type: biber[1] === 'ERROR' ? 'error' : 'warning', line: null, message: `Biber: ${biber[2].trim()}` });
+  }
+  return errors;
+}
+
+/**
+ * latexmk's own reason for failing, for a run whose logs parse to no error at
+ * all — a missing input file, an engine that would not start. Without it the
+ * UI can only say "typesetting failed" and leave the user nothing to act on.
+ */
+function latexmkFailure(out) {
+  const at = out.lastIndexOf('Collected error summary');
+  if (at < 0) return [];
+  const items = [];
+  for (const line of out.slice(at).split('\n').slice(1)) {
+    if (!/^\s+\S/.test(line)) break;
+    const text = line.trim();
+    if (!text.startsWith('Refer to')) items.push(text);
+  }
+  return items.map((message) => ({ type: 'error', line: null, message: `Typesetting failed: ${message}` }));
+}
+
 function run(cmd, args, opts, timeoutMs) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { ...opts });
@@ -166,7 +214,14 @@ async function compileInner(body) {
     // still exits non-zero when errors occurred, so the caller gets a complete
     // PDF plus the error list (the default). With it, the run stops at the
     // first error and the PDF on disk is truncated at that page.
-    ...(haltOnError ? ['-halt-on-error'] : []),
+    //
+    // -f is the other half of running to completion, and only nonstopmode
+    // without it looks like it works: latexmk gives up after the pass that
+    // errored ("Errors, so I did not complete making targets"), so bibtex and
+    // the reruns that resolve citations and cross-references never happen. A
+    // paper with one bad macro then renders every \cite as [?] and every
+    // \ref as ??. latexmk still exits non-zero, so `ok` stays false.
+    ...(haltOnError ? ['-halt-on-error'] : ['-f']),
     '-file-line-error',
     // no -no-shell-escape: the image sets texmf shell_escape=p (restricted),
     // so only whitelisted programs (epstopdf, kpsewhich, bibtex, …) run.
@@ -211,7 +266,18 @@ async function compileInner(body) {
   }
   const durationMs = Date.now() - t0;
   let log = readLog(out);
+  // A previous run's outputs stay on disk when this run fails, so existence
+  // alone says nothing about which run wrote them. "Fresh" = written by this
+  // run: mtime at or after the sentinel's (same clock, second granularity at
+  // worst, and a write in the sentinel's own second still counts).
+  const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  const bibLogPath = path.join(outAbs, `${base}.blg`);
   const errors = parseLog(log);
+  // Only this run's .blg: a stale one from before the user fixed the .bib
+  // would report errors that no longer exist.
+  if (isFresh(bibLogPath)) {
+    try { errors.push(...parseBibLog(fs.readFileSync(bibLogPath, 'utf8'))); } catch { /* unreadable is not an error */ }
+  }
   // -file-line-error paths are relative to the compile dir (the root file's
   // dir, thanks to -cd) — reduce in-project ones to project-relative paths so
   // the editor's error links and the AI-fix prompt name files the way the rest
@@ -220,13 +286,31 @@ async function compileInner(body) {
     if (typeof e.file !== 'string' || !e.file) continue;
     const abs = path.resolve(absDir, rootDir, e.file);
     if (abs === absDir || abs.startsWith(absDir + path.sep)) e.file = path.relative(absDir, abs);
+    // An error inside a generated file (the .bbl bibtex just wrote, an .aux)
+    // has a real line number in a file the user cannot open or fix. Say which
+    // file it was and drop the link, so the row explains the fallout while the
+    // .bib error above it stays the one to click.
+    if (e.file.split(path.sep).includes(OUT_SUBDIR)) {
+      e.message = `${path.basename(e.file)} (generated)${e.line != null ? ` line ${e.line}` : ''}: ${e.message}`;
+      e.file = null;
+      e.line = null;
+    }
   }
+  // One broken .bib entry makes every pass report the same generated-file error;
+  // identical rows tell the user nothing the first one did not.
+  const seen = new Set();
+  const deduped = errors.filter((e) => {
+    const key = `${e.type}\u0000${e.file ?? ''}\u0000${e.line ?? ''}\u0000${e.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  errors.length = 0;
+  errors.push(...deduped);
   const ok = code === 0 && fs.existsSync(pdfPath);
-  // A previous run's PDF/SyncTeX stay on disk when this run fails, so existence
-  // alone says nothing about which run wrote them. "Fresh" = written by this
-  // run: mtime at or after the sentinel's (same clock, second granularity at
-  // worst, and a write in the sentinel's own second still counts).
-  const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  // Never report a failure the user cannot read: a run that fails with nothing
+  // in either log falls back to latexmk's own summary.
+  if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
@@ -308,6 +392,12 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { ok: false, error: 'not found' });
 });
 
-probeTexLive().finally(() => {
-  server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
-});
+// The log parsers are pure and worth testing without a TeX Live image; the
+// server only starts when this file is run directly (the image's CMD).
+module.exports = { parseLog, parseBibLog, latexmkFailure };
+
+if (require.main === module) {
+  probeTexLive().finally(() => {
+    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
+  });
+}

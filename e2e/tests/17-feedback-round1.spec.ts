@@ -174,6 +174,74 @@ test.describe('compile to completion', () => {
       await expect(page.getByTestId('pdf-stale')).toBeVisible();
     } finally { await cleanup(request, id); }
   });
+
+  test('a document with a bibliography resolves its citations even when a pass fails', async ({ page, request }) => {
+    const id = await createProject(request, 'Run To End Bib');
+    try {
+      // Every real paper has a bibliography, and running to completion is what
+      // gets it: latexmk stops after a failed pass unless forced, so bibtex and
+      // the reruns never happen and each \cite renders as [?].
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'refs.bib',
+        content: '@article{knuth1984,\n  author = {Knuth, Donald E.},\n  title = {Literate Programming},\n  journal = {The Computer Journal},\n  year = {1984},\n}\n' } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: [
+        '\\documentclass{article}',
+        '\\begin{document}',
+        '\\section{Intro}\\label{sec:intro}',
+        'Literate programming \\cite{knuth1984} and \\ref{sec:intro}.',
+        '\\thisMacroDoesNotExist',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+        '' ].join('\n') } });
+
+      await withoutAutoTypeset(page);
+      await openProject(page, id);
+      const first = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const result = await (await first).json();
+
+      expect(result.ok).toBe(false);
+      expect(result.pdfUrl).toBeTruthy();
+      expect(result.errors.some((e: { message: string }) => /undefined control sequence/i.test(e.message))).toBe(true);
+      // the point of the test: the failed pass did not cost the bibliography
+      expect(result.log).not.toMatch(/Citation `knuth1984' .* undefined/);
+      expect(result.log).not.toMatch(/Reference `sec:intro' .* undefined/);
+      expect(result.log).toMatch(/Output written on/);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('a broken .bib entry is reported with its line instead of a wall of undefined citations', async ({ page, request }) => {
+    const id = await createProject(request, 'Broken Bib');
+    try {
+      // A missing closing brace: bibtex writes no usable .bbl, so the LaTeX log
+      // carries only "Citation undefined" — the line to fix is in the .blg.
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'refs.bib',
+        content: '@article{a,\n  title = {One},\n  year = {2001},\n\n@article{b,\n  title = {Two},\n  year = {2002},\n}\n' } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: [
+        '\\documentclass{article}',
+        '\\begin{document}',
+        'Text \\cite{a} and \\cite{b}.',
+        '\\bibliographystyle{plain}',
+        '\\bibliography{refs}',
+        '\\end{document}',
+        '' ].join('\n') } });
+
+      await withoutAutoTypeset(page);
+      await openProject(page, id);
+      const first = compileResponse(page);
+      await page.getByTestId('typeset-button').click();
+      const result = await (await first).json();
+
+      const bib = result.errors.filter((e: { type: string; file?: string }) => e.type === 'error' && e.file === 'refs.bib');
+      expect(bib.length).toBeGreaterThan(0);
+      expect(bib[0].line).toBeGreaterThan(1);
+      expect(bib[0].message).toMatch(/^BibTeX: /);
+      // the row is a link into refs.bib, not a dead end
+      await expect(page.getByTestId('errors-panel')).toBeVisible();
+      await page.getByTestId('errors-panel').getByText(/BibTeX: /).first().click();
+      await expect(page.getByTestId('active-file')).toHaveText('refs.bib');
+    } finally { await cleanup(request, id); }
+  });
 });
 
 test.describe('stale preview', () => {
