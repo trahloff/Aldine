@@ -119,5 +119,7 @@ To roll back, run "Promote to latest" by hand (Actions tab) with the previous
 version: it re-tags the digests that already exist, no rebuild. The same
 command is the way to re-promote a version whose approval you let expire.
 
-Budget about an hour for the build: the full TeX Live compiler image is
-around 2.8 GB compressed per architecture.
+Budget about an hour for the build: the compiler is built twice, as the
+default `medium` scheme and as `-full`, and the full TeX Live image is around
+2.8 GB compressed per architecture. Both variants are smoked and promoted
+together, so `latest` and `latest-full` always name the same release.

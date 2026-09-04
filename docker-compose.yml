@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # Hardening: no external egress (internal network), drop all Linux caps, no

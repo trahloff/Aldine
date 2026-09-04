@@ -121,7 +121,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -173,10 +173,16 @@ what `deploy/backup.sh` looks for.
   security fixes: per [SECURITY.md](SECURITY.md), only the latest release
   gets them.
 - **The first pull is big.** TeX Live lives in the compiler image: about
-  1 GB compressed for 0.3.0, and about 2.8 GB (around 9 GB on disk) from
-  0.4.0 on, which switches to full TeX Live so every script and language
-  typesets out of the box. After the first pull, starts take seconds. Ready
-  when `curl localhost:8080/api/health` returns `{"ok":true,"name":"aldine"}`.
+  1 GB compressed, 3.7 GB on disk. It carries a curated package set, the
+  publisher classes, and the Arabic, Persian, Cyrillic and Greek scripts;
+  the one family it leaves out is CJK. After the first pull, starts take
+  seconds. Ready when `curl localhost:8080/api/health` returns
+  `{"ok":true,"name":"aldine"}`.
+- **Need a package it does not have?** Every release from 0.4.0 also ships
+  all of TeX Live as `-full` (about 2.8 GB compressed, 9 GB on disk). Add
+  `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again; the
+  missing-package error in the editor tells you the same thing. Project
+  settings show which one you are on.
 - **Port 8080 taken?** Change the left side of `ports:`.
 - **Everything beyond the minimum**: building from source (latest `main`,
   not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
@@ -184,10 +190,7 @@ what `deploy/backup.sh` looks for.
   the same compiler sandbox and the same volumes, so you can switch without
   losing data: `docker compose -f docker-compose.full.yml up -d --build`.
   The first build pulls TeX Live; expect 15–40 minutes.
-- **Constrained host?** Build the compiler yourself with the slimmer
-  `medium` scheme (curated packages and publisher classes, no CJK, about
-  1.3 GB of packages):
-  `ALDINE_TEXLIVE_SCHEME=medium docker compose -f docker-compose.full.yml up -d --build`
+  `ALDINE_TEXLIVE_SCHEME=full` builds the all-of-TeX-Live variant instead.
 
 ## How Aldine compares
 
@@ -201,7 +204,7 @@ what `deploy/backup.sh` looks for.
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
 | Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
-| Package coverage | **All of TeX Live** by default (`ALDINE_TEXLIVE_SCHEME=medium` for a curated slim image) | All of TeX Live | Whatever you install |
+| Package coverage | Curated TeX Live by default (publisher classes, most scripts); **all of TeX Live** with `ALDINE_TEXLIVE=-full` | All of TeX Live | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
 | Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
 | License | AGPL-3.0 | AGPL | MIT/varies |

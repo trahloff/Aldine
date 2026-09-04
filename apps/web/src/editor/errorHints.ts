@@ -3,8 +3,8 @@
 const HINTS: Array<{ re: RegExp; hint: string }> = [
   { re: /Undefined control sequence/i, hint: 'A command isn’t defined — check its spelling, or add the \\usepackage that provides it.' },
   { re: /Missing \$ inserted/i, hint: 'Math content outside math mode — wrap symbols like _ ^ \\alpha in $…$.' },
-  { re: /File `?([^']+?)\.sty'? not found/i, hint: 'The package “$1” isn’t in this server’s TeX Live image (or is misspelled in \\usepackage). Self-hosting? Rebuild with ALDINE_TEXLIVE_SCHEME=full to include all of CTAN.' },
-  { re: /File `?([^']+?)\.cls'? not found/i, hint: 'The document class “$1” isn’t in this server’s TeX Live image — upload the .cls into the project, or rebuild with ALDINE_TEXLIVE_SCHEME=full to include all of CTAN.' },
+  { re: /File `?([^']+?)\.sty'? not found/i, hint: 'The package “$1” isn’t in this server’s TeX Live image (or is misspelled in \\usepackage). Self-hosting? Set ALDINE_TEXLIVE=-full and pull again to get all of TeX Live (ALDINE_TEXLIVE_SCHEME=full when building from source).' },
+  { re: /File `?([^']+?)\.cls'? not found/i, hint: 'The document class “$1” isn’t in this server’s TeX Live image — upload the .cls into the project, or set ALDINE_TEXLIVE=-full and pull again to get all of TeX Live.' },
   { re: /File `?([^']+?)'? not found/i, hint: 'The file isn’t in the project — check the path in \\input, \\include, or \\includegraphics.' },
   { re: /Environment .* undefined/i, hint: 'The \\begin{…} environment isn’t defined — load the package that provides it.' },
   { re: /\\begin\{.*\} on input line .* ended by \\end\{.*\}/i, hint: 'Mismatched \\begin/\\end pair — every \\begin{x} must close with \\end{x}.' },

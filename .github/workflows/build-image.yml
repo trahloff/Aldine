@@ -29,6 +29,16 @@ on:
         required: false
         type: boolean
         default: false
+      build-args:
+        description: Extra build args, one KEY=value per line
+        required: false
+        type: string
+        default: ''
+      tag-suffix:
+        description: Appended to the version and sha tags (e.g. -full for the full TeX Live variant)
+        required: false
+        type: string
+        default: ''
     outputs:
       digest:
         description: Digest of the pushed multi-arch index
@@ -40,6 +50,8 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-${{ inputs.name }}
+  VERSION_TAG: ${{ inputs.version }}${{ inputs.tag-suffix }}
+  VARIANT: ${{ inputs.name }}${{ inputs.tag-suffix }}
 
 jobs:
   build:
@@ -69,8 +81,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Refuse to overwrite a published version
         run: |
-          if docker manifest inspect "$IMAGE:${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "::error::$IMAGE:${{ inputs.version }} already exists; version tags are immutable. Cut a new version instead."
+          if docker manifest inspect "$IMAGE:$VERSION_TAG" >/dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION_TAG already exists; version tags are immutable. Cut a new version instead."
             exit 1
           fi
       - name: Platform slug
@@ -85,18 +97,19 @@ jobs:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           platforms: ${{ matrix.platform }}
+          build-args: ${{ inputs.build-args }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ inputs.name }}-${{ steps.slug.outputs.value }}
+          cache-from: type=gha,scope=${{ env.VARIANT }}-${{ steps.slug.outputs.value }}
           # mode=max of a full TeX Live layer set exceeds the 10 GB repo cache
           # and evicts itself every run; min keeps only the final layers.
-          cache-to: type=gha,scope=${{ inputs.name }}-${{ steps.slug.outputs.value }},mode=min
+          cache-to: type=gha,scope=${{ env.VARIANT }}-${{ steps.slug.outputs.value }},mode=min
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
           echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ steps.slug.outputs.value }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ inputs.name }}-${{ steps.slug.outputs.value }}
+          name: digests-${{ env.VARIANT }}-${{ steps.slug.outputs.value }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -110,7 +123,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-${{ inputs.name }}-*
+          pattern: digests-${{ env.VARIANT }}-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
@@ -123,16 +136,16 @@ jobs:
         id: index
         run: |
           set -e
-          if docker manifest inspect "$IMAGE:${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "::error::$IMAGE:${{ inputs.version }} appeared while building; version tags are immutable."
+          if docker manifest inspect "$IMAGE:$VERSION_TAG" >/dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION_TAG appeared while building; version tags are immutable."
             exit 1
           fi
           refs=()
           for f in /tmp/digests/*; do refs+=("$IMAGE@$(cat "$f")"); done
           docker buildx imagetools create \
-            -t "$IMAGE:${{ inputs.version }}" \
-            -t "$IMAGE:sha-${GITHUB_SHA::7}" \
+            -t "$IMAGE:$VERSION_TAG" \
+            -t "$IMAGE:sha-${GITHUB_SHA::7}${{ inputs.tag-suffix }}" \
             "${refs[@]}"
-          digest=$(docker buildx imagetools inspect "$IMAGE:${{ inputs.version }}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Pushed $IMAGE:${{ inputs.version }} = $digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed $IMAGE:$VERSION_TAG = $digest" >> "$GITHUB_STEP_SUMMARY"

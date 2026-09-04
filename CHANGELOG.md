@@ -180,12 +180,15 @@ All notable changes to Aldine are documented here. The format follows
   on screen as before.
 
 
-- The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
-  script and language compiles out of the box. The `medium` scheme stays for
-  constrained hosts and now includes the publisher classes and the Arabic/Persian,
-  Cyrillic, Greek and other-script collections (Persian via xepersian or
-  polyglossia verified). Self-hosters: rebuild the compiler image; expect ~9 GB
-  on disk for the default.
+- The compiler image is published in two variants. `aldine-compiler:<version>`
+  is the `medium` scheme, which now includes the publisher classes and the
+  Arabic/Persian, Cyrillic, Greek and other-script collections (Persian via
+  xepersian or polyglossia verified), about 3.7 GB on disk.
+  `aldine-compiler:<version>-full` is all of TeX Live (about 9 GB on disk):
+  every script and language, CJK included. Pick it with `ALDINE_TEXLIVE=-full`
+  next to `ALDINE_VERSION` in the compose environment; `latest-full` tracks
+  `latest`. A missing-package error hint names that switch. Building from
+  source (`docker-compose.full.yml`) still takes `ALDINE_TEXLIVE_SCHEME`.
 - The compiler image installs `collection-publishers` (elsarticle, IEEEtran,
   acmart, revtex4-2, agujournal, copernicus, and the other journal and
   conference classes) on the medium scheme, and the full scheme's base image

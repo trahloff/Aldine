@@ -247,5 +247,6 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `RL_COMPILE_CONCURRENCY` | Max concurrent compiles the app forwards (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
-| `ALDINE_TEXLIVE_SCHEME` | Compiler image build: `full` (default, all of TeX Live, ~9 GB on disk) or `medium` (curated set + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~3 GB) |
+| `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; curated set + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~3.7 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
+| `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (curated TeX Live) or `-full` (all of TeX Live, from 0.4.0) |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |

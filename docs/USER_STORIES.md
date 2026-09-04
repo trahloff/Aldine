@@ -71,7 +71,7 @@ flag; everything else works in the default single-tenant deploy.
 - **COMP-6** — SyncTeX: double-clicking the PDF jumps the editor to the source
   line; ⌘J jumps the PDF to my cursor with a flash.
 - **COMP-7** — A missing-package error names the package and points at
-  `ALDINE_TEXLIVE_SCHEME=full`.
+  `ALDINE_TEXLIVE=-full`.
 
 ## Collaboration (COLLAB)
 
