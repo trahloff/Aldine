@@ -1,0 +1,12 @@
+# Overlay for the release smoke job: run the exact digests the build just
+# pushed, on the same sandbox the base file gives users. Nothing else changes,
+# so what passes here is what a self-hoster gets.
+#
+#   ALDINE_APP_IMAGE=ghcr.io/trahloff/aldine-app@sha256:... \
+#   ALDINE_COMPILER_IMAGE=ghcr.io/trahloff/aldine-compiler@sha256:... \
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml up -d
+services:
+  app:
+    image: ${ALDINE_APP_IMAGE:?set ALDINE_APP_IMAGE to the app image digest to smoke}
+  compiler:
+    image: ${ALDINE_COMPILER_IMAGE:?set ALDINE_COMPILER_IMAGE to the compiler image digest to smoke}

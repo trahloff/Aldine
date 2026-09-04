@@ -24,6 +24,6 @@ docker run --rm \
   -v "${DATA_VOL}":/data \
   -v "${SECRETS_VOL}":/secrets \
   -v "${IN_DIR}":/backup:ro \
-  alpine sh -c "rm -rf /data/* /secrets/* && tar xzf /backup/${IN_FILE} -C /"
+  alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce sh -c "rm -rf /data/* /secrets/* && tar xzf /backup/${IN_FILE} -C /"
 
 echo "Restored from ${IN_FILE}. Start the stack: docker compose up -d"

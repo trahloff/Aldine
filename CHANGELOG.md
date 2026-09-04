@@ -146,6 +146,27 @@ All notable changes to Aldine are documented here. The format follows
   deploy and rollback workflows take a `target` input (production or staging).
 
 ### Changed
+- Releases no longer move `:latest` on their own. A version tag now runs the
+  full CI suite on the tagged commit, builds `aldine-app` and
+  `aldine-compiler` as immutable `x.y.z` (and `sha-<commit>`) images, boots
+  those exact digests with the user-facing compose file and typesets a
+  document with a bibliography inside the sandbox, then waits for a human to
+  approve the promote step before `:latest` and the GitHub Release follow.
+  The same "Promote to latest" workflow, run by hand with an older version,
+  is the rollback: it re-tags what already exists, no rebuild. The compose
+  file and the README block pin `${ALDINE_VERSION:-0.3.0}` instead of
+  `:latest`, so a running install never changes under you; upgrading is
+  `ALDINE_VERSION=x.y.z docker compose pull && docker compose up -d`, and
+  rolling back is the same line with the previous version. CI now also runs
+  the web unit tests, checks that every place naming the version agrees, and
+  discovers the server unit test files instead of listing them (two branches
+  each adding a test used to conflict on that line, and the merge dropped one
+  side's tests without anything noticing). The server image installs from
+  the lockfile (`npm ci`), so the shipped dependency tree is the one CI
+  tested; a `.dockerignore` keeps a checkout's `node_modules`, `.git` and
+  `.data` out of the build context (a local `--build` used to copy the host's
+  `node_modules` over the installed one); and `deploy/backup.sh` and
+  `deploy/restore.sh` pin the `alpine` image by digest.
 - `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
   part (and an optional `name` field); the web client uploads the file that
   way, so the browser holds one copy of a 60 MB archive instead of four (file,

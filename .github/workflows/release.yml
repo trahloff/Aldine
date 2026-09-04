@@ -1,63 +1,114 @@
 name: Release
 
-# Build and publish the app + compiler images to GHCR on a version tag.
-# Usage:  git tag v0.4.0 && git push origin v0.4.0
+# A version tag builds; it does not publish to anyone.
+#
+#   git push origin v0.4.0
+#     preflight  the tag is on main, and every version pin agrees with it
+#     verify     the full CI suite, on the tagged commit (tags skip ci.yml's own triggers)
+#     build      aldine-app and aldine-compiler as 0.4.0 + sha-<commit>, immutable
+#     smoke      boot those exact digests with the user-facing compose file and
+#                typeset a document with a bibliography inside the sandbox
+#     promote    waits for approval in the `latest` environment, then moves
+#                `latest` to the same digests and publishes the GitHub Release
+#
+# Until promote is approved nothing a self-hoster pulls has changed. To roll
+# back, run "Promote to latest" by hand with the previous version.
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write   # create the GitHub Release
-  packages: write   # push to GHCR
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  images:
+  preflight:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: app
-            context: .
-            dockerfile: apps/server/Dockerfile
-          - name: compiler
-            context: apps/compiler
-            dockerfile: apps/compiler/Dockerfile
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3   # arm64 builds via emulation
-      - uses: docker/setup-buildx-action@v3
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/aldine-${{ matrix.name }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-      - name: Build & push
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64   # x86 servers + Apple Silicon/Pi/Graviton
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          fetch-depth: 0
+      - name: The tag must point at a commit on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main. Merge first, then tag."
+            exit 1
+          fi
+      - name: Version pins agree with the tag
+        id: version
+        run: |
+          node scripts/check-release-pins.mjs --tag "$GITHUB_REF_NAME"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-  release:
-    needs: images
+  verify:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  build-app:
+    needs: [preflight, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: app
+      context: .
+      dockerfile: apps/server/Dockerfile
+      version: ${{ needs.preflight.outputs.version }}
+    secrets: inherit
+
+  build-compiler:
+    needs: [preflight, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: compiler
+      context: apps/compiler
+      dockerfile: apps/compiler/Dockerfile
+      version: ${{ needs.preflight.outputs.version }}
+      free-disk: true
+    secrets: inherit
+
+  smoke:
+    needs: [preflight, build-app, build-compiler]
     runs-on: ubuntu-latest
+    env:
+      ALDINE_APP_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-app@${{ needs.build-app.outputs.digest }}
+      ALDINE_COMPILER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/setup-node@v4
         with:
-          generate_release_notes: true
+          node-version: 22
+      - name: Free runner disk for the compiler image
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+      - name: Start the stack from the published digests
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml up -d --quiet-pull
+      - name: Smoke test
+        run: node scripts/smoke-image.mjs
+        env:
+          ALDINE_URL: http://localhost:8080
+          EXPECT_SCHEME: full
+      - name: Container logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml logs --no-color | tail -200
+      - name: Summary
+        run: |
+          {
+            echo "Smoke passed against:"
+            echo "- $ALDINE_APP_IMAGE"
+            echo "- $ALDINE_COMPILER_IMAGE"
+            echo
+            echo "Next: approve the promote job to move \`latest\` here, or leave it and nothing changes for users."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    needs: [preflight, smoke]
+    uses: ./.github/workflows/promote.yml
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+    secrets: inherit

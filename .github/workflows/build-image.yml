@@ -1,0 +1,138 @@
+name: Build image
+
+# Reusable: builds one image per platform on a native runner, pushes each by
+# digest, then stitches them into a multi-arch index tagged with the version
+# and the commit. Called by release.yml for the app and the compiler.
+#
+# A version tag is immutable: the merge job refuses to overwrite one that
+# already resolves. The only tag that ever moves is `latest`, and only
+# promote.yml touches it.
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: Image name suffix (app | compiler)
+        required: true
+        type: string
+      context:
+        required: true
+        type: string
+      dockerfile:
+        required: true
+        type: string
+      version:
+        description: Version to tag, without the leading v
+        required: true
+        type: string
+      free-disk:
+        description: Remove unused toolchains from the runner first (the full TeX Live image needs the space)
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      digest:
+        description: Digest of the pushed multi-arch index
+        value: ${{ jobs.merge.outputs.digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-${{ inputs.name }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free runner disk
+        if: ${{ inputs.free-disk }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af >/dev/null
+          df -h / | tail -1
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Refuse to overwrite a published version
+        run: |
+          if docker manifest inspect "$IMAGE:${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::$IMAGE:${{ inputs.version }} already exists; version tags are immutable. Cut a new version instead."
+            exit 1
+          fi
+      - name: Platform slug
+        id: slug
+        run: echo "value=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ inputs.name }}-${{ steps.slug.outputs.value }}
+          # mode=max of a full TeX Live layer set exceeds the 10 GB repo cache
+          # and evicts itself every run; min keeps only the final layers.
+          cache-to: type=gha,scope=${{ inputs.name }}-${{ steps.slug.outputs.value }},mode=min
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ steps.slug.outputs.value }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ inputs.name }}-${{ steps.slug.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.index.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ inputs.name }}-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create the multi-arch index (version + commit tags only)
+        id: index
+        run: |
+          set -e
+          if docker manifest inspect "$IMAGE:${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::$IMAGE:${{ inputs.version }} appeared while building; version tags are immutable."
+            exit 1
+          fi
+          refs=()
+          for f in /tmp/digests/*; do refs+=("$IMAGE@$(cat "$f")"); done
+          docker buildx imagetools create \
+            -t "$IMAGE:${{ inputs.version }}" \
+            -t "$IMAGE:sha-${GITHUB_SHA::7}" \
+            "${refs[@]}"
+          digest=$(docker buildx imagetools inspect "$IMAGE:${{ inputs.version }}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed $IMAGE:${{ inputs.version }} = $digest" >> "$GITHUB_STEP_SUMMARY"
