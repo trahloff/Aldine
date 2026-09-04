@@ -515,9 +515,16 @@ export async function venueKitSeed(entry: VenueKitEntry): Promise<VenueKitSeed> 
     if (stale) {
       try { return { files: kitProject(entry, stale.files), venueKit: status(true) }; } catch { /* the skeleton, then */ }
     }
+    const network = err?.cause?.code || err?.code;
     const reason = safeReason(err?.name === 'TimeoutError' || err?.name === 'AbortError'
       ? `it did not answer within ${KIT_TIMEOUT_MS / 1000} seconds`
-      : String(err?.message || err));
+      : network === 'ENOTFOUND' || network === 'EAI_AGAIN'
+        ? `${entry.kit.host} could not be resolved`
+        : network === 'ECONNREFUSED' || network === 'ECONNRESET' || network === 'EHOSTUNREACH'
+          ? `${entry.kit.host} could not be reached`
+          : String(err?.message || err) === 'fetch failed'
+            ? `${entry.kit.host} could not be reached`
+            : String(err?.message || err));
     return { files: fallbackFiles(entry, reason), venueKit: status(false, reason) };
   }
 }
