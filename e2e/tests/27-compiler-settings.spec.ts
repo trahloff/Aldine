@@ -127,6 +127,15 @@ test.describe('compiler settings panel', () => {
       await expect.poll(() => page.evaluate(() => window.localStorage.getItem('aldine.autoTypeset'))).toBe('1');
       await expect(page.getByTestId('auto-toggle')).toHaveClass(/auto-toggle--on/);
 
+      // Theme lives here too: the editor has no visible theme control, and
+      // outside the command palette this dialog is the only way back to dark.
+      await expect(page.getByTestId('settings-theme')).toHaveValue('dark');
+      await page.getByTestId('settings-theme').selectOption('light');
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('light');
+      await expect.poll(() => page.evaluate(() => window.localStorage.getItem('aldine.theme'))).toBe('light');
+      await page.getByTestId('settings-theme').selectOption('dark');
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+
       await page.getByTestId('settings-root-file').selectOption('other.tex');
       await expect.poll(async () => (await meta(request, id)).rootFile).toBe('other.tex');
       await expect(page.locator('.toast').filter({ hasText: 'Main document is now other.tex' })).toBeVisible();

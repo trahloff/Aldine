@@ -435,6 +435,16 @@
    positioned pane they cover the sidebar and toolbar too. */
 .pane--editor { position: relative; }
 
+/* The preview toolbar is the widest row in the app and its pane is resizable,
+   so the pane's own title is the first thing to drop: the PDF beside it and
+   the typeset status already say which pane this is, and keeping the row on
+   one line matters more than repeating it. The query is on the pane, not the
+   window — a wide window can still hold a narrow preview. `.pane__header`
+   wraps as the backstop below even this. */
+.pane--preview { container-type: inline-size; }
+.pane__title { display: none; }
+@container (min-width: 470px) { .pane__title { display: inline; } }
+
 .pane__header {
   display: flex;
   align-items: center;
