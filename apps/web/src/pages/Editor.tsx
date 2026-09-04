@@ -799,9 +799,9 @@ export default function Editor() {
           }}
         />
 
-        <section className="pane" style={{ width: pdfWidth, flex: 'none' }}>
+        <section className="pane pane--preview" style={{ width: pdfWidth, flex: 'none' }}>
           <div className="pane__header">
-            <span>Preview</span>
+            <span className="pane__title">Preview</span>
             <span className="pdf-status" data-testid="pdf-status" style={{ marginLeft: 10 }}>
               {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
               {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
@@ -831,7 +831,7 @@ export default function Editor() {
                 title="Download the compiled PDF"
                 data-testid="download-pdf"
               >
-                Download PDF
+                Download
               </a>
             )}
             <button

@@ -7,6 +7,10 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- A theme control in project settings, under Appearance. Dark and light were
+  only switchable from the home screen or the command palette, so once you
+  were in a project there was no visible way back. It says it applies to this
+  browser, like the auto-typeset switch beside it.
 - Venue kits fetched from the publisher: 25 more venues in the template
   gallery (NeurIPS, ICLR, ICML, AISTATS, AAAI, IJCAI, ECAI, ACL/EMNLP/NAACL,
   COLING, CVPR, ICCV, ECCV, USENIX and USENIX Security, SIAM, MDPI,
@@ -179,6 +183,11 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- The preview toolbar fits on one line at ordinary pane widths again. It had
+  outgrown the pane, so it wrapped to a second row and left the two pane
+  headers at different heights. The pane's own "Preview" title now appears
+  only when the pane is wide enough to spare it, and the download button says
+  "Download"; the wrap stays as the backstop for narrower panes.
 - A dialog taller than the window no longer hides its own buttons. The panel
   caps at 70% of the window height and scrolls; the action row scrolled away
   with the content, so on a laptop-sized window the New project dialog showed
