@@ -53,6 +53,43 @@ export function isHiddenPath(rel: string): boolean {
 
 export const SEED_MAX_FILES = 1000;
 export const SEED_MAX_BYTES = 32 * 1024 * 1024;
+/** POSIX NAME_MAX. A longer path component is ENAMETOOLONG inside
+ *  createProject, which can only be reported as a server fault; caught here it
+ *  is the caller's own path and a 400 that names it. */
+export const SEED_MAX_NAME_BYTES = 255;
+
+/** A whole path can be too long even when every component fits: PATH_MAX is
+ *  1024 on macOS and 4096 on Linux, and DATA_DIR/projects/<id>/ goes in front
+ *  of every key. 900 bytes leaves room for the longest prefix we deploy. */
+export const SEED_MAX_PATH_BYTES = 900;
+
+/** The first path component too long for the filesystem, or null. */
+export function overlongName(rel: string): string | null {
+  return rel.split('/').find((seg) => Buffer.byteLength(seg) > SEED_MAX_NAME_BYTES) ?? null;
+}
+
+/** The first name used as both a file and a directory, or null: writing
+ *  `a` and then `a/b` fails halfway through with ENOTDIR, and the message
+ *  carries the server's absolute path. */
+export function pathConflict(paths: Iterable<string>): string | null {
+  const taken = new Set(paths);
+  for (const p of taken) {
+    const segs = p.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const dir = segs.slice(0, i).join('/');
+      if (taken.has(dir)) return dir;
+    }
+  }
+  return null;
+}
+
+/** Why a path cannot be written (component or whole path too long), or null. */
+export function overlongPath(rel: string): string | null {
+  const seg = overlongName(rel);
+  if (seg) return `a name longer than ${SEED_MAX_NAME_BYTES} bytes`;
+  if (Buffer.byteLength(rel) > SEED_MAX_PATH_BYTES) return `a path longer than ${SEED_MAX_PATH_BYTES} bytes`;
+  return null;
+}
 
 /**
  * Why a `files` map cannot seed a project, or null when it can. Keys are
@@ -70,6 +107,8 @@ export function seedError(files: unknown): string | null {
   for (const [rel, content] of entries) {
     const norm = importPath(rel);
     if (norm === null || isHiddenPath(norm)) return `File path "${rel}" is not allowed`;
+    const tooLong = overlongPath(norm);
+    if (tooLong) return `File path "${rel}" has ${tooLong}`;
     if (typeof content !== 'string') return `Content of "${rel}" must be a string`;
     total += Buffer.byteLength(content);
     if (total > SEED_MAX_BYTES) return `Files total more than ${Math.round(SEED_MAX_BYTES / (1024 * 1024))} MB`;

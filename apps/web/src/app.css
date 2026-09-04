@@ -161,6 +161,7 @@
 .tpl__icon { font-size: 16px; }
 .tpl__name { font-weight: 600; font-size: 13px; }
 .tpl__desc { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.tpl__kit { font-size: 10px; color: var(--text-3); margin-top: 4px; }
 .tpl__license { font-size: 10px; color: var(--text-2); opacity: 0.8; margin-top: 4px; }
 .tpl-search { position: relative; margin-top: 12px; }
 .tpl-search .input { padding-right: 30px; }
@@ -873,4 +874,12 @@
   .home__bar > div:last-child { flex-wrap: wrap; }
   .split-pdf, .pdf-pane { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
+}
+
+/* The typesetting log opens at its first error; mark it so the eye lands there. */
+.logview__hit {
+  background: color-mix(in srgb, var(--error) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
 }

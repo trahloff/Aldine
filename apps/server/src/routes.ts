@@ -12,7 +12,7 @@ import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, c
 import { publishProjectEvent } from './events.js';
 import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
-import { listAllTemplates, resolveTemplateFiles } from './templates.js';
+import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
@@ -27,7 +27,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, seedError, newId, BRANCH_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, BRANCH_RE } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -353,19 +353,34 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
     const { name = 'Untitled Project', files, template } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
+    let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {
       const bad = seedError(files);
       if (bad) return reply.code(400).send({ error: bad });
       seed = files;
     }    if (template) {
       try {
-        seed = await resolveTemplateFiles(template);
+        resolved = await resolveTemplateSeed(template);
+        seed = resolved.files;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
       }
     }
-    const meta = await store.createProject(name, seed, reqUser(req)?.id);
-    return publicMeta(meta, reqUser(req));  // Promise; Fastify awaits
+    // Every path shape the caller controls is screened by seedError and
+    // kitSeedProblem, so a write that still fails here is this server's fault
+    // (a full disk, a read-only data directory) and answers 5xx. The errno
+    // text names DATA_DIR, so it is logged and not returned.
+    let meta: Awaited<ReturnType<typeof store.createProject>>;
+    try {
+      meta = await store.createProject(name, seed, reqUser(req)?.id);
+    } catch (err: any) {
+      req.log.error({ err }, 'createProject failed');
+      return reply.code(500).send({ error: 'Could not create the project' });
+    }
+    const body = await publicMeta(meta, reqUser(req));
+    // A venue kit that could not be downloaded still creates the project (from
+    // a skeleton); the client says so rather than the request failing.
+    return resolved?.venueKit ? { ...body, venueKit: resolved.venueKit } : body;
   });
 
   // ---------- sharing (owner only) ----------
@@ -490,9 +505,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         const p = importPath(entry);
         if (p === null) return fail(400, `ZIP entry "${entry}" points outside the project`);
         if (p.startsWith('__MACOSX/') || isHiddenPath(p)) continue;
+        // Screened here, not at the write: fs would answer ENAMETOOLONG with
+        // the server's absolute path in the message, and the catch below
+        // would hand that to the caller.
+        const tooLong = overlongPath(p);
+        if (tooLong) return fail(400, `ZIP entry "${entry}" has ${tooLong}`);
         files[p] = data;
       }
       if (!Object.keys(files).length) return fail(400, 'ZIP had no usable files');
+      const clash = pathConflict(Object.keys(files));
+      if (clash) return fail(400, `The archive uses "${clash}" as both a file and a directory`);
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
@@ -521,7 +543,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
       if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
-      return fail(400, `Could not import ZIP: ${err.message}`);
+      // A ZipError names the entry and the reason and is the caller's to fix;
+      // anything else is a server fault whose message may carry on-disk paths.
+      if (err instanceof ZipError) return fail(400, `Could not import ZIP: ${err.message}`);
+      req.log.error({ err }, 'ZIP import failed unexpectedly');
+      return fail(500, 'Could not import the ZIP. Try again, or send the archive to the instance operator.');
     }
   });
 

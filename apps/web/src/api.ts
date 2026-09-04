@@ -89,6 +89,23 @@ export interface TemplateInfo {
   license?: string;
   licenseUrl?: string;
   source?: { url: string; version?: string };
+  /** Fetched-kit venues: where the official kit is downloaded from at create time. */
+  kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+}
+
+/** How the venue kit went while the project was being created. */
+export interface VenueKitStatus {
+  id: string;
+  name: string;
+  host: string;
+  url: string;
+  ok: boolean;
+  reason?: string;
+}
+
+/** POST /api/projects: a fetched-venue project also reports its kit. */
+export interface CreatedProject extends ProjectSummary {
+  venueKit?: VenueKitStatus;
 }
 
 /** What /api/projects/import decided while placing the archive. */
@@ -100,7 +117,7 @@ export interface CompilerInfo { ok: boolean; texlive: { release: string; scheme:
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),
   createProject: (name: string, files?: Record<string, string>, template?: string) =>
-    req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
+    req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */

@@ -20,6 +20,12 @@ export const config = {
   /** Built-in + user plugins */
   pluginsDir: process.env.PLUGINS_DIR || path.join(repoRoot, 'plugins'),
   templatesDir: process.env.TEMPLATES_DIR || path.join(repoRoot, 'templates'),
+  /**
+   * Registry of venue kits fetched from publishers. Deliberately not derived
+   * from templatesDir: the e2e suite and the unit tests point it at a fixture
+   * registry while still serving the repo's real folder templates.
+   */
+  venuesFile: process.env.VENUES_FILE || path.join(repoRoot, 'templates', 'venues.json'),
   webDist: process.env.WEB_DIST || path.join(repoRoot, 'apps/web/dist'),
 };
 

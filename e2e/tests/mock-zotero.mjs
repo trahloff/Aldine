@@ -1,5 +1,9 @@
-/** Mock Zotero Web API + DOI/arXiv reference lookup for e2e tests. */
+/** Mock Zotero Web API + DOI/arXiv reference lookup + a venue kit host, for e2e tests. */
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildZip } from '../../apps/server/test/zip.mjs';
 
 const KEY = 'test-key-123';
 const USER = 777;
@@ -77,6 +81,14 @@ const server = http.createServer((req, res) => {
     return send(200, `<?xml version="1.0"?>\n<feed><title>arXiv Query</title><entry><title>A Mock arXiv Paper</title><published>2019-01-01T00:00:00Z</published><author><name>Alice Smith</name></author><author><name>Bob Jones</name></author></entry></feed>`);
   }
 
+  // --- Mock venue kit publisher (see apps/server/src/venuekits.ts) ---
+  // The registry the app server reads points here, so the kit path is exercised
+  // end to end without the suite ever reaching a real publisher.
+  if (url.pathname === '/venue-kit.zip') {
+    res.writeHead(200, { 'content-type': 'application/zip', 'content-length': String(VENUE_KIT.length) });
+    return res.end(VENUE_KIT);
+  }
+
   if (auth !== KEY) return send(403, { error: 'bad key' });
 
   if (url.pathname === '/keys/current') {
@@ -104,4 +116,38 @@ const server = http.createServer((req, res) => {
 });
 
 const port = Number(process.env.E2E_MOCK_PORT || 4919);
+
+/** A publisher kit, built here rather than committed: no publisher file, and
+ *  no file of ours pretending to be one, ever lands in the repo. */
+const VENUE_KIT = buildZip({
+  'e2e-kit-1.0/e2evenue.sty': '\\ProvidesPackage{e2evenue}\n\\endinput\n',
+  'e2e-kit-1.0/e2e-sample.tex': '\\documentclass{article}\n\\usepackage{e2evenue}\n\\begin{document}\nFrom the venue kit.\n\\end{document}\n',
+  'e2e-kit-1.0/e2e.bib': '@article{knuth1984,author={Knuth, Donald E.},title={Literate Programming},year={1984}}\n',
+  'e2e-kit-1.0/kit-manual.pdf': '%PDF-1.7 not taken\n',
+  '__MACOSX/e2e-kit-1.0/._e2evenue.sty': 'junk',
+});
+
+/**
+ * The venue registry the app server loads (VENUES_FILE in playwright.config).
+ * Written here because only this process knows the mock's port; the server
+ * re-reads the file when it changes, so the order the two start in does not
+ * matter.
+ */
+const venue = (id, name, file) => ({
+  id, name, category: 'Conferences',
+  description: `${name} submission, used by the e2e suite.`,
+  homepage: 'https://example.org/authors',
+  termsUrl: 'https://example.org/terms',
+  kit: { url: `http://localhost:${port}/${file}`, host: `localhost:${port}`, take: ['e2evenue.sty', 'e2e-sample.tex', 'e2e.bib'] },
+  documentClass: 'article',
+  preamble: ['\\usepackage{e2evenue}'],
+  bibStyle: 'plain',
+  main: 'e2e-sample.tex',
+});
+const registry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.data-e2e/venues-e2e.json');
+fs.mkdirSync(path.dirname(registry), { recursive: true });
+fs.writeFileSync(registry, JSON.stringify({
+  venues: [venue('e2ekit', 'E2E Venue Kit', 'venue-kit.zip'), venue('e2egone', 'E2E Missing Kit', 'no-such-kit.zip')],
+}, null, 2));
+
 server.listen(port, () => console.log(`[mock-zotero] on :${port}`));

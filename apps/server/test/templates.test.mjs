@@ -8,6 +8,9 @@
  *  - the generated skeleton puts the title block where the class wants it
  *  - a compiler with no catalog leaves the folder templates alone
  *  - creating a project from a venue id works like a folder template
+ *  - a fetched venue joins the same gallery, and an installed class of the
+ *    same venue wins, so a venue is never listed twice
+ *  - a fetched venue whose kit cannot be downloaded still creates the project
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +23,10 @@ process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'secrets');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 process.env.TEMPLATES_DIR = path.join(tmp, 'templates');
+process.env.VENUES_FILE = path.join(tmp, 'venues.json');
+// Loopback URLs are only fetchable under the test hook; port 1 refuses at once,
+// so the kit failure path is exercised without touching the network.
+process.env.ALDINE_TEST_HOOKS = '1';
 delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
 
@@ -41,6 +48,20 @@ fs.writeFileSync(path.join(tplDir, 'demo', 'figs', 'plot.pdf'), BINARY);
 fs.mkdirSync(path.join(tplDir, 'slides'), { recursive: true });
 fs.writeFileSync(path.join(tplDir, 'slides', 'template.json'), JSON.stringify({ name: 'Slides', category: 'Slides', order: 2 }));
 fs.writeFileSync(path.join(tplDir, 'slides', 'main.tex'), '\\documentclass{beamer}\n');
+
+const kitVenue = (id, name) => ({
+  id, name, category: 'Conferences', description: `${name} submission.`,
+  homepage: 'https://example.org/authors',
+  kit: { url: 'http://127.0.0.1:1/kit.zip', host: '127.0.0.1:1', take: ['venue.sty'] },
+  documentClass: 'article', preamble: ['\\usepackage{venue}'], bibStyle: 'plain',
+});
+// `neurips` is also in the stubbed compiler catalog below: the gallery must
+// show one NeurIPS tile, the installed one, which needs no download.
+// 'AA Venue' sorts before every installed venue: the two halves of the venue
+// gallery are one alphabet, not one after the other.
+fs.writeFileSync(process.env.VENUES_FILE, JSON.stringify({
+  venues: [kitVenue('neurips', 'NeurIPS'), kitVenue('testvenue', 'Test Venue'), kitVenue('aavenue', 'AA Venue')],
+}));
 
 const { listTemplates, listAllTemplates, templateFiles } = await import('../src/templates.ts');
 const catalog = await import('../src/catalog.ts');
@@ -118,7 +139,14 @@ eq(fetchCalls, 1, 'nor does it drop the in-flight dedup');
 
 const all = await listAllTemplates();
 eq(all.filter((t) => !t.id.startsWith('venue:')).map((t) => t.id), ['blank', 'demo', 'slides'], 'folder templates stay first');
-check(all.length === 6, 'the gallery is the blank tile, the folder templates and the venues');
+check(all.length === 8, 'the gallery is the blank tile, the folder templates, the installed venues and the fetched ones');
+const venueHalf = all.filter((t) => t.id.startsWith('venue:')).map((t) => t.name);
+eq(venueHalf, [...venueHalf].sort((a, b) => a.localeCompare(b)), 'installed and fetched venues share one alphabet, so a category does not restart it');
+eq(all.filter((t) => t.id === 'venue:neurips').length, 1, 'a venue that is both installed and fetchable is listed once');
+check(!all.find((t) => t.id === 'venue:neurips').kit, 'the installed class wins the tile: no download needed');
+const fetched = all.find((t) => t.id === 'venue:testvenue');
+eq(fetched.kit.host, '127.0.0.1:1', 'a fetched venue says which host its kit comes from');
+eq(fetched.license, 'Publisher terms', 'a fetched venue links the publisher\u2019s terms instead of claiming a licence');
 
 // ---- seed files per venue ----
 const skeleton = await catalog.venueTemplateFiles('venue:elsarticle');
@@ -190,13 +218,13 @@ catalog.resetVenueCache();
 const startedAt = Date.now();
 const withoutCatalog = await listAllTemplates();
 check(Date.now() - startedAt < 4_000, 'a silent compiler does not hold the template listing open');
-eq(withoutCatalog.map((t) => t.id), ['blank', 'demo', 'slides'], 'the folder templates answer while the catalog is still in flight');
+eq(withoutCatalog.filter((t) => !t.kit).map((t) => t.id), ['blank', 'demo', 'slides'], 'the folder templates answer while the catalog is still in flight');
 
 // ---- a compiler without a catalog ----
 globalThis.fetch = async () => { throw new Error('connection refused'); };
 catalog.resetVenueCache();
 eq(await catalog.venueTemplates(), [], 'no catalog is an empty list, not an error');
-eq((await listAllTemplates()).map((t) => t.id), ['blank', 'demo', 'slides'], 'the folder templates carry the gallery on their own');
+eq((await listAllTemplates()).filter((t) => !t.kit).map((t) => t.id), ['blank', 'demo', 'slides'], 'the folder templates carry the gallery on their own');
 
 // ---- creating a project from either kind ----
 globalThis.fetch = async () => ({ ok: true, json: async () => CATALOG });
@@ -224,11 +252,46 @@ check(!fs.existsSync(path.join(process.env.DATA_DIR, 'projects', fromFolder, 'LI
 const fromVenue = await create('venue:elsarticle');
 check(projectFile(fromVenue, 'main.tex').toString('utf8').includes('{elsarticle}'), 'a venue project starts from that class');
 
+// A kit that cannot be downloaded creates the project anyway, from the
+// skeleton, and says so instead of failing the request.
+const kitRes = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Fetched', template: 'venue:testvenue' } });
+eq(kitRes.statusCode, 200, 'a venue whose kit is unreachable still creates the project');
+const kitBody = JSON.parse(kitRes.body);
+eq(kitBody.venueKit.ok, false, 'the response says the kit could not be downloaded');
+check(kitBody.venueKit.reason.length > 0, 'and why');
+check(projectFile(kitBody.id, 'README-venue.md').toString('utf8').includes('http://127.0.0.1:1/kit.zip'), 'README-venue.md names the kit URL');
+// The venue's own class is what the project does not have, so the skeleton
+// stands on article and keeps the venue's line as a comment.
+const kitMain = projectFile(kitBody.id, 'main.tex').toString('utf8');
+check(kitMain.includes('\\documentclass{article}'), 'the skeleton starts from a class the image has');
+check(kitMain.includes('% \\usepackage{venue}'), 'the venue\u2019s own line waits as a comment');
+
 const bad = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'x', template: 'venue:nope' } });
 eq(bad.statusCode, 400, 'an unknown venue id is a 400, not a crash');
 
+// A name past every path component limit is the caller's own path, so the
+// screen names it and answers 400 before any of the project is written.
+const tooLong = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Long', files: { [`${'a'.repeat(300)}.tex`]: 'x' } } });
+eq(tooLong.statusCode, 400, 'a seed name the filesystem cannot write is a 400');
+check(JSON.parse(tooLong.body).error.includes('longer than 255 bytes'), 'and it says which limit the path is past');
+
 const listed = JSON.parse((await app.inject({ method: 'GET', url: '/api/templates' })).body);
 check(listed.some((t) => t.id === 'venue:elsarticle' && t.category === 'Journals'), 'GET /api/templates merges the catalog in');
+
+// What is left in the createProject catch is this server failing to write: a
+// read-only or missing data directory, a full disk. That is a 5xx, and its
+// errno text names DATA_DIR, so the answer is a fixed sentence. Standing a
+// regular file where `projects/` belongs is ENOTDIR for any user, root
+// included, unlike a chmod.
+const projectsDir = path.join(process.env.DATA_DIR, 'projects');
+fs.renameSync(projectsDir, `${projectsDir}.held`);
+fs.writeFileSync(projectsDir, 'not a directory');
+const unwritable = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Nowhere' } });
+fs.rmSync(projectsDir);
+fs.renameSync(`${projectsDir}.held`, projectsDir);
+eq(unwritable.statusCode, 500, 'a data directory this server cannot write is a 500, not a bad request');
+eq(JSON.parse(unwritable.body).error, 'Could not create the project', 'and the answer is one fixed sentence');
+check(!unwritable.body.includes(process.env.DATA_DIR), 'the data directory is not handed to the caller');
 
 await app.close();
 await closeDb();
