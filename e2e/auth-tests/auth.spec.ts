@@ -372,6 +372,36 @@ test.describe('collab under auth', () => {
     // before the token fix this stayed blank (collab never authenticated)
     await expect(page.locator('.cm-content')).toContainText('LOADED-UNDER-AUTH-42', { timeout: 15_000 });
   });
+
+});
+
+test.describe('cookies', () => {
+  // #26: the browser sends every cookie on the host, so a neighbouring app's
+  // `x=100%` used to throw URIError in the onRequest hook and 500 every request.
+  test('a malformed cookie on the host does not break the session', async ({ page, context, baseURL }) => {
+    const email = uniq();
+    await register(page, email);
+    const url = new URL(baseURL!);
+    await context.addCookies([
+      { name: 'foreign', value: '100%', domain: url.hostname, path: '/' },
+      { name: 'truncated', value: '%E0%A4%A', domain: url.hostname, path: '/' },
+    ]);
+    const res = await page.goto('/');
+    expect(res?.status()).toBe(200);
+    // still signed in: the session cookie next to the malformed ones resolves
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('body')).not.toContainText('Internal server error');
+
+    // signed out with only the malformed cookies left: the login screen, not a 500
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    const again = await page.goto('/');
+    expect(again?.status()).toBe(200);
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    const me = await page.request.get('/api/auth/me');
+    expect(me.status()).toBe(200);
+    expect((await me.json()).user).toBeNull();
+  });
 });
 
 test.describe('ownerless legacy projects', () => {

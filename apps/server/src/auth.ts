@@ -143,9 +143,20 @@ export function parseCookies(header: string | undefined): Record<string, string>
   if (!header) return out;
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i > 0) out[part.slice(0, i).trim()] = decodeCookieValue(part.slice(i + 1).trim());
   }
   return out;
+}
+// The Cookie header carries every cookie on the host, not only ours: a
+// neighbouring app's `x=100%` or a truncated `%E0%A4%A` must not turn every
+// request into a 500. A value that is not valid percent-encoding is kept raw;
+// it will simply fail session lookup.
+function decodeCookieValue(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 export function sessionCookie(sid: string): string {
   return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;

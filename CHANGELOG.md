@@ -204,6 +204,12 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- A cookie on the same host that is not valid percent-encoding (another
+  app's `x=100%`, a truncated `%E0%A4%A`) no longer turns every request into
+  `{"error":"Internal server error"}` until the user clears site cookies. Such
+  a value is now kept as-is and simply fails session lookup; the rest of the
+  Cookie header is parsed normally. (#26)
+
 - The preview toolbar fits on one line at ordinary pane widths again. It had
   outgrown the pane, so it wrapped to a second row and left the two pane
   headers at different heights. The pane's own "Preview" title now appears
