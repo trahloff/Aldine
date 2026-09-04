@@ -14,6 +14,8 @@ import NamespacePicker from '../components/NamespacePicker';
 import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
+import { pickTemplate, templateToPost } from '../util/templates';
+import { importSummary } from '../util/engines';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */

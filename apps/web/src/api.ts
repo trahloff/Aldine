@@ -77,7 +77,7 @@ export class ApiError extends Error {
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+    headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
     ...init,
   });
   if (!res.ok) {
@@ -99,6 +99,12 @@ export interface DeleteResult {
   ok: boolean;
   remoteDelete?: { deleted: boolean; scheduledFor?: string; reason?: string };
 }
+export interface TemplateInfo { id: string; name: string; description?: string; icon?: string }
+/** What /api/projects/import decided while placing the archive. */
+export interface ImportedProject extends ProjectSummary {
+  import: { engine: string; engineReason: string | null; transcoded: string[] };
+}
+export interface CompilerInfo { ok: boolean; texlive: { release: string; scheme: string } }
 
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),

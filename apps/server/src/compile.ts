@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { config } from './config.js';
-import { branchDir, readMeta } from './store.js';
+import { branchDir, readMeta, writeMeta } from './store.js';
+import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
 import { flushBranchDocs } from './collab.js';
 
@@ -67,6 +68,43 @@ export function forgetPdfUrls(projectId: string, branch?: string): void {
   for (const key of lastSynctexId.keys()) if (key.startsWith(`${projectId}::`)) lastSynctexId.delete(key);
 }
 
+export interface CompilerInfo {
+  /** The compiler answered /health. */
+  ok: boolean;
+  /** TeX Live release year ("2026") and scheme ("full" | "medium"); "unknown"
+   *  when the compiler predates the report or runs outside the image. */
+  texlive: { release: string; scheme: string };
+}
+
+const UNKNOWN_TEXLIVE = { release: 'unknown', scheme: 'unknown' };
+// A reachable compiler's TeX Live does not change while it runs; an
+// unreachable one is retried soon so the settings panel recovers with it.
+const COMPILER_INFO_TTL_MS = 5 * 60_000;
+const COMPILER_INFO_RETRY_MS = 5_000;
+let compilerInfoCache: { until: number; value: CompilerInfo } | null = null;
+let compilerInfoInflight: Promise<CompilerInfo> | null = null;
+
+/** Release and scheme of the connected compiler's TeX Live, cached. */
+export function compilerInfo(): Promise<CompilerInfo> {
+  const now = Date.now();
+  if (compilerInfoCache && compilerInfoCache.until > now) return Promise.resolve(compilerInfoCache.value);
+  if (compilerInfoInflight) return compilerInfoInflight;
+  compilerInfoInflight = (async () => {
+    let value: CompilerInfo;
+    try {
+      const res = await fetch(`${config.compilerUrl}/health`, { signal: AbortSignal.timeout(5_000) });
+      const raw = (await res.json()) as { ok?: boolean; texlive?: { release?: unknown; scheme?: unknown } };
+      const str = (v: unknown) => (typeof v === 'string' && v ? v : 'unknown');
+      value = { ok: !!raw.ok, texlive: { release: str(raw.texlive?.release), scheme: str(raw.texlive?.scheme) } };
+    } catch {
+      value = { ok: false, texlive: UNKNOWN_TEXLIVE };
+    }
+    compilerInfoCache = { until: Date.now() + (value.ok ? COMPILER_INFO_TTL_MS : COMPILER_INFO_RETRY_MS), value };
+    return value;
+  })().finally(() => { compilerInfoInflight = null; });
+  return compilerInfoInflight;
+}
+
 export function compileProject(projectId: string, branch: string): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   const prev = compileChain.get(key) || Promise.resolve();
@@ -84,6 +122,15 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
+  // A rootless project (blank, or its last .tex deleted) adopts a .tex here as
+  // well as on file creation: files also arrive through git (pull, GitHub
+  // sync) without passing the file routes.
+  if (!meta.rootFile) {
+    const root = detectRoot(projectId, branch);
+    if (!root) throw new Error('No .tex file to typeset. Create one to start writing.');
+    meta.rootFile = root;
+    await writeMeta(meta);
+  }
 
   const res = await fetch(`${config.compilerUrl}/compile`, {
     method: 'POST',
@@ -119,12 +166,23 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   // end, so the document is complete and the errors sit in the list beside
   // it. With stopOnFirstError the PDF on disk is truncated at the first error,
   // so only an error-free run is shown and the previous one stays on screen.
+  const previous = lastGoodPdfUrl.get(key) ?? null;
   if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
     const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
     lastGoodPdfUrl.set(key, { url: pdfUrl, compileId });
     return { ...body, pdfUrl, compileId };
   }
-  const previous = lastGoodPdfUrl.get(key) ?? null;
+  // latexmk found nothing to redo: the PDF on disk is this run's result even
+  // though nothing was rewritten. It keeps its URL and compileId — a fresh
+  // cache-buster would refetch identical bytes and unbind SyncTeX, and
+  // calling it stale would flag every typeset of an unchanged document.
+  if (body.ok && body.pdf) {
+    const id = previous?.compileId ?? compileId;
+    const pdfUrl = previous?.url ?? `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
+    if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id });
+    if (!lastSynctexId.has(key) && body.synctex) lastSynctexId.set(key, id);
+    return { ...body, pdfUrl, compileId: id };
+  }
   return { ...body, pdfUrl: previous?.url ?? null, pdfStale: previous !== null, compileId: previous?.compileId };
 }
 

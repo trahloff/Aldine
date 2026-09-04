@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { TreeEntry, api } from '../api';
 import { fileIcon } from './Icons';
 
@@ -14,6 +14,13 @@ interface Props {
   onDelete(path: string): void;
   onRename(from: string, to: string): void;
   onSetRoot(path: string): void;
+  /** Bumped by the parent to open the new-file input from outside the tree
+   *  (the editor's empty state). */
+  newFileRequest?: number;
+  /** Called once the request opened the input, so the parent resets it: the
+   *  tree is unmounted on other sidebar tabs and would otherwise reopen the
+   *  input on every remount. */
+  onNewFileHandled?(): void;
 }
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
@@ -51,9 +58,17 @@ const FolderIcon = () => (
   </svg>
 );
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onUploaded, onDelete, onRename, onSetRoot }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
+  // A project with no files of the user's own (the .gitignore every project
+  // carries does not count) gets main.tex suggested: that name also makes the
+  // file the typeset root without a further step.
+  const startAdding = () => {
+    setName(files.some((f) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.')) ? '' : 'main.tex');
+    setAdding(true);
+  };
+  useEffect(() => { if (newFileRequest) { startAdding(); onNewFileHandled?.(); } }, [newFileRequest]);
   const [menu, setMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [sourceOnly, setSourceOnly] = useState(true);
@@ -153,7 +168,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         />
       ) : (
         <div className="tree__actions">
-          <button className="btn btn--ghost btn--small" onClick={() => setAdding(true)} data-testid="new-file">+ New file</button>
+          <button className="btn btn--ghost btn--small" onClick={startAdding} data-testid="new-file">+ New file</button>
           <button className="btn btn--ghost btn--small" onClick={() => fileInput.current?.click()} data-testid="upload-file">↑ Upload</button>
           <button className="btn btn--ghost btn--small" onClick={() => setSourceOnly((v) => !v)} data-testid="source-only" title="Show only LaTeX source & images">{sourceOnly ? '☰ All' : '⌇ Source'}</button>
           <input ref={fileInput} type="file" multiple hidden data-testid="upload-input"
@@ -164,7 +179,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
       {menu && (
         <div className="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()}>
-          <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as typeset root</button>
+          <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as main document</button>
           <button className="menu__item" onClick={() => {
             const to = window.prompt('Rename to', menu.path);
             if (to && to !== menu.path) onRename(menu.path, to);

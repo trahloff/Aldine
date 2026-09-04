@@ -50,8 +50,16 @@ function hasTex(dir: string): boolean {
  * people spend an afternoon on.
  */
 export function listLocalTemplates(): TemplateInfo[] {
+/** Not a directory under templates/: a project with no files and no typeset
+ *  root. Listed first so the grid leads with it and never hidden by an
+ *  absent templates dir. */
+export const BLANK_TEMPLATE: TemplateInfo = {
+  id: 'blank', name: 'Blank', description: 'An empty project. Add the first file yourself.', icon: '▢', order: 0,
+};
+
+export function listTemplates(): TemplateInfo[] {
   const dir = config.templatesDir;
-  if (!fs.existsSync(dir)) return [];
+  if (!fs.existsSync(dir)) return [BLANK_TEMPLATE];
   const out: TemplateInfo[] = [];
   for (const name of fs.readdirSync(dir)) {
     if (name.startsWith('.')) continue;

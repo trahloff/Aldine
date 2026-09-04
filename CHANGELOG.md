@@ -6,168 +6,65 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- **Deleting a project now really deletes its GitLab project.** One `DELETE` is
-  not enough: GitLab only *marks* a project and keeps it in the group for the
-  instance's retention period (30 days on GitLab.com, and the default on every
-  tier since GitLab 18.0), so the repo outlived the project it belonged to.
-  Aldine now follows up with the immediate purge, addressing the project by id
-  because marking it renames its path. Where an instance reserves immediate
-  deletion for admins, the delete reports the date GitLab will remove it rather
-  than claiming success. A delete against an unreachable GitLab no longer counts
-  as done — it keeps the link so the purge sweep retries it.
-- **Projects mirrored by an earlier build no longer leak their GitLab project.**
-  Their stored link predates the flag recording that Aldine created the repo, and
-  the absent flag was read as "imported, leave it alone" — so their repos were
-  never deleted, and the log blamed an import that never happened. An unflagged
-  link inside the configured group is now recognised as Aldine's; imports record
-  the flag explicitly, so an absent one only ever means an older build.
-- **The result of the remote delete is reported.** It was only ever a server log
-  line, which made a repo left behind look identical to a successful delete. The
-  home screen now says when the remote was kept, and why.
-- **Syncing works on a service-token deployment.** Push, pull, branch switching
-  and merge requests demanded a *personal* GitLab connection, while project
-  creation, autopush and templates all fall back to `GITLAB_TOKEN` — so a
-  deployment whose users never connect GitLab individually could create and
-  auto-push projects but got "Connect GitLab to sync" from every button in the
-  sync UI. Sync now uses the same ladder as autopush: the caller's own token,
-  then the one that created the link, then the service account. Listing and
-  importing repos still require a personal connection — the service token there
-  would widen which repositories a user can reach, not just how they authenticate.
-- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
-  on screen and the SyncTeX file on disk come from different typeset runs,
-  instead of landing on the wrong line. Compile results carry a `compileId`
-  that the lookup sends back.
-
 ### Added
-- **Project templates can live in a GitLab group.** Set `GITLAB_TEMPLATE_GROUP`
-  and every project in that group (and its subgroups) is offered as a starting
-  point in the New project dialog, cloned to seed the new project. Templates get
-  version control and merge requests, and the dialog re-reads the group each time
-  it opens, so a template pushed to the group is available immediately. The tile
-  takes its label and description from the GitLab project, or from an optional
-  `template.json` committed at the repo root. Independent of
-  `GITLAB_DEFAULT_GROUP`: templates can come from GitLab whether or not new
-  projects are mirrored there. Copies, never links — the new project keeps no
-  connection to the template repo, so editing a template never rewrites projects
-  made from it. An unreachable GitLab leaves the dialog usable with whatever
-  local templates exist.
-- **Templates can fill in the project name, author and date.** A template may
-  use `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}` and `{{YEAR}}` in its text
-  files; anything else in braces is left alone, so ordinary LaTeX passes through
-  untouched.
-- **A GitLab group can be the home for new projects.** Set `GITLAB_TOKEN` and
-  `GITLAB_DEFAULT_GROUP` and every new project is created inside that group and
-  pushed there, with a "Save in" picker in the New project modal for choosing or
-  creating a subgroup without leaving Aldine. GitLab is a **mirror**, not the
-  store: the local repository stays authoritative, so a GitLab outage never
-  blocks anyone — creation degrades to a local project with a Retry banner, and
-  the next attempt sends it to the group it was meant for. Off unless both
-  variables are set. ZIP imports (an Overleaf export, say) are uploaded the same
-  way, after their binary assets are committed, so the mirror is complete rather
-  than short a figure.
-- **Trashing a project deletes its GitLab project**, so a nominated group doesn't
-  collect repos for projects nobody can see. Only repos Aldine created are ever
-  deleted — one imported from GitLab is left alone. Restoring from the trash
-  re-creates the project from the local repository, which survives intact, so the
-  content comes back; GitLab-side merge requests, issues and CI history do not.
-  The delete is best-effort and never blocks trashing, and the 30-day purge
-  sweep retries any that failed. Renaming a project still does not rename it in
-  GitLab — that would break existing clone URLs.
-- **Import from GitLab**, with the same push/pull/branch parity as GitHub, for
-  both gitlab.com and self-hosted instances. Connect with a personal access
-  token (scope `api`) or, if the deployment sets `GITLAB_CLIENT_ID`/`SECRET`, a
-  one-click OAuth connect. A GitLab-linked project opens *merge requests* where
-  a GitHub one opens pull requests. The home screen and first-run onboarding
-  offer one import tile per configured host, so a deployment with only GitHub
-  configured looks exactly as it did.
+- Blank projects: a "Blank" tile leads the template grid and creates a project
+  with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
+  does the same. The editor's empty state says "Create a file to start writing"
+  with a New file button that suggests `main.tex`. A project without a `.tex`
+  file has no typeset root and is not auto-typeset; the first `.tex` created,
+  renamed in, or found at typeset time (files can arrive through git) becomes
+  the root, and deleting the last `.tex` unsets it again. Typesetting a project
+  with no `.tex` answers 400 "No .tex file to typeset" instead of reaching the
+  compiler, and the PDF pane says so instead of suggesting the shortcut. A root
+  derived from the tree (at typeset time, on the first `.tex`, after the root
+  is deleted) is ranked like an import: `main.tex` at the top level over a
+  nested one, a file with `\documentclass` over one without.
+- `POST /api/projects` validates `files`: a key that would land in `.git` or
+  `.aldine*`, escapes the project, is empty, is both a file and a directory, or
+  carries non-string content answers 400 and no project is created (previously
+  a seeded `.git/config` reached the fresh repo before its initial commit ran
+  git). Keys are normalised like ZIP entries (`./a.tex`, backslashes), as are
+  roots adopted from a file write or rename. `.git` and `.aldine*` are screened
+  without regard to letter case or a trailing dot or space (`.GIT/config`,
+  `.git./config`), which reach `.git/config` on macOS and Windows; the same
+  screen guards file writes, renames, ZIP imports and the file listing. A seed
+  that makes `.gitignore` a directory is refused with 400 rather than failing
+  the write of the project's own `.gitignore`.
+- The New project dialog only posts a template id the server listed; on a
+  server without a templates directory the pick stays empty and Create seeds
+  the default article, with the Blank tile still there to choose.
+- Project settings dialog (toolbar "Settings", command palette) with a
+  Compiler section: main document, compiler (pdfLaTeX, XeLaTeX, LuaLaTeX),
+  the connected compiler's TeX Live release and scheme ("2026, full"), "Stop
+  on first error" and "Auto-typeset". The preview-header engine picker and
+  the log dialog's checkbox stay as shortcuts to the same settings. The
+  project name is editable there too. (#7)
+- Engine detection on ZIP import: a `latexmkrc` in the archive (`$pdf_mode`
+  4 or 5, or a `$pdflatex`/`$xelatex`/`$lualatex` line), a `% !TEX program`
+  line, or a root file using fontspec, unicode-math, polyglossia, xepersian,
+  bidi or luacode sets the project to XeLaTeX or LuaLaTeX; the import toast
+  says which and why, and the settings panel repeats the reason. A
+  `$pdflatex` line that only passes flags to pdflatex (the Overleaf
+  `-shell-escape` idiom), or an rc that assigns all three engine commands,
+  chooses nothing, so the root file still decides.
+  Sources that are not UTF-8 are transcoded to UTF-8: Windows-1252 (a
+  superset of Latin-1, so Word-era quotes and dashes survive), or Latin-9 /
+  Mac Roman when the inputenc option names them; the option is switched to
+  `utf8` and the file is named in the toast. A UTF-8 file with a stray byte
+  is left as it was, multibyte characters intact. Overleaf exports that need
+  XeLaTeX now typeset on first open. (#7)
+- The compiler reports its TeX Live release and scheme at `GET /health`
+  (`texlive: { release, scheme }`; "unknown" outside the image), and the
+  server exposes it, cached, at `GET /api/compiler`. Switching between
+  several TeX Live versions (`ALDINE_COMPILERS`) is not part of this change;
+  the panel displays the one compiler the server is connected to.
+- The e2e suites take `E2E_PORT`, `E2E_MOCK_PORT` and `E2E_AUTH_PORT` so two
+  checkouts can run side by side (see AGENTS.md).
 - AWS deployment: an optional staging service on the same load balancer
   (`staging_domain_name`), with its own filesystem, log group and certificate,
   so a feature branch can be tried at a real URL before it reaches prod. The
   deploy and rollback workflows take a `target` input (production or staging).
 
-### Security
-- The minimal `docker-compose.yml` carries the compiler sandbox again: an
-  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
-  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
-  in `docker-compose.full.yml` while SECURITY.md and the README went on
-  promising it, so quick-start instances were compiling untrusted LaTeX in a
-  container with full egress and every capability. The README quick start is the
-  same file, verbatim, including the `name: aldine` line that fixes the volume
-  names.
-
-### Changed
-- **A new project must be named.** The New project dialog's Create button stays
-  disabled until you type one, and `POST /api/projects` rejects a blank name
-  instead of defaulting to "Untitled Project" — a name nobody chose, that
-  everybody then renamed, and that a template's `{{PROJECT_NAME}}` would have
-  baked into the document. Names are trimmed and capped at 200 characters, the
-  same rules rename has always used. ZIP and repository imports are unaffected:
-  they take their name from the file or repo. Scripted callers that relied on the
-  default now need to send a `name`.
-- **Breaking (HTTP API).** The remote-sync endpoints moved from
-  `/api/github/*` to `/api/remotes/:provider/*`, and from
-  `/api/projects/:id/github/*` to `/api/projects/:id/remote/*` (`…/pr` is now
-  `…/change-request`). The old paths are gone, so anything scripting against
-  them needs updating. The OAuth connect callback now returns to
-  `/?remote=<provider>` rather than `/?github=connected`.
-- **Action required if you use GitHub sync OAuth.** The callback path moved from
-  `/api/github/oauth/callback` to `/api/remotes/github/oauth/callback`, so the
-  authorization callback URL registered in your GitHub OAuth app must be
-  updated or "Connect with GitHub" will fail. Personal access tokens are
-  unaffected.
-- **Auto-sync moved from per-browser to per-project.** It was a `localStorage`
-  flag driving a timer in the browser, which stopped when the tab closed; the
-  push now happens on the server after the debounced autocommit, and the setting
-  is shared by the project's collaborators. Anyone who had it enabled in their
-  browser will find it off after upgrading — enable it once per project instead.
-  It defaults on only for auto-provisioned projects, so existing GitHub-linked
-  projects never start pushing unbidden.
-- Project metadata gained `remote`, which replaces `github` and records which
-  host the project is linked to. Existing projects are read through a
-  compatibility shim and upgraded in place on their next write, so no migration
-  is needed and a downgrade keeps working until something writes.
-- The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
-  script and language compiles out of the box. The `medium` scheme stays for
-  constrained hosts and now includes the publisher classes and the Arabic/Persian,
-  Cyrillic, Greek and other-script collections (Persian via xepersian or
-  polyglossia verified). Self-hosters: rebuild the compiler image; expect ~9 GB
-  on disk for the default.
-- The compiler image installs `collection-publishers` (elsarticle, IEEEtran,
-  acmart, revtex4-2, agujournal, copernicus, and the other journal and
-  conference classes) on the medium scheme, and the full scheme's base image
-  is pinned by digest like the medium one. Self-hosters must rebuild the
-  compiler image (`docker compose build compiler`) to get the classes.
-- Typesetting runs to the end of the document by default instead of stopping
-  at the first error: the preview shows the complete PDF and the errors sit in
-  the list beside it, like Overleaf. The old behaviour is a per-project setting,
-  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
-  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
-  on screen as before.
-- `deploy/papyr-backup.service` / `.timer` are renamed to `aldine-backup.*`, the
-  names the runbook has always used, so the install commands work as written. If
-  you installed the old units, disable and delete them or both timers will run.
-- `docker-compose.full.yml` passes `COMPILE_TIMEOUT_MS` and
-  `MAX_CONCURRENT_COMPILES` through from `.env` instead of hardcoding the
-  timeout.
-- `template.json` is now optional in `TEMPLATES_DIR`: any subdirectory holding a
-  `.tex` file is a template, named after its folder, so a directory of papers
-  works as-is. A folder that *is* skipped now says why in the log instead of
-  vanishing silently. `docker-compose.full.yml` passes `TEMPLATES_DIR` through
-  and carries a commented mount for it, so a container deploy can use its own
-  templates without rebuilding the image.
-
-### Fixed
-- A custom `TEMPLATES_DIR` without a template named `article` made **New
-  project** fail outright: the dialog's selection was hardcoded to that id, so
-  Create posted a template the server had never heard of. The dialog now selects
-  the first template a deployment actually offers.
-- Binary files in a template (a logo, a bundled PDF) were read as UTF-8 and
-  written back corrupted. Templates now carry bytes through untouched.
-- A template shipping its own `.gitignore` had it overwritten by Aldine's. Both
-  are kept now: Aldine appends only the build-artefact lines that are missing.
-
-### Added
 - Download PDF button in the preview toolbar — saves the compiled PDF named
   after the project.
 - Public-demo hardening: `ALDINE_PROTECTED_PROJECTS` serves listed projects
@@ -182,7 +79,6 @@ All notable changes to Aldine are documented here. The format follows
 - `AGENTS.md` at the repo root (the cross-tool agent-guidance standard);
   `CLAUDE.md` now imports it instead of carrying its own copy.
 
-### Added
 - An About dialog, from the home screen and the command palette, naming the
   licence and linking to the source, stamped with the version and the commit
   the bundle was built from. AGPL section 13 requires a network instance to
@@ -197,7 +93,63 @@ All notable changes to Aldine are documented here. The format follows
   self-hosted edition stays AGPL, and that no feature that works today moves
   behind a paid tier.
 
+### Changed
+- `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
+  part (and an optional `name` field); the web client uploads the file that
+  way, so the browser holds one copy of a 60 MB archive instead of four (file,
+  base64, JSON string, request body). The JSON `{ name, zipBase64 }` body
+  keeps working for API clients. The 60 MB limit and its message are unchanged.
+- Typesetting runs to the end of the document by default instead of stopping
+  at the first error: the preview shows the complete PDF and the errors sit in
+  the list beside it, like Overleaf. The old behaviour is a per-project setting,
+  "Stop on first error" (log dialog and command palette, `stopOnFirstError` in
+  `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
+  on screen as before.
+
+- The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
+  script and language compiles out of the box. The `medium` scheme stays for
+  constrained hosts and now includes the publisher classes and the Arabic/Persian,
+  Cyrillic, Greek and other-script collections (Persian via xepersian or
+  polyglossia verified). Self-hosters: rebuild the compiler image; expect ~9 GB
+  on disk for the default.
+- The compiler image installs `collection-publishers` (elsarticle, IEEEtran,
+  acmart, revtex4-2, agujournal, copernicus, and the other journal and
+  conference classes) on the medium scheme, and the full scheme's base image
+  is pinned by digest like the medium one. Self-hosters must rebuild the
+  compiler image (`docker compose build compiler`) to get the classes.
+- `deploy/papyr-backup.service` / `.timer` are renamed to `aldine-backup.*`, the
+  names the runbook has always used, so the install commands work as written. If
+  you installed the old units, disable and delete them or both timers will run.
+- `docker-compose.full.yml` passes `COMPILE_TIMEOUT_MS` and
+  `MAX_CONCURRENT_COMPILES` through from `.env` instead of hardcoding the
+  timeout.
+
+- App instances send `noindex`: an Aldine box holds private documents, and
+  the public face for search engines is aldine.dev. This covers the demo and
+  every self-hosted install; remove the tag in `apps/web/index.html` if you
+  want your instance indexed.
+
 ### Fixed
+- ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
+  end-of-central-directory record), so exports from tools that write ZIP64
+  headers no longer fail as "not a zip file" or import partially. An entry
+  compressed with anything but store or deflate (bzip2, LZMA, zstd, ...) or a
+  password-protected entry (ZipCrypto or AES) is now refused with a message
+  that names the entry and the method, instead of being skipped silently or
+  imported as garbage. Entry names without the UTF-8 flag are decoded as UTF-8
+  when valid, otherwise from the Info-ZIP unicode path field, cp437 or Latin-1,
+  so Windows and 7-Zip archives keep their accented file names.
+- Every failed ZIP import writes one info-level log line (`ZIP import failed`)
+  with the reason, the archive size and its entry count, never file contents,
+  so a hosted instance can be debugged without asking the user for the file.
+  The server now logs at `info` by default (per-request access lines stay off);
+  `LOG_LEVEL=warn` restores the previous quiet.
+
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
+
 - Importing a ZIP larger than about 24 MB no longer fails with a bare
   "Payload Too Large": the import route now accepts the 60 MB the dialog
   promises (the ZIP travels base64-encoded inside JSON, so the global 32 MB
@@ -258,24 +210,6 @@ All notable changes to Aldine are documented here. The format follows
   the demo answers no TLS handshake at all until the window rolls over. The
   wipe now drops the data volumes by name and leaves `aldine_caddy-data` alone.
 
-### Changed
-- App instances send `noindex`: an Aldine box holds private documents, and
-  the public face for search engines is aldine.dev. This covers the demo and
-  every self-hosted install; remove the tag in `apps/web/index.html` if you
-  want your instance indexed.
-
-### Security
-- Accepting a review suggestion now applies to the live collaborative
-  document on the server. The old client-side path read the disk copy,
-  string-replaced, and wrote the whole file back — silently destroying every
-  collaborator's not-yet-autosaved edits, and failing with a misleading
-  "commented text has changed" toast whenever the target text was younger
-  than the autosave debounce.
-- Renaming a file flushes pending collaborative edits to disk first. The
-  rename endpoint evicted the live document before moving the file, so
-  keystrokes from the last few seconds were silently lost.
-
-### Fixed
 - Renaming the typeset root keeps it the root (the setting follows the new
   name; deleting the root already re-derived it). Renaming a missing file now
   returns 404 instead of 500, and a rename conflict from the command palette
@@ -318,7 +252,6 @@ All notable changes to Aldine are documented here. The format follows
   row, menu hover, primary button) use a fill that carries white text at
   4.5:1.
 
-### Fixed
 - The word count now covers the whole document (the root file plus everything
   it `\input`s/`\include`s), keeping the open file's share live while typing.
   It used to count only the open file, which for a multi-file project meant
@@ -382,6 +315,26 @@ All notable changes to Aldine are documented here. The format follows
   described resizing a server type that is no longer the default.
 - The landing page announced "Typeset in 0.4s" a paragraph above "about two
   seconds"; the README says ~2s, so the page does now too.
+
+### Security
+- The minimal `docker-compose.yml` carries the compiler sandbox again: an
+  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
+  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
+  in `docker-compose.full.yml` while SECURITY.md and the README went on
+  promising it, so quick-start instances were compiling untrusted LaTeX in a
+  container with full egress and every capability. The README quick start is the
+  same file, verbatim, including the `name: aldine` line that fixes the volume
+  names.
+
+- Accepting a review suggestion now applies to the live collaborative
+  document on the server. The old client-side path read the disk copy,
+  string-replaced, and wrote the whole file back — silently destroying every
+  collaborator's not-yet-autosaved edits, and failing with a misleading
+  "commented text has changed" toast whenever the target text was younger
+  than the autosave debounce.
+- Renaming a file flushes pending collaborative edits to disk first. The
+  rename endpoint evicted the live document before moving the file, so
+  keystrokes from the last few seconds were silently lost.
 
 ## [0.3.0] — 2026-08-03
 

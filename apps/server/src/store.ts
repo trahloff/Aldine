@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
-import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile } from './util.js';
+import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
 import type { ProjectMeta } from './db/types.js';
 
@@ -95,17 +95,33 @@ export async function createProject(name: string, files: Record<string, string |
     'main.tex': DEFAULT_MAIN_TEX(name),
     'references.bib': DEFAULT_BIB,
   };
-  for (const [rel, content] of Object.entries(seed)) {
-    const abs = safeJoin(dir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
+  const written: string[] = [];
+  try {
+    const g = git(dir);
+    await g.init(['--initial-branch=main']);
+    await g.addConfig('user.name', 'Aldine');
+    await g.addConfig('user.email', 'aldine@localhost');
+    for (const [rel, content] of Object.entries(seed)) {
+      const norm = importPath(rel);
+      if (norm === null || isHiddenPath(norm)) throw new Error(`file path "${rel}" is not allowed`);
+      if (typeof content !== 'string') throw new Error(`content of "${rel}" must be a string`);
+      const abs = safeJoin(dir, norm);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+      written.push(norm);
+    }
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.aldine-out/\n*.aux\n*.log\n*.out\n*.toc\n*.bbl\n*.bcf\n*.blg\n*.synctex.gz\n*.fls\n*.fdb_latexmk\n*.run.xml\n');
+    await g.add(['-A']);
+    await g.commit('Initial commit');
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
   }
   writeGitignore(dir, seed['.gitignore']);
   await g.add(['-A']);
   await g.commit('Initial commit');
 
-  const rootFile = fs.existsSync(path.join(dir, 'main.tex')) ? 'main.tex'
-    : Object.keys(seed).find((f) => f.endsWith('.tex')) || 'main.tex';
+  const rootFile = written.includes('main.tex') ? 'main.tex' : written.find((f) => f.endsWith('.tex')) || '';
   const meta: ProjectMeta = { id, name, rootFile, engine: 'pdf', createdAt: new Date().toISOString() };
   if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
   await writeMeta(meta);
@@ -164,7 +180,7 @@ export function listFiles(id: string, branch: string): TreeEntry[] {
   const walk = (rel: string) => {
     const abs = path.join(base, rel);
     for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
-      if (e.name === '.git' || e.name.startsWith('.aldine')) continue;
+      if (isHiddenName(e.name)) continue;
       const relPath = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         out.push({ path: relPath, type: 'dir' });

@@ -77,6 +77,15 @@ try {
   const withErrors = r.pdfUrl;
   const withErrorsId = r.compileId;
 
+  // latexmk had nothing to redo (ok, PDF on disk, nothing rewritten): the
+  // document is unchanged, so it is neither stale nor a new run.
+  queue.push({ ...good, pdfFresh: false, synctexFresh: false });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, true, 'unchanged document typesets ok');
+  eq(r.pdfUrl, withErrors, 'an unchanged document keeps its URL');
+  eq(r.pdfStale, undefined, 'and is not stale');
+  eq(r.compileId, withErrorsId, 'and keeps its compileId so SyncTeX stays bound');
+
   // SyncTeX binding: a lookup for a preview from another run is refused
   // before the compiler is asked; the current run's id goes through.
   let sx = await synctexLookup(meta.id, 'main', { direction: 'inverse', page: 1, x: 1, y: 1, compileId: freshId });

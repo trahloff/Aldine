@@ -37,8 +37,8 @@ export default defineConfig({
   },
   webServer: process.env.ALDINE_URL ? undefined : [
     {
-      command: 'node tests/mock-zotero.mjs',
-      port: 4919,
+      command: `E2E_MOCK_PORT=${MOCK} node tests/mock-zotero.mjs`,
+      port: MOCK,
       reuseExistingServer: true,
       timeout: 10_000,
     },
@@ -64,7 +64,7 @@ export default defineConfig({
       // override the mock Anthropic endpoint the AI-fix test relies on.
       command: 'npm run build -w apps/web && PORT=3100 DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e OPENROUTER_API_KEY= OPENAI_API_KEY= GITLAB_API_BASE=http://localhost:4921/api/v4 ZOTERO_API_BASE=http://localhost:4919 DOI_API_BASE=http://localhost:4919 ARXIV_API_BASE=http://localhost:4919 OPENALEX_API_BASE=http://localhost:4919 ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:4919 npx tsx apps/server/src/index.ts',
       cwd: '..',
-      port: 3100,
+      port: PORT,
       reuseExistingServer: true,
       timeout: 600_000,
     },

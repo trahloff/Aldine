@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { WebSocketServer } from 'ws';
 import fs from 'node:fs';
@@ -58,7 +58,15 @@ if (autoProvisionEnabled()) {
 // trustProxy makes req.ip honor X-Forwarded-For — enable ONLY behind a trusted
 // reverse proxy (Caddy/nginx). Off by default so clients can't spoof their IP
 // to evade rate limits or lock others out.
-const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 32 * 1024 * 1024, trustProxy: process.env.TRUST_PROXY === '1' });
+// Info level so operational lines (a failed ZIP import and its reason) reach
+// the hosted instance's log; per-request access lines stay off because the
+// load balancer already keeps those. LOG_LEVEL=warn restores the old quiet.
+const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL || 'info' },
+  logController: new LogController({ disableRequestLogging: true }),
+  bodyLimit: 32 * 1024 * 1024,
+  trustProxy: process.env.TRUST_PROXY === '1',
+});
 
 await initObservability(app);
 await registerRoutes(app);

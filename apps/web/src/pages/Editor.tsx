@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -26,15 +26,10 @@ import Modal from '../components/Modal';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
+import ProjectSettings from '../components/ProjectSettings';
+import { ENGINES } from '../util/engines';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
-
-/** The engines the server accepts (PATCH rejects anything else with 400). */
-const ENGINES: Array<{ id: string; label: string }> = [
-  { id: 'pdf', label: 'pdfLaTeX' },
-  { id: 'xelatex', label: 'XeLaTeX' },
-  { id: 'lualatex', label: 'LuaLaTeX' },
-];
 
 /** A text field that is not the code editor (whose own keymap owns Mod-j). */
 function inTextField(target: EventTarget | null): boolean {
@@ -49,10 +44,17 @@ export default function Editor() {
   const [params, setParams] = useSearchParams();
   const branch = params.get('branch') || 'main';
   const navigate = useNavigate();
+  // Home hands the import result over in history state so the settings
+  // panel can say where the compiler choice came from.
+  const imported = (useLocation().state as { import?: ImportedProject['import'] } | null)?.import;
   const toast = useToast();
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [files, setFiles] = useState<TreeEntry[]>([]);
+  // The on-open typeset waits for the first file listing: before it, every
+  // project looks empty and a blank one must not compile at all.
+  const [filesLoaded, setFilesLoaded] = useState(false);
+  const [newFileRequest, setNewFileRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
@@ -76,6 +78,7 @@ export default function Editor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled } = useAuth();
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
@@ -93,6 +96,13 @@ export default function Editor() {
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRef = useRef(auto);
   autoRef.current = auto;
+  // Every project carries a .gitignore; dotfiles are not what the user wrote,
+  // so they neither open on load nor count against the empty state.
+  const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
+  const hasFiles = files.some(isUserFile);
+  const hasTex = files.some((f) => f.type === 'file' && f.path.endsWith('.tex'));
+  const hasTexRef = useRef(hasTex);
+  hasTexRef.current = hasTex;
 
   const loadProject = useCallback(async () => {
     try {
@@ -138,8 +148,9 @@ export default function Editor() {
       const p = await loadProject();
       if (!p) return;
       const f = await loadFiles();
-      const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => e.type === 'file' && !e.binary);
+      const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
+      setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
       // this server until it's published. Only the owner can publish, so only
       // the owner is nudged.
@@ -190,7 +201,8 @@ export default function Editor() {
   const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
-    if (!local || !autoRef.current) return;
+    // Nothing to typeset until the project has a .tex file.
+    if (!local || !autoRef.current || !hasTexRef.current) return;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     autoTimer.current = setTimeout(() => doCompile(), 2000);
   }, [doCompile, refreshDocWords]);
@@ -211,18 +223,33 @@ export default function Editor() {
     setCompile({ status: 'idle', result: null });
   };
 
-  const renameProject = async (el: HTMLElement, name: string) => {
-    if (!project || !name.trim() || name === project.name) return;
+  const saveName = useCallback(async (name: string) => {
     try {
       const p = await api.patchProject(id, { name: name.trim() });
       setProject((prev) => (prev ? { ...prev, name: p.name } : prev));
     } catch (err: any) {
-      // The name lives in a contentEditable React doesn't control, so a
-      // rejected rename would otherwise leave the refused text on screen.
-      el.textContent = project.name;
       toast(`Could not rename: ${err.message}`, 'error');
+      throw err;
     }
+  }, [id, toast]);
+
+  const renameProject = async (el: HTMLElement, name: string) => {
+    if (!project || !name.trim() || name === project.name) return;
+    // The name lives in a contentEditable React doesn't control, so a
+    // rejected rename would otherwise leave the refused text on screen.
+    await saveName(name).catch(() => { el.textContent = project.name; });
   };
+
+  const setRootFile = useCallback(async (path: string) => {
+    if (!project || path === project.rootFile) return;
+    try {
+      await api.patchProject(id, { rootFile: path });
+      await loadProject();
+      toast(`Main document is now ${path}`, 'ok');
+    } catch (err: any) {
+      toast(`Could not change the main document: ${err.message}`, 'error');
+    }
+  }, [id, project, loadProject, toast]);
 
   const setStopOnFirstError = useCallback(async (on: boolean) => {
     if (!project || on === !!project.stopOnFirstError) return;
@@ -433,6 +460,7 @@ export default function Editor() {
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
+      { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
@@ -537,6 +565,7 @@ export default function Editor() {
         {authEnabled && project.isOwner && (
           <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title="Invite collaborators or share by link">Share</button>
         )}
+        <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
         <button className="btn" onClick={startComment} data-testid="add-comment" title="Comment on the selected text">Comment</button>
         <Presence users={users} />
         <div className="toolbar__group">
@@ -556,8 +585,8 @@ export default function Editor() {
       <div className="workspace">
         <aside className="pane sidebar">
           <div className="sidebar__tabs" role="tablist">
-            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab">Files</button>
-            <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab">History</button>
+            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
+            <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab" data-testid="tab-history">History</button>
             <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" data-testid="tab-review">
               Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
             </button>
@@ -576,10 +605,13 @@ export default function Editor() {
                 projectId={id}
                 branch={branch}
                 onOpen={setActiveFile}
+                newFileRequest={newFileRequest}
+                onNewFileHandled={() => setNewFileRequest(0)}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
                     await loadFiles();
+                    loadProject(); // the first .tex of a rootless project becomes its root
                     setActiveFile(path);
                   } catch (err: any) {
                     if (/already exists/i.test(err?.message)) { toast(`"${path}" already exists`, 'error'); setActiveFile(path); }
@@ -593,6 +625,7 @@ export default function Editor() {
                 onDelete={async (path) => {
                   await api.deleteFile(id, branch, path);
                   await loadFiles();
+                  loadProject(); // deleting the root re-derives (or unsets) it
                   if (activeFile === path) setActiveFile(null);
                 }}
                 onRename={async (from, to) => {
@@ -605,11 +638,7 @@ export default function Editor() {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
                   }
                 }}
-                onSetRoot={async (path) => {
-                  await api.patchProject(id, { rootFile: path });
-                  await loadProject();
-                  toast(`Typeset root is now ${path}`, 'ok');
-                }}
+                onSetRoot={setRootFile}
               />
             )}
             {tab === 'history' && <HistoryPanel projectId={id} branch={branch} />}
@@ -630,7 +659,7 @@ export default function Editor() {
           </div>
         </aside>
 
-        <main className="pane" style={{ flex: 1 }}>
+        <main className="pane pane--editor" style={{ flex: 1 }}>
           {activeFile ? (
             <>
               <div className="pane__header">
@@ -679,6 +708,11 @@ export default function Editor() {
                 mode={mode}
               />
             </>
+          ) : filesLoaded && !hasFiles ? (
+            <div className="pdf-empty" data-testid="empty-project">
+              <p>Create a file to start writing.</p>
+              <button className="btn btn--primary" data-testid="empty-new-file" onClick={() => { setTab('files'); setNewFileRequest((n) => n + 1); }}>New file</button>
+            </div>
           ) : (
             <div className="pdf-empty"><p>Select a file to start writing.</p></div>
           )}
@@ -811,7 +845,10 @@ export default function Editor() {
             stale={pdfStale}
             // The on-open typeset is auto-typeset's job — a user who turned the
             // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
-            onFirstOpen={() => { if (autoRef.current) doCompile(); }}
+            // A project without a .tex has nothing to typeset.
+            ready={filesLoaded}
+            hasTex={hasTex}
+            onFirstOpen={() => { if (autoRef.current && hasTexRef.current) doCompile(); }}
             onInverse={onPdfInverse}
           />
         </section>
@@ -828,6 +865,21 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+
+      {settingsOpen && (
+        <ProjectSettings
+          project={project}
+          files={files}
+          autoTypeset={auto}
+          importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
+          onClose={() => setSettingsOpen(false)}
+          onRename={saveName}
+          onSetRoot={setRootFile}
+          onSetEngine={setEngine}
+          onSetStopOnFirstError={setStopOnFirstError}
+          onToggleAutoTypeset={toggleAuto}
+        />
+      )}
 
       {shareOpen && (
         <ShareModal

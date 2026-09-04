@@ -255,8 +255,11 @@
 .gh-repo__badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); border: 1px solid var(--hairline); border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
 .gh-repo__meta { font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
 
-.settings__row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+.settings__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
 .settings__label { color: var(--text-2); }
+.settings__control { flex: 0 0 62%; width: auto; }
+.settings__control--check { display: flex; align-items: center; gap: 8px; }
+.settings__hint { color: var(--text-3); font-size: 12px; line-height: 1.3; }
 .user-chip__name { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--text); font: inherit; font-weight: 600; }
 .user-chip__name:hover { color: var(--accent); text-decoration: underline; }
 .login__oauth { width: 100%; justify-content: center; gap: 8px; height: 34px; margin-bottom: 10px; }
@@ -401,6 +404,9 @@
 
 .pane { background: var(--bg-panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pane + .pane { border-left: 1px solid var(--hairline); }
+/* The empty states inside are absolute (.pdf-empty, inset: 0); without a
+   positioned pane they cover the sidebar and toolbar too. */
+.pane--editor { position: relative; }
 
 .pane__header {
   display: flex;
