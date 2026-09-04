@@ -94,16 +94,30 @@ disagree about.
 
 ## Releasing
 
-Pushing a version tag runs `.github/workflows/release.yml`, which builds the
-`aldine-app` and `aldine-compiler` images, pushes them to GHCR, and **publishes**
-a GitHub release straight away. There is no draft step to catch mistakes, so do
-the three local steps first:
+A version tag ships to nobody. Pushing one runs `.github/workflows/release.yml`,
+which checks the tag is on main and every version pin agrees with it, runs the
+full CI suite on that commit, builds `aldine-app` and `aldine-compiler` as
+immutable `x.y.z` and `sha-<commit>` tags, boots those exact digests with the
+user-facing compose file and typesets a document with a bibliography inside
+the sandbox. Then it waits. `:latest` moves, and the GitHub Release appears,
+only when you approve the `promote` job (the `latest` environment) in that
+same run. Until then nothing a self-hoster pulls has changed.
 
 ```bash
 # 1. move the CHANGELOG's [Unreleased] entries under a new [x.y.z] heading,
 #    and add the compare link at the bottom of the file
-# 2. match the manifests to the tag you are about to push
+# 2. match every pin to the tag you are about to push
 npm pkg set version=0.4.0 --workspaces --include-workspace-root
-# 3. commit both, then tag
+#    and the ${ALDINE_VERSION:-…} default in docker-compose.yml and the README
+#    block (scripts/check-release-pins.mjs tells you which one you missed)
+# 3. commit, then tag
 git tag v0.4.0 && git push origin main v0.4.0
+# 4. when the run pauses at "promote", try 0.4.0 somewhere real, then approve
 ```
+
+To roll back, run "Promote to latest" by hand (Actions tab) with the previous
+version: it re-tags the digests that already exist, no rebuild. The same
+command is the way to re-promote a version whose approval you let expire.
+
+Budget about an hour for the build: the full TeX Live compiler image is
+around 2.8 GB compressed per architecture.

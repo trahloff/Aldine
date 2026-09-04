@@ -72,3 +72,13 @@ lacks packages); everything else passes locally. Two checkouts side by side
   (the compiler can read project dirs).
 - Playwright `webServer` timeouts are long on purpose; kill stray
   `tsx watch` processes if local ports hang.
+- Image tags: a version tag builds immutable `x.y.z` images and stops;
+  `latest` moves only in `promote.yml` after a human approves.
+  `build-image.yml` tags the index by hand for that reason; if you ever swap
+  in `docker/metadata-action`, set `flavor: latest=false` or it re-adds
+  `latest` for every release semver. `docker-compose.yml` pins
+  `${ALDINE_VERSION:-x.y.z}` on purpose. Do not "simplify" either back to
+  `latest`.
+- `test:unit` discovers `apps/server/test/*.test.mjs`; never enumerate test
+  files in package.json again (two branches adding tests conflicted on that
+  line and the merge silently dropped one side's tests).

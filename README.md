@@ -110,7 +110,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:latest
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.3.0}
     ports:
       - "8080:3000"
     volumes:
@@ -121,7 +121,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:latest
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -153,20 +153,41 @@ docker compose up -d`. Keep the `name: aldine` line wherever you save it: it
 fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
-- **The first pull is big** (~2.5 GB; TeX Live is in the compiler image);
-  after that, starts take seconds. Ready when `curl localhost:8080/api/health`
-  returns `{"ok":true,"name":"aldine"}`. Images are published on release tags.
+- **You are pinned to a version.** The block above says
+  `${ALDINE_VERSION:-0.3.0}`, so a fresh copy installs the current release and
+  nothing under a running install changes on its own. To upgrade, read the
+  [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
+
+      ALDINE_VERSION=0.4.0 docker compose pull && docker compose up -d
+
+  To roll back, set `ALDINE_VERSION` to the previous release and run the same
+  command. Your projects live in the `aldine-data` and `aldine-secrets`
+  volumes and an image swap does not touch them. `:latest` still exists and
+  points at the newest release; pinning is what lets you choose when to move.
+- **Pre-1.0 stability.** Versions follow SemVer with one caveat: before 1.0
+  a minor bump (0.3 to 0.4) may change behaviour or on-disk layout, a patch
+  bump (0.4.0 to 0.4.1) will not. Every release is built from a commit that
+  passed CI, and its images are booted and made to typeset a real document
+  before `:latest` moves to them. Upgrades across a minor are not yet tested
+  against existing data, so back up first. Watch the repo's Releases for
+  security fixes: per [SECURITY.md](SECURITY.md), only the latest release
+  gets them.
+- **The first pull is big.** TeX Live lives in the compiler image: about
+  1 GB compressed for 0.3.0, and about 2.8 GB (around 9 GB on disk) from
+  0.4.0 on, which switches to full TeX Live so every script and language
+  typesets out of the box. After the first pull, starts take seconds. Ready
+  when `curl localhost:8080/api/health` returns `{"ok":true,"name":"aldine"}`.
 - **Port 8080 taken?** Change the left side of `ports:`.
-- **Everything beyond the minimum**: building from source (latest `main`),
-  auth/SSO/AI/email options, TLS, Postgres/Redis. All of it lives
-  in [`docker-compose.full.yml`](docker-compose.full.yml), which carries the
-  same compiler sandbox and the same volumes, so you can switch without
-  losing data:
-  `docker compose -f docker-compose.full.yml up -d --build`. The first build
-  installs LaTeX packages; expect 15–40 minutes.
-- **Need packages beyond the curated set?** Build the full file with all of
-  CTAN preinstalled (~9 GB on disk):
-  `ALDINE_TEXLIVE_SCHEME=medium docker compose -f docker-compose.full.yml up -d --build` for a slimmer image (curated packages, no CJK).
+- **Everything beyond the minimum**: building from source (latest `main`,
+  not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
+  lives in [`docker-compose.full.yml`](docker-compose.full.yml), which carries
+  the same compiler sandbox and the same volumes, so you can switch without
+  losing data: `docker compose -f docker-compose.full.yml up -d --build`.
+  The first build pulls TeX Live; expect 15–40 minutes.
+- **Constrained host?** Build the compiler yourself with the slimmer
+  `medium` scheme (curated packages and publisher classes, no CJK, about
+  1.3 GB of packages):
+  `ALDINE_TEXLIVE_SCHEME=medium docker compose -f docker-compose.full.yml up -d --build`
 
 ## How Aldine compares
 
