@@ -74,6 +74,11 @@ export default function Editor() {
     });
   }, []);
   const [showLog, setShowLog] = useState(false);
+  // Scroll the log to its first error once the dialog has rendered.
+  const logHit = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (showLog) logHit.current?.scrollIntoView({ block: 'center' });
+  }, [showLog]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -889,7 +894,19 @@ export default function Editor() {
         <Modal onClose={() => setShowLog(false)} label="Typesetting log" wide>
           <div>
             <h2>Typesetting log</h2>
-            <pre className="logview" data-testid="log-view">{compile.result.log || '(no log)'}</pre>
+            <pre className="logview" data-testid="log-view">{(() => {
+              const log = compile.result.log || '(no log)';
+              // Open at the first error, not at the pdfTeX banner: the reason
+              // for opening the log is 300 lines below the top.
+              const at = log.search(/^(?:! |[^\n]*:\d+: )/m);
+              if (at < 0) return log;
+              const end = log.indexOf('\n', at);
+              return (<>
+                {log.slice(0, at)}
+                <mark className="logview__hit" ref={logHit} data-testid="log-first-error">{log.slice(at, end < 0 ? undefined : end)}</mark>
+                {end < 0 ? '' : log.slice(end)}
+              </>);
+            })()}</pre>
             <div className="modal__row">
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 12.5 }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
                 <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} />

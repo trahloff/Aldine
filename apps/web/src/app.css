@@ -875,3 +875,11 @@
   .split-pdf, .pdf-pane { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
 }
+
+/* The typesetting log opens at its first error; mark it so the eye lands there. */
+.logview__hit {
+  background: color-mix(in srgb, var(--error) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}

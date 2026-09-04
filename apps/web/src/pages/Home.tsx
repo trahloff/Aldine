@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, ProjectSummary, TemplateCategory, TemplateInfo } from '../api';
 import { useToast } from '../components/Toast';
@@ -31,6 +31,7 @@ function matchesQuery(t: TemplateInfo, q: string): boolean {
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const zipInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
@@ -70,15 +71,24 @@ export default function Home() {
     }).catch(() => setTemplates([]));
   }, []);
 
-  // The gallery keeps its choice while the search narrows it, so the tile that
-  // Create will actually use is often filtered away: name it in the dialog.
-  const chosen = templates?.find((t) => t.id === template) ?? null;
+  // A search that hides the chosen tile would leave Create acting on something
+  // the user cannot see, so the first result of a narrowing search becomes the
+  // choice. With no search, or when the choice is still on screen, it stands.
+  const shownTemplates = (() => {
+    const q = templateQuery.trim().toLowerCase();
+    if (!templates) return [] as TemplateInfo[];
+    return q ? templates.filter((t) => matchesQuery(t, q)) : templates;
+  })();
+  const effectiveTemplate = shownTemplates.some((t) => t.id === template)
+    ? template
+    : shownTemplates[0]?.id ?? template;
+  const chosen = templates?.find((t) => t.id === effectiveTemplate) ?? null;
   const closeCreate = () => { setCreating(false); setTemplateQuery(''); };
 
   const create = async () => {
     const name = newName.trim() || 'Untitled Project';
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], template));
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate));
       if (p.venueKit && !p.venueKit.ok) {
         toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
       }
@@ -175,11 +185,9 @@ export default function Home() {
                 <button className="btn btn--small" data-testid="logout" onClick={async () => { await api.logout(); setUser(null); }}>Sign out</button>
               </span>
             )}
-            <label className="btn" data-testid="import-zip">
-              Import ZIP
-              <input type="file" accept=".zip" hidden data-testid="import-input" aria-label="Import a project from a ZIP file"
-                onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-            </label>
+            <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import ZIP</button>
+            <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
+              onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
             <button className="btn" onClick={() => setShowGithub(true)} data-testid="new-from-github">
               From GitHub
             </button>
@@ -202,9 +210,7 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
               <button className="btn" onClick={() => setShowGithub(true)}>Import from GitHub</button>
-              <label className="btn">Import a ZIP
-                <input type="file" accept=".zip" hidden onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-              </label>
+              <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP</button>
             </div>
           </div>
         ) : (
@@ -348,8 +354,7 @@ export default function Home() {
                 </div>
                 <div className="tpl-gallery" data-testid="template-grid">
                   {(() => {
-                    const q = templateQuery.trim().toLowerCase();
-                    const shown = q ? templates.filter((t) => matchesQuery(t, q)) : templates;
+                    const shown = shownTemplates;
                     if (!shown.length) {
                       return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
                     }
@@ -363,7 +368,7 @@ export default function Home() {
                             {group.map((t) => (
                               <button
                                 key={t.id}
-                                className={`tpl ${template === t.id ? 'tpl--active' : ''}`}
+                                className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
                                 data-testid={`template-${t.id}`}
                                 onClick={() => setTemplate(t.id)}
                                 title={t.description}

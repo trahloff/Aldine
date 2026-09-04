@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import Modal from './Modal';
 import { shortcut } from '../platform';
 /** First-run welcome shown once (localStorage-gated by the parent). */
@@ -5,6 +6,9 @@ export default function Onboarding({ onNew, onGithub, onImportZip, onClose }: {
   onNew(): void; onGithub(): void; onImportZip(file: File): void; onClose(): void;
 }) {
   const start = (fn: () => void) => { onClose(); fn(); };
+  // A <label> around a hidden file input is not focusable, so the tile was
+  // mouse-only; a button that opens the input keeps it on the tab order.
+  const zipInput = useRef<HTMLInputElement>(null);
 
   return (
     <Modal onClose={onClose} label="Welcome to Aldine" testId="onboarding" wide>
@@ -17,15 +21,16 @@ export default function Onboarding({ onNew, onGithub, onImportZip, onClose }: {
             <span className="onboard__tile-title">Start a paper</span>
             <span className="onboard__tile-sub">A blank doc or a template.</span>
           </button>
-          <label className="onboard__tile onboard__tile--gh" onClick={() => start(onGithub)} data-testid="onboard-github">
+          <button className="onboard__tile onboard__tile--gh" onClick={() => start(onGithub)} data-testid="onboard-github">
             <span className="onboard__tile-title">Import from GitHub</span>
             <span className="onboard__tile-sub">Clone a repo, then push &amp; pull as you write.</span>
-          </label>
-          <label className="onboard__tile" data-testid="onboard-zip">
+          </button>
+          <button className="onboard__tile" data-testid="onboard-zip" onClick={() => zipInput.current?.click()}>
             <span className="onboard__tile-title">Import a ZIP</span>
             <span className="onboard__tile-sub">Bring a project over from Overleaf.</span>
-            <input type="file" accept=".zip" hidden onChange={(e) => { if (e.target.files?.[0]) { const f = e.target.files[0]; onClose(); onImportZip(f); } }} />
-          </label>
+          </button>
+          <input ref={zipInput} type="file" accept=".zip" hidden aria-hidden="true" tabIndex={-1}
+            onChange={(e) => { if (e.target.files?.[0]) { const f = e.target.files[0]; onClose(); onImportZip(f); } }} />
         </div>
 
         <ul className="onboard__points">

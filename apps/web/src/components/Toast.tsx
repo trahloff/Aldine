@@ -13,7 +13,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const push = useCallback((text: string, kind: Toast['kind'] = 'info') => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3400);
+    // An error carries a sentence to read and usually something to do about
+    // it, so it stays about twice as long as a confirmation.
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 7000 : 3400);
   }, []);
   return (
     <ToastCtx.Provider value={push}>
