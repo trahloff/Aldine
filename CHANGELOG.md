@@ -6,6 +6,23 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- The hosted staging deployment is isolated from production. It had shared
+  the task security group that alone authorises the production filesystem
+  (including the secrets directory), received every production SSM secret,
+  pushed to the ECR repositories production task definitions resolve, and
+  was rolled by the same IAM role a feature branch could assume. Staging now
+  has its own security groups, secrets under `/papyr/staging/`, execution
+  role, repositories and deploy role; feature branches listed in
+  `github_deploy_branches` can reach staging only, and the production deploy
+  refuses to build on a task definition the staging role registered.
+
+### Fixed
+- Staging no longer inherits `ALDINE_SSO_ONLY` from production, so password
+  sign-in works there as documented.
+- The demo box pulls `main` and rebuilds during its nightly wipe instead of
+  running the commit it was provisioned with.
+
 ## [0.4.1] — 2026-09-05
 
 0.4.0 was built but never published: its medium compiler image had been

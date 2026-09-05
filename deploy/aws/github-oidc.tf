@@ -16,13 +16,31 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  # infra = Terraform (admin) → main only. deploy = image roll → main plus any
-  # branch listed in github_deploy_branches, so a feature branch can ship to
-  # staging from CI. Anyone who can push those branches can roll a service.
+  # infra = Terraform (admin) → main only. deploy = the prod image roll → main
+  # only. deploy_staging = the staging roll → main plus any branch listed in
+  # github_deploy_branches. Each role can push to and roll exactly one
+  # deployment (below), so the widened trust for feature branches never reaches
+  # prod: the workflow picks the role by target, and IAM refuses the other.
   github_roles = { for k, v in {
-    infra  = { repo = var.github_infra_repo, branches = ["main"] }
-    deploy = { repo = var.github_deploy_repo, branches = distinct(concat(["main"], var.github_deploy_branches)) }
+    infra          = { repo = var.github_infra_repo, branches = ["main"] }
+    deploy         = { repo = var.github_deploy_repo, branches = ["main"] }
+    deploy_staging = { repo = local.staging_enabled ? var.github_deploy_repo : "", branches = distinct(concat(["main"], var.github_deploy_branches)) }
   } : k => v if v.repo != "" }
+
+  # What each deploy role may touch: its deployment's repositories, service and
+  # execution role, nothing of the other's.
+  github_deploy_scopes = { for k, v in {
+    deploy = {
+      repos      = [aws_ecr_repository.repos["papyr-server"].arn, aws_ecr_repository.repos["papyr-compiler"].arn]
+      service    = aws_ecs_service.app.id
+      pass_roles = [aws_iam_role.task.arn, aws_iam_role.execution.arn]
+    }
+    deploy_staging = {
+      repos      = local.staging_enabled ? [aws_ecr_repository.repos["papyr-staging-server"].arn, aws_ecr_repository.repos["papyr-staging-compiler"].arn] : []
+      service    = local.staging_enabled ? aws_ecs_service.staging[0].id : ""
+      pass_roles = local.staging_enabled ? [aws_iam_role.task.arn, aws_iam_role.staging_execution[0].arn] : []
+    }
+  } : k => v if contains(keys(local.github_roles), k) }
 }
 
 data "aws_iam_policy_document" "github_assume" {
@@ -67,15 +85,15 @@ resource "aws_iam_role_policy_attachment" "github_infra_admin" {
 }
 
 resource "aws_iam_role" "github_deploy" {
-  count              = var.github_deploy_repo != "" ? 1 : 0
-  name               = "papyr-github-deploy"
-  assume_role_policy = data.aws_iam_policy_document.github_assume["deploy"].json
+  for_each           = local.github_deploy_scopes
+  name               = each.key == "deploy" ? "papyr-github-deploy" : "papyr-github-deploy-staging"
+  assume_role_policy = data.aws_iam_policy_document.github_assume[each.key].json
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
-  count = var.github_deploy_repo != "" ? 1 : 0
-  name  = "image-deploy"
-  role  = aws_iam_role.github_deploy[0].id
+  for_each = local.github_deploy_scopes
+  name     = "image-deploy"
+  role     = aws_iam_role.github_deploy[each.key].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -98,18 +116,20 @@ resource "aws_iam_role_policy" "github_deploy" {
           "ecr:PutImage",
           "ecr:UploadLayerPart",
         ]
-        Resource = [for r in aws_ecr_repository.repos : r.arn]
+        Resource = each.value.repos
       },
       {
         Sid      = "EcsRoll"
         Effect   = "Allow"
         Action   = ["ecs:UpdateService", "ecs:DescribeServices"]
-        Resource = concat([aws_ecs_service.app.id], local.staging_enabled ? [aws_ecs_service.staging[0].id] : [])
+        Resource = [each.value.service]
       },
       {
         # SHA-pinned deploys: CI reads the live task def, swaps the image tags,
         # and registers a new revision (these ECS actions don't support
-        # resource-level scoping).
+        # resource-level scoping, so the staging role can also register
+        # revisions in the prod family; deploy-aws.yml refuses to build on a
+        # revision the staging role registered).
         Sid      = "TaskDefPinning"
         Effect   = "Allow"
         Action   = ["ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"]
@@ -117,13 +137,25 @@ resource "aws_iam_role_policy" "github_deploy" {
       },
       {
         # Registering a task def that references the task/execution roles
-        # requires passing them — scoped to exactly those two, ECS only.
+        # requires passing them — scoped to this deployment's pair, ECS only.
         Sid       = "PassTaskRoles"
         Effect    = "Allow"
         Action    = "iam:PassRole"
-        Resource  = [aws_iam_role.task.arn, aws_iam_role.execution.arn]
+        Resource  = each.value.pass_roles
         Condition = { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } }
       },
     ]
   })
+}
+
+# The prod deploy role predates the staging one and lived at a count-indexed
+# address; keep its state entry (and the role's name and ARN) across the move.
+moved {
+  from = aws_iam_role.github_deploy[0]
+  to   = aws_iam_role.github_deploy["deploy"]
+}
+
+moved {
+  from = aws_iam_role_policy.github_deploy[0]
+  to   = aws_iam_role_policy.github_deploy["deploy"]
 }

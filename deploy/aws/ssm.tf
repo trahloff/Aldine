@@ -3,6 +3,10 @@
 # or logs. Only non-empty entries in var.secret_env are provisioned.
 # The env-var NAMES are not secret (only the values are), so the key set can be
 # de-sensitised for use as for_each keys; values are still pulled sensitively.
+#
+# Staging has its own parameter set under /papyr/staging/ (see staging.tf):
+# nothing from the prod set reaches the staging task unless it is listed in
+# var.staging_secret_env too.
 locals {
   secret_keys = nonsensitive(toset([for k, v in var.secret_env : k if v != ""]))
 }

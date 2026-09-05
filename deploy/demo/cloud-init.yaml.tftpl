@@ -15,10 +15,12 @@ write_files:
       ALDINE_COMPILE_PER_MIN=6
       ALDINE_PROTECTED_PROJECTS=${protected_projects}
 
-  # Nightly wipe: destroy the project data and recreate the stack. A demo box
-  # keeps nothing — except Caddy's certificate store: `down -v` would take that
-  # too, and re-issuing nightly burns Let's Encrypt's limit of 5 certificates
-  # per identifier per 168h, which takes the demo offline for hours.
+  # Nightly wipe: pull the current main, destroy the project data and rebuild
+  # the stack, so the demo never runs a fixed commit for months. A failed pull
+  # or build leaves the previous images in place. A demo box keeps nothing —
+  # except Caddy's certificate store: `down -v` would take that too, and
+  # re-issuing nightly burns Let's Encrypt's limit of 5 certificates per
+  # identifier per 168h, which takes the demo offline for hours.
   - path: /etc/systemd/system/aldine-demo-wipe.service
     content: |
       [Unit]
@@ -26,7 +28,7 @@ write_files:
       [Service]
       Type=oneshot
       WorkingDirectory=/opt/aldine/repo
-      ExecStart=/bin/bash -c 'docker compose --env-file /opt/aldine/.env.demo -f docker-compose.full.yml -f deploy/docker-compose.prod.yml --profile tls down && docker volume rm -f aldine_aldine-data aldine_aldine-secrets && docker compose --env-file /opt/aldine/.env.demo -f docker-compose.full.yml -f deploy/docker-compose.prod.yml --profile tls up -d'
+      ExecStart=/bin/bash -c 'git pull --ff-only; docker compose --env-file /opt/aldine/.env.demo -f docker-compose.full.yml -f deploy/docker-compose.prod.yml --profile tls down && docker volume rm -f aldine_aldine-data aldine_aldine-secrets && docker compose --env-file /opt/aldine/.env.demo -f docker-compose.full.yml -f deploy/docker-compose.prod.yml --profile tls up -d --build && docker image prune -f'
   - path: /etc/systemd/system/aldine-demo-wipe.timer
     content: |
       [Unit]

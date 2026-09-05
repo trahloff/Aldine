@@ -38,6 +38,11 @@ The nightly wipe destroys the data volumes — and with them the showcase projec
 and its id — so either re-seed each morning or disable the wipe timer for launch
 week (`systemctl disable --now aldine-demo-wipe.timer` on the box).
 
+The wipe also pulls `main` and rebuilds the images, so the demo tracks the
+repository without anyone logging in; a box provisioned before this ran a
+fixed commit until someone did. To update a box by hand (or right after a
+fix lands), run the wipe unit: `systemctl start aldine-demo-wipe.service`.
+
 The wipe deliberately keeps `aldine_caddy-data`. Let's Encrypt issues at most 5
 certificates per week for the same hostname, so a wipe that took the certificate
 store with it would put the demo behind an unreachable TLS handshake for hours

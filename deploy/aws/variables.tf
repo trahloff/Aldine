@@ -112,7 +112,7 @@ variable "github_infra_repo" {
 }
 
 variable "github_deploy_repo" {
-  description = "GitHub repo (owner/name) whose main branch may assume the image-deploy role via OIDC. Empty = don't create GitHub OIDC resources for it."
+  description = "GitHub repo (owner/name) whose main branch may assume the image-deploy roles via OIDC (prod: main only; staging: main plus github_deploy_branches). Empty = don't create GitHub OIDC resources for it."
   type        = string
   default     = ""
 }
@@ -136,8 +136,15 @@ variable "staging_env" {
   default     = {}
 }
 
+variable "staging_secret_env" {
+  description = "Secrets for the staging server, stored under /papyr/staging/ and injected like secret_env. Nothing from secret_env reaches staging; list the entries you want there (with staging OAuth apps and keys of their own)."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "github_deploy_branches" {
-  description = "Branches of github_deploy_repo allowed to assume the image-deploy role (main is always included). Add a feature branch here to deploy it to staging from CI."
+  description = "Branches of github_deploy_repo allowed to assume the STAGING image-deploy role (main is always included). These branches can push staging images and roll the staging service, nothing in prod."
   type        = list(string)
   default     = []
 }
