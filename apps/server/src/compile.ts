@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { branchDir, readMeta, writeMeta } from './store.js';
@@ -25,6 +26,12 @@ export interface CompileResult {
   error?: string;
 }
 
+/** The PDF the compiler writes for a root, relative to the branch dir (the compiler's `pdf` field). */
+function expectedPdfRel(rootFile: string): string {
+  const base = path.posix.basename(rootFile).replace(/\.tex$/i, '');
+  return path.posix.join(path.posix.dirname(rootFile), '.aldine-out', `${base}.pdf`);
+}
+
 /** projectDir sent to the compiler is relative to the shared data volume root. */
 function relProjectDir(projectId: string, branch: string): string {
   return path.relative(config.dataDir, branchDir(projectId, branch));
@@ -44,7 +51,7 @@ const compileChain = new Map<string, Promise<unknown>>();
  * and misalign SyncTeX with the source. In-memory: after a restart the first
  * failed compile reports no PDF rather than an unknown one.
  */
-const lastGoodPdfUrl = new Map<string, { url: string; compileId: number }>();
+const lastGoodPdfUrl = new Map<string, { url: string; compileId: number; pdf: string }>();
 
 /** compileId of the run whose SyncTeX file is on disk, per project::branch. */
 const lastSynctexId = new Map<string, number>();
@@ -166,10 +173,16 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   // end, so the document is complete and the errors sit in the list beside
   // it. With stopOnFirstError the PDF on disk is truncated at the first error,
   // so only an error-free run is shown and the previous one stays on screen.
-  const previous = lastGoodPdfUrl.get(key) ?? null;
+  // The remembered URL names a PDF path. It stands for this run only when
+  // that path is the one this root produces: switching the main document and
+  // back would otherwise serve the other document as a clean success.
+  const remembered = lastGoodPdfUrl.get(key) ?? null;
+  const expectedPdf = body.pdf ?? expectedPdfRel(meta.rootFile);
+  const previous = remembered && remembered.pdf === expectedPdf ? remembered : null;
+  if (!previous && remembered) lastGoodPdfUrl.delete(key);
   if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
     const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
-    lastGoodPdfUrl.set(key, { url: pdfUrl, compileId });
+    lastGoodPdfUrl.set(key, { url: pdfUrl, compileId, pdf: body.pdf });
     return { ...body, pdfUrl, compileId };
   }
   // latexmk found nothing to redo: the PDF on disk is this run's result even
@@ -179,11 +192,16 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   if (body.ok && body.pdf) {
     const id = previous?.compileId ?? compileId;
     const pdfUrl = previous?.url ?? `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
-    if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id });
+    if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id, pdf: body.pdf });
     if (!lastSynctexId.has(key) && body.synctex) lastSynctexId.set(key, id);
     return { ...body, pdfUrl, compileId: id };
   }
-  return { ...body, pdfUrl: previous?.url ?? null, pdfStale: previous !== null, compileId: previous?.compileId };
+  // No PDF from this run. The previous one is offered only while its file is
+  // still there: a halted run under stopOnFirstError deletes the output, and
+  // a URL to a deleted file is worse than no URL.
+  const kept = previous && fs.existsSync(path.join(branchDir(projectId, branch), previous.pdf)) ? previous : null;
+  if (!kept) lastGoodPdfUrl.delete(key);
+  return { ...body, pdfUrl: kept?.url ?? null, pdfStale: kept !== null, compileId: kept?.compileId };
 }
 
 /** `{ stale: true }` when the caller's preview (compileId) is not the run whose SyncTeX is on disk. */

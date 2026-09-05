@@ -40,6 +40,11 @@ const gitops = await import('../src/gitops.ts');
 
 await initDb();
 const meta = await store.createProject('Stale test');
+// The mock compiler writes nothing; a previous PDF is offered only while its
+// file is still on disk, so stage one where the compiler would have put it.
+const pdfOnDisk = path.join(store.branchDir(meta.id, 'main'), '.aldine-out', 'main.pdf');
+fs.mkdirSync(path.dirname(pdfOnDisk), { recursive: true });
+fs.writeFileSync(pdfOnDisk, '%PDF-1.5 placeholder');
 const good = { ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: '.aldine-out/main.synctex.gz', synctexFresh: true, log: 'ok', errors: [], durationMs: 5 };
 // Errors, but TeX ran to the end: the PDF and SyncTeX on disk are this run's.
 const errorsFull = { ok: false, exitCode: 12, pdf: '.aldine-out/main.pdf', pdfFresh: true, synctex: '.aldine-out/main.synctex.gz', synctexFresh: true, log: '! Undefined control sequence.', errors: [{ type: 'error', line: 3, message: 'Undefined control sequence' }], durationMs: 5 };
@@ -124,6 +129,33 @@ try {
   r = await compileProject(meta.id, 'main');
   eq(r.ok, true, 'recovered');
   check(r.pdfUrl !== withErrors, 'a new success mints a new URL');
+  const recovered = r.pdfUrl;
+
+  // Switching the main document: the remembered URL names main.pdf and must
+  // not stand in for other.tex, nor, when switching back, the other way round
+  // (the "nothing to redo" branch used to hand back whatever URL was remembered).
+  meta.rootFile = 'other.tex';
+  await store.writeMeta(meta);
+  queue.push({ ...good, pdf: '.aldine-out/other.pdf', synctex: '.aldine-out/other.synctex.gz' });
+  r = await compileProject(meta.id, 'main');
+  check(r.pdfUrl.includes('other.pdf'), `the other document gets its own URL: ${r.pdfUrl}`);
+  meta.rootFile = 'main.tex';
+  await store.writeMeta(meta);
+  queue.push({ ...good, pdfFresh: false, synctexFresh: false });
+  r = await compileProject(meta.id, 'main');
+  check(r.pdfUrl.includes('main.pdf'), `switching back does not serve the other document: ${r.pdfUrl}`);
+  check(r.pdfUrl !== recovered, 'and it is a fresh URL, not the one remembered from before the switch');
+  eq(r.pdfStale, undefined, 'not stale: the PDF on disk is this root\'s');
+
+  // The previous PDF is gone from disk (a halted run under stop-on-first-error
+  // deletes the output): nothing to show, rather than a URL that 404s.
+  queue.push({ ...good });
+  r = await compileProject(meta.id, 'main');
+  fs.rmSync(pdfOnDisk);
+  queue.push({ ...fatal });
+  r = await compileProject(meta.id, 'main');
+  eq(r.pdfUrl, null, 'no URL to a PDF that no longer exists');
+  eq(r.pdfStale, false, 'and nothing is flagged stale');
 } finally {
   await closeDb();
   mock.close();
