@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-05
+
 ### Added
 - Aldine can live under a URL prefix, for hosts that put several apps behind
   one origin (`https://server/internal/aldine/`). Set `ALDINE_BASE_PATH`, or
@@ -757,7 +759,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/trahloff/Aldine/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trahloff/Aldine/compare/v0.2.0...v0.3.0

@@ -57,6 +57,8 @@ found".
 DATA_DIR=$(pwd)/.data-e2e PORT=4020 node apps/compiler/server.js   # in its own terminal
 npx playwright test -c e2e                                   # main (no-auth)
 npx playwright test -c e2e/playwright.auth.config.ts         # auth
+npx playwright test -c e2e/playwright.base-path.config.ts    # served under /internal/aldine (:3300)
+ALDINE_REMOTE_URL=https://staging.example.com npx playwright test -c e2e/playwright.remote.config.ts  # a deployed instance
 ```
 
 Kill the dev compiler container from the previous section first, or it holds
