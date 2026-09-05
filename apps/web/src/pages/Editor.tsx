@@ -17,7 +17,7 @@ import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
-import { useCommentSignal } from '../editor/commentSignal';
+import { useCommentSignal, useFilesSignal } from '../editor/commentSignal';
 import GithubSync from '../components/GithubSync';
 import GithubPublish from '../components/GithubPublish';
 import CommentComposer from '../components/CommentComposer';
@@ -105,6 +105,8 @@ export default function Editor() {
   const pdfRef = useRef<PdfPaneHandle>(null);
   const compilingRef = useRef(false);
   const pendingRef = useRef(false);
+  /** The branch on screen, for a typeset that finishes after a switch. */
+  const branchRef = useRef(branch);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRef = useRef(auto);
   autoRef.current = auto;
@@ -186,8 +188,12 @@ export default function Editor() {
     const t0 = Date.now();
     try {
       const result = await api.compile(id, branch);
+      // The user may have switched branch while this ran: the result belongs
+      // to the branch it was asked for, not to whatever is on screen now.
+      if (branchRef.current !== branch) return;
       setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
     } catch (err: any) {
+      if (branchRef.current !== branch) return;
       // A capacity rejection is the server being busy, not a broken document —
       // keep the busy state and retry with backoff instead of showing "Failed".
       if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
@@ -232,8 +238,13 @@ export default function Editor() {
 
   const switchBranch = (name: string) => {
     setParams(name === 'main' ? {} : { branch: name });
-    setCompile({ status: 'idle', result: null });
   };
+  // The branch can also change through the URL (Back/Forward), not only
+  // through switchBranch, and the preview belongs to the old one either way.
+  useEffect(() => {
+    branchRef.current = branch;
+    setCompile({ status: 'idle', result: null });
+  }, [id, branch]);
 
   const saveName = useCallback(async (name: string) => {
     try {
@@ -312,6 +323,29 @@ export default function Editor() {
   useEffect(() => { loadComments(); }, [id, branch]);
   // live-sync: re-fetch when any collaborator changes comments
   const bumpComments = useCommentSignal(id, branch, loadComments);
+  // The file list is a REST snapshot. The server bumps this signal whenever
+  // the branch's files change on disk (another tab, a collaborator, the agent
+  // API, a pull), and a tab coming back to the foreground refetches anyway.
+  useFilesSignal(id, branch, loadFiles);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') loadFiles(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadFiles]);
+  // A file this tab has open can be deleted or renamed elsewhere. Keeping the
+  // editor on it would write it back on the next keystroke; move off it and
+  // say so. This tab's own delete/rename names the path first, so it stays
+  // silent for those.
+  const localRemoval = useRef<string | null>(null);
+  useEffect(() => {
+    if (!filesLoaded || !activeFile || localRemoval.current === activeFile) return;
+    if (files.some((f) => f.path === activeFile)) return;
+    const next = files.find((e) => e.path === project?.rootFile)
+      || files.find((e) => e.type === 'file' && /\.tex$/i.test(e.path))
+      || files.find((e) => isUserFile(e) && !e.binary);
+    setActiveFile(next?.path || null);
+    toast(`${activeFile} was removed from the project by someone else`);
+  }, [files]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // push this file's comment ranges into the editor as highlight decorations
   useEffect(() => {
@@ -632,12 +666,18 @@ export default function Editor() {
                   toast(paths.length === 1 ? `Uploaded ${paths[0]}` : `Uploaded ${paths.length} files`, 'ok');
                 }}
                 onDelete={async (path) => {
-                  await api.deleteFile(id, branch, path);
-                  await loadFiles();
-                  loadProject(); // deleting the root re-derives (or unsets) it
-                  if (activeFile === path) setActiveFile(null);
+                  localRemoval.current = path;
+                  try {
+                    await api.deleteFile(id, branch, path);
+                    await loadFiles();
+                    loadProject(); // deleting the root re-derives (or unsets) it
+                    if (activeFile === path) setActiveFile(null);
+                  } finally {
+                    setTimeout(() => { if (localRemoval.current === path) localRemoval.current = null; }, 0);
+                  }
                 }}
                 onRename={async (from, to) => {
+                  localRemoval.current = from;
                   try {
                     await api.renameFile(id, branch, from, to);
                     await loadFiles();
@@ -645,6 +685,8 @@ export default function Editor() {
                     if (activeFile === from) setActiveFile(to);
                   } catch (err: any) {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
+                  } finally {
+                    setTimeout(() => { if (localRemoval.current === from) localRemoval.current = null; }, 0);
                   }
                 }}
                 onSetRoot={setRootFile}

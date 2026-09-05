@@ -26,6 +26,20 @@ export async function createBranch(id: string, name: string, from = 'main'): Pro
   await g.raw(['worktree', 'add', '-b', name, dir, from]);
 }
 
+/**
+ * Checkpoints on `name` that main does not have, newest first message
+ * included: what a delete would throw away. Deleting is `branch -D`, and
+ * nothing in the app can bring a commit back after it.
+ */
+export async function unmergedCommits(id: string, name: string): Promise<{ count: number; newest: string | null }> {
+  if (!BRANCH_RE.test(name) || name.includes('..')) throw new Error('bad branch name');
+  const g = git(repoDir(id));
+  const count = Number((await g.raw(['rev-list', '--count', `main..${name}`])).trim()) || 0;
+  if (!count) return { count: 0, newest: null };
+  const newest = (await g.raw(['log', '-1', '--format=%s', name])).trim() || null;
+  return { count, newest };
+}
+
 export async function deleteBranch(id: string, name: string): Promise<void> {
   if (name === 'main') throw new Error('cannot delete main');
   const g = git(repoDir(id));

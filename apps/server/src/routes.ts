@@ -895,6 +895,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     });
 
+  // What deleting a branch would discard, so the client can ask properly.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/branches/unmerged', async (req, reply) => {
+    const { name } = req.query;
+    if (!name) return reply.code(400).send({ error: 'name required' });
+    if (name === 'main') return { count: 0, newest: null };
+    try {
+      return await gitops.unmergedCommits(req.params.id, name);
+    } catch (err) {
+      return reply.code(404).send({ error: `No such branch: ${(err as Error).message}` });
+    }
+  });
+
   app.delete<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/branches', async (req, reply) => {
     const { name } = req.query;
     if (!name) return reply.code(400).send({ error: 'name required' });
