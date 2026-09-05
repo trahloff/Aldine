@@ -112,7 +112,7 @@ export default function Editor() {
   // so they neither open on load nor count against the empty state.
   const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
   const hasFiles = files.some(isUserFile);
-  const hasTex = files.some((f) => f.type === 'file' && f.path.endsWith('.tex'));
+  const hasTex = files.some((f) => f.type === 'file' && /\.tex$/i.test(f.path));
   const hasTexRef = useRef(hasTex);
   hasTexRef.current = hasTex;
 

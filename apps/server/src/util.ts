@@ -39,6 +39,19 @@ export function importPath(entry: string): string | null {
  *  Windows `.GIT/config` and `.git./config` open `.git/config`, and the
  *  initial commit runs git on whatever the seed wrote there. `.gitignore` is
  *  not hidden. */
+/**
+ * Why a value cannot be the project's main document, or null when it can. The
+ * compiler puts this name on latexmk's command line; a segment starting with
+ * "-" would be read as an option there ("-pdflatex=<program>" runs the
+ * program), so it is refused here as well as in the compiler.
+ */
+export function invalidRootFile(rootFile: unknown): string | null {
+  if (typeof rootFile !== 'string' || !rootFile.trim()) return 'Main document cannot be empty';
+  if (rootFile.includes('..') || rootFile.startsWith('/') || rootFile.startsWith('\\')) return 'Main document must be a path inside the project';
+  if (rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'))) return 'Main document name cannot start with "-"';
+  return null;
+}
+
 export function isHiddenName(seg: string): boolean {
   const s = seg.toLowerCase().replace(/[. ]+$/, '');
   return s === '.git' || s.startsWith('.aldine');

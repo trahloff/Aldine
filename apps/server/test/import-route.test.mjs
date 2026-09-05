@@ -188,7 +188,7 @@ try {
   eq((await store.readMeta(id)).engine, 'xelatex', 'engine untouched by a name-only patch');
 
   // ---- engine detection on import ----
-  res = await importZip({ 'latexmkrc': '$pdf_mode = 4;\n', 'main.tex': doc });
+  res = await importZip({ 'latexmkrc': '$pdf_mode = 5;\n', 'main.tex': doc });
   eq(res.statusCode, 200, 'latexmkrc archive imports');
   eq(res.json().engine, 'xelatex', 'engine set from latexmkrc');
   eq(res.json().import, { engine: 'xelatex', engineReason: 'latexmkrc in the archive', transcoded: [] }, 'response says why');

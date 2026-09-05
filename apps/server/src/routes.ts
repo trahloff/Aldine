@@ -27,7 +27,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, BRANCH_RE } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, BRANCH_RE, invalidRootFile } from './util.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -572,7 +572,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         if (trimmed.length > 200) return reply.code(400).send({ error: 'Project name is too long (max 200 characters)' });
         meta.name = trimmed;
       }
-      if (rootFile) meta.rootFile = rootFile;
+      if (rootFile) {
+        const bad = invalidRootFile(rootFile);
+        if (bad) return reply.code(400).send({ error: bad });
+        meta.rootFile = rootFile;
+      }
       if (engine !== undefined) {
         if (!(ENGINES as readonly string[]).includes(engine as string)) {
           return reply.code(400).send({ error: `Unknown engine "${String(engine)}" — use one of ${ENGINES.join(', ')}` });
