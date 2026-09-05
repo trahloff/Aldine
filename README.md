@@ -110,7 +110,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.3.0}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.4.0}
     ports:
       - "8080:3000"
     volumes:
@@ -121,7 +121,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.3.0}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.4.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -154,7 +154,7 @@ fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
 - **You are pinned to a version.** The block above says
-  `${ALDINE_VERSION:-0.3.0}`, so a fresh copy installs the current release and
+  `${ALDINE_VERSION:-0.4.0}`, so a fresh copy installs the current release and
   nothing under a running install changes on its own. To upgrade, read the
   [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
 
