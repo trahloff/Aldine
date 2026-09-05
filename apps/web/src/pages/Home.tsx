@@ -85,8 +85,14 @@ export default function Home() {
   const chosen = templates?.find((t) => t.id === effectiveTemplate) ?? null;
   const closeCreate = () => { setCreating(false); setTemplateQuery(''); };
 
+  // One request per click: a venue kit takes seconds to download, and a
+  // double-click or a held Enter used to make two identical projects and
+  // land in the second.
+  const [submitting, setSubmitting] = useState(false);
   const create = async () => {
+    if (submitting) return;
     const name = newName.trim() || 'Untitled Project';
+    setSubmitting(true);
     try {
       const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate));
       if (p.venueKit && !p.venueKit.ok) {
@@ -95,6 +101,7 @@ export default function Home() {
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
+      setSubmitting(false);
     }
   };
 
@@ -401,7 +408,7 @@ export default function Home() {
             )}
             <div className="modal__row">
               <button className="btn" onClick={closeCreate}>Cancel</button>
-              <button className="btn btn--primary" onClick={create} data-testid="create-project">Create</button>
+              <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
             </div>
           </div>
         </Modal>

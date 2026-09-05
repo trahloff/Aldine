@@ -59,8 +59,23 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
   };
 
   const remove = async (n: string) => {
-    if (!window.confirm(`Delete branch ${n}?`)) return;
-    await api.deleteBranch(projectId, n);
+    // Deleting is permanent (git branch -D, no reflog surfaced anywhere), so
+    // the question names what goes with the branch.
+    let question = `Delete branch ${n}?`;
+    try {
+      const { count, newest } = await api.unmergedCommits(projectId, n);
+      if (count > 0) {
+        const newestPart = newest ? ` (newest: "${newest}")` : '';
+        question = `Branch ${n} has ${count} checkpoint${count === 1 ? '' : 's'} that main does not have${newestPart}. Deleting the branch discards ${count === 1 ? 'it' : 'them'} for good. Delete anyway?`;
+      }
+    } catch { /* the plain question still stands */ }
+    if (!window.confirm(question)) return;
+    try {
+      await api.deleteBranch(projectId, n);
+    } catch (err: any) {
+      toast(`Could not delete branch: ${err.message}`, 'error');
+      return;
+    }
     if (current === n) onSwitch('main');
     load();
     onChanged();
@@ -84,7 +99,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
               {b.name !== 'main' && (
                 <>
                   <button className="btn btn--ghost btn--small" title={`Merge ${b.name} into main`} onClick={() => mergeIntoMain(b.name)} data-testid={`merge-${b.name}`}>⤝ main</button>
-                  <button className="btn btn--ghost btn--small" title={`Delete ${b.name}`} onClick={() => remove(b.name)}>✕</button>
+                  <button className="btn btn--ghost btn--small" style={{ marginLeft: 6 }} title={`Delete ${b.name}`} onClick={() => remove(b.name)} data-testid={`delete-${b.name}`}>✕</button>
                 </>
               )}
             </div>

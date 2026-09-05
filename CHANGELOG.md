@@ -6,6 +6,29 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The file tree follows what others do. It was a snapshot from page load:
+  a file created, renamed or deleted in another tab, by a collaborator or by
+  the agent API stayed invisible until reload, and a tab that still had a
+  deleted file open wrote it back on its next keystroke. The server now
+  signals every open editor on a branch when its files change on disk (the
+  same channel the review comments use), a tab coming back to the foreground
+  refetches, and an editor whose open file was removed elsewhere moves off it
+  and says so; the collab socket for a deleted file is closed and refuses to
+  reopen it while the deletion is fresh.
+- Uploading a file whose name already exists asks before replacing it; it
+  used to swap the content in place, including the file open in the editor,
+  with typed work unrecoverable.
+- Create in the New project dialog accepts one click: a double-click or a
+  held Enter made two identical projects and opened the second.
+- Deleting a branch that has checkpoints main does not have says how many
+  and names the newest before asking; the question was the same one-liner as
+  for an empty branch, and the delete is permanent.
+- A typeset that finishes after you switched branch is dropped instead of
+  landing its PDF, status and errors on the branch now on screen; and the
+  preview resets on a branch change that arrives through Back/Forward, not
+  only through the branch menu.
+
 ## [0.4.0] — 2026-09-05
 
 ### Added
