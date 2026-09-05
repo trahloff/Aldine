@@ -3,9 +3,13 @@ dist/
 .data/
 .data-e2e/
 .data-auth/
+.data-base-path/
+.data-remote/
 .data-shots/
 .secrets/
 .secrets-auth/
+.secrets-base-path/
+.secrets-remote/
 .secrets-pb/
 .secrets-shots/
 .cache/

@@ -225,6 +225,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 |---|---|
 | `ALDINE_DOMAIN` | Domain Caddy serves + provisions TLS for (`tls` profile) |
 | `ALDINE_PUBLIC_URL` | Absolute origin used in OAuth callbacks and reset links — required for SSO and email |
+| `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { wsUrl } from '../basePath';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 
@@ -29,10 +30,9 @@ function useSignalDoc(projectId: string, branch: string, docPath: string, onRemo
   cbRef.current = onRemoteChange;
 
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ydoc = new Y.Doc();
     const provider = new HocuspocusProvider({
-      url: `${proto}//${location.host}/collab`,
+      url: wsUrl('/collab'),
       name: `${projectId}::${branch}::${docPath}`,
       document: ydoc,
       // With auth enabled the server defines onAuthenticate, so a tokenless

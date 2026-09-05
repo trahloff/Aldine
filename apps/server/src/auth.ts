@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from './db/index.js';
 import type { User } from './db/types.js';
+import { config } from './config.js';
 
 /**
  * Optional, env-gated auth (AUTH_ENABLED=1). When off, every request is
@@ -15,6 +16,8 @@ export const AUTH_ENABLED = process.env.AUTH_ENABLED === '1' || process.env.AUTH
 /** SSO-only mode: disable all password endpoints (register/login/reset/change) — sign-in is exclusively via a configured OAuth provider. */
 export const SSO_ONLY = process.env.ALDINE_SSO_ONLY === '1' || process.env.ALDINE_SSO_ONLY === 'true';
 export const COOKIE = 'aldine_session';
+// Scoped to the base path so a neighbouring app on the same host never sees it.
+export const COOKIE_PATH = config.basePath || '/';
 const SESSION_DAYS = 30;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -159,10 +162,10 @@ function decodeCookieValue(raw: string): string {
   }
 }
 export function sessionCookie(sid: string): string {
-  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
+  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
 }
 export function clearCookie(): string {
-  return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${SECURE_COOKIES ? '; Secure' : ''}`;
+  return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=0${SECURE_COOKIES ? '; Secure' : ''}`;
 }
 export function sidFromRequest(cookieHeader: string | undefined): string | undefined {
   return parseCookies(cookieHeader)[COOKIE];

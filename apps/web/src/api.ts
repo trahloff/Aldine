@@ -1,3 +1,5 @@
+import { withBase } from './basePath';
+
 export interface AuthUser { id: string; email: string; name: string; provider?: string }
 export interface OAuthProviderInfo { id: string; label: string }
 export interface ProjectSummary {
@@ -66,7 +68,7 @@ export class ApiError extends Error {
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetch(withBase(url), {
     headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
     ...init,
   });
@@ -138,7 +140,7 @@ export const api = {
 
   listFiles: (id: string, branch: string) => req<TreeEntry[]>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`),
   readFile: async (id: string, branch: string, path: string) => {
-    const res = await fetch(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`);
+    const res = await fetch(withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
@@ -183,7 +185,7 @@ export const api = {
   githubPush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean }>(`/api/projects/${id}/github/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing
   githubPull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
-    const res = await fetch(`/api/projects/${id}/github/pull`, { method: 'POST' });
+    const res = await fetch(withBase(`/api/projects/${id}/github/pull`), { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

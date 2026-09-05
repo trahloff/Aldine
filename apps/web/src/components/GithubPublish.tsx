@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { withBase } from '../basePath';
 import { api, GithubStatus } from '../api';
 import { useToast } from './Toast';
 import Modal from './Modal';
@@ -57,7 +58,7 @@ export default function GithubPublish({ projectId, projectName, onClose, onLinke
           <div style={{ marginTop: 4 }}>
             {status.oauth && (
               <>
-                <a className="btn login__oauth" href="/api/github/oauth" data-testid="github-connect-oauth">{GH_ICON} Connect with GitHub</a>
+                <a className="btn login__oauth" href={withBase('/api/github/oauth')} data-testid="github-connect-oauth">{GH_ICON} Connect with GitHub</a>
                 <div className="login__or">or use a token</div>
               </>
             )}

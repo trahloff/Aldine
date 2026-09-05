@@ -18,6 +18,7 @@ import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
 import { guessRoot, detectRoot } from './root.js';
+import { config } from './config.js';
 import { detectEngine, decodeText } from './detect.js';
 import { multipartBoundary, parseMultipart } from './multipart.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
@@ -56,12 +57,13 @@ function badCredentials(body: { email?: unknown; password?: unknown } | undefine
 function oauthProviders(): Array<{ id: string; label: string }> {
   return oauth.configuredProviders().map((p) => ({ id: p.id, label: p.label }));
 }
-/** Public origin for OAuth redirects — ALDINE_PUBLIC_URL, else derived from the request. */
+/** Public URL of the app root (origin + base path, no trailing slash) for OAuth
+ *  redirects — ALDINE_PUBLIC_URL's origin, else derived from the request. */
 function publicBase(req: FastifyRequest): string {
-  if (process.env.ALDINE_PUBLIC_URL) return process.env.ALDINE_PUBLIC_URL.replace(/\/$/, '');
+  if (config.publicUrl) return config.publicUrl;
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-  return `${proto}://${host}`;
+  return `${proto}://${host}${config.basePath}`;
 }
 
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
@@ -238,7 +240,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // Build the reset link from the CONFIGURED public URL only — never the
       // request Host/X-Forwarded-Host, which an attacker controls and could use
       // to redirect the victim's valid token to their own domain (takeover).
-      const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
+      const base = config.publicUrl;
       const link = `${base}/?reset_token=${encodeURIComponent(r.token)}`;
       if (email.emailConfigured() && base) {
         // send in the background so the response time doesn't leak whether the
@@ -273,7 +275,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
     if (!provider) return reply.code(404).send({ error: 'This sign-in provider is not configured' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    reply.header('set-cookie', `aldine_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     const redirect = `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`;
     return reply.redirect(provider.authorizeUrl(state, redirect));
   });
@@ -289,8 +291,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       try {
         const profile = await provider.exchange(req.query.code, `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`);
         const user = await auth.findOrCreateOAuth(profile.email, profile.name, provider.id);
-        reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), 'aldine_oauth_state=; Path=/; Max-Age=0']);
-        return reply.redirect('/');
+        reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), `aldine_oauth_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`]);
+        return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
         return reply.code(400).send({ error: `${provider.label} sign-in failed: ${err.message}` });
       }
@@ -1203,7 +1205,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     return reply.redirect(github.connectUrl(state, `${publicBase(req)}/api/github/oauth/callback`));
   });
 
@@ -1217,8 +1219,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const token = await github.exchangeCode(req.query.code, `${publicBase(req)}/api/github/oauth/callback`);
       const me = await github.whoami(token);
       await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
-      reply.header('set-cookie', 'aldine_gh_state=; Path=/; Max-Age=0');
-      return reply.redirect('/?github=connected');
+      reply.header('set-cookie', `aldine_gh_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
+      return reply.redirect(`${config.basePath}/?github=connected`);
     } catch (err: any) {
       return reply.code(400).send({ error: `GitHub connect failed: ${err.message}` });
     }
