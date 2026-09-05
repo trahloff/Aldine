@@ -196,14 +196,17 @@ export async function synctexLookup(projectId: string, branch: string, payload: 
       return { ok: false, stale: true, error: 'The preview and the typeset output are from different runs — typeset again to jump accurately' };
     }
   }
-  payload = rest;
+  // Only the lookup fields cross to the compiler: projectDir and rootFile are
+  // the server's to set, and a body that carried its own would read another
+  // project's SyncTeX records.
+  const { direction, file, line, column, page, x, y } = rest;
   const res = await fetch(`${config.compilerUrl}/synctex`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       projectDir: relProjectDir(projectId, branch),
       rootFile: meta.rootFile,
-      ...payload,
+      direction, file, line, column, page, x, y,
     }),
   });
   return res.json();

@@ -34,7 +34,7 @@ async function importFile(page: import('@playwright/test').Page, file: string, s
 }
 
 test.describe('engine detection on import', () => {
-  test('a latexmkrc with $pdf_mode 4 selects XeLaTeX and the import typesets with it', async ({ page, request }) => {
+  test('a latexmkrc with $pdf_mode 5 selects XeLaTeX and the import typesets with it', async ({ page, request }) => {
     const { dir, file, stem } = zipFixture('import-latexmkrc');
     let id: string | null = null;
     try {

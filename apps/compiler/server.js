@@ -192,10 +192,23 @@ async function compile(body) {
   }
 }
 
+/**
+ * A root file is a relative path inside the project. A segment starting with
+ * "-" is refused because the name ends up on a latexmk command line, and
+ * latexmk reads "-pdflatex=<program>" as an option that runs <program>: with
+ * it, whoever can name the main document runs commands in this container.
+ * The "./" prefix in mkArgs is the second lock on the same door.
+ */
+function invalidRootFile(rootFile) {
+  if (typeof rootFile !== 'string' || !rootFile) return true;
+  if (rootFile.includes('..') || path.isAbsolute(rootFile)) return true;
+  return rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'));
+}
+
 async function compileInner(body) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
@@ -230,9 +243,11 @@ async function compileInner(body) {
     '-synctex=1',
     '-cd', // chdir to the root file's directory before compiling
     `-outdir=${OUT_SUBDIR}`,
-    rootFile,
+    `./${rootFile}`, // never bare: a name starting with "-" must stay a file, not an option
   ];
-  const base = path.basename(rootFile).replace(/\.tex$/, '');
+  // Case-insensitive: the root picker accepts MAIN.TEX, and latexmk writes
+  // MAIN.pdf for it; stripping only ".tex" would look for MAIN.TEX.pdf.
+  const base = path.basename(rootFile).replace(/\.tex$/i, '');
   const rel = (f) => path.join(rootDir, OUT_SUBDIR, f); // path relative to the project dir
   const outAbs = path.join(absDir, rootDir, OUT_SUBDIR);
   const pdfPath = path.join(outAbs, `${base}.pdf`);
@@ -260,7 +275,13 @@ async function compileInner(body) {
   // leftover .aux/.bcf artifacts make an otherwise-valid document fail with an
   // undefined-control-sequence in the .aux (\abx@aux@…, \bibcite, …). Wipe the
   // regenerable aux files once and rebuild — the .aux is not source of truth.
-  if (code !== 0 && !timedOut && /(\\abx@aux@|\\bibcite|\\@writefile|undefined)/i.test(readLog(out)) && /\.(aux|bcf)\b/i.test(readLog(out))) {
+  // The bare word "undefined" and a mention of the .aux are in nearly every
+  // failing log; only an error located in the .aux/.bcf next to one of its own
+  // macros is the stale-artifact case. Otherwise every failing compile would
+  // pay a second full -g build (each invocation is a complete multi-pass run
+  // under -f).
+  const staleAux = (l) => /\.(aux|bcf):\d+:/i.test(l) && /(\\abx@aux@|\\bibcite|\\@writefile)/.test(l);
+  if (code !== 0 && !timedOut && staleAux(readLog(out))) {
     for (const ext of ['aux', 'bcf', 'bbl', 'blg', 'run.xml', 'toc', 'out', 'fls', 'fdb_latexmk']) {
       try { fs.rmSync(path.join(outAbs, `${base}.${ext}`), { force: true }); } catch { /* best effort */ }
     }
@@ -275,9 +296,13 @@ async function compileInner(body) {
   const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
   const bibLogPath = path.join(outAbs, `${base}.blg`);
   const errors = parseLog(log);
-  // Only this run's .blg: a stale one from before the user fixed the .bib
-  // would report errors that no longer exist.
-  if (isFresh(bibLogPath)) {
+  // This run's .blg, or an older one that latexmk still holds against the
+  // document: latexmk does not re-run bibtex/biber until the .bib changes, and
+  // until then reports "gave an error in previous invocation", whose located
+  // errors are the ones in that older .blg. A stale .blg from a .bib the user
+  // already fixed cannot reach here, because fixing the .bib re-runs the rule.
+  const bibRuleFailed = /\b(bibtex|biber)\b[^\n]*gave an error/i.test(out);
+  if (isFresh(bibLogPath) || bibRuleFailed) {
     try { errors.push(...parseBibLog(fs.readFileSync(bibLogPath, 'utf8'))); } catch { /* unreadable is not an error */ }
   }
   // -file-line-error paths are relative to the compile dir (the root file's
@@ -334,11 +359,11 @@ async function compileInner(body) {
 async function synctex(body) {
   const { projectDir, rootFile = 'main.tex', direction, line, column = 0, page, x, y } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   const rootDir = path.dirname(rootFile);
-  const base = path.basename(rootFile).replace(/\.tex$/, '');
+  const base = path.basename(rootFile).replace(/\.tex$/i, '');
   const pdf = path.join(rootDir, OUT_SUBDIR, `${base}.pdf`);
   let args;
   if (direction === 'forward') {
@@ -400,7 +425,7 @@ const server = http.createServer(async (req, res) => {
 
 // The log parsers are pure and worth testing without a TeX Live image; the
 // server only starts when this file is run directly (the image's CMD).
-module.exports = { parseLog, parseBibLog, latexmkFailure };
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile };
 
 if (require.main === module) {
   probeTexLive().finally(() => {

@@ -37,8 +37,8 @@ function engineFromProgram(name: string): Engine | null {
 }
 
 /**
- * latexmk's own precedence, reduced: $pdf_mode selects the engine (4 = xelatex,
- * 5 = lualatex, 1 = pdflatex); without it, a $pdflatex command naming xelatex
+ * latexmk's own precedence, reduced: $pdf_mode selects the engine (4 = lualatex,
+ * 5 = xelatex, 1 = pdflatex: latexmk -pdflua sets 4 and -pdfxe sets 5); without it, a $pdflatex command naming xelatex
  * or lualatex (the pre-4.51 idiom); without either, a bare $xelatex or
  * $lualatex assignment is the only remaining hint, and only when it stands
  * alone: an rc that assigns both (the idiom that hands -shell-escape to
@@ -49,8 +49,8 @@ export function engineFromLatexmkrc(text: string): Engine | null {
   const code = text.split('\n').map((l) => l.replace(/#.*$/, '')).join('\n');
   const mode = code.match(/\$pdf_mode\s*=\s*['"]?(\d)/);
   if (mode) {
-    if (mode[1] === '4') return 'xelatex';
-    if (mode[1] === '5') return 'lualatex';
+    if (mode[1] === '4') return 'lualatex';
+    if (mode[1] === '5') return 'xelatex';
     if (mode[1] === '1') return 'pdf';
   }
   const cmd = code.match(/\$pdflatex\s*=\s*['"]\s*(\S+)/);

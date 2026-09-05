@@ -207,6 +207,25 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- A project whose main document is `MAIN.TEX` (any capitalisation but
+  `.tex`) typesets again. The root picker accepted it, latexmk wrote
+  `MAIN.pdf`, and the compiler looked for `MAIN.TEX.pdf`, so every typeset
+  came back as a failure with no error to show and a second full rebuild each
+  time. The editor's auto-typeset and empty state now recognise it too.
+- A `latexmkrc` with `$pdf_mode = 4` now selects LuaLaTeX and `= 5` XeLaTeX,
+  which is what latexmk means by them (`-pdflua` sets 4, `-pdfxe` sets 5);
+  they were swapped, so an archive that named its engine that way imported
+  with the other one and failed its first typeset.
+- A bibliography error stays visible on the typesets that follow it. latexmk
+  does not re-run bibtex or biber until the `.bib` changes, and only reports
+  that the rule "gave an error in previous invocation"; the located error
+  from that run (file and line in the `.bib`) was dropped as stale, leaving
+  a row with no file to click.
+- A failing typeset no longer pays a second full rebuild. The stale-aux
+  recovery matched the word "undefined" in any error and the `.aux` mention
+  in any log, so nearly every failed compile ran twice; with runs to
+  completion, that doubled the wait. It now fires only for an error located
+  in the `.aux`/`.bcf` next to one of that file's own macros.
 - A cookie on the same host that is not valid percent-encoding (another
   app's `x=100%`, a truncated `%E0%A4%A`) no longer turns every request into
   `{"error":"Internal server error"}` until the user clears site cookies. Such
@@ -448,6 +467,17 @@ All notable changes to Aldine are documented here. The format follows
   seconds"; the README says ~2s, so the page does now too.
 
 ### Security
+- The main document's name could carry latexmk options. A root file such as
+  `-pdflatex=<command>` landed bare on the compiler's command line, and
+  latexmk ran the command; with auth off, or as any project member with it
+  on, that was command execution inside the compiler container, which mounts
+  every project. The compiler and the settings route now refuse a path
+  segment starting with `-`, and the compiler passes the root file as
+  `./<name>` so it can never be read as an option. Reported by the September
+  regression review; present since the compiler was written.
+- A SyncTeX lookup could name another project's directory in its body and
+  read that project's SyncTeX records (file names and line numbers). Only the
+  lookup fields cross to the compiler now.
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
   `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
   `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it

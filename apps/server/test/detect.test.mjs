@@ -11,21 +11,21 @@ const B = (s) => Buffer.from(s);
 const doc = (preamble = '') => `\\documentclass{article}\n${preamble}\\begin{document}\nHello\n\\end{document}\n`;
 
 // ---- latexmkrc ----
-eq(engineFromLatexmkrc('$pdf_mode = 4;'), 'xelatex', '$pdf_mode 4');
-eq(engineFromLatexmkrc('$pdf_mode = 5;'), 'lualatex', '$pdf_mode 5');
+eq(engineFromLatexmkrc('$pdf_mode = 4;'), 'lualatex', '$pdf_mode 4 is -pdflua');
+eq(engineFromLatexmkrc('$pdf_mode = 5;'), 'xelatex', '$pdf_mode 5 is -pdfxe');
 eq(engineFromLatexmkrc('$pdf_mode = 1;'), 'pdf', '$pdf_mode 1 is an explicit pdflatex');
-eq(engineFromLatexmkrc('$pdf_mode = "4";'), 'xelatex', 'quoted value');
+eq(engineFromLatexmkrc('$pdf_mode = "4";'), 'lualatex', 'quoted value');
 eq(engineFromLatexmkrc("$pdflatex = 'xelatex -synctex=1 %O %S';"), 'xelatex', 'pre-4.51 idiom: $pdflatex names xelatex');
 eq(engineFromLatexmkrc("$pdflatex = 'lualatex %O %S';"), 'lualatex', '$pdflatex names lualatex');
 eq(engineFromLatexmkrc("$pdflatex = '/usr/bin/xelatex %O %S';"), 'xelatex', 'absolute command path');
 eq(engineFromLatexmkrc("$pdflatex = 'pdflatex -shell-escape %O %S';"), null, '$pdflatex naming pdflatex only passes flags: no choice');
 eq(engineFromLatexmkrc("$xelatex = 'xelatex -interaction=nonstopmode %O %S';"), 'xelatex', 'a bare $xelatex assignment is the last hint');
 eq(engineFromLatexmkrc("$lualatex = 'lualatex %O %S';"), 'lualatex', 'a bare $lualatex assignment');
-eq(engineFromLatexmkrc("$pdf_mode = 5;\n$xelatex = 'xelatex %O %S';"), 'lualatex', '$pdf_mode wins over a command assignment');
+eq(engineFromLatexmkrc("$pdf_mode = 4;\n$xelatex = 'xelatex %O %S';"), 'lualatex', '$pdf_mode wins over a command assignment');
 const allThree = "$pdflatex = 'pdflatex -shell-escape %O %S';\n$xelatex = 'xelatex -shell-escape %O %S';\n$lualatex = 'lualatex -shell-escape %O %S';";
 eq(engineFromLatexmkrc(allThree), null, 'flags handed to all three engines choose none');
 eq(engineFromLatexmkrc("$xelatex = 'xelatex %O %S';\n$lualatex = 'lualatex %O %S';"), null, 'both bare assignments together are no hint either');
-eq(engineFromLatexmkrc("$pdf_mode = 4;\n" + allThree), 'xelatex', '$pdf_mode still decides beside all three');
+eq(engineFromLatexmkrc("$pdf_mode = 5;\n" + allThree), 'xelatex', '$pdf_mode still decides beside all three');
 eq(engineFromLatexmkrc("$pdflatex = 'xelatex %O %S';\n$lualatex = 'lualatex %O %S';"), 'xelatex', 'a $pdflatex naming xelatex beats a bare $lualatex');
 eq(engineFromLatexmkrc('# $pdf_mode = 4;\n$bibtex_use = 2;'), null, 'commented-out setting is ignored');
 eq(engineFromLatexmkrc('$bibtex_use = 2;'), null, 'no engine setting at all');
@@ -49,11 +49,11 @@ eq(engineFromSource(doc('\\newcommand{\\pct}{\\%}\\usepackage{fontspec}\n')).eng
 eq(engineFromSource(doc('\\newcommand{\\pct}{\\%} % \\usepackage{fontspec}\n')), null, 'a real comment after an escaped \\% still hides it');
 
 // ---- archive-level precedence ----
-const files = { 'latexmkrc': B('$pdf_mode = 4;'), 'main.tex': B(doc('\\usepackage{luacode}\n')) };
+const files = { 'latexmkrc': B('$pdf_mode = 5;'), 'main.tex': B(doc('\\usepackage{luacode}\n')) };
 eq(detectEngine(files, 'main.tex'), { engine: 'xelatex', reason: 'latexmkrc in the archive' }, 'latexmkrc beats the package sniff');
-eq(detectEngine({ '.latexmkrc': B('$pdf_mode = 5;'), 'main.tex': B(doc()) }, 'main.tex').engine, 'lualatex', 'dotfile spelling');
-eq(detectEngine({ 'paper/latexmkrc': B('$pdf_mode = 4;'), 'paper/main.tex': B(doc()) }, 'paper/main.tex').engine, 'xelatex', 'latexmkrc beside a nested root');
-eq(detectEngine({ 'latexmkrc': B('$pdf_mode = 5;'), 'paper/latexmkrc': B('$pdf_mode = 4;'), 'paper/main.tex': B(doc()) }, 'paper/main.tex').engine, 'xelatex', 'the latexmkrc beside the root wins over the top-level one');
+eq(detectEngine({ '.latexmkrc': B('$pdf_mode = 4;'), 'main.tex': B(doc()) }, 'main.tex').engine, 'lualatex', 'dotfile spelling');
+eq(detectEngine({ 'paper/latexmkrc': B('$pdf_mode = 5;'), 'paper/main.tex': B(doc()) }, 'paper/main.tex').engine, 'xelatex', 'latexmkrc beside a nested root');
+eq(detectEngine({ 'latexmkrc': B('$pdf_mode = 4;'), 'paper/latexmkrc': B('$pdf_mode = 5;'), 'paper/main.tex': B(doc()) }, 'paper/main.tex').engine, 'xelatex', 'the latexmkrc beside the root wins over the top-level one');
 eq(detectEngine({ 'latexmkrc': B('$bibtex_use = 2;'), 'main.tex': B(doc('\\usepackage{xepersian}\n')) }, 'main.tex'), { engine: 'xelatex', reason: 'the xepersian package in the main document' }, 'silent latexmkrc falls through to the root');
 eq(detectEngine({ 'latexmkrc': B("$pdflatex = 'pdflatex -synctex=1 %O %S';"), 'main.tex': B(doc('\\usepackage{xepersian}\n')) }, 'main.tex'), { engine: 'xelatex', reason: 'the xepersian package in the main document' }, 'a flags-only $pdflatex line does not override a root that needs XeLaTeX');
 eq(detectEngine({ 'latexmkrc': B(allThree), 'main.tex': B(doc('\\usepackage{xepersian}\n')) }, 'main.tex'), { engine: 'xelatex', reason: 'the xepersian package in the main document' }, 'an rc that flags all three engines leaves the root to decide');
