@@ -107,9 +107,13 @@ jobs:
         run: |
           mkdir -p /tmp/digests
           echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ steps.slug.outputs.value }}"
+      # The variant sits between two fixed delimiters so the merge job's glob
+      # cannot pick up another variant's files ("digests-compiler-*" matched
+      # "digests-compiler-full-…" and stitched the medium index from all four
+      # manifests; the smoke job caught it, the 0.4.0 tag was burned).
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ env.VARIANT }}-${{ steps.slug.outputs.value }}
+          name: digests-${{ env.VARIANT }}--${{ steps.slug.outputs.value }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -123,7 +127,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-${{ env.VARIANT }}-*
+          pattern: digests-${{ env.VARIANT }}--*
           merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
