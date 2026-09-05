@@ -1,7 +1,7 @@
 {
   "name": "aldine",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Slim, fast, open-source LaTeX collaboration platform",
   "workspaces": [
     "apps/server",

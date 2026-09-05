@@ -6,7 +6,17 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-05
+
+0.4.0 was built but never published: its medium compiler image had been
+stitched from the full variant's manifests as well as its own, the release
+smoke test refused it, and version tags are never rewritten. 0.4.1 is the
+first published 0.4 release and carries everything listed under 0.4.0.
+
 ### Fixed
+- The release pipeline's per-architecture digest artifacts are named with a
+  delimiter the variant cannot contain, so a variant's merge step only sees
+  its own manifests.
 - The file tree follows what others do. It was a snapshot from page load:
   a file created, renamed or deleted in another tab, by a collaborator or by
   the agent API stayed invisible until reload, and a tab that still had a
@@ -719,7 +729,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/trahloff/Aldine/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trahloff/Aldine/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trahloff/Aldine/compare/v0.1.0...v0.2.0
