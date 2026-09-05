@@ -4,7 +4,10 @@ import { defineConfig } from '@playwright/test';
  * The app served under a URL prefix (ALDINE_BASE_PATH=/internal/aldine) on
  * :3300, isolated from the root-path suites. baseURL is the bare origin on
  * purpose: Playwright resolves '/x' against the origin and would drop a path
- * in baseURL, so the specs spell the prefix out.
+ * in baseURL, so the specs spell the prefix out. The typeset test runs only
+ * when a compiler shares this suite's data dir:
+ *   DATA_DIR=$(pwd)/.data-base-path PORT=4022 node apps/compiler/server.js
+ *   COMPILER_URL=http://localhost:4022 npm run test:e2e:base-path
  */
 const PORT = Number(process.env.E2E_BASE_PATH_PORT || 3300);
 const BASE = process.env.ALDINE_BASE_PATH_URL || `http://localhost:${PORT}`;

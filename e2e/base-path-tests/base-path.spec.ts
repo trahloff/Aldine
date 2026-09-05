@@ -72,4 +72,49 @@ test.describe('served under a base path (#27)', () => {
     await expect(page.getByTestId('project-name')).toContainText('Deep link');
     expect(failed).toEqual([]);
   });
+
+  test('plugins load from under the prefix', async ({ page, request }) => {
+    const { failed } = watch(page);
+    const entry = await request.get(`${BASE}/plugins/zotero/index.js`);
+    expect(entry.ok()).toBeTruthy();
+    expect(entry.headers()['content-type']).toContain('javascript');
+    expect((await request.get('/plugins/zotero/index.js')).status()).toBe(404);
+
+    const res = await request.post(`${BASE}/api/projects`, { data: { name: 'Plugin host' } });
+    const { id } = await res.json();
+    await page.goto(`${BASE}/p/${id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    // the host imports each plugin's entry module dynamically — a wrong base would 404 it
+    await expect(page.getByTestId('tab-plugin:zotero')).toBeVisible();
+    await page.getByTestId('tab-plugin:zotero').click();
+    await expect(page.getByTestId('zotero-panel')).toBeVisible();
+    expect(failed).toEqual([]);
+  });
+
+  test('typesetting serves the PDF and its download from under the prefix', async ({ page, request }) => {
+    const compiler = await (await request.get(`${BASE}/api/compiler`)).json();
+    test.skip(!compiler.ok, 'needs a compiler sharing this suite\'s DATA_DIR (COMPILER_URL)');
+
+    const { failed } = watch(page);
+    const res = await request.post(`${BASE}/api/projects`, { data: { name: 'Typeset under prefix' } });
+    const { id } = await res.json();
+    // plain LaTeX only, so a BasicTeX box can typeset it too
+    const put = await request.put(`${BASE}/api/projects/${id}/file`, {
+      data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\nUnder the prefix.\n\\end{document}\n' },
+    });
+    expect(put.ok()).toBeTruthy();
+
+    await page.goto(`${BASE}/p/${id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    await page.getByTestId('typeset-button').click();
+    await expect(page.getByTestId('pdf-status')).toContainText('Typeset in', { timeout: 120_000 });
+    await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 30_000 });
+
+    const href = await page.getByTestId('download-pdf').getAttribute('href');
+    expect(href).toMatch(new RegExp(`^${BASE}/api/projects/${id}/output\\?`));
+    const pdf = await request.get(href!);
+    expect(pdf.status()).toBe(200);
+    expect(pdf.headers()['content-type']).toContain('pdf');
+    expect(failed).toEqual([]);
+  });
 });
