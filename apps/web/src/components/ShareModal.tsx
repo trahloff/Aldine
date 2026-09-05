@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { withBase } from '../basePath';
 import { api, ProjectSummary } from '../api';
 import { useToast } from './Toast';
 import Modal from './Modal';
@@ -18,7 +19,7 @@ export default function ShareModal({ project, onClose, onSaved }: {
   const [emails, setEmails] = useState((project.share?.collaborators || []).join(', '));
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const shareUrl = `${location.origin}/p/${project.id}`;
+  const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
 
   const copyLink = async () => {
     try {

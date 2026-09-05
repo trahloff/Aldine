@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type JSX } from 'react';
+import { withBase } from '../basePath';
 import { api, AuthUser, OAuthProviderInfo } from '../api';
 
 interface AuthState {
@@ -121,7 +122,7 @@ function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthPr
         <p className="home__tag" style={{ marginBottom: 18 }}>{title}</p>
 
         {providers.map((p) => (
-          <a key={p.id} className="btn login__oauth" href={`/api/auth/oauth/${p.id}`} data-testid={`oauth-${p.id}`}>
+          <a key={p.id} className="btn login__oauth" href={withBase(`/api/auth/oauth/${p.id}`)} data-testid={`oauth-${p.id}`}>
             {PROVIDER_ICON[p.id]}
             Continue with {p.label}
           </a>

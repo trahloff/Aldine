@@ -1,15 +1,11 @@
-import Fastify, { LogController } from 'fastify';
-import fastifyStatic from '@fastify/static';
 import { WebSocketServer } from 'ws';
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from './config.js';
-import { registerRoutes } from './routes.js';
+import { buildApp, isCollabUpgrade } from './app.js';
 import { hocuspocus, flushAllDocs, closeProjectConnections } from './collab.js';
 import { initProjectEvents } from './events.js';
 import { commitAll } from './gitops.js';
 import * as store from './store.js';
-import { initObservability, captureError } from './observability.js';
+import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
 
@@ -24,39 +20,14 @@ await initRateLimit();
 // our local collab sockets for it so clients re-authenticate. No-op without Redis.
 initProjectEvents({ onAccessChanged: closeProjectConnections });
 
-// trustProxy makes req.ip honor X-Forwarded-For — enable ONLY behind a trusted
-// reverse proxy (Caddy/nginx). Off by default so clients can't spoof their IP
-// to evade rate limits or lock others out.
-// Info level so operational lines (a failed ZIP import and its reason) reach
-// the hosted instance's log; per-request access lines stay off because the
-// load balancer already keeps those. LOG_LEVEL=warn restores the old quiet.
-const app = Fastify({
-  logger: { level: process.env.LOG_LEVEL || 'info' },
-  logController: new LogController({ disableRequestLogging: true }),
-  bodyLimit: 32 * 1024 * 1024,
-  trustProxy: process.env.TRUST_PROXY === '1',
-});
-
-await initObservability(app);
-await registerRoutes(app);
-
-// Serve the built frontend (production). In dev, Vite serves it and proxies to us.
-if (fs.existsSync(path.join(config.webDist, 'index.html'))) {
-  await app.register(fastifyStatic, { root: config.webDist, prefix: '/' });
-  app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith('/api') || req.url.startsWith('/plugins') || req.url.startsWith('/collab')) {
-      return reply.code(404).send({ error: 'not found' });
-    }
-    return reply.type('text/html').send(fs.readFileSync(path.join(config.webDist, 'index.html')));
-  });
-}
+const app = await buildApp();
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
 
-// Yjs collaboration over WebSocket at /collab
+// Yjs collaboration over WebSocket at <basePath>/collab
 const wss = new WebSocketServer({ noServer: true });
 app.server.on('upgrade', (request, socket, head) => {
-  if (request.url && request.url.startsWith('/collab')) {
+  if (isCollabUpgrade(request.url)) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       hocuspocus.handleConnection(ws, request);
     });
@@ -65,7 +36,7 @@ app.server.on('upgrade', (request, socket, head) => {
   }
 });
 
-console.log(`[aldine] server on :${config.port} — data=${config.dataDir} compiler=${config.compilerUrl}`);
+console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
 
 // Trash purge: hard-delete soft-deleted projects after ALDINE_TRASH_DAYS
 // (default 30). Swept on boot and daily; errors are logged, never fatal.

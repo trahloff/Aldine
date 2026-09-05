@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { withBase } from '../basePath';
 import { api, GithubRepo, GithubStatus } from '../api';
 import { useToast } from './Toast';
 import { friendlyDate } from '../util/dates';
@@ -56,7 +57,7 @@ export default function GithubImport({ onClose, onImported }: { onClose(): void;
             <p className="modal__sub" style={{ marginBottom: 14 }}>Connect your GitHub account to browse and import repositories.</p>
             {status.oauth && (
               <>
-                <a className="btn login__oauth" href="/api/github/oauth" data-testid="github-connect-oauth">{GH_ICON} Connect with GitHub</a>
+                <a className="btn login__oauth" href={withBase('/api/github/oauth')} data-testid="github-connect-oauth">{GH_ICON} Connect with GitHub</a>
                 <div className="login__or">or use a token</div>
               </>
             )}

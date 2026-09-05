@@ -181,7 +181,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   const previous = remembered && remembered.pdf === expectedPdf ? remembered : null;
   if (!previous && remembered) lastGoodPdfUrl.delete(key);
   if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
-    const pdfUrl = `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
+    const pdfUrl = `${config.basePath}/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
     lastGoodPdfUrl.set(key, { url: pdfUrl, compileId, pdf: body.pdf });
     return { ...body, pdfUrl, compileId };
   }
@@ -191,7 +191,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   // calling it stale would flag every typeset of an unchanged document.
   if (body.ok && body.pdf) {
     const id = previous?.compileId ?? compileId;
-    const pdfUrl = previous?.url ?? `/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
+    const pdfUrl = previous?.url ?? `${config.basePath}/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
     if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id, pdf: body.pdf });
     if (!lastSynctexId.has(key) && body.synctex) lastSynctexId.set(key, id);
     return { ...body, pdfUrl, compileId: id };

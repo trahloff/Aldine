@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { withBase } from '../basePath';
 
 /**
  * Aldine plugin host.
@@ -68,7 +69,8 @@ export function PluginHost({ ctx, onPanels }: Props) {
       editor: { insertAtCursor: (t) => ctxRef.current.insertAtCursor(t) },
       compile: () => ctxRef.current.compile(),
       toast: (t, k) => ctxRef.current.toast(t, k),
-      fetch: (url, init) => fetch(url, init),
+      // plugins address the API root-relatively; the base path is the host's concern
+      fetch: (url, init) => fetch(url.startsWith('/') ? withBase(url) : url, init),
       ui: {
         registerSidebarPanel(panel) {
           panels.push({ id: `plugin:${panel.id}`, title: panel.title, mount: (el) => panel.render(el) });
@@ -78,12 +80,12 @@ export function PluginHost({ ctx, onPanels }: Props) {
 
     (async () => {
       try {
-        const res = await fetch('/api/plugins');
+        const res = await fetch(withBase('/api/plugins'));
         const manifests = (await res.json()) as Array<{ id: string; entry: string; enabled?: boolean }>;
         for (const m of manifests) {
           if (m.enabled === false) continue;
           try {
-            const mod = await import(/* @vite-ignore */ `/plugins/${m.id}/${m.entry}`);
+            const mod = await import(/* @vite-ignore */ withBase(`/plugins/${m.id}/${m.entry}`));
             mod.default?.activate?.(api);
           } catch (err) {
             console.error(`[plugins] failed to load ${m.id}`, err);

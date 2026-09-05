@@ -6,6 +6,17 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Aldine can live under a URL prefix, for hosts that put several apps behind
+  one origin (`https://server/internal/aldine/`). Set `ALDINE_BASE_PATH`, or
+  give `ALDINE_PUBLIC_URL` a path: the app, the API, the collaboration
+  websocket, plugin assets, OAuth callbacks, reset links and share links all
+  follow it, the session cookie is scoped to it, and anything outside the
+  prefix is not served — except the two probes an orchestrator aims at the
+  container itself: `/api/health` and a bare `GET /`, which answers 200 with
+  a pointer to the prefix, so compose healthchecks and load balancers keep
+  working. (#27)
+
 ### Security
 - The hosted staging deployment is isolated from production. It had shared
   the task security group that alone authorises the production filesystem

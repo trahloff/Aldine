@@ -269,7 +269,8 @@ is not `1`, so auth silently stays off.
 ```dotenv
 # app on loopback only; your reverse proxy fronts it
 ALDINE_APP_BIND=127.0.0.1
-# absolute origin used in OAuth callbacks and password-reset links
+# absolute URL of the app, used in OAuth callbacks and password-reset links.
+# Give it a path to serve Aldine under a prefix (https://server/internal/aldine)
 ALDINE_PUBLIC_URL=https://aldine.example.com
 
 # Everything below is optional and off unless set.
