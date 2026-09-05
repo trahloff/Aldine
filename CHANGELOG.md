@@ -6,6 +6,17 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Sign in with ORCID. Set `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` from a
+  Public API client (`ORCID_SANDBOX=1` for the sandbox) and the sign-in page
+  offers it next to Google and GitHub. Most researchers keep their ORCID
+  email private, so such an account has no email address: it is keyed by the
+  iD, shown in account settings, skipped by password reset and welcome mail,
+  and invited to a project by its ORCID iD instead of an address. A public,
+  verified ORCID email still matches an existing ORCID account with that
+  address. Postgres deployments get the migration on start (`users.email`
+  nullable, new `users.subject`). (#10)
+
 ## [0.5.0] — 2026-09-05
 
 ### Added

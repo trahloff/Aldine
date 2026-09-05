@@ -88,7 +88,7 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
 - **Multi-user auth** (optional): set `AUTH_ENABLED=1` for login, per-project
-  ownership, and sharing (invite-only or link). Google & GitHub SSO, or
+  ownership, and sharing (invite-only or link). Google, GitHub & ORCID SSO, or
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
@@ -282,6 +282,10 @@ GOOGLE_OAUTH_CLIENT_SECRET=
 # GitHub SSO
 GITHUB_LOGIN_CLIENT_ID=
 GITHUB_LOGIN_CLIENT_SECRET=
+# ORCID SSO: a Public API client (orcid.org/developer-tools, HTTPS callback
+# <ALDINE_PUBLIC_URL>/api/auth/oauth/orcid/callback); ORCID_SANDBOX=1 for sandbox.orcid.org
+ORCID_CLIENT_ID=
+ORCID_CLIENT_SECRET=
 # GitHub repo sync: a separate OAuth app with repo scope
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=

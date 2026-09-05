@@ -3,6 +3,8 @@ import { api, AuthUser } from '../api';
 import { useToast } from './Toast';
 import Modal from './Modal';
 
+const PROVIDER_NAME: Record<string, string> = { github: 'GitHub', google: 'Google', orcid: 'ORCID' };
+
 /** Account settings: identity + change password (password accounts only). */
 export default function AccountSettings({ user, onClose }: { user: AuthUser; onClose(): void }) {
   const [current, setCurrent] = useState('');
@@ -29,20 +31,27 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
     <Modal onClose={onClose} label="Account settings" testId="account-settings">
       <div>
         <h2 style={{ marginBottom: 2 }}>Account</h2>
-        <p className="modal__sub">{user.email}</p>
+        <p className="modal__sub" data-testid="account-email">{user.email ?? 'No email address on this account'}</p>
 
         <div className="settings__row">
           <span className="settings__label">Name</span>
           <span>{user.name}</span>
         </div>
+        {user.orcid && (
+          <div className="settings__row">
+            <span className="settings__label">ORCID iD</span>
+            <a href={`https://orcid.org/${user.orcid}`} target="_blank" rel="noreferrer" data-testid="account-orcid">{user.orcid}</a>
+          </div>
+        )}
         <div className="settings__row">
           <span className="settings__label">Sign-in</span>
-          <span>{isSso ? `Single sign-on (${user.provider})` : 'Email & password'}</span>
+          <span>{isSso ? `Single sign-on (${PROVIDER_NAME[user.provider!] || user.provider})` : 'Email & password'}</span>
         </div>
 
         {isSso ? (
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginTop: 14 }}>
-            Your password is managed by {user.provider}. There's nothing to change here.
+            Your password is managed by {PROVIDER_NAME[user.provider!] || user.provider}. There's nothing to change here.
+            {user.orcid && !user.email && ' Collaborators invite you by your ORCID iD, since this account has no email address.'}
           </p>
         ) : (
           <>
