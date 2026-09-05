@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-06
+
 ### Added
 - Sign in with ORCID. Set `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` from a
   Public API client (`ORCID_SANDBOX=1` for the sandbox) and the sign-in page
@@ -770,7 +772,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/trahloff/Aldine/compare/v0.3.0...v0.4.0
