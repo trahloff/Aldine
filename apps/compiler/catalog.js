@@ -77,10 +77,11 @@ function run(cmd, args, timeoutMs = PROBE_TIMEOUT_MS) {
  * kpsewhich prints one line per argument — the resolved path, or empty when the
  * file is not installed — so the answers line up with the queries positionally.
  */
+/** null when kpsewhich itself did not run (missing, killed, timed out): not the same as "nothing installed". */
 async function locate(files) {
   if (!files.length) return {};
   const { ok, out } = await run('kpsewhich', files);
-  if (!ok) return {};
+  if (!ok) return null;
   const lines = out.split('\n');
   const found = {};
   files.forEach((f, i) => {
@@ -175,6 +176,7 @@ async function build() {
   const wanted = [];
   for (const v of VENUES) for (const f of v.files) wanted.push(f);
   const found = await locate(wanted);
+  if (found === null) return { ok: false, generatedAt: new Date().toISOString(), classes: [] };
   const classes = [];
   if (Object.keys(found).length) {
     const pkgs = await packageData();
@@ -200,19 +202,26 @@ async function build() {
 
 let cached = null;
 let inflight = null;
+let failedUntil = 0;
+const RETRY_MS = 30_000;
 
 /**
- * Cached for the life of the process: the TeX installation cannot change under
- * it, and installing a package needs a restart anyway. There is deliberately no
- * refresh switch — the port is unauthenticated, and a caller that could drop the
- * cache could make every request spawn its own kpsewhich and tlmgr sweep.
+ * A good catalog is cached for the life of the process: the TeX installation
+ * cannot change under it, and installing a package needs a restart anyway.
+ * There is deliberately no refresh switch — the port is unauthenticated, and a
+ * caller that could drop the cache could make every request spawn its own
+ * kpsewhich and tlmgr sweep. A probe that did not run (ok:false) is held for
+ * RETRY_MS instead, so a slow first boot does not become an empty gallery for
+ * the life of the process.
  */
 function getCatalog() {
   if (cached) return Promise.resolve(cached);
+  const failed = () => ({ ok: false, generatedAt: new Date().toISOString(), classes: [] });
+  if (Date.now() < failedUntil) return Promise.resolve(failed());
   if (!inflight) {
     inflight = build()
-      .then((c) => { cached = c; inflight = null; return c; })
-      .catch(() => { inflight = null; return { ok: true, generatedAt: new Date().toISOString(), classes: [] }; });
+      .then((c) => { if (c.ok) cached = c; else failedUntil = Date.now() + RETRY_MS; inflight = null; return c; })
+      .catch(() => { failedUntil = Date.now() + RETRY_MS; inflight = null; return failed(); });
   }
   return inflight;
 }

@@ -9,6 +9,10 @@ import zlib from 'node:zlib';
  */
 const MAX_ENTRY_BYTES = 40 * 1024 * 1024;   // 40 MB per file
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;  // 200 MB inflated total
+// Every entry costs a synchronous write and a git add, whatever its size;
+// with ZIP64 the directory can declare millions of empty ones inside the
+// upload limit. A real project has hundreds of files, a large one thousands.
+const MAX_ENTRIES = 20_000;
 
 const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
@@ -125,6 +129,7 @@ export function unzip(buf: Buffer): Record<string, Buffer> {
   let total = 0;
   const { count, offset } = readDirectory(buf);
   const fail = (msg: string) => new ZipError(msg, count);
+  if (count > MAX_ENTRIES) throw fail(`the archive has ${count} entries; the limit is ${MAX_ENTRIES}`);
   let off = offset;
 
   for (let n = 0; n < count; n++) {

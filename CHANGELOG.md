@@ -207,6 +207,26 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- Switching the main document and back no longer shows the other document
+  as a clean typeset. The remembered preview URL was keyed on the branch
+  only, so a typeset of an unchanged `main.tex` after a spell on `arxiv.tex`
+  handed back the URL that still named `arxiv.pdf`. The URL now stands only
+  for the PDF the current main document produces. In the same place: with
+  "stop on first error" on, a halted run deletes the PDF, and the preview
+  kept linking it; a previous PDF is offered only while its file exists.
+- Two scans in ZIP import were quadratic on a crafted archive: an upload of
+  unterminated `\usepackage{` runs held the server for ten seconds at 256 KB
+  and without bound at the 40 MB per-file cap, with no login needed on a
+  default install. Both scans are bounded now (190 ms on the same input).
+- A ZIP with more than 20 000 entries is refused up front. ZIP64 support
+  lifted the old 65 535-entry ceiling, and every entry costs a write and a
+  git add whatever its size, so a 60 MB archive of empty entries meant
+  hundreds of thousands of them.
+- A compiler that is slow to answer its first catalog probe no longer
+  empties the venue gallery for the life of the process, and a failed
+  refresh on the server keeps the last list it had instead of an empty one
+  (which made a tile the gallery had just shown fail with "unknown
+  template" on create).
 - A project whose main document is `MAIN.TEX` (any capitalisation but
   `.tex`) typesets again. The root picker accepted it, latexmk wrote
   `MAIN.pdf`, and the compiler looked for `MAIN.TEX.pdf`, so every typeset

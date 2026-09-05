@@ -176,9 +176,14 @@ let inflight: Promise<CatalogClass[]> | null = null;
 /** Bumped by resetVenueCache so an orphaned fetch cannot write over the new state. */
 let generation = 0;
 
-/** The last catalog the compiler actually answered with, however stale. */
+/**
+ * The last catalog the compiler actually answered with, however stale. A
+ * failed fetch keeps these rows under its short TTL rather than replacing
+ * them with an empty list: a tile the gallery showed a moment ago must not
+ * turn into "unknown template" at create time because the compiler blinked.
+ */
 function lastGoodClasses(): CatalogClass[] {
-  return cache && cache.ttl === CACHE_OK_MS ? cache.classes : [];
+  return cache ? cache.classes : [];
 }
 
 /**
@@ -204,14 +209,19 @@ function fetchClasses(): Promise<CatalogClass[]> {
     try {
       const res = await fetch(`${config.compilerUrl}/catalog`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`catalog HTTP ${res.status}`);
-      const body = (await res.json()) as { classes?: CatalogClass[] };
+      const body = (await res.json()) as { ok?: boolean; classes?: CatalogClass[] };
+      // ok:false is a probe that did not run (kpsewhich missing or timed out),
+      // not an installation with no classes.
+      if (body.ok === false) throw new Error('catalog probe failed');
       const classes = Array.isArray(body.classes) ? body.classes.filter((c) => c && typeof c.id === 'string' && typeof c.cls === 'string') : [];
       if (gen === generation) cache = { at: Date.now(), ttl: CACHE_OK_MS, classes };
       return classes;
     } catch {
-      // A compiler that is still booting must not poison the cache for long.
-      if (gen === generation) cache = { at: Date.now(), ttl: CACHE_FAIL_MS, classes: [] };
-      return [];
+      // A compiler that is still booting must not poison the cache for long,
+      // and one that answered before keeps its answer on the books meanwhile.
+      const kept = lastGoodClasses();
+      if (gen === generation) cache = { at: Date.now(), ttl: CACHE_FAIL_MS, classes: kept };
+      return kept;
     } finally {
       if (gen === generation) inflight = null;
     }

@@ -86,4 +86,17 @@ await throws(() => unzip(buildZip({ 'zeros.bin': { data: Buffer.alloc(41 * 1024 
 files = unzip(buildZip({ 'blob.bin': Buffer.alloc(41 * 1024 * 1024) }));
 eq(files['blob.bin'].length, 41 * 1024 * 1024, 'a stored entry has no per-file cap (bounded by the archive)');
 
+
+// ---- entry-count cap ----
+// Every entry costs a write and a git add; ZIP64 lifted the 65 535 ceiling
+// and a 60 MB upload of empty entries would mean hundreds of thousands.
+{
+  const many = {};
+  for (let i = 0; i < 20_001; i++) many[`f${i}`] = '';
+  await throws(() => unzip(buildZip(many, { zip64: true })), 'has 20001 entries; the limit is 20000', 'an archive over the entry cap is refused before any entry is read');
+  const some = {};
+  for (let i = 0; i < 50; i++) some[`f${i}`] = 'x';
+  eq(Object.keys(unzip(buildZip(some))).length, 50, 'an ordinary archive is unaffected');
+}
+
 console.log('unzip: all checks passed');
