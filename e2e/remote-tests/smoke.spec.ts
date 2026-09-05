@@ -12,7 +12,11 @@ const NAME = `Remote smoke ${STAMP}`;
 function watch(page: Page) {
   const failed: string[] = [];
   const sockets: string[] = [];
-  page.on('response', (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.url()}`); });
+  page.on('response', (r) => {
+    // without a compiler the editor's automatic typeset answers 400; that is the skip case, not a routing miss
+    if (process.env.ALDINE_REMOTE_SKIP_TYPESET && new URL(r.url()).pathname.endsWith('/compile')) return;
+    if (r.status() >= 400) failed.push(`${r.status()} ${r.url()}`);
+  });
   page.on('websocket', (ws) => sockets.push(ws.url()));
   return { failed, sockets };
 }
@@ -77,10 +81,13 @@ test.describe(`deployed instance${BASE ? ` under ${BASE}` : ''}`, () => {
       await expect(page.getByTestId('download-pdf')).toHaveAttribute('href', new RegExp(`^${BASE}/api/projects/${projectId}/output`));
     }
 
-    // the share link is the public URL of this project
-    await page.getByTestId('share-project').click();
-    await expect(page.getByTestId('share-url')).toHaveValue(new RegExp(`^${page.url().split('/p/')[0]}/p/${projectId}$`));
-    await page.keyboard.press('Escape');
+    // the share link is the public URL of this project (sharing exists only with sign-in)
+    if (authed) {
+      await page.getByTestId('share-project').click();
+      await page.getByTestId('share-link').check();
+      await expect(page.getByTestId('share-url')).toHaveText(`${page.url().split('/p/')[0]}/p/${projectId}`);
+      await page.keyboard.press('Escape');
+    }
 
     await page.getByRole('button', { name: 'Back to projects' }).click();
     await expect(page.getByTestId('project-grid')).toContainText(NAME);
