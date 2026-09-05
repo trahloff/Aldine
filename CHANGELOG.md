@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-05
+
 ### Added
 - A theme control in project settings, under Appearance. Dark and light were
   only switchable from the home screen or the command palette, so once you
@@ -694,7 +696,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/trahloff/Aldine/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trahloff/Aldine/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trahloff/Aldine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/trahloff/Aldine/releases/tag/v0.1.0
