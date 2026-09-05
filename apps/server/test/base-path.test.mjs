@@ -66,6 +66,7 @@ eq(rewriteUrl('/internal/aldine'), '/', 'bare prefix → root');
 eq(rewriteUrl('/internal/aldine?x=1'), '/?x=1', 'bare prefix keeps its query');
 eq(rewriteUrl('/internal/aldine/api/projects?a=1'), '/api/projects?a=1', 'prefix peeled');
 eq(rewriteUrl('/api/health'), '/api/health', 'root health check passes through');
+eq(rewriteUrl('/'), '/__base-path-root__', 'bare root becomes the pointer');
 check(rewriteUrl('/internal/aldine-other/x').startsWith('/__outside-base-path__/'), 'sibling path is outside');
 check(rewriteUrl('/api/projects').startsWith('/__outside-base-path__/'), 'unprefixed api is outside');
 check(isCollabUpgrade('/internal/aldine/collab?token=x'), 'prefixed collab upgrade accepted');
@@ -97,6 +98,12 @@ res = await get('/internal/aldine/api/health');
 eq(res.statusCode, 200, 'health under the prefix');
 res = await get('/api/health');
 eq(res.statusCode, 200, 'health at the root for container healthchecks');
+res = await get('/');
+eq(res.statusCode, 200, 'bare root answers a load balancer probe');
+check(res.headers['content-type'].startsWith('text/plain'), 'root pointer is plain text');
+check(res.body.includes('/internal/aldine/'), 'root pointer names the base path');
+res = await app.inject({ method: 'HEAD', url: '/' });
+eq(res.statusCode, 200, 'HEAD probe at the root');
 res = await get('/internal/aldine/api/auth/me');
 eq(res.statusCode, 200, 'api under the prefix');
 eq(res.json().authEnabled, false, 'api answers');
@@ -104,7 +111,7 @@ res = await get('/internal/aldine/api/nope');
 eq(res.statusCode, 404, 'unknown api route under the prefix is 404, not the app');
 check(res.headers['content-type'].startsWith('application/json'), 'api 404 is json');
 
-for (const url of ['/', '/other', '/internal', '/internal/aldine-other', '/api/projects', '/assets/index-abc.js', '/index.html']) {
+for (const url of ['/?x=1', '/other', '/internal', '/internal/aldine-other', '/api/projects', '/assets/index-abc.js', '/index.html', '/__base-path-root__']) {
   res = await get(url);
   eq(res.statusCode, 404, `${url} is outside the base path`);
   check(!res.body.includes('aldine-base-path'), `${url} does not leak the app`);

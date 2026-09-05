@@ -19,12 +19,16 @@ export function underBasePath(url: string): boolean {
 /**
  * Routes are declared once, at '/api/...', and the base path is peeled off the
  * incoming URL before routing. Requests outside the base path 404 — the rest of
- * the host belongs to whatever else is deployed there — except the health
- * check, which orchestrators poll at the container's own port and root.
+ * the host belongs to whatever else is deployed there — except the two probes
+ * orchestrators aim at the container's own port and root: /api/health, and a
+ * bare GET / (the default health check of most load balancers), which answers
+ * 200 with a one-line pointer to where the app lives.
  */
+export const ROOT_POINTER = '/__base-path-root__';
 export function rewriteUrl(url: string): string {
   if (!BASE) return url;
   if (url === '/api/health') return url;
+  if (url === '/') return ROOT_POINTER;
   if (!underBasePath(url)) return `/__outside-base-path__${url}`;
   const rest = url.slice(BASE.length);
   return rest === '' || rest.startsWith('?') ? `/${rest}` : rest;
@@ -64,6 +68,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await initObservability(app);
   await registerRoutes(app);
+  if (BASE) app.get(ROOT_POINTER, async (_req, reply) => reply.type('text/plain').send(`Aldine is served at ${BASE}/\n`));
 
   // Serve the built frontend (production). In dev, Vite serves it and proxies to us.
   const indexFile = path.join(config.webDist, 'index.html');

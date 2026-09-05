@@ -19,8 +19,13 @@ function watch(page: Page) {
 }
 
 test.describe('served under a base path (#27)', () => {
-  test('only the base path is ours; the health check also answers at the root', async ({ request }) => {
-    expect((await request.get('/')).status()).toBe(404);
+  test('only the base path is ours; the root probes still answer', async ({ request }) => {
+    const root = await request.get('/');
+    expect(root.status()).toBe(200); // a load balancer's default health check
+    expect(root.headers()['content-type']).toContain('text/plain');
+    expect(await root.text()).toContain(`${BASE}/`);
+    expect((await request.get('/other')).status()).toBe(404);
+    expect((await request.get('/index.html')).status()).toBe(404);
     expect((await request.get('/api/projects')).status()).toBe(404);
     expect((await request.get(`${BASE}-other`)).status()).toBe(404);
     expect((await request.get(`${BASE}/api/projects`)).status()).toBe(200);
