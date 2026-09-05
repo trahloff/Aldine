@@ -101,6 +101,8 @@ function rootSiblingPath(rootFile: string, name: string): string {
   return dir === '.' ? name : path.posix.join(dir, name);
 }
 
+const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
+
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, ...rest } = meta;
   // The collaborator roster is the owner's private list of invitee email
@@ -185,7 +187,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // Fire-and-forget a simple welcome email (no verification step). Never let
       // a mail failure affect the signup response.
       const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
-      if (email.emailConfigured() && base) {
+      if (email.emailConfigured() && base && user.email) {
         const greeting = user.name ? `Hi ${user.name},` : 'Hi there,';
         email.sendMail({
           to: user.email,
@@ -242,7 +244,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // to redirect the victim's valid token to their own domain (takeover).
       const base = config.publicUrl;
       const link = `${base}/?reset_token=${encodeURIComponent(r.token)}`;
-      if (email.emailConfigured() && base) {
+      if (email.emailConfigured() && base && r.user.email) {
         // send in the background so the response time doesn't leak whether the
         // address exists, and a slow SMTP/SES call can't hang the request
         email.sendMail({
@@ -290,7 +292,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       try {
         const profile = await provider.exchange(req.query.code, `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`);
-        const user = await auth.findOrCreateOAuth(profile.email, profile.name, provider.id);
+        const user = await auth.findOrCreateOAuth(profile, provider.id);
         reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), `aldine_oauth_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`]);
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
@@ -391,8 +393,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const meta = await store.readMeta(req.params.id);
       if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can change sharing' });
       const mode = req.body?.mode === 'link' ? 'link' : 'private';
+      // An entry is an email address or an ORCID iD (the only way to invite a
+      // researcher whose ORCID account shares no email).
       const collaborators = Array.isArray(req.body?.collaborators)
-        ? req.body!.collaborators.map((c) => c.trim().toLowerCase()).filter((c) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
+        ? req.body!.collaborators.map((c) => String(c).trim()).map((c) => (isOrcidId(c) ? c.toUpperCase() : c.toLowerCase()))
+          .filter((c) => isOrcidId(c) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
         : (meta.share?.collaborators || []);
       meta.share = { mode, collaborators };
       await store.writeMeta(meta);

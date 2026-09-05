@@ -30,6 +30,10 @@ services:
       # GitHub login (SSO) — separate from GitHub sync below.
       GITHUB_LOGIN_CLIENT_ID: ${GITHUB_LOGIN_CLIENT_ID:-}
       GITHUB_LOGIN_CLIENT_SECRET: ${GITHUB_LOGIN_CLIENT_SECRET:-}
+      # ORCID login (SSO): a Public API client from orcid.org/developer-tools.
+      ORCID_CLIENT_ID: ${ORCID_CLIENT_ID:-}
+      ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET:-}
+      ORCID_SANDBOX: ${ORCID_SANDBOX:-}
       # GitHub sync (repo import/push/pull) — OAuth app with repo scope.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}

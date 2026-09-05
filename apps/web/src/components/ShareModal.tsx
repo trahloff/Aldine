@@ -7,6 +7,8 @@ import Modal from './Modal';
 /** Mirrors the server's collaborator filter (the share route) so an address it
  *  would silently discard is reported here instead of vanishing on save. */
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// An ORCID iD invites a researcher who signed in with ORCID and has no public email.
+const ORCID_RE = /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/;
 const MAX_COLLABORATORS = 50;
 
 /** Owner-only sharing dialog: private/link mode + collaborator emails. */
@@ -33,8 +35,8 @@ export default function ShareModal({ project, onClose, onSaved }: {
   const save = async () => {
     // Separators people actually paste: commas, semicolons, newlines.
     const list = emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
-    const bad = list.filter((e) => !EMAIL_RE.test(e));
-    if (bad.length) { toast(`Not a valid email address: ${bad.join(', ')}`, 'error'); return; }
+    const bad = list.filter((e) => !EMAIL_RE.test(e) && !ORCID_RE.test(e));
+    if (bad.length) { toast(`Not an email address or ORCID iD: ${bad.join(', ')}`, 'error'); return; }
     if (list.length > MAX_COLLABORATORS) {
       toast(`Too many collaborators — ${MAX_COLLABORATORS} is the maximum, you listed ${list.length}`, 'error');
       return;
@@ -70,7 +72,7 @@ export default function ShareModal({ project, onClose, onSaved }: {
             <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
           </div>
         )}
-        <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>Collaborator emails, comma-separated</label>
+        <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>Collaborator emails or ORCID iDs, comma-separated</label>
         <input
           id="share-emails"
           className="input"

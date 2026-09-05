@@ -38,6 +38,11 @@ GOOGLE_OAUTH_CLIENT_SECRET=...
 # GitHub login (SSO):  https://github.com/settings/developers
 GITHUB_LOGIN_CLIENT_ID=...
 GITHUB_LOGIN_CLIENT_SECRET=...
+# ORCID login (SSO): https://orcid.org/developer-tools (Public API client; the
+# callback must be HTTPS). Researchers whose ORCID email is private get an
+# account without an email; invite them by ORCID iD.
+ORCID_CLIENT_ID=...
+ORCID_CLIENT_SECRET=...
 
 # GitHub sync (import repos as projects, push/pull) — a SEPARATE OAuth app with
 # repo scope. Callback: <ALDINE_PUBLIC_URL>/api/github/oauth/callback
@@ -231,6 +236,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
+| `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
 | `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |

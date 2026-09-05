@@ -89,8 +89,11 @@ export class JsonStore implements DataStore {
     // Enforce email-uniqueness like Postgres' UNIQUE(email): this read-check-write
     // is synchronous (no await), so it closes the register() TOCTOU race that two
     // interleaved sign-ups would otherwise slip through on the JSON backend.
-    if (Object.values(m).some((x) => x.email === u.email && x.id !== u.id)) {
+    if (u.email && Object.values(m).some((x) => x.email === u.email && x.id !== u.id)) {
       throw new Error('An account with that email already exists');
+    }
+    if (u.subject && Object.values(m).some((x) => x.subject === u.subject && x.id !== u.id)) {
+      throw new Error('An account for that identity already exists');
     }
     m[u.id] = this.clone(u);
     this.write(this.usersPath, m);
@@ -98,6 +101,7 @@ export class JsonStore implements DataStore {
   async updateUser(u: User) { const m = this.users(); m[u.id] = this.clone(u); this.write(this.usersPath, m); }
   async getUser(id: string) { return this.clone(this.users()[id] || null); }
   async findUserByEmail(email: string) { return this.clone(Object.values(this.users()).find((u) => u.email === email) || null); }
+  async findUserBySubject(subject: string) { return this.clone(Object.values(this.users()).find((u) => u.subject === subject) || null); }
 
   // ---- sessions ----
   private sessions() { return this.read<Record<string, SessionRow>>(this.sessionsPath, {}); }

@@ -313,14 +313,16 @@ test.describe('auth depth', () => {
     await expect(page.locator('.home__brand')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('SSO endpoints 404 when unconfigured and no buttons show', async ({ page, request }) => {
+  test('SSO endpoints 404 for unconfigured providers, and only configured ones show a button', async ({ page, request }) => {
     for (const p of ['github', 'google']) {
       expect((await request.get(`/api/auth/oauth/${p}`, { maxRedirects: 0 })).status()).toBe(404);
     }
+    expect((await request.get('/api/auth/oauth/orcid', { maxRedirects: 0 })).status()).toBe(302);
     await page.goto('/');
     await expect(page.getByTestId('auth-email')).toBeVisible();
     await expect(page.getByTestId('oauth-github')).toHaveCount(0);
     await expect(page.getByTestId('oauth-google')).toHaveCount(0);
+    await expect(page.getByTestId('oauth-orcid')).toBeVisible();
   });
 
   test('change password from account settings revokes other sessions', async ({ page, browser, request }) => {
@@ -474,5 +476,76 @@ test.describe('ownerless legacy projects', () => {
     await expect(page.getByTestId(`share-${id}`)).toBeVisible(); // owner controls appear
     await expect(page.getByTestId(`claim-${id}`)).toHaveCount(0);
     await ctx.close();
+  });
+});
+
+/**
+ * ORCID sign-in against the stub in mock-orcid.mjs. Most researchers keep
+ * their ORCID email private, so the account has no email at all: it is keyed
+ * by the iD, and collaborators invite it by the iD.
+ */
+const ORCID_PRIVATE = '0000-0002-1825-0097';
+
+async function signInWithOrcid(page: import('@playwright/test').Page, persona: 'private' | 'public') {
+  await page.goto('/');
+  await page.getByTestId('oauth-orcid').click();
+  await expect(page.getByTestId(`persona-${persona}`)).toBeVisible();
+  await page.getByTestId(`persona-${persona}`).click();
+}
+
+test.describe('ORCID sign-in', () => {
+  test('an ORCID account without a public email lands in the project list and keeps its projects', async ({ page }) => {
+    await signInWithOrcid(page, 'private');
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId('user-name').click();
+    const settings = page.getByTestId('account-settings');
+    await expect(settings.getByTestId('account-orcid')).toHaveText(ORCID_PRIVATE);
+    await expect(settings.getByTestId('account-email')).toHaveText('No email address on this account');
+    await expect(settings).toContainText('Single sign-on (ORCID)');
+    await page.keyboard.press('Escape');
+
+    const name = `ORCID paper ${Date.now()}`;
+    await page.getByTestId('new-project').click();
+    await page.getByTestId('new-project-name').fill(name);
+    await page.getByTestId('create-project').click();
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+
+    await page.goto('/');
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    await signInWithOrcid(page, 'private');
+    await expect(page.getByTestId('project-grid')).toContainText(name, { timeout: 15_000 });
+  });
+
+  test('an owner invites an ORCID iD and the email-less account gets in', async ({ browser }) => {
+    const alice = await browser.newContext();
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const proj = await (await alice.request.post('/api/projects', { data: { name: 'Invite by iD' } })).json();
+
+    const orcid = await browser.newContext();
+    const page = await orcid.newPage();
+    await signInWithOrcid(page, 'private');
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    expect((await orcid.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    const shared = await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [ORCID_PRIVATE.toLowerCase()] } });
+    expect(shared.ok()).toBeTruthy();
+    expect((await orcid.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
+    const list = await (await orcid.request.get('/api/projects')).json();
+    expect(list.some((p: { id: string }) => p.id === proj.id)).toBeTruthy();
+
+    await alice.close();
+    await orcid.close();
+  });
+
+  test('a public ORCID email never signs into a password account with that address', async ({ page, request }) => {
+    // The address the public persona exposes; registered as a password account
+    // first (a re-run finds it already there, which is the same situation).
+    await request.post('/api/auth/register', { data: { email: 'sofia.garcia@example.org', password: 'password123', name: 'Sofia' } });
+    await signInWithOrcid(page, 'public');
+    await expect(page.locator('body')).toContainText('sign in with your password');
+    await page.goto('/');
+    await expect(page.getByTestId('auth-email')).toBeVisible();
   });
 });

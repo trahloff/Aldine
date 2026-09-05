@@ -1,6 +1,7 @@
 import { withBase } from './basePath';
 
-export interface AuthUser { id: string; email: string; name: string; provider?: string }
+/** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
 export interface OAuthProviderInfo { id: string; label: string }
 export interface ProjectSummary {
   id: string;

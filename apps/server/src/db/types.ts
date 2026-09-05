@@ -9,12 +9,17 @@
 
 export interface User {
   id: string;
-  email: string;
+  /** null for accounts whose identity provider shares no verified address
+   *  (ORCID by default). Such accounts cannot use password sign-in, reset
+   *  links or email invitations; they are reached by provider subject. */
+  email: string | null;
   name: string;
   salt: string;
   hash: string;
   createdAt: string;
   provider?: string;
+  /** Stable provider-scoped identity, `orcid:0000-0002-1825-0097`. Unique. */
+  subject?: string;
 }
 
 export interface Reply { author: string; body: string; createdAt: string }
@@ -82,6 +87,7 @@ export interface DataStore {
   createUser(u: User): Promise<void>;
   getUser(id: string): Promise<User | null>;
   findUserByEmail(emailLower: string): Promise<User | null>;
+  findUserBySubject(subject: string): Promise<User | null>;
   updateUser(u: User): Promise<void>;
 
   // sessions (revocable)

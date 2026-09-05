@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { db } from './db/index.js';
 import type { User } from './db/types.js';
 import { config } from './config.js';
+import type { OAuthProfile } from './oauth.js';
 
 /**
  * Optional, env-gated auth (AUTH_ENABLED=1). When off, every request is
@@ -22,12 +23,18 @@ const SESSION_DAYS = 30;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 export type { User } from './db/types.js';
-export interface PublicUser { id: string; email: string; name: string; provider?: string }
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';
 
-export function pub(u: User): PublicUser { return { id: u.id, email: u.email, name: u.name, provider: u.provider }; }
+export function pub(u: User): PublicUser {
+  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u) };
+}
+/** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
+export function orcidOf(u: { subject?: string }): string | undefined {
+  return u.subject?.startsWith('orcid:') ? u.subject.slice('orcid:'.length) : undefined;
+}
 
 function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString('hex');
@@ -39,20 +46,22 @@ function verifyPassword(password: string, user: User): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-export async function register(email: string, password: string, name?: string, provider?: string): Promise<PublicUser> {
-  email = email.trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address');
+export async function register(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<PublicUser> {
+  email = email ? email.trim().toLowerCase() : null;
+  if (email === null && !(provider && subject)) throw new Error('Enter a valid email address');
+  if (email !== null && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address');
   if (!provider && password.length < 8) throw new Error('Password must be at least 8 characters');
-  if (await db().findUserByEmail(email)) throw new Error('An account with that email already exists');
+  if (email !== null && await db().findUserByEmail(email)) throw new Error('An account with that email already exists');
   const salt = crypto.randomBytes(16).toString('hex');
   const user: User = {
     id: crypto.randomBytes(9).toString('base64url'),
     email,
-    name: (name || email.split('@')[0]).trim(),
+    name: (name || (email ? email.split('@')[0] : subject!)).trim(),
     salt,
     hash: password ? hashPassword(password, salt) : '',
     createdAt: new Date().toISOString(),
     provider,
+    subject,
   };
   await db().createUser(user);
   return pub(user);
@@ -69,19 +78,35 @@ export function getUser(id: string): Promise<User | null> {
 }
 
 /**
- * Find an OAuth user by email or create one. Only merges into an existing
- * account created by the SAME provider — never into a password account, which
- * (registration doesn't verify email) an attacker could pre-create for the
- * victim's address. Prevents pre-account-hijacking.
+ * Find an OAuth user or create one: by provider subject first, then by email.
+ * Only merges into an existing account created by the SAME provider — never
+ * into a password account, which (registration doesn't verify email) an
+ * attacker could pre-create for the victim's address. Prevents
+ * pre-account-hijacking. A subject-less provider with no email is a bug in
+ * the provider entry, not a sign-in path.
  */
-export async function findOrCreateOAuth(email: string, name: string, provider: string): Promise<PublicUser> {
-  const existing = await db().findUserByEmail(email.trim().toLowerCase());
-  if (existing) {
-    if (existing.provider === provider) return pub(existing);
-    const how = existing.provider ? `sign in with ${existing.provider}` : 'sign in with your password';
-    throw new Error(`An account with this email already exists — ${how} instead.`);
+export async function findOrCreateOAuth(profile: OAuthProfile, provider: string): Promise<PublicUser> {
+  const email = profile.email ? profile.email.trim().toLowerCase() : null;
+  if (profile.subject) {
+    const bySubject = await db().findUserBySubject(profile.subject);
+    if (bySubject) return pub(bySubject);
   }
-  return register(email, '', name, provider);
+  const existing = email ? await db().findUserByEmail(email) : null;
+  if (existing) {
+    if (existing.provider !== provider) {
+      const how = existing.provider ? `sign in with ${existing.provider}` : 'sign in with your password';
+      throw new Error(`An account with this email already exists — ${how} instead.`);
+    }
+    if (profile.subject && existing.subject !== profile.subject) {
+      // First sign-in since the provider started reporting subjects: bind it
+      // so a later change of the public email cannot detach the account.
+      existing.subject = profile.subject;
+      await db().updateUser(existing);
+    }
+    return pub(existing);
+  }
+  if (email === null && !profile.subject) throw new Error(`${provider} did not share an email address`);
+  return register(email, '', profile.name, provider, profile.subject);
 }
 
 export async function changePassword(userId: string, current: string, next: string): Promise<void> {
