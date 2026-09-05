@@ -26,7 +26,7 @@ on:
         description: Service to roll
         type: choice
         options: [production, staging]
-        default: production
+        required: true
 
 env:
   # Task-definition family and service share a name per target.
@@ -66,16 +66,29 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/papyr-server:${{ github.sha }}
             ${{ steps.ecr.outputs.registry }}/papyr-server:latest
 
+      # The hosted instance runs all of TeX Live; the Dockerfile's default is
+      # the medium scheme the published images use.
       - name: Build & push compiler
         uses: docker/build-push-action@v6
         with:
           context: apps/compiler
           file: apps/compiler/Dockerfile
           platforms: linux/arm64
+          build-args: TEXLIVE_SCHEME=full
           push: true
           tags: |
             ${{ steps.ecr.outputs.registry }}/papyr-compiler:${{ github.sha }}
             ${{ steps.ecr.outputs.registry }}/papyr-compiler:latest
+
+      # The full TeX Live compiler build runs about an hour under emulation,
+      # which is the OIDC session's lifetime: the roll below failed with an
+      # expired token after the images were already pushed. Assume the role
+      # again so the roll and the wait for stability start with a fresh hour.
+      - name: Refresh AWS credentials for the roll
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Register SHA-pinned task definition & roll the service
         run: |

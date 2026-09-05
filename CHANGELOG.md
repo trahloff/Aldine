@@ -207,6 +207,13 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- The hosted deploy (`deploy-aws.yml`) pins the compiler build to full TeX
+  Live now that the Dockerfile defaults to medium, assumes its AWS role
+  again before rolling the service (the hour-long compiler build outlived
+  the first session's token, so the roll failed after the images were
+  pushed), and no longer defaults its target to production; the rollback
+  workflow reads its revision input from the environment and accepts only
+  digits.
 - Switching the main document and back no longer shows the other document
   as a clean typeset. The remembered preview URL was keyed on the branch
   only, so a typeset of an unchanged `main.tex` after a spell on `arxiv.tex`
