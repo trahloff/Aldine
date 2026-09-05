@@ -100,21 +100,35 @@ Set `staging_domain_name` (a hostname in the same Route53 zone) and apply:
 ```hcl
 staging_domain_name    = "staging.latex.example.com"
 staging_env            = { ALDINE_MCP = "1" }   # anything you want to try before prod
+staging_secret_env     = { OPENROUTER_API_KEY = "..." }  # staging's own keys; prod's never reach it
 github_deploy_branches = ["my-feature"]         # branches CI may deploy to staging
 ```
 
 That adds a second certificate on the HTTPS listener, a host-header rule to a
 second target group, and a second Fargate Spot service (`papyr-staging`) with
-its own EFS filesystem and log group (`/papyr/staging`). It shares the VPC,
-roles, ECR repositories and SSM secrets with prod — so OAuth sign-in only works
-there if the providers also list the staging callback URL; password sign-in
-always works. Cost is roughly one extra Spot task plus a few GB of EFS.
+its own security groups, EFS filesystem, log group (`/papyr/staging`), ECR
+repositories (`papyr-staging-server`, `papyr-staging-compiler`), SSM secrets
+(`/papyr/staging/*`), execution role and deploy role. It shares only the VPC,
+the load balancer and the cluster with prod. Staging runs whatever a feature
+branch pushes, so nothing it can reach is a prod asset: its tasks are not in
+the security group the prod filesystem admits, its execution role can read
+only its own parameters, and the role a feature branch assumes can push and
+roll staging alone. OAuth sign-in works on staging only with OAuth apps of its
+own in `staging_secret_env`; password sign-in always works (`ALDINE_SSO_ONLY`
+is not inherited). Cost is roughly one extra Spot task plus a few GB of EFS.
 
-Deploy a branch to it from the Actions tab: **Deploy to AWS → branch: my-feature
-→ target: staging**. Roll back the same way with **Rollback AWS deploy →
-target: staging**. Scale the service to 0 in the console to pause it; unset
-`staging_domain_name` and apply to remove it entirely (the EFS filesystem goes
-with it — staging data is disposable by design).
+Set the repository variable `AWS_STAGING_DEPLOY_ROLE_ARN` to the
+`github_staging_deploy_role_arn` output, then deploy a branch from the Actions
+tab: **Deploy to AWS → branch: my-feature → target: staging**. Roll back the
+same way with **Rollback AWS deploy → target: staging**. Scale the service to
+0 in the console to pause it; unset `staging_domain_name` and apply to remove
+it entirely (the EFS filesystem goes with it — staging data is disposable by
+design).
+
+Upgrading a staging that predates the split: the apply moves the service into
+its own security group and registers a task definition on the new repositories
+and role, but the running task keeps the old revision until the next
+**Deploy to AWS → target: staging** run, which also fills the new repositories.
 
 ## Cost (eu-central-1, low traffic, ballpark)
 

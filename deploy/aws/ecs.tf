@@ -34,14 +34,21 @@ locals {
   )
 
   # One container spec for every deployment (prod, and staging when enabled —
-  # see staging.tf), so the two can only differ in image tag, env and log
-  # destination. Anything else that diverges here is a drift bug.
+  # see staging.tf), so the two can only differ in image repositories and tag,
+  # env, secrets and log destination. Anything else that diverges here is a
+  # drift bug. Repositories and secrets are per deployment on purpose: a
+  # staging task must not be able to read a prod secret or run a prod tag.
   deployments = merge(
     {
       prod = {
         image_tag = var.image_tag
         env       = local.server_env
         log_group = aws_cloudwatch_log_group.app.name
+        repos = {
+          server   = aws_ecr_repository.repos["papyr-server"].repository_url
+          compiler = aws_ecr_repository.repos["papyr-compiler"].repository_url
+        }
+        secrets = aws_ssm_parameter.secret
       }
     },
     local.staging_enabled ? {
@@ -49,6 +56,11 @@ locals {
         image_tag = var.staging_image_tag
         env       = local.staging_server_env
         log_group = aws_cloudwatch_log_group.staging[0].name
+        repos = {
+          server   = aws_ecr_repository.repos["papyr-staging-server"].repository_url
+          compiler = aws_ecr_repository.repos["papyr-staging-compiler"].repository_url
+        }
+        secrets = aws_ssm_parameter.staging_secret
       }
     } : {},
   )
@@ -56,7 +68,7 @@ locals {
   container_definitions = { for name, d in local.deployments : name => jsonencode([
     {
       name            = "compiler"
-      image           = "${aws_ecr_repository.repos["papyr-compiler"].repository_url}:${d.image_tag}"
+      image           = "${d.repos.compiler}:${d.image_tag}"
       essential       = true
       linuxParameters = { initProcessEnabled = true } # reap orphaned pdflatex/biber
       environment     = [{ name = "DATA_DIR", value = "/data" }, { name = "PORT", value = "4020" }]
@@ -79,11 +91,11 @@ locals {
     },
     {
       name            = "server"
-      image           = "${aws_ecr_repository.repos["papyr-server"].repository_url}:${d.image_tag}"
+      image           = "${d.repos.server}:${d.image_tag}"
       essential       = true
       linuxParameters = { initProcessEnabled = true } # reap orphaned git children
       environment     = [for k, v in d.env : { name = k, value = tostring(v) }]
-      secrets         = [for k, p in aws_ssm_parameter.secret : { name = k, valueFrom = p.arn }]
+      secrets         = [for k, p in d.secrets : { name = k, valueFrom = p.arn }]
       dependsOn       = [{ containerName = "compiler", condition = "HEALTHY" }]
       # Give the shutdown hook time to flush open Yjs docs + autosave-commit.
       stopTimeout = 120

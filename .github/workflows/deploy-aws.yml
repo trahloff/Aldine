@@ -14,11 +14,15 @@ name: Deploy to AWS
 # Manual trigger only (no surprise deploys/costs on every push). `target`
 # picks the service: production (papyr) or staging (papyr-staging — exists
 # only when Terraform's staging_domain_name is set; dispatch it on a feature
-# branch that github_deploy_branches allows). Requires:
-#   - vars.AWS_DEPLOY_ROLE_ARN : an IAM role trusting GitHub OIDC (see
-#     deploy/aws/github-oidc.tf — needs ECR push, task-def registration,
-#     PassRole for the task roles, and service update)
-#   - vars.AWS_REGION          : e.g. eu-west-1
+# branch that github_deploy_branches allows). Each target has its own IAM
+# role, ECR repositories and service, so a feature branch holding the staging
+# role cannot push a prod image or roll the prod service, whatever it puts in
+# this file. Requires:
+#   - vars.AWS_DEPLOY_ROLE_ARN         : the prod role (deploy/aws/github-oidc.tf;
+#     trusted by main only)
+#   - vars.AWS_STAGING_DEPLOY_ROLE_ARN : the staging role (trusted by main plus
+#     github_deploy_branches)
+#   - vars.AWS_REGION                  : e.g. eu-west-1
 on:
   workflow_dispatch:
     inputs:
@@ -29,8 +33,11 @@ on:
         required: true
 
 env:
-  # Task-definition family and service share a name per target.
+  # Task-definition family, service and ECR repository prefix share a name per
+  # target; the role is the one IAM trusts for that target.
   SERVICE: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
+  IMAGE_PREFIX: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
+  DEPLOY_ROLE_ARN: ${{ inputs.target == 'staging' && vars.AWS_STAGING_DEPLOY_ROLE_ARN || vars.AWS_DEPLOY_ROLE_ARN }}
 
 permissions:
   id-token: write # OIDC
@@ -45,7 +52,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Login to ECR
@@ -63,8 +70,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/papyr-server:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/papyr-server:latest
+            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_PREFIX }}-server:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_PREFIX }}-server:latest
 
       # The hosted instance runs all of TeX Live; the Dockerfile's default is
       # the medium scheme the published images use.
@@ -77,8 +84,8 @@ jobs:
           build-args: TEXLIVE_SCHEME=full
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/papyr-compiler:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/papyr-compiler:latest
+            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_PREFIX }}-compiler:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_PREFIX }}-compiler:latest
 
       # The full TeX Live compiler build runs about an hour under emulation,
       # which is the OIDC session's lifetime: the roll below failed with an
@@ -87,7 +94,7 @@ jobs:
       - name: Refresh AWS credentials for the roll
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Register SHA-pinned task definition & roll the service
@@ -95,10 +102,20 @@ jobs:
           set -euo pipefail
           REG="${{ steps.ecr.outputs.registry }}"
           SHA="${{ github.sha }}"
-          # Current task def → swap both images to the SHA tags → register.
+          # Latest task def in the family → swap both images to the SHA tags →
+          # register. Registration cannot be scoped per family in IAM, so the
+          # staging role could have registered the latest prod revision (with
+          # any env or secret reference): refuse to build a prod deploy on one.
           aws ecs describe-task-definition --task-definition "$SERVICE" \
             --query taskDefinition --region "${{ vars.AWS_REGION }}" > td.json
-          jq --arg s "$REG/papyr-server:$SHA" --arg c "$REG/papyr-compiler:$SHA" '
+          BY=$(jq -r '.registeredBy // ""' td.json)
+          if [ "${{ inputs.target }}" = production ]; then
+            case "$BY" in *papyr-github-deploy-staging*)
+              echo "Refusing: the latest $SERVICE revision was registered by the staging deploy role ($BY)."
+              echo "Register a clean revision with terraform apply, then rerun."; exit 1;;
+            esac
+          fi
+          jq --arg s "$REG/$IMAGE_PREFIX-server:$SHA" --arg c "$REG/$IMAGE_PREFIX-compiler:$SHA" '
             .containerDefinitions |= map(
               if .name == "server" then .image = $s
               elif .name == "compiler" then .image = $c

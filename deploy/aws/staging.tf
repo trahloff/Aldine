@@ -1,22 +1,115 @@
 # Optional staging deployment on the SAME load balancer, enabled by setting
 # var.staging_domain_name. It gets its own certificate, target group, listener
-# rule, EFS filesystem, log group, task definition and service; it shares the
-# VPC, security groups, ECR repositories, IAM roles and SSM secrets with prod.
+# rule, security groups, EFS filesystem, log group, ECR repositories, SSM
+# secrets, execution role, task definition and service; it shares only the
+# VPC, the ALB, the task role (SES send) and the cluster with prod.
 #
-# The separate filesystem is not optional: collab is single-node and the
+# The separation is the point: staging runs unreviewed feature-branch images,
+# so nothing it can reach may be a prod asset. Its task security group is not
+# papyr-task (membership there is the only thing the prod EFS mount targets
+# check), its execution role can read only /papyr/staging/* parameters, and a
+# feature branch can only assume the staging deploy role (github-oidc.tf).
+#
+# The separate filesystem is also not optional: collab is single-node and the
 # datastore is last-atomic-rename-wins, so two services on one /data would
-# corrupt each other's projects. The shared secrets mean OAuth sign-in fails
-# on staging unless the providers also list the staging callback URLs —
-# password sign-in works regardless.
+# corrupt each other's projects. Staging secrets come from
+# var.staging_secret_env, so OAuth sign-in works there only if you register a
+# staging OAuth app; password sign-in always works because ALDINE_SSO_ONLY is
+# never inherited from prod.
 
 locals {
   staging_enabled = var.staging_domain_name != ""
 
   staging_server_env = merge(
-    local.server_env,
+    { for k, v in local.server_env : k => v if k != "ALDINE_SSO_ONLY" },
     { ALDINE_PUBLIC_URL = "https://${var.staging_domain_name}" },
     var.staging_env,
   )
+
+  staging_secret_keys = nonsensitive(toset([for k, v in var.staging_secret_env : k if v != ""]))
+}
+
+# ---- secrets and the execution role that may read them. A separate role is
+# what keeps a feature-branch task definition from listing a prod parameter:
+# the prod execution role is never passed to a staging task (github-oidc.tf
+# scopes iam:PassRole per deploy role).
+resource "aws_ssm_parameter" "staging_secret" {
+  for_each = local.staging_enabled ? local.staging_secret_keys : toset([])
+  name     = "/papyr/staging/${each.key}"
+  type     = "SecureString"
+  value    = var.staging_secret_env[each.key]
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_iam_role" "staging_execution" {
+  count              = local.staging_enabled ? 1 : 0
+  name               = "papyr-staging-ecs-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "staging_execution_managed" {
+  count      = local.staging_enabled ? 1 : 0
+  role       = aws_iam_role.staging_execution[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+data "aws_iam_policy_document" "staging_read_secrets" {
+  count = local.staging_enabled && length(local.staging_secret_keys) > 0 ? 1 : 0
+  statement {
+    actions   = ["ssm:GetParameters"]
+    resources = [for p in aws_ssm_parameter.staging_secret : p.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "staging_read_secrets" {
+  count  = local.staging_enabled && length(local.staging_secret_keys) > 0 ? 1 : 0
+  name   = "papyr-staging-read-secrets"
+  role   = aws_iam_role.staging_execution[0].id
+  policy = data.aws_iam_policy_document.staging_read_secrets[0].json
+}
+
+# ---- network: staging's own task and EFS security groups. The prod mount
+# targets admit NFS from papyr-task only, so a staging task in its own group
+# has no route to the prod filesystem, /secrets included.
+resource "aws_security_group" "staging_task" {
+  count       = local.staging_enabled ? 1 : 0
+  name        = "papyr-staging-task"
+  description = "Papyr staging Fargate task"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "App port from ALB only"
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = { Name = "papyr-staging-task" }
+}
+
+resource "aws_security_group" "staging_efs" {
+  count       = local.staging_enabled ? 1 : 0
+  name        = "papyr-staging-efs"
+  description = "Papyr staging EFS mount targets"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "NFS from staging tasks"
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.staging_task[0].id]
+  }
+  tags = { Name = "papyr-staging-efs" }
 }
 
 # ---- TLS: a second certificate on the HTTPS listener (SNI), so the prod
@@ -138,7 +231,7 @@ resource "aws_efs_mount_target" "staging" {
   count           = local.staging_enabled ? length(aws_subnet.public) : 0
   file_system_id  = aws_efs_file_system.staging[0].id
   subnet_id       = aws_subnet.public[count.index].id
-  security_groups = [aws_security_group.efs.id]
+  security_groups = [aws_security_group.staging_efs[0].id]
 }
 
 # Same uid/gid coupling as efs.tf: both images run as root.
@@ -185,7 +278,7 @@ resource "aws_ecs_task_definition" "staging" {
   network_mode             = "awsvpc"
   cpu                      = var.task_cpu
   memory                   = var.task_memory
-  execution_role_arn       = aws_iam_role.execution.arn
+  execution_role_arn       = aws_iam_role.staging_execution[0].arn
   task_role_arn            = aws_iam_role.task.arn
 
   runtime_platform {
@@ -234,7 +327,7 @@ resource "aws_ecs_service" "staging" {
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.task.id]
+    security_groups  = [aws_security_group.staging_task[0].id]
     assign_public_ip = true
   }
 

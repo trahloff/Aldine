@@ -22,6 +22,7 @@ on:
 
 env:
   SERVICE: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
+  DEPLOY_ROLE_ARN: ${{ inputs.target == 'staging' && vars.AWS_STAGING_DEPLOY_ROLE_ARN || vars.AWS_DEPLOY_ROLE_ARN }}
 
 permissions:
   id-token: write # OIDC
@@ -34,7 +35,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Roll the service back
