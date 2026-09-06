@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { ensureWorktree, checkpointPaths } from './gitops.js';
+import { ensureWorktree, checkpointPathsHeld, withRepoLock } from './gitops.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, scheduleCommit } from './collab.js';
 import { bibKeys } from './bib.js';
 
@@ -184,21 +184,28 @@ export async function addReference(projectId: string, branch: string, query: str
   const entry = await fetchBibEntry(query.trim());
   if (!entry) return null;
   await ensureWorktree(projectId, branch);
-  if (author) {
+  // Synchronous on purpose: with an author it runs inside the repo lock, and
+  // an await between the write and scheduleCommit would let an autosave
+  // stage the entry before it is attributed.
+  const append = (): AddedReference => {
+    let existing = '';
+    try { existing = store.readFile(projectId, branch, bibFile).toString('utf8'); } catch { /* new file */ }
+    // key-only dedup via the shared bibKeys scanner — consistent with the
+    // /bib index (skips @comment/@string) but without parsing every field
+    // of every existing entry just to compare keys.
+    const key = [...bibKeys(entry)][0] ?? '';
+    if (key && bibKeys(existing).has(key)) return { key, bibFile, duplicate: true };
+    store.writeFile(projectId, branch, bibFile, existing.trimEnd() + '\n\n' + entry.trim() + '\n');
+    refreshBranchDocsFromDisk(projectId, branch, [bibFile]);
+    if (author) scheduleCommit(projectId, branch, `Add reference ${key || bibFile}`, author, [bibFile]);
+    else scheduleCommit(projectId, branch);
+    return { key, bibFile, duplicate: false };
+  };
+  if (!author) return append();
+  return withRepoLock(projectId, async () => {
     flushBranchDocs(projectId, branch);
-    await checkpointPaths(projectId, branch, [bibFile]);
+    await checkpointPathsHeld(projectId, branch, [bibFile]);
     flushBranchDocs(projectId, branch);
-  }
-  let existing = '';
-  try { existing = store.readFile(projectId, branch, bibFile).toString('utf8'); } catch { /* new file */ }
-  // key-only dedup via the shared bibKeys scanner — consistent with the
-  // /bib index (skips @comment/@string) but without parsing every field
-  // of every existing entry just to compare keys.
-  const key = [...bibKeys(entry)][0] ?? '';
-  if (key && bibKeys(existing).has(key)) return { key, bibFile, duplicate: true };
-  store.writeFile(projectId, branch, bibFile, existing.trimEnd() + '\n\n' + entry.trim() + '\n');
-  refreshBranchDocsFromDisk(projectId, branch);
-  if (author) scheduleCommit(projectId, branch, `Add reference ${key || bibFile}`, author, [bibFile]);
-  else scheduleCommit(projectId, branch);
-  return { key, bibFile, duplicate: false };
+    return append();
+  });
 }

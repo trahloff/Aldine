@@ -6,7 +6,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { commitAll, commitPaths, ensureWorktree, registerAttributedPaths, takeAttributedPaths } from './gitops.js';
+import { autoCommit, ensureWorktree, registerAttributedPaths, pendingAttributionKeys } from './gitops.js';
 import { safeJoin, debouncePerKey } from './util.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
@@ -66,33 +66,31 @@ function deleteSnapshot(name: string): void {
 /** Overridable so tests can exercise the debounced commit without 20 s waits. */
 const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') || 20_000;
 
-/** Debounced auto-commit per project::branch after edits settle. Attributed
- *  (agent) paths commit first under their author + intent, then an anonymous
- *  sweep commits whatever remains — one debounce window with mixed human and
- *  agent work must never co-mingle the two into one wrongly-attributed commit
- *  (UX.md: git is the audit ledger; HistoryPanel/session review key on the
- *  author string). The attribution lives in gitops, OUTSIDE the debounce
- *  args — the debounce is last-writer-wins, and a human keystroke scheduling
- *  anonymously after an agent write must not erase the agent's attribution
- *  (or vice versa); an explicit whole-tree commit in the window consumes it. */
+/** Debounced auto-commit per project::branch after edits settle. One debounce
+ *  window with mixed human and agent work must never co-mingle the two into
+ *  one wrongly-attributed commit (UX.md: git is the audit ledger;
+ *  HistoryPanel/session review key on the author string) — the ordering rule
+ *  (attributed paths first under their author + intent, then the anonymous
+ *  sweep) lives in gitops.autoCommit, which takes the attribution only while
+ *  it holds the repo lock. The attribution lives in gitops, OUTSIDE the
+ *  debounce args — the debounce is last-writer-wins, and a human keystroke
+ *  scheduling anonymously after an agent write must not erase the agent's
+ *  attribution (or vice versa); an explicit whole-tree commit in the window
+ *  consumes it. */
 const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   const [projectId, branch] = key.split('::');
-  const attributed = takeAttributedPaths(projectId, branch);
-  void (async () => {
-    if (attributed) {
-      await commitPaths(projectId, branch, [...attributed.paths], attributed.message, attributed.author)
-        .catch((err) => console.error('[collab] attributed autocommit failed', err.message));
-    }
-    await commitAll(projectId, branch, 'aldine: autosave')
-      .catch((err) => console.error('[collab] autocommit failed', err.message));
-  })();
+  void autoCommit(projectId, branch).catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file
  *  upload / rename / reference add, MCP tools) so working-tree changes reach
  *  git history even when no Yjs doc is open — not just on the next manual
  *  push. Agent (MCP) callers pass their stated intent + author "Claude" +
- *  the touched paths, which commit separately from the anonymous sweep. */
+ *  the touched paths, which commit separately from the anonymous sweep.
+ *  Agent (MCP) callers invoke this inside gitops.withRepoLock, in the same
+ *  synchronous run as their disk write, after checkpointPathsHeld — the lock
+ *  is what keeps an in-flight autosave from staging the write before it is
+ *  attributed. */
 export function scheduleCommit(projectId: string, branch: string, message?: string, author?: string, paths?: string[]): void {
   if (message && author && paths?.length) registerAttributedPaths(projectId, branch, message, author, paths);
   scheduleAutoCommit(`${projectId}::${branch}`);
@@ -111,17 +109,72 @@ const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 export function tombstone(name: string): void { tombstoned.add(name); }
 export function untombstone(name: string): void { tombstoned.delete(name); }
 
-// Monotonic per-branch content version — the invalidation signal for derived
-// indexes (the /bib and /labels caches in routes.ts). Bumped by every path
-// that changes branch content on disk: Yjs doc stores, REST file mutations,
-// and git rewrites (merge/revert/pull → refreshBranchDocsFromDisk).
-const contentVersions = new Map<string, number>();
-export function bumpContentVersion(projectId: string, branch: string): void {
-  const k = `${projectId}::${branch}`;
-  contentVersions.set(k, (contentVersions.get(k) || 0) + 1);
+// Per-branch change log behind the content version: the version at which each
+// path last changed on disk, plus a watermark for tree-wide rewrites (git
+// merge/revert/pull/reset), after which every path — listed or not — counts
+// as changed. Conflict checks compare one path's version with the caller's
+// base, so a write to one file never conflicts with a read of another.
+// Per process (like the version itself): docs/SCALING.md sticky routing.
+//
+// Invariants the tests pin:
+//  I1 contentVersion(b) is monotonic per process and bumps on every disk
+//     change of branch content (indexes.ts, compile results and listings key
+//     on it unchanged).
+//  I2 fileVersion(P) <= contentVersion(b); every entry in `paths` is > `tree`
+//     (paths is cleared whenever tree moves), so `paths.get(P) ?? tree` is
+//     the max of the two.
+//  I3 A write of P with base V is refused iff fileVersion(P) > V (P changed
+//     after the read) or V > contentVersion(b) (V is from another process
+//     lifetime or node — unknowable, so refused rather than trusted).
+//  I4 A path nobody wrote since the last tree-wide mark has fileVersion =
+//     tree; a brand-new path therefore conflicts only with a git-level
+//     rewrite after V.
+//  I5 writeDocToDisk marks its path only when the bytes actually change, so
+//     pending typing in the SAME file still conflicts and pending typing in
+//     another file does not.
+interface BranchChanges { version: number; paths: Map<string, number>; tree: number }
+const branchChanges = new Map<string, BranchChanges>();
+const changesKey = (projectId: string, branch: string) => `${projectId}::${branch}`;
+function changesOf(projectId: string, branch: string): BranchChanges {
+  const k = changesKey(projectId, branch);
+  let c = branchChanges.get(k);
+  if (!c) { c = { version: 0, paths: new Map(), tree: 0 }; branchChanges.set(k, c); }
+  return c;
 }
+// "./main.tex" and "main.tex" are one file; a key mismatch would miss a conflict.
+const pathKey = (p: string) => path.posix.normalize(p);
+
 export function contentVersion(projectId: string, branch: string): number {
-  return contentVersions.get(`${projectId}::${branch}`) || 0;
+  return branchChanges.get(changesKey(projectId, branch))?.version ?? 0;
+}
+/** Bump the branch version once and record it as the last-change version of each path. */
+export function markPathsChanged(projectId: string, branch: string, paths: string[]): number {
+  const c = changesOf(projectId, branch);
+  c.version += 1;
+  for (const p of paths) c.paths.set(pathKey(p), c.version);
+  return c.version;
+}
+/** Bump the branch version and count every path — known or not — as changed at it. */
+export function markTreeChanged(projectId: string, branch: string): number {
+  const c = changesOf(projectId, branch);
+  c.version += 1;
+  c.tree = c.version;
+  c.paths.clear();
+  return c.version;
+}
+/** The branch version at which `filePath` last changed (0 = untouched this process lifetime). */
+export function fileVersion(projectId: string, branch: string, filePath: string): number {
+  const c = branchChanges.get(changesKey(projectId, branch));
+  if (!c) return 0;
+  return c.paths.get(pathKey(filePath)) ?? c.tree;
+}
+export interface VersionConflict { error: 'version_conflict'; currentVersion: number; fileVersion: number }
+/** null when a write of `filePath` at `baseVersion` is safe; else the conflict body every caller returns verbatim. */
+export function versionConflict(projectId: string, branch: string, filePath: string, baseVersion: number): VersionConflict | null {
+  const currentVersion = contentVersion(projectId, branch);
+  const fv = fileVersion(projectId, branch, filePath);
+  if (fv <= baseVersion && baseVersion <= currentVersion) return null;
+  return { error: 'version_conflict', currentVersion, fileVersion: fv };
 }
 
 /** Ephemeral coordination docs (e.g. the comment-change signal) are never written to disk. */
@@ -150,7 +203,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, text);
   lastWritten.set(name, hash);
-  bumpContentVersion(projectId, branch);
+  markPathsChanged(projectId, branch, [filePath]);
   scheduleAutoCommit(`${projectId}::${branch}`);
 }
 
@@ -283,6 +336,18 @@ export function flushAllDocs(): { projectId: string; branch: string }[] {
     if (p) dirty.set(`${p.projectId}::${p.branch}`, { projectId: p.projectId, branch: p.branch });
   });
   return [...dirty.values()];
+}
+
+/** Everything the shutdown flush must commit: the branches with open docs
+ *  (flushed to disk here) plus the branches holding agent work that no doc
+ *  carries — an MCP client with no browser tab open writes straight to disk,
+ *  and only the in-memory ledger knows the delta is Claude's. Not covered: a
+ *  kill -9 inside the ~20 s debounce, which the next autosave sweeps as an
+ *  anonymous autosave (docs/AGENT_API.md). */
+export function shutdownFlushSet(): { projectId: string; branch: string }[] {
+  const set = new Map<string, { projectId: string; branch: string }>();
+  for (const d of [...flushAllDocs(), ...pendingAttributionKeys()]) set.set(`${d.projectId}::${d.branch}`, d);
+  return [...set.values()];
 }
 
 /**
@@ -442,12 +507,17 @@ export function flushBranchDocs(projectId: string, branch: string): number {
 }
 
 /**
- * After git changed files on disk (merge/revert), push new content into loaded docs
- * so connected editors update in place.
+ * After files changed on disk behind the docs (a REST/tool write, git
+ * merge/revert/pull), push new content into loaded docs so connected editors
+ * update in place. `changed` = the paths the caller rewrote; omitted means
+ * git rewrote the tree and every path counts as changed — the conservative
+ * default, so a caller that forgets its paths gets spurious conflicts, never
+ * missed ones.
  */
-export function refreshBranchDocsFromDisk(projectId: string, branch: string): void {
+export function refreshBranchDocsFromDisk(projectId: string, branch: string, changed?: string[]): void {
   bumpFilesSignal(projectId, branch); // every caller just changed the branch on disk
-  bumpContentVersion(projectId, branch); // git just rewrote files under this branch
+  if (changed) markPathsChanged(projectId, branch, changed);
+  else markTreeChanged(projectId, branch);
   hocuspocus.documents.forEach((doc: Y.Doc & { name: string }, name: string) => {
     const parsed = parseDocName(name);
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;

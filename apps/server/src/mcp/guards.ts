@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import * as auth from '../auth.js';
-import { readMeta, type ProjectMeta } from '../store.js';
+import { branchDir, readMeta, type ProjectMeta } from '../store.js';
 import { canAccess } from '../authz.js';
 import { protectedProjects } from '../collab.js';
-import { isHiddenPath } from '../util.js';
+import { importPath, isHiddenPath, optionLikePath } from '../util.js';
 
 /**
  * Auth and shared authorization helpers for the MCP surface. Tool handlers
@@ -84,9 +86,70 @@ export function assertWritableProject(projectId: string): void {
   if (protectedProjects.has(projectId)) throw new McpDenied('That project is read-only');
 }
 
-/** Same hidden-path rule as REST file routes (git internals, compile output). */
-export function assertVisiblePath(rel: string): void {
-  if (!rel || rel.includes('..') || isHiddenPath(rel)) throw new McpDenied('Invalid file path');
+/**
+ * Same hidden-path rule as REST file routes (git internals, compile output),
+ * returning the ONE spelling every later lookup must use: "./main.tex",
+ * "main.tex" and "a//b" name the same file, but the open-doc registry, the
+ * attribution ledger, the git pathspec and the version log all key on the
+ * string they are handed — a raw spelling would splice the disk copy under
+ * a live doc (the next keystroke then overwrites the edit) and register an
+ * attribution no git status path ever matches (no Claude commit). A segment
+ * starting with "-" is refused like the root-file setting refuses it: the
+ * path becomes a git pathspec, and the compiler an argv word.
+ */
+export function visiblePath(rel: string): string {
+  const norm = rel ? importPath(rel) : null;
+  if (norm === null || isHiddenPath(norm)) throw new McpDenied('Invalid file path');
+  if (optionLikePath(norm)) throw new McpDenied('File name cannot start with "-"');
+  return norm;
+}
+
+/**
+ * The spelling the file tree lists for a visiblePath: letter case is the one
+ * difference importPath cannot collapse, and on a case-insensitive filesystem
+ * (macOS, Windows) "Main.tex" opens the same bytes as the tracked "main.tex"
+ * while every lookup keyed on the string — the open-doc registry, the
+ * attribution ledger, the git status pathspec — misses it (the edit lands on
+ * disk but commits as an anonymous autosave, with no Claude commit to
+ * review). Walked segment by segment because readdir is the only call that
+ * reports case as stored (existsSync answers true for every variant there).
+ * Folded on every host, not only case-insensitive ones: a case-only sibling
+ * created on Linux is a checkout collision for every collaborator on a Mac.
+ * A segment with no entry keeps its spelling (a new file or directory); one
+ * that matches several entries by case only (possible on a case-sensitive
+ * host when the request names none of them exactly) is refused rather than
+ * guessed. With `wholeFile` (write_file, a batch_write entry with content)
+ * a fold of the LAST segment is refused instead of applied: the caller means
+ * to create "Figure.tex", and folding would silently replace "figure.tex"
+ * with a result that names neither. Reads, edit_file and directory segments
+ * keep the fold. Requires the worktree to exist — call after ensureWorktree.
+ */
+export function diskSpelling(projectId: string, branch: string, rel: string, opts: { wholeFile?: boolean } = {}): string {
+  const segments = rel.split('/');
+  const out: string[] = [];
+  let dir = branchDir(projectId, branch);
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return [...out, ...segments.slice(i)].join('/'); }
+    let hit = seg;
+    if (!entries.includes(seg)) {
+      const lower = seg.toLowerCase();
+      const variants = entries.filter((e) => e.toLowerCase() === lower);
+      if (variants.length > 1) {
+        throw new McpDenied(`Ambiguous file path: more than one entry is spelled like "${seg}" (differing only by case) — pass the exact spelling project_structure lists`);
+      }
+      if (!variants.length) return [...out, ...segments.slice(i)].join('/');
+      if (opts.wholeFile && i === segments.length - 1) {
+        const listed = [...out, variants[0]].join('/');
+        throw new McpDenied(`"${rel}" would replace "${listed}" (same name, different case) — edit that file, or pass its listed spelling to replace it`);
+      }
+      hit = variants[0];
+    }
+    out.push(hit);
+    dir = path.join(dir, hit);
+  }
+  return out.join('/');
 }
 
 /**

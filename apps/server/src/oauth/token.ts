@@ -29,13 +29,13 @@ export interface TokenResponse {
 export type Params = Record<string, unknown>;
 export const param = (p: Params, k: string): string | undefined => (typeof p[k] === 'string' ? (p[k] as string) : undefined);
 
-interface Grant { userId: string; clientId: string; clientName: string; projectIds: string[] | null; family: string }
+interface Grant { userId: string; clientId: string; clientName: string; projectIds: string[] | null; family: string; carry?: { createdAt: string; lastUsedAt: string | null } }
 
 async function mint(g: Grant): Promise<TokenResponse> {
   const now = Date.now();
   const { token, record } = await auth.createAccessToken(
     g.userId, g.clientName, g.projectIds, new Date(now + ACCESS_TTL_MS).toISOString(),
-    { clientName: g.clientName, family: g.family },
+    { clientName: g.clientName, family: g.family, carry: g.carry },
   );
   const refresh = REFRESH_PREFIX + crypto.randomBytes(32).toString('base64url');
   const rec: RefreshTokenRecord = {
@@ -137,7 +137,10 @@ export async function refreshTokens(issuer: string, p: Params): Promise<TokenRes
   if (!(await db().markRefreshUsed(rec.id, now))) throw await reused();
   const old = await db().getToken(rec.tokenId);
   if (old && !old.revokedAt) { old.revokedAt = now; await db().updateToken(old); }
-  const res = await mint({ userId: rec.userId, clientId: rec.clientId, clientName: rec.clientName, projectIds: rec.projectIds, family: rec.family });
+  const res = await mint({
+    userId: rec.userId, clientId: rec.clientId, clientName: rec.clientName, projectIds: rec.projectIds, family: rec.family,
+    carry: old ? { createdAt: old.createdAt, lastUsedAt: old.lastUsedAt } : undefined,
+  });
   // A family revocation (the loser's replay, or the user's revoke) that
   // landed while this rotation was minting could not reach the rows just
   // written. The presented record is revoked with the family, so re-reading

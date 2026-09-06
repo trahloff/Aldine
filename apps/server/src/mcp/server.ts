@@ -7,7 +7,8 @@ import { mcpLimiter } from '../ratelimit.js';
 import { authenticateMcp, mcpRateKeys, type McpIdentity } from './guards.js';
 import { publicBase } from '../util.js';
 import { wwwAuthenticate } from '../oauth/metadata.js';
-import { registerTools } from './tools.js';
+import { registerTools, loadViewerHtml } from './tools.js';
+import { config } from '../config.js';
 
 /**
  * Streamable HTTP MCP endpoint (POST/GET /mcp), env-gated behind ALDINE_MCP=1.
@@ -47,6 +48,11 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
   const staticToken = process.env.ALDINE_MCP_TOKEN || undefined;
   if (!auth.AUTH_ENABLED && !staticToken) {
     console.log('[aldine] /mcp is enabled but has no credential configured — every request gets 401. Set AUTH_ENABLED=1 (connect with a personal access token) or set ALDINE_MCP_TOKEN.');
+  } else {
+    // The positive line a self-hoster looks for after setting the env vars.
+    const credentials = auth.AUTH_ENABLED ? 'personal access tokens + Connect (OAuth)' : 'static token (ALDINE_MCP_TOKEN)';
+    const viewer = loadViewerHtml() !== null ? 'built' : 'not built (run npm run build:viewer -w apps/server)';
+    console.log(`[aldine] MCP connector at ${config.publicUrl ? `${config.publicUrl}/mcp` : `${config.basePath}/mcp (ALDINE_PUBLIC_URL unset; links are root-relative)`} — credentials: ${credentials}; PDF viewer: ${viewer}`);
   }
 
   // onRequest runs before Fastify's body parsing, so the limiter and the auth

@@ -5,7 +5,7 @@
  */
 export { registerOAuth } from './routes.js';
 export { OAuthError } from './errors.js';
-export { protectedResourceMetadata, authorizationServerMetadata, resourceUri, isOurResource, wwwAuthenticate, SCOPE } from './metadata.js';
+export { protectedResourceMetadata, authorizationServerMetadata, resourceUri, resourceMetadataUrl, isOurResource, wwwAuthenticate, SCOPE } from './metadata.js';
 export { issueCode, consumeCode, CODE_TTL_MS } from './codes.js';
 export { fetchClientMetadata, parseClientIdUrl, parseClientMetadata, isAllowedRedirectUri, isBlockedAddress } from './cimd.js';
 export { resolveClient, redirectUriMatches, DCR_PREFIX } from './clients.js';

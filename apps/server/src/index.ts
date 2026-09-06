@@ -1,9 +1,9 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { buildApp, isCollabUpgrade } from './app.js';
-import { hocuspocus, flushAllDocs, closeProjectConnections } from './collab.js';
+import { hocuspocus, shutdownFlushSet, closeProjectConnections } from './collab.js';
 import { initProjectEvents } from './events.js';
-import { commitAll } from './gitops.js';
+import { autoCommit } from './gitops.js';
 import * as store from './store.js';
 import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
@@ -56,10 +56,13 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`[aldine] ${signal} — flushing ${hocuspocus.documents.size} open documents…`);
   try {
-    // commit only the branches that actually had open docs (typically a handful),
-    // not every project — avoids a SIGTERM fan-out of hundreds of git processes
-    const dirty = flushAllDocs();
-    await Promise.allSettled(dirty.map((d) => commitAll(d.projectId, d.branch, 'aldine: autosave on shutdown')));
+    // commit only the branches that had open docs or pending agent work
+    // (typically a handful), not every project — avoids a SIGTERM fan-out of
+    // hundreds of git processes. autoCommit, not commitAll: pending agent work
+    // must land under its author before the anonymous sweep, exactly as the
+    // debounce would have done.
+    const dirty = shutdownFlushSet();
+    await Promise.allSettled(dirty.map((d) => autoCommit(d.projectId, d.branch, 'aldine: autosave on shutdown')));
     console.log(`[aldine] flushed ${dirty.length} project/branch(es); exiting`);
   } catch (err) {
     console.error('[aldine] shutdown flush error', err);

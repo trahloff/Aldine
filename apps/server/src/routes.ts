@@ -8,7 +8,7 @@ import * as zotero from './zotero.js';
 import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
@@ -27,7 +27,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
@@ -156,7 +156,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }
 
   // ---------- auth (env-gated) ----------
-  app.get('/api/auth/me', async (req) => ({ authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders() }));
+  // mcpEnabled/publicUrl let the Agent access card say whether the connector
+  // URL it shows is served at all, and whether claude.ai could reach it.
+  app.get('/api/auth/me', async (req) => ({
+    authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders(),
+    mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null,
+  }));
+
+  /** Author for a human commit (checkpoint, merge, revert): the account name
+   *  whenever there is one — the browser's anonymous "Writer N" identity is
+   *  only right without accounts, and the audit trail must name the person
+   *  who undid Claude's work. */
+  const commitAuthor = (req: any, fallback?: string): string | undefined => {
+    const u = reqUser(req);
+    return (auth.AUTH_ENABLED && u && (u.name || u.email)) || fallback;
+  };
 
   /** 403 when password sign-in is disabled (SSO-only mode). */
   const passwordDisabled = (reply: any) => reply.code(403).send({ error: 'Password sign-in is disabled — use single sign-on.' });
@@ -404,6 +418,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       expiresAt = new Date(exp).toISOString();
     }
     const { token, record } = await auth.createAccessToken(user.id, name, projectIds, expiresAt);
+    // Success-metric line (deploy/README.md): a connection exists from here on.
+    console.log(`[metric] agent_connect user=${user.id} via=pat scope=${projectIds ? projectIds.length : 'all'}`);
     // the plaintext token appears in this response and never again
     return { token, ...record };
   });
@@ -617,7 +633,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const meta = await store.createProject(name, textFiles, reqUser(req)?.id);
       created = meta;
       for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
-      if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
+      if (binFiles.length) await gitops.autoCommit(meta.id, 'main', 'aldine: import assets').catch(() => {});
       const root = guessRoot(files);
       // Detection reads the archive bytes, not the transcoded text: the package
       // names it looks for are ASCII either way, and the latexmkrc is never transcoded.
@@ -733,8 +749,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // A committed .svg (or sniffed .html) served on our own origin would run its
       // scripts on top-level navigation, acting as the viewer. nosniff pins the
       // type and the sandbox CSP neutralizes any script while <img> embeds still render.
+      // content-version is the branch version a caller passes back as
+      // baseVersion; file-version is when this file itself last changed (PUT
+      // refuses only when that moved past baseVersion).
       return reply
         .header('x-aldine-content-version', String(contentVersion(req.params.id, branch)))
+        .header('x-aldine-file-version', String(fileVersion(req.params.id, branch, rel)))
         .header('X-Content-Type-Options', 'nosniff')
         .header('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox")
         .type(mime).send(buf);
@@ -748,19 +768,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false, baseVersion } = req.body || {};
       if (!rel) return reply.code(400).send({ error: 'path required' });
       if (isHiddenPath(rel) || rel.includes('..')) return reply.code(403).send({ error: 'Invalid file path' });
+      if (optionLikePath(rel)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       await gitops.ensureWorktree(req.params.id, branch);
       // Flush open docs BEFORE writing: the store debounce means up to ~8 s of
       // a live collaborator's typing exists only in memory, and writing over
       // the stale disk copy would refresh those keystrokes away.
       flushBranchDocs(req.params.id, branch);
       // Optimistic concurrency: a caller that read at baseVersion writes only
-      // if nothing changed since. Checked after the flush so a pending edit
-      // counts as a change, not a silent overwrite. Branch-granular by design.
+      // if THIS file did not change since. Checked after the flush so pending
+      // typing in this file counts as a change, not a silent overwrite; a
+      // change to any other file on the branch does not (per-file by design).
+      // A base newer than the branch knows is refused as unknowable.
       if (baseVersion !== undefined) {
-        const currentVersion = contentVersion(req.params.id, branch);
-        if (baseVersion !== currentVersion) {
-          return reply.code(409).send({ error: 'version_conflict', currentVersion });
-        }
+        const conflict = versionConflict(req.params.id, branch, rel, baseVersion);
+        if (conflict) return reply.code(409).send(conflict);
       }
       // createOnly (new-file flow): never clobber an existing file with empty content
       if (createOnly && store.fileExists(req.params.id, branch, rel)) {
@@ -771,7 +792,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       } catch {
         return reply.code(400).send({ error: 'Could not write that file path' });
       }
-      refreshBranchDocsFromDisk(req.params.id, branch);
+      refreshBranchDocsFromDisk(req.params.id, branch, [rel]);
       scheduleCommit(req.params.id, branch); // non-collab write → still reach git history
       const newRoot = await adoptRootIfUnset(req.params.id, branch, rel);
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -782,6 +803,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { branch = 'main', from, to } = req.body || {};
       if (!from || !to) return reply.code(400).send({ error: 'from/to required' });
       if (isHiddenPath(from) || isHiddenPath(to)) return reply.code(403).send({ error: 'forbidden path' });
+      if (optionLikePath(to)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       if (from === to) return { ok: true };
       // never overwrite an existing file — that would destroy both it and the source
       if (store.fileExists(req.params.id, branch, to)) {
@@ -794,10 +816,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // tombstoned doc is never written, so anything typed inside the autosave
       // debounce window would be renamed away and lost.
       flushBranchDocs(req.params.id, branch);
+      const wasDir = store.isDirectory(req.params.id, branch, from);
       // evict the source doc so its final store can't recreate the old file
       evictDoc(req.params.id, branch, from);
       store.renameFile(req.params.id, branch, from, to);
-      bumpContentVersion(req.params.id, branch); // bib/label indexes carry file paths
+      // bib/label indexes carry file paths; a directory rename moves every child
+      if (wasDir) markTreeChanged(req.params.id, branch);
+      else markPathsChanged(req.params.id, branch, [from, to]);
       scheduleCommit(req.params.id, branch);
       // The typeset root keeps its designation through a rename (deletion
       // already re-derives it; a rename must not orphan it). A rename that
@@ -822,9 +847,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
+    const wasDir = store.isDirectory(req.params.id, branch, rel);
     evictDoc(req.params.id, branch, rel); // prevent resurrection via pending store
     store.deleteFile(req.params.id, branch, rel);
-    bumpContentVersion(req.params.id, branch);
+    // a directory delete removes every child, which a single path mark would miss
+    if (wasDir) markTreeChanged(req.params.id, branch);
+    else markPathsChanged(req.params.id, branch, [rel]);
     scheduleCommit(req.params.id, branch);
     // If the typeset root was deleted, re-point it at the best remaining .tex
     // so the next compile doesn't fail with "root file not found". With no
@@ -962,12 +990,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       // capture latest edits so the new branch starts from what the user sees
       flushBranchDocs(req.params.id, from);
-      await gitops.commitAll(req.params.id, from, 'aldine: checkpoint before branching').catch(() => {});
+      await gitops.autoCommit(req.params.id, from, 'aldine: checkpoint before branching').catch(() => {});
       try {
         await gitops.createBranch(req.params.id, name, from);
       } catch (err) {
         return reply.code(409).send({ error: `Could not create branch: ${(err as Error).message}` });
       }
+      // A recreated name must not inherit the deleted branch's version log:
+      // a base_version read before the delete would otherwise pass the
+      // per-file conflict check against a tree it never saw.
+      markTreeChanged(req.params.id, name);
       return { ok: true };
     });
 
@@ -992,30 +1024,42 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       return reply.code(409).send({ error: `Could not delete branch: ${(err as Error).message}` });
     }
+    markTreeChanged(req.params.id, name); // see the create route
     forgetPdfUrls(req.params.id, name);
     return { ok: true };
   });
 
   app.post<{ Params: { id: string }; Body: { branch?: string; message?: string; author?: string } }>(
     '/api/projects/:id/commit', async (req) => {
-      const { branch = 'main', message = 'aldine: manual commit', author } = req.body || {};
+      const { branch = 'main', message, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
       flushBranchDocs(req.params.id, branch);
-      return gitops.commitAll(req.params.id, branch, message, author);
+      // autoCommit, not commitAll: a person's checkpoint inside the agent's
+      // debounce window must not sign Claude's pending delta with their name.
+      return gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
     });
 
   // Revert a set of commits (newest-first) as one new commit — the session
   // toast's "Revert these changes". Additive history only, never a rewrite.
   app.post<{ Params: { id: string }; Body: { branch?: string; hashes?: string[]; message?: string; author?: string } }>(
     '/api/projects/:id/revert', async (req, reply) => {
-      const { branch = 'main', hashes, message = 'Revert agent changes', author } = req.body || {};
+      const { branch = 'main', hashes, message: rawMessage, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
+      const message = cleanCommitMessage(rawMessage, 'Revert agent changes');
       if (!Array.isArray(hashes) || hashes.length === 0) return reply.code(400).send({ error: 'hashes required' });
       // capture pending edits first so the revert never collides with a dirty tree
       flushBranchDocs(req.params.id, branch);
-      await gitops.commitAll(req.params.id, branch, 'aldine: checkpoint before revert', author).catch(() => {});
+      await gitops.autoCommit(req.params.id, branch, 'aldine: checkpoint before revert', author).catch(() => {});
       try {
         const result = await gitops.revertCommits(req.params.id, branch, hashes, message, author);
-        if (result.ok) refreshBranchDocsFromDisk(req.params.id, branch);
-        return result;
+        if (result.ok) {
+          refreshBranchDocsFromDisk(req.params.id, branch);
+          // Success-metric line (docs/plans/agent-api/00-overview.md, "% of
+          // agent commits reverted"): only reverts that undo Claude's work.
+          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === 'Claude').length;
+          if (agentCommits) console.log(`[metric] agent_revert user=${reqUser(req)?.id ?? 'operator'} project=${req.params.id} commits=${agentCommits}`);
+        }
+        return { ...result, author: author ?? null };
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
       }
@@ -1032,7 +1076,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string }; Body: { from: string; into: string; author?: string } }>(
     '/api/projects/:id/merge', async (req, reply) => {
-      const { from, into, author } = req.body || {};
+      const { from, into, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
       if (!from || !into) return reply.code(400).send({ error: 'from/into required' });
       flushBranchDocs(req.params.id, from);
       flushBranchDocs(req.params.id, into);
@@ -1218,12 +1263,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         }
         if (next === null) { outcome = 'stale'; } else {
           store.writeFile(req.params.id, branch, c.file, next);
-          refreshBranchDocsFromDisk(req.params.id, branch);
+          refreshBranchDocsFromDisk(req.params.id, branch, [c.file]);
           outcome = 'applied';
         }
       }
       if (outcome === 'stale') return reply.code(409).send({ error: 'The commented text has changed — apply the suggestion manually.' });
-      bumpContentVersion(req.params.id, branch);
+      markPathsChanged(req.params.id, branch, [c.file]);
       scheduleCommit(req.params.id, branch);
       await comments.resolveComment(req.params.id, req.params.cid, true);
       return { ok: true };
@@ -1371,7 +1416,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     try { info = await github.createRepo(conn.token, name, req.body?.private !== false); }
     catch (err: any) { return reply.code(400).send({ error: `Could not create repo: ${err.message}` }); }
     flushBranchDocs(req.params.id, 'main');
-    await gitops.commitAll(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
     meta.github = { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) };
     await store.writeMeta(meta);
     try { await gitops.pushToRemote(req.params.id, 'main', github.tokenUrl(info.cloneUrl, conn.token)); }
@@ -1391,8 +1436,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string }; Body: { message?: string; auto?: boolean } }>('/api/projects/:id/github/push', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing
-    const message = (req.body?.message || '').trim() || 'Update from Aldine';
-    const commit = await gitops.commitAll(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
+    const message = cleanCommitMessage(req.body?.message, 'Update from Aldine');
+    const commit = await gitops.autoCommit(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
     // HEAD is the commit hash we just made (when we committed), else look it up.
     const head = commit.committed ? commit.hash ?? null : await gitops.headCommit(req.params.id).catch(() => null);
     // Auto-sync (client sends auto:true, fires ~every 20s) skips the full git-push
@@ -1413,7 +1458,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>('/api/projects/:id/github/pull', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main');
-    await gitops.commitAll(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
     try {
       const result = await gitops.pullFromRemote(req.params.id, link.remoteBranch, link.url);
       if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts });
@@ -1457,7 +1502,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (target === link.remoteBranch) return { ok: true };
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.commitAll(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url).catch(() => {}); // best-effort save
       await gitops.resetToRemote(req.params.id, target, link.url);
       const meta = link.meta; meta.github!.remoteBranch = target; await store.writeMeta(meta);
@@ -1475,7 +1520,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.commitAll(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, name, link.url); // push creates the remote branch
       const meta = link.meta; meta.github!.remoteBranch = name; await store.writeMeta(meta);
       return { ok: true, branch: name };
@@ -1487,7 +1532,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const link = await linkedRemote(req, reply); if (!link) return;
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.commitAll(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url);
       const repo = await github.getRepo(link.token, link.owner, link.repo);
       if (link.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });

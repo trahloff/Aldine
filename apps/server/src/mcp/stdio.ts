@@ -27,9 +27,12 @@ if (expected) {
 }
 
 const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
-const { initDb } = await import('../db/index.js');
+const { config } = await import('../config.js');
+const { initDb, closeDb } = await import('../db/index.js');
 const { ensureSigningSecret } = await import('../output-signing.js');
 const { createMcpServer } = await import('./server.js');
+const { shutdownFlushSet } = await import('../collab.js');
+const { autoCommit } = await import('../gitops.js');
 
 // Tools go through the datastore exactly like the HTTP path.
 await initDb();
@@ -42,10 +45,37 @@ try {
   process.exit(1);
 }
 // No request to derive the origin from: links are absolute only with ALDINE_PUBLIC_URL.
-const publicBase = (process.env.ALDINE_PUBLIC_URL || '').replace(/\/$/, '');
+const publicBase = config.publicUrl;
 if (!publicBase) {
-  console.error(`aldine-mcp: ALDINE_PUBLIC_URL is not set — pdfUrl and deepLink are root-relative and the inline PDF viewer is off (set it to the instance origin, e.g. http://localhost:${process.env.PORT || 3000})`);
+  console.error(`aldine-mcp: ALDINE_PUBLIC_URL is not set — pdfUrl and deepLink are root-relative and the inline PDF viewer is off (set it to the instance URL, path prefix included when Aldine is served under one, e.g. http://localhost:${process.env.PORT || 3000})`);
 }
 const server = createMcpServer({ user: null, tokenScope: null }, publicBase);
+
+// The attribution ledger and the ~20 s debounce live in this process, and
+// the client ends a session by closing stdin, then SIGTERM two seconds
+// later, then SIGKILL: without this flush the next autosave (the server's,
+// or the next stdio session's) sweeps the agent's delta anonymously — the
+// same flush index.ts runs on a deploy. The SDK transport reads stdin but
+// never closes on its end, so the end is watched here. Guarded: the stdin
+// close and the SIGTERM that follows it must not commit twice.
+let stopping = false;
+async function stop(reason: string): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  try {
+    const dirty = shutdownFlushSet();
+    await Promise.allSettled(dirty.map((d) => autoCommit(d.projectId, d.branch, 'aldine: autosave on shutdown')));
+    if (dirty.length) console.error(`aldine-mcp: ${reason} — flushed ${dirty.length} project/branch(es)`);
+  } catch (err) {
+    console.error('aldine-mcp: shutdown flush error', err);
+  }
+  try { await closeDb(); } catch { /* noop */ }
+  process.exit(0);
+}
+process.stdin.on('end', () => { void stop('stdin closed'); });
+server.server.onclose = () => { void stop('client closed'); };
+process.on('SIGTERM', () => { void stop('SIGTERM'); });
+process.on('SIGINT', () => { void stop('SIGINT'); });
+
 await server.connect(new StdioServerTransport());
 console.error('aldine-mcp: ready (stdio)');

@@ -66,8 +66,37 @@ export function rootSiblingPath(rootFile: string, name: string): string {
 export function invalidRootFile(rootFile: unknown): string | null {
   if (typeof rootFile !== 'string' || !rootFile.trim()) return 'Main document cannot be empty';
   if (rootFile.includes('..') || rootFile.startsWith('/') || rootFile.startsWith('\\')) return 'Main document must be a path inside the project';
-  if (rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'))) return 'Main document name cannot start with "-"';
+  if (optionLikePath(rootFile)) return 'Main document name cannot start with "-"';
   return null;
+}
+
+/** A segment starting with "-" reads as an option wherever the path is an
+ *  argv word — latexmk's command line and a git pathspec alike. The commit
+ *  primitives put `--` before their pathspecs, so this is the boundary
+ *  refusal that keeps such a name out of the tree in the first place. */
+export function optionLikePath(rel: string): boolean {
+  return rel.split(/[\\/]/).some((seg) => seg.startsWith('-'));
+}
+
+export const COMMIT_MESSAGE_MAX = 200;
+
+/**
+ * A commit subject safe to hand to git and to show back: control characters
+ * are dropped (a NUL fails the spawn, and a failed attributed commit blocks
+ * the branch's autosave until it lands; ESC/C1 reach terminals and the
+ * History panel unfiltered), CR and tab become spaces (both split the
+ * for-each-ref and log records), and the subject is bounded so one call
+ * cannot plant a megabyte every `git log` carries. Empty after cleaning →
+ * `fallback`.
+ */
+export function cleanCommitMessage(message: string | undefined | null, fallback: string): string {
+  const cleaned = (message ?? '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+    .replace(/[\r\t]+/g, ' ')
+    .trim()
+    .slice(0, COMMIT_MESSAGE_MAX)
+    .trim();
+  return cleaned || fallback;
 }
 
 export function isHiddenName(seg: string): boolean {

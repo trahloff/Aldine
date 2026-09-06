@@ -180,8 +180,10 @@ function pubToken(t: TokenRecord): PublicToken {
   return { id: t.id, name: t.name, projectIds: t.projectIds, createdAt: t.createdAt, lastUsedAt: t.lastUsedAt, expiresAt: t.expiresAt, clientName: t.clientName ?? null };
 }
 
-/** OAuth provenance of a token; both null for hand-made tokens. */
-export interface TokenOrigin { clientName: string | null; family: string | null }
+/** OAuth provenance of a token; both null for hand-made tokens. A rotation
+ *  passes the record it replaces so the Agent access card keeps showing when
+ *  the connection was made and last used, not when the token last rotated. */
+export interface TokenOrigin { clientName: string | null; family: string | null; carry?: { createdAt: string; lastUsedAt: string | null } }
 
 /** Mint a token. The plaintext value is returned exactly once — only its digest is stored. */
 export async function createAccessToken(userId: string, name: string, projectIds: string[] | null, expiresAt: string | null, origin: TokenOrigin = { clientName: null, family: null }): Promise<{ token: string; record: PublicToken }> {
@@ -192,8 +194,8 @@ export async function createAccessToken(userId: string, name: string, projectIds
     name,
     hash: tokenDigest(token),
     projectIds,
-    createdAt: new Date().toISOString(),
-    lastUsedAt: null,
+    createdAt: origin.carry?.createdAt ?? new Date().toISOString(),
+    lastUsedAt: origin.carry?.lastUsedAt ?? null,
     expiresAt,
     revokedAt: null,
     clientName: origin.clientName,

@@ -141,6 +141,8 @@ export async function registerOAuth(app: FastifyInstance): Promise<void> {
       clientId: client.id, clientName: client.name, redirectUri, codeChallenge: params.codeChallenge,
       resource: params.resource, scope: SCOPE, userId: user.id, projectIds,
     });
+    // Success-metric line (deploy/README.md): a Connect grant is a connection.
+    console.log(`[metric] agent_connect user=${user.id} via=oauth scope=${projectIds ? projectIds.length : 'all'}`);
     return noStore(reply).send({ redirectTo: redirectWith(redirectUri, { code, state: params.state, iss: issuer }) });
   });
 

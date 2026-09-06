@@ -25,10 +25,26 @@ export function underBasePath(url: string): boolean {
  * 200 with a one-line pointer to where the app lives.
  */
 export const ROOT_POINTER = '/__base-path-root__';
+/** RFC 8414 §3.1 / RFC 9728 §3.1 put the discovery documents at the ORIGIN
+ *  root with the issuer's path inserted after the well-known segment
+ *  (…/.well-known/oauth-authorization-server/internal/aldine), which is the
+ *  form MCP clients try first; they are routed to the same handlers as the
+ *  app-relative form. Nothing else at the origin root is ours. */
+const WELL_KNOWN_AT_ROOT = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource'];
+/** The only remainders that name a document: the issuer itself and the /mcp
+ *  resource, each with an optional query. Anything else must stay outside
+ *  the base path — an open-ended remainder would reach the static plugin,
+ *  which decodes it and lets "..%2f" walk back into the web dist. */
+const WELL_KNOWN_REST = /^(\/mcp)?(\?.*)?$/;
 export function rewriteUrl(url: string): string {
   if (!BASE) return url;
   if (url === '/api/health') return url;
   if (url === '/') return ROOT_POINTER;
+  for (const wk of WELL_KNOWN_AT_ROOT) {
+    if (!url.startsWith(wk + BASE)) continue;
+    const rest = url.slice(wk.length + BASE.length);
+    if (WELL_KNOWN_REST.test(rest)) return wk + rest;
+  }
   if (!underBasePath(url)) return `/__outside-base-path__${url}`;
   const rest = url.slice(BASE.length);
   return rest === '' || rest.startsWith('?') ? `/${rest}` : rest;
@@ -89,7 +105,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       root: config.webDist,
       prefix: '/',
       index: false,
-      allowedPath: (pathname) => pathname !== '/index.html',
+      // Compared after decoding and dot-segment collapse, the same view
+      // send() takes: "/assets/..%2findex.html" is the raw file too.
+      allowedPath: (pathname) => {
+        let p = pathname;
+        try { p = path.posix.normalize(decodeURIComponent(pathname)); } catch { return false; }
+        return p !== '/index.html' && !p.startsWith('/.well-known/');
+      },
     });
     app.setNotFoundHandler((req, reply) => {
       // /oauth/authorize is the SPA's consent page; the other /oauth/* paths,

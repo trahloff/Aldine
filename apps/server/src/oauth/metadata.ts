@@ -52,11 +52,20 @@ export function authorizationServerMetadata(issuer: string) {
   };
 }
 
-/** Where a client finds the protected-resource document for `/mcp`. The
- *  path-suffixed form is the RFC 9728 location for a resource at `/mcp`;
- *  the root form is served too for clients that probe it. */
+/** Where a client finds the protected-resource document for `/mcp`: the
+ *  RFC 9728 §3.1 location — well-known segment first, then the issuer's path
+ *  (the base path, when Aldine is served under one), then `/mcp`. A client
+ *  with a prefixed issuer probes exactly this form and the MCP SDK follows
+ *  the challenge's URL verbatim. An issuer that is not a URL keeps the plain
+ *  suffixed shape. */
 export function resourceMetadataUrl(issuer: string): string {
-  return `${issuer}/.well-known/oauth-protected-resource/mcp`;
+  const base = issuer.replace(/\/$/, '');
+  try {
+    const u = new URL(base);
+    return `${u.origin}/.well-known/oauth-protected-resource${u.pathname.replace(/\/$/, '')}/mcp`;
+  } catch {
+    return `${base}/.well-known/oauth-protected-resource/mcp`;
+  }
 }
 
 /** `WWW-Authenticate` value for a /mcp 401 (RFC 6750 §3 + RFC 9728 §5.1). */
