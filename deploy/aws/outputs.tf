@@ -32,8 +32,13 @@ output "github_infra_role_arn" {
 }
 
 output "github_deploy_role_arn" {
-  description = "Assume this from the app repo's image-deploy workflow (empty github_deploy_repo → null)."
-  value       = try(aws_iam_role.github_deploy[0].arn, null)
+  description = "Assume this from the app repo's image-deploy workflow for target=production (GitHub variable AWS_DEPLOY_ROLE_ARN; empty github_deploy_repo → null)."
+  value       = try(aws_iam_role.github_deploy["deploy"].arn, null)
+}
+
+output "github_staging_deploy_role_arn" {
+  description = "Assume this for target=staging (GitHub variable AWS_STAGING_DEPLOY_ROLE_ARN; null without staging or github_deploy_repo)."
+  value       = try(aws_iam_role.github_deploy["deploy_staging"].arn, null)
 }
 
 output "staging_url" {

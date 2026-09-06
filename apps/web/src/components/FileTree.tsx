@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { TreeEntry, api } from '../api';
+import { ApiError, TreeEntry, api } from '../api';
 import { fileIcon } from './Icons';
 
 interface Props {
@@ -111,7 +111,17 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       const bytes = new Uint8Array(buf);
       const chunk = 0x8000;
       for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64');
+      // Never replace a file that exists without asking: the one being
+      // replaced may be open in the editor with unsaved typing in it. The
+      // server answers 409 for createOnly, which also covers a file another
+      // client added since the tree was loaded.
+      try {
+        await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64', { createOnly: true });
+      } catch (err) {
+        if (!(err instanceof ApiError) || err.status !== 409) throw err;
+        if (!window.confirm(`${f.name} already exists in this project. Replace it with the uploaded file?`)) continue;
+        await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64');
+      }
       done.push(f.name);
     }
     if (done.length) onUploaded(done);

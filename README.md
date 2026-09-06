@@ -88,7 +88,7 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
 - **Multi-user auth** (optional): set `AUTH_ENABLED=1` for login, per-project
-  ownership, and sharing (invite-only or link). Google & GitHub SSO, or
+  ownership, and sharing (invite-only or link). Google, GitHub & ORCID SSO, or
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
@@ -110,7 +110,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:latest
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.6.0}
     ports:
       - "8080:3000"
     volumes:
@@ -121,7 +121,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:latest
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.6.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -153,20 +153,44 @@ docker compose up -d`. Keep the `name: aldine` line wherever you save it: it
 fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
-- **The first pull is big** (~2.5 GB; TeX Live is in the compiler image);
-  after that, starts take seconds. Ready when `curl localhost:8080/api/health`
-  returns `{"ok":true,"name":"aldine"}`. Images are published on release tags.
+- **You are pinned to a version.** The block above says
+  `${ALDINE_VERSION:-0.6.0}`, so a fresh copy installs the current release and
+  nothing under a running install changes on its own. To upgrade, read the
+  [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
+
+      ALDINE_VERSION=0.4.0 docker compose pull && docker compose up -d
+
+  To roll back, set `ALDINE_VERSION` to the previous release and run the same
+  command. Your projects live in the `aldine-data` and `aldine-secrets`
+  volumes and an image swap does not touch them. `:latest` still exists and
+  points at the newest release; pinning is what lets you choose when to move.
+- **Pre-1.0 stability.** Versions follow SemVer with one caveat: before 1.0
+  a minor bump (0.3 to 0.4) may change behaviour or on-disk layout, a patch
+  bump (0.4.0 to 0.4.1) will not. Every release is built from a commit that
+  passed CI, and its images are booted and made to typeset a real document
+  before `:latest` moves to them. Upgrades across a minor are not yet tested
+  against existing data, so back up first. Watch the repo's Releases for
+  security fixes: per [SECURITY.md](SECURITY.md), only the latest release
+  gets them.
+- **The first pull is big.** TeX Live lives in the compiler image: about
+  1 GB compressed, 3.7 GB on disk. It carries a curated package set, the
+  publisher classes, and the Arabic, Persian, Cyrillic and Greek scripts;
+  the one family it leaves out is CJK. After the first pull, starts take
+  seconds. Ready when `curl localhost:8080/api/health` returns
+  `{"ok":true,"name":"aldine"}`.
+- **Need a package it does not have?** Every release from 0.4.0 also ships
+  all of TeX Live as `-full` (about 2.8 GB compressed, 9 GB on disk). Add
+  `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again; the
+  missing-package error in the editor tells you the same thing. Project
+  settings show which one you are on.
 - **Port 8080 taken?** Change the left side of `ports:`.
-- **Everything beyond the minimum**: building from source (latest `main`),
-  auth/SSO/AI/email options, TLS, Postgres/Redis. All of it lives
-  in [`docker-compose.full.yml`](docker-compose.full.yml), which carries the
-  same compiler sandbox and the same volumes, so you can switch without
-  losing data:
-  `docker compose -f docker-compose.full.yml up -d --build`. The first build
-  installs LaTeX packages; expect 15–40 minutes.
-- **Need packages beyond the curated set?** Build the full file with all of
-  CTAN preinstalled (~9 GB on disk):
-  `ALDINE_TEXLIVE_SCHEME=medium docker compose -f docker-compose.full.yml up -d --build` for a slimmer image (curated packages, no CJK).
+- **Everything beyond the minimum**: building from source (latest `main`,
+  not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
+  lives in [`docker-compose.full.yml`](docker-compose.full.yml), which carries
+  the same compiler sandbox and the same volumes, so you can switch without
+  losing data: `docker compose -f docker-compose.full.yml up -d --build`.
+  The first build pulls TeX Live; expect 15–40 minutes.
+  `ALDINE_TEXLIVE_SCHEME=full` builds the all-of-TeX-Live variant instead.
 
 ## How Aldine compares
 
@@ -180,7 +204,7 @@ what `deploy/backup.sh` looks for.
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
 | Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
-| Package coverage | **All of TeX Live** by default (`ALDINE_TEXLIVE_SCHEME=medium` for a curated slim image) | All of TeX Live | Whatever you install |
+| Package coverage | Curated TeX Live by default (publisher classes, most scripts); **all of TeX Live** with `ALDINE_TEXLIVE=-full` | All of TeX Live | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
 | Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
 | License | AGPL-3.0 | AGPL | MIT/varies |
@@ -245,8 +269,9 @@ is not `1`, so auth silently stays off.
 ```dotenv
 # app on loopback only; your reverse proxy fronts it
 ALDINE_APP_BIND=127.0.0.1
-# absolute origin used in OAuth callbacks, password-reset links and the
-# PDF links the MCP connector hands out
+# absolute URL of the app, used in OAuth callbacks, password-reset links and
+# the PDF links the MCP connector hands out. Give it a path to serve Aldine
+# under a prefix (https://server/internal/aldine)
 ALDINE_PUBLIC_URL=https://aldine.example.com
 # signs the connector's 15-minute PDF links; generated into META_DIR when
 # unset — set it explicitly when several nodes do not share that volume.
@@ -262,6 +287,10 @@ GOOGLE_OAUTH_CLIENT_SECRET=
 # GitHub SSO
 GITHUB_LOGIN_CLIENT_ID=
 GITHUB_LOGIN_CLIENT_SECRET=
+# ORCID SSO: a Public API client (orcid.org/developer-tools, HTTPS callback
+# <ALDINE_PUBLIC_URL>/api/auth/oauth/orcid/callback); ORCID_SANDBOX=1 for sandbox.orcid.org
+ORCID_CLIENT_ID=
+ORCID_CLIENT_SECRET=
 # GitHub repo sync: a separate OAuth app with repo scope
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
@@ -368,10 +397,14 @@ Copyright (C) 2026 Tobias Rahloff.
 
 [AGPL-3.0](LICENSE): self-host freely; if you offer a modified Aldine as a
 service, share your changes. Third-party plugins interact with Aldine over its
-plugin API and may use any license. `templates/iac-paper/iac.cls` is LPPL-1.3c,
-the customary license for a LaTeX class file. Overleaf is a trademark of its
-owners; Aldine is an independent project, not affiliated with or endorsed by
-Overleaf.
+plugin API and may use any license. Each folder under `templates/` carries its
+own `LICENSE` and states it in `template.json` (the gallery shows it on the
+tile): the generic templates are MIT, and `templates/iac-paper` is LPPL-1.3c,
+the customary license for a LaTeX class file. Venue templates are generated
+from the classes installed in the compiler image, with the license `tlmgr`
+reports; no publisher file is stored in this repository. Overleaf is a
+trademark of its owners; Aldine is an independent project, not affiliated with
+or endorsed by Overleaf.
 
 Two things stated plainly, because finding them out later feels like a
 bait-and-switch. **A hosted Aldine service is planned**, and contributions are

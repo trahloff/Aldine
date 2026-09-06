@@ -135,7 +135,22 @@
 }
 .modal h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .modal p.modal__sub { margin: 0 0 14px; color: var(--text-2); }
-.modal__row { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
+/* The action row stays put while a long dialog scrolls under it. The template
+   gallery and the settings list are both taller than the 70vh cap, and a
+   Create button that has scrolled out of sight reads as a dialog with no way
+   to finish. `bottom` cancels the panel's own bottom padding so the row sits
+   flush with the panel edge. */
+.modal__row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: -20px;
+  z-index: 1;
+  margin: 14px -20px -20px;
+  padding: 12px 20px 20px;
+  background: var(--bg-panel);
+}
 .modal .input { width: 100%; }
 
 /* template picker */
@@ -163,6 +178,37 @@
 .tpl__icon { font-size: 16px; }
 .tpl__name { font-weight: 600; font-size: 13px; }
 .tpl__desc { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.tpl__kit { font-size: 10px; color: var(--text-3); margin-top: 4px; }
+.tpl__license { font-size: 10px; color: var(--text-2); opacity: 0.8; margin-top: 4px; }
+.tpl-search { position: relative; margin-top: 12px; }
+.tpl-search .input { padding-right: 30px; }
+.tpl-search__clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tpl-search__clear:hover { background: var(--bg-hover); color: var(--text); }
+.tpl-choice { font-size: 11px; color: var(--text-2); margin: 8px 0 0; }
+/* The gallery grows with the compiler image (hundreds of venues); the modal must not. */
+.tpl-gallery { max-height: 44vh; overflow-y: auto; margin-top: 4px; }
+.tpl-group + .tpl-group { margin-top: 10px; }
+.tpl-group__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-top: 10px;
+}
+.tpl-empty { font-size: 12px; color: var(--text-2); margin: 12px 0 0; }
 
 /* ---------- login ---------- */
 .login { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -392,17 +438,32 @@
    positioned pane they cover the sidebar and toolbar too. */
 .pane--editor { position: relative; }
 
+/* The preview toolbar is the widest row in the app and its pane is resizable,
+   so the pane's own title is the first thing to drop: the PDF beside it and
+   the typeset status already say which pane this is, and keeping the row on
+   one line matters more than repeating it. The query is on the pane, not the
+   window — a wide window can still hold a narrow preview. `.pane__header`
+   wraps as the backstop below even this. */
+.pane--preview { container-type: inline-size; }
+.pane__title { display: none; }
+@container (min-width: 470px) { .pane__title { display: inline; } }
+
 .pane__header {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  min-height: 34px;
   padding: 0 10px;
   border-bottom: 1px solid var(--hairline);
   color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
   flex: none;
+  /* The preview pane is resizable and its toolbar is the widest thing in it.
+     Wrapping keeps every control reachable; without this the row overflows the
+     pane and widens the whole page, which scrolls the app toolbar off-screen. */
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .sidebar { width: 230px; flex: none; background: var(--bg-inset); }
@@ -891,3 +952,11 @@
 .consent__error .btn { display: inline-flex; vertical-align: baseline; }
 .consent__hint { color: var(--text-2); font-size: 12.5px; line-height: 1.45; margin: 0 0 14px; }
 .consent__back { align-self: flex-start; }
+
+/* The typesetting log opens at its first error; mark it so the eye lands there. */
+.logview__hit {
+  background: color-mix(in srgb, var(--error) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}

@@ -3,7 +3,7 @@ import { ProjectMeta } from './store.js';
 
 /**
  * Is this user a member of the project — its owner or someone the owner
- * invited by email? Membership is the basis for both listing and for anything
+ * invited by email or ORCID iD? Membership is the basis for both listing and for anything
  * that reaches the owner's linked accounts (Zotero, GitHub remote): a link
  * grants entry to the document, it does not make the visitor part of the team.
  * Also the listing predicate — a link-shared project opens by URL but must not
@@ -14,8 +14,8 @@ export function isMember(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (!meta.ownerId) return true;      // legacy project created before auth
   if (!user) return false;
   if (meta.ownerId === user.id) return true;
-  const email = user.email.toLowerCase();
-  return !!meta.share?.collaborators?.some((c) => c.toLowerCase() === email);
+  const email = user.email?.toLowerCase();
+  return !!meta.share?.collaborators?.some((c) => (email && c.toLowerCase() === email) || (user.orcid && c === user.orcid));
 }
 
 /** Should this project appear in the user's project list? Members only. */

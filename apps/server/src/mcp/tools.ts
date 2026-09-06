@@ -17,7 +17,7 @@ import { isTextFile, rootSiblingPath } from '../util.js';
 import { isListed } from '../authz.js';
 import { addReference } from '../references.js';
 import { bibIndex, labelIndex, wordCount } from '../indexes.js';
-import { listTemplates, templateFiles } from '../templates.js';
+import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from '../templates.js';
 import {
   McpDenied, resolveProject, assertWritableProject, assertVisiblePath, type McpIdentity,
 } from './guards.js';
@@ -752,7 +752,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     description: 'Create a new project, blank or from a template, and return its id for the write tools. Needs a token with access to all projects — a project-scoped token cannot create; if refused, relay that to the user (they can mint an unscoped token in Settings → Agent access).',
     inputSchema: {
       name: z.string().min(1).max(200).describe('Project name shown in the workspace.'),
-      template: z.string().optional().describe('Template id (e.g. "article", "beamer", "report"). Omit for a blank main.tex + references.bib.'),
+      template: z.string().optional().describe('Template id from the workspace gallery: a folder template ("article", "beamer", "report") or a venue ("venue:neurips", "venue:elsarticle"; a venue kit is downloaded from the publisher when it is not installed). "blank" creates a project with no files. Omit for a starter main.tex + references.bib.'),
     },
   }, async ({ name, template }) => {
     try {
@@ -762,15 +762,30 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (identity.tokenScope?.projectIds) {
         return fail('This token is scoped to specific projects and cannot create new ones — ask the user for a token without a project scope');
       }
-      let seed: Record<string, string> | undefined;
+      let seed: Record<string, Buffer> | undefined;
+      let resolved: TemplateSeed | undefined;
       if (template) {
-        try { seed = templateFiles(template); } catch {
-          const ids = listTemplates().map((t) => t.id);
-          return fail(`Unknown template "${template}"${ids.length ? ` — available: ${ids.join(', ')}` : ''}`);
+        // The same gallery the New project dialog offers, so a venue the user
+        // can pick there is one the agent can pick too.
+        const known = (await listAllTemplates()).map((t) => t.id);
+        if (!known.includes(template)) {
+          return fail(`Unknown template "${template}"${known.length ? ` — available: ${known.join(', ')}` : ''}`);
+        }
+        try {
+          resolved = await resolveTemplateSeed(template);
+          seed = resolved.files;
+        } catch (err: any) {
+          return fail(`Template "${template}" could not be prepared: ${err?.message || err}`);
         }
       }
       const meta = await store.createProject(name, seed, identity.user?.id);
-      return ok({ id: meta.id, name: meta.name, rootFile: meta.rootFile, engine: meta.engine, deepLink: `${base}/p/${meta.id}`, ...(await echo(meta.id, 'main')) });
+      // A venue kit that could not be downloaded still creates the project
+      // from a skeleton; the model should say so rather than the call failing.
+      return ok({
+        id: meta.id, name: meta.name, rootFile: meta.rootFile, engine: meta.engine, deepLink: `${base}/p/${meta.id}`,
+        ...(resolved?.venueKit ? { venueKit: resolved.venueKit } : {}),
+        ...(await echo(meta.id, 'main')),
+      });
     } catch (err) { return toolError(err); }
   });
 }

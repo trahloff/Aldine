@@ -16,15 +16,30 @@ export interface EngineDetection {
 // person wrote, and the 200 MB archive bound must stay cheap to honour.
 const SNIFF_BYTES = 256 * 1024;
 
-/** \usepackage or \RequirePackage naming any of the packages, outside a comment (an escaped \% opens none). */
-const packageRe = (names: string[]) =>
-  new RegExp(`^(?:[^%\\\\\\n]|\\\\.)*\\\\(?:usepackage|RequirePackage)\\s*(?:\\[[^\\]]*\\]\\s*)?\\{[^}]*\\b(${names.join('|')})\\b[^}]*\\}`, 'm');
+/**
+ * A \usepackage or \RequirePackage call, options and argument bounded. The
+ * text it runs on has had its comments stripped line by line first, so the
+ * regex never has to look behind a match for an unescaped %, and never
+ * rescans: an import made of unterminated \usepackage{ runs (one 256 KB line)
+ * used to hold the event loop for ten seconds.
+ */
+const PACKAGE_CALL_RE = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]{0,500}\]\s*)?\{([^}]{0,2000})\}/g;
+/** The line up to its first unescaped %: an escaped \% opens no comment. */
+const CODE_RE = /^(?:[^%\\]|\\.)*/;
+const stripComments = (text: string) => text.split('\n').map((l) => (l.includes('%') ? CODE_RE.exec(l)![0] : l)).join('\n');
+/** The first of `names` that a package call in `text` loads, or null. */
+function packageIn(text: string, names: string[]): string | null {
+  const nameRe = new RegExp(`\\b(${names.join('|')})\\b`);
+  for (const m of stripComments(text).matchAll(PACKAGE_CALL_RE)) {
+    const hit = nameRe.exec(m[1]);
+    if (hit) return hit[1];
+  }
+  return null;
+}
 const LUA_PACKAGES = ['luacode', 'luatexbase', 'luaotfload', 'lualatex-math', 'luatextra', 'luamplib'];
 // fontspec and unicode-math run on both engines; XeLaTeX is the one Overleaf
 // picks for them and the one bidi/xepersian require outright.
 const XE_PACKAGES = ['fontspec', 'unicode-math', 'polyglossia', 'xepersian', 'bidi', 'xeCJK', 'xltxtra', 'xunicode'];
-const LUA_RE = packageRe(LUA_PACKAGES);
-const XE_RE = packageRe(XE_PACKAGES);
 // "% !TEX program = xelatex" (TeXShop/TeXworks/VS Code), "TS-program" is the TeXShop spelling.
 const MAGIC_RE = /^%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/im;
 
@@ -37,8 +52,8 @@ function engineFromProgram(name: string): Engine | null {
 }
 
 /**
- * latexmk's own precedence, reduced: $pdf_mode selects the engine (4 = xelatex,
- * 5 = lualatex, 1 = pdflatex); without it, a $pdflatex command naming xelatex
+ * latexmk's own precedence, reduced: $pdf_mode selects the engine (4 = lualatex,
+ * 5 = xelatex, 1 = pdflatex: latexmk -pdflua sets 4 and -pdfxe sets 5); without it, a $pdflatex command naming xelatex
  * or lualatex (the pre-4.51 idiom); without either, a bare $xelatex or
  * $lualatex assignment is the only remaining hint, and only when it stands
  * alone: an rc that assigns both (the idiom that hands -shell-escape to
@@ -49,8 +64,8 @@ export function engineFromLatexmkrc(text: string): Engine | null {
   const code = text.split('\n').map((l) => l.replace(/#.*$/, '')).join('\n');
   const mode = code.match(/\$pdf_mode\s*=\s*['"]?(\d)/);
   if (mode) {
-    if (mode[1] === '4') return 'xelatex';
-    if (mode[1] === '5') return 'lualatex';
+    if (mode[1] === '4') return 'lualatex';
+    if (mode[1] === '5') return 'xelatex';
     if (mode[1] === '1') return 'pdf';
   }
   const cmd = code.match(/\$pdflatex\s*=\s*['"]\s*(\S+)/);
@@ -73,10 +88,10 @@ export function engineFromSource(text: string): { engine: Engine; reason: string
     const e = engineFromProgram(magic[1]);
     if (e) return { engine: e, reason: `the "!TEX program" line in the main document` };
   }
-  const lua = text.match(LUA_RE);
-  if (lua) return { engine: 'lualatex', reason: `the ${lua[1]} package in the main document` };
-  const xe = text.match(XE_RE);
-  if (xe) return { engine: 'xelatex', reason: `the ${xe[1]} package in the main document` };
+  const lua = packageIn(text, LUA_PACKAGES);
+  if (lua) return { engine: 'lualatex', reason: `the ${lua} package in the main document` };
+  const xe = packageIn(text, XE_PACKAGES);
+  if (xe) return { engine: 'xelatex', reason: `the ${xe} package in the main document` };
   return null;
 }
 
@@ -110,7 +125,9 @@ const CP1252_C1 = '\u20AC\u0081\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\
   + '\u0090\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u009D\u017E\u0178';
 const decodeCp1252 = (data: Buffer) => data.toString('latin1').replace(/[\x80-\x9f]/g, (c) => CP1252_C1[c.charCodeAt(0) - 0x80]);
 
-const INPUTENC_RE = /(\\usepackage\s*\[)([^\]]*)(\]\s*\{inputenc\})/g;
+// Options never span a line; unbounded [^\]]* rescanned a whole file per
+// unterminated "\usepackage[" (quadratic, and this runs on every import).
+const INPUTENC_RE = /(\\usepackage\s*\[)([^\]\n]{0,200})(\]\s*\{inputenc\})/g;
 /** inputenc options the transcode understands; each is replaced by utf8 afterwards. */
 const LEGACY_OPTION_RE = /\b(latin1|latin9|ansinew|cp1252|applemac)\b/g;
 // Windows-1252 is a superset of Latin-1 for every printable byte, so a

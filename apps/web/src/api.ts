@@ -1,4 +1,7 @@
-export interface AuthUser { id: string; email: string; name: string; provider?: string }
+import { withBase } from './basePath';
+
+/** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
 export interface OAuthProviderInfo { id: string; label: string }
 export interface ProjectSummary {
   id: string;
@@ -115,7 +118,7 @@ async function oauthReq<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetch(withBase(url), {
     headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
     ...init,
   });
@@ -127,7 +130,36 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface TemplateInfo { id: string; name: string; description?: string; icon?: string }
+export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' | 'General';
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  category?: TemplateCategory;
+  documentClass?: string;
+  license?: string;
+  licenseUrl?: string;
+  source?: { url: string; version?: string };
+  /** Fetched-kit venues: where the official kit is downloaded from at create time. */
+  kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+}
+
+/** How the venue kit went while the project was being created. */
+export interface VenueKitStatus {
+  id: string;
+  name: string;
+  host: string;
+  url: string;
+  ok: boolean;
+  reason?: string;
+}
+
+/** POST /api/projects: a fetched-venue project also reports its kit. */
+export interface CreatedProject extends ProjectSummary {
+  venueKit?: VenueKitStatus;
+}
+
 /** What /api/projects/import decided while placing the archive. */
 export interface ImportedProject extends ProjectSummary {
   import: { engine: string; engineReason: string | null; transcoded: string[] };
@@ -137,7 +169,7 @@ export interface CompilerInfo { ok: boolean; texlive: { release: string; scheme:
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),
   createProject: (name: string, files?: Record<string, string>, template?: string) =>
-    req<ProjectSummary>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
+    req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */
@@ -159,12 +191,12 @@ export const api = {
   listFiles: (id: string, branch: string) =>
     req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),
   readFile: async (id: string, branch: string, path: string) => {
-    const res = await fetch(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`);
+    const res = await fetch(withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
-  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8') =>
-    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding }) }),
+  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean } = {}) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}) }) }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
   deleteFile: (id: string, branch: string, path: string) =>
@@ -186,6 +218,8 @@ export const api = {
     req<{ ok: boolean }>(`/api/projects/${id}/branches`, { method: 'POST', body: JSON.stringify({ name, from }) }),
   deleteBranch: (id: string, name: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/branches?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  unmergedCommits: (id: string, name: string) =>
+    req<{ count: number; newest: string | null }>(`/api/projects/${id}/branches/unmerged?name=${encodeURIComponent(name)}`),
   commit: (id: string, branch: string, message: string, author?: string) =>
     req<{ committed: boolean; hash?: string }>(`/api/projects/${id}/commit`, { method: 'POST', body: JSON.stringify({ branch, message, author }) }),
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
@@ -204,7 +238,7 @@ export const api = {
   githubPush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean }>(`/api/projects/${id}/github/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing
   githubPull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
-    const res = await fetch(`/api/projects/${id}/github/pull`, { method: 'POST' });
+    const res = await fetch(withBase(`/api/projects/${id}/github/pull`), { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

@@ -1,0 +1,78 @@
+name: Promote to latest
+
+# The only workflow that moves `latest`. Re-tags the digests already published
+# under a version tag (no rebuild), then publishes the GitHub Release for it.
+# The same command pointed at the previous version is the rollback.
+#
+# The job runs in the `latest` environment. Give that environment a required
+# reviewer (Settings → Environments → latest) and every run pauses here until
+# a human approves; without one, this runs unattended.
+#
+# Called by release.yml after the smoke test, and runnable by hand:
+#   Actions → Promote to latest → Run workflow → version: 0.4.0
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to point latest at (e.g. 0.4.0 or, to roll back, 0.3.0)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: write   # the GitHub Release
+  packages: write   # re-tag on GHCR
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment:
+      name: latest
+      url: https://github.com/${{ github.repository }}/pkgs/container/aldine-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move latest (and the minor alias) to the version's digests
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          case "$VERSION" in
+            *[!0-9.]*|'') echo "::error::version must look like 0.4.0, got '$VERSION'"; exit 1 ;;
+          esac
+          minor="${VERSION%.*}"
+          owner="ghcr.io/${{ github.repository_owner }}"
+          # image:suffix pairs; the compiler ships a medium (default) and a
+          # -full variant, promoted together so latest and latest-full agree.
+          targets=("aldine-app:" "aldine-compiler:" "aldine-compiler:-full")
+          for t in "${targets[@]}"; do
+            image="$owner/${t%%:*}"; suffix="${t#*:}"
+            # A version that was never built (or never finished building) must
+            # not become latest.
+            docker buildx imagetools inspect "$image:$VERSION$suffix" >/dev/null
+          done
+          for t in "${targets[@]}"; do
+            image="$owner/${t%%:*}"; suffix="${t#*:}"
+            docker buildx imagetools create -t "$image:latest$suffix" -t "$image:$minor$suffix" "$image:$VERSION$suffix"
+            echo "$image:latest$suffix -> $VERSION$suffix ($(docker buildx imagetools inspect "$image:latest$suffix" --format '{{json .Manifest.Digest}}'))" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          make_latest: true
+          generate_release_notes: true

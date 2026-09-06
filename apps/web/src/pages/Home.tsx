@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, TemplateInfo } from '../api';
+import { api, ApiError, ProjectSummary, TemplateCategory, TemplateInfo } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -21,14 +21,24 @@ import { importSummary } from '../util/engines';
 const IMPORT_MAX_ZIP_MB = 60;
 const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 
+/** Gallery order; a category with no template in it is not drawn. */
+const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
+
+function matchesQuery(t: TemplateInfo, q: string): boolean {
+  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host].join(' ').toLowerCase();
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}
+
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const zipInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
-  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [template, setTemplate] = useState('article');
+  const [templateQuery, setTemplateQuery] = useState('');
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
   const [showGithub, setShowGithub] = useState(false);
@@ -70,13 +80,37 @@ export default function Home() {
     }).catch(() => setTemplates([]));
   }, []);
 
+  // A search that hides the chosen tile would leave Create acting on something
+  // the user cannot see, so the first result of a narrowing search becomes the
+  // choice. With no search, or when the choice is still on screen, it stands.
+  const shownTemplates = (() => {
+    const q = templateQuery.trim().toLowerCase();
+    if (!templates) return [] as TemplateInfo[];
+    return q ? templates.filter((t) => matchesQuery(t, q)) : templates;
+  })();
+  const effectiveTemplate = shownTemplates.some((t) => t.id === template)
+    ? template
+    : shownTemplates[0]?.id ?? template;
+  const chosen = templates?.find((t) => t.id === effectiveTemplate) ?? null;
+  const closeCreate = () => { setCreating(false); setTemplateQuery(''); };
+
+  // One request per click: a venue kit takes seconds to download, and a
+  // double-click or a held Enter used to make two identical projects and
+  // land in the second.
+  const [submitting, setSubmitting] = useState(false);
   const create = async () => {
+    if (submitting) return;
     const name = newName.trim() || 'Untitled Project';
+    setSubmitting(true);
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates, template));
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate));
+      if (p.venueKit && !p.venueKit.ok) {
+        toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
+      }
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
+      setSubmitting(false);
     }
   };
 
@@ -167,11 +201,9 @@ export default function Home() {
                 <button className="btn btn--small" data-testid="logout" onClick={async () => { await api.logout(); setUser(null); }}>Sign out</button>
               </span>
             )}
-            <label className="btn" data-testid="import-zip">
-              Import ZIP
-              <input type="file" accept=".zip" hidden data-testid="import-input" aria-label="Import a project from a ZIP file"
-                onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-            </label>
+            <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import ZIP</button>
+            <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
+              onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
             <button className="btn" onClick={() => setShowGithub(true)} data-testid="new-from-github">
               From GitHub
             </button>
@@ -194,9 +226,7 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
               <button className="btn" onClick={() => setShowGithub(true)}>Import from GitHub</button>
-              <label className="btn">Import a ZIP
-                <input type="file" accept=".zip" hidden onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-              </label>
+              <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP</button>
             </div>
           </div>
         ) : (
@@ -300,7 +330,7 @@ export default function Home() {
       )}
 
       {creating && (
-        <Modal onClose={() => setCreating(false)} label="New project">
+        <Modal onClose={closeCreate} label="New project">
           <div>
             <h2>New project</h2>
             <p className="modal__sub">Name it, pick a starting point, start writing.</p>
@@ -311,28 +341,83 @@ export default function Home() {
               value={newName}
               data-testid="new-project-name"
               onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setCreating(false); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             />
-            {templates.length > 0 && (
-              <div className="tpl-grid" data-testid="template-grid">
-                {templates.map((t) => (
-                  <button
-                    key={t.id}
-                    className={`tpl ${template === t.id ? 'tpl--active' : ''}`}
-                    data-testid={`template-${t.id}`}
-                    onClick={() => setTemplate(t.id)}
-                    title={t.description}
-                  >
-                    <span className="tpl__icon">{t.icon || '📄'}</span>
-                    <span className="tpl__name">{t.name}</span>
-                    <span className="tpl__desc">{t.description}</span>
-                  </button>
-                ))}
-              </div>
+            {templates === null && <p className="tpl-empty">Loading templates…</p>}
+            {templates !== null && templates.length > 0 && (
+              <>
+                <div className="tpl-search">
+                  <input
+                    className="input"
+                    placeholder="Search templates, for example IEEE or NeurIPS"
+                    aria-label="Search templates"
+                    value={templateQuery}
+                    data-testid="template-search"
+                    onChange={(e) => setTemplateQuery(e.target.value)}
+                  />
+                  {/* Escape belongs to the dialog: the modal closes on it before
+                      any handler here could clear the query. */}
+                  {templateQuery && (
+                    <button
+                      className="tpl-search__clear"
+                      aria-label="Clear the template search"
+                      data-testid="template-search-clear"
+                      onClick={() => setTemplateQuery('')}
+                    >
+                      <IconX />
+                    </button>
+                  )}
+                </div>
+                <div className="tpl-gallery" data-testid="template-grid">
+                  {(() => {
+                    const shown = shownTemplates;
+                    if (!shown.length) {
+                      return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
+                    }
+                    return TEMPLATE_CATEGORIES.map((cat) => {
+                      const group = shown.filter((t) => (t.category || 'General') === cat);
+                      if (!group.length) return null;
+                      return (
+                        <div key={cat} className="tpl-group" data-testid={`template-category-${cat}`}>
+                          <div className="tpl-group__label">{cat}</div>
+                          <div className="tpl-grid">
+                            {group.map((t) => (
+                              <button
+                                key={t.id}
+                                className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
+                                data-testid={`template-${t.id}`}
+                                onClick={() => setTemplate(t.id)}
+                                title={t.description}
+                              >
+                                <span className="tpl__icon">{t.icon || '📄'}</span>
+                                <span className="tpl__name">{t.name}</span>
+                                <span className="tpl__desc">{t.description}</span>
+                                {/* The kit is downloaded when the project is created, not now:
+                                    say so before the user picks the tile. */}
+                                {t.kit && (
+                                  <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
+                                    Downloads the official kit from {t.kit.host}
+                                  </span>
+                                )}
+                                {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+                <p className="tpl-choice" data-testid="template-choice">
+                  Starting from {chosen ? chosen.name : 'the built-in article'}
+                  {chosen?.license ? ` (${chosen.license})` : ''}
+                  {chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
+                </p>
+              </>
             )}
             <div className="modal__row">
-              <button className="btn" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="btn btn--primary" onClick={create} data-testid="create-project">Create</button>
+              <button className="btn" onClick={closeCreate}>Cancel</button>
+              <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
             </div>
           </div>
         </Modal>

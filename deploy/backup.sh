@@ -23,7 +23,7 @@ docker run --rm \
   -v "${DATA_VOL}":/data:ro \
   -v "${SECRETS_VOL}":/secrets:ro \
   -v "${OUT_DIR}":/backup \
-  alpine tar czf "/backup/${OUT_FILE}" -C / data secrets
+  alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce tar czf "/backup/${OUT_FILE}" -C / data secrets
 
 echo "Backup written: ${OUT_DIR}/${OUT_FILE}"
 echo "Contains: /data (projects + git repos) and /secrets (users, sessions, API keys, comments)."

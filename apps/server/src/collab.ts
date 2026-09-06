@@ -226,6 +226,10 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     if (!parsed) throw new Error(`invalid document name: ${documentName}`);
     const { projectId, branch, filePath } = parsed;
     if (isSignalDoc(filePath)) return document; // ephemeral coordination channel, nothing to load
+    // A client whose socket was closed by evictDoc reconnects at once; while
+    // the tombstone stands, the file is gone on purpose and a fresh empty doc
+    // would let that client's copy write it straight back.
+    if (tombstoned.has(documentName)) throw new Error('file was deleted');
     await ensureWorktree(projectId, branch);
     const text = document.getText(TEXT_KEY);
     if (text.length > 0) return document; // already has state (e.g. synced from a peer node)
@@ -292,12 +296,30 @@ export function evictDoc(projectId: string, branch: string, filePath: string): v
   deleteSnapshot(name); // file deleted/renamed → drop its collab snapshot so a re-create starts clean
   const doc = hocuspocus.documents.get(name) as (Y.Doc & { destroy?: () => void }) | undefined;
   if (doc) {
+    // Clients still on this doc would keep editing a file that no longer
+    // exists and write it back on their next store; drop them first.
+    try { hocuspocus.closeConnections(name); } catch { /* no connections */ }
     hocuspocus.documents.delete(name);
     try { doc.destroy?.(); } catch { /* noop */ }
   }
   // allow a later re-create of the same path to persist again
   setTimeout(() => untombstone(name), 5000);
+  bumpFilesSignal(projectId, branch);
 }
+
+/**
+ * Tell every client on a branch that its file list changed. The tree is a
+ * REST listing; this bumps a shared counter in an ephemeral collab doc (the
+ * same trick the review comments use) so open editors refetch instead of
+ * showing a snapshot from page load. No client on the branch, nothing to do.
+ */
+export const FILES_SIGNAL = '.aldine/files-signal';
+export function bumpFilesSignal(projectId: string, branch: string): void {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as Y.Doc | undefined;
+  if (!doc) return;
+  try { doc.getMap<number>('signal').set('v', Date.now()); } catch { /* best effort */ }
+}
+
 
 /**
  * Drop every live collab socket on a project, forcing clients to reconnect and
@@ -424,6 +446,7 @@ export function flushBranchDocs(projectId: string, branch: string): number {
  * so connected editors update in place.
  */
 export function refreshBranchDocsFromDisk(projectId: string, branch: string): void {
+  bumpFilesSignal(projectId, branch); // every caller just changed the branch on disk
   bumpContentVersion(projectId, branch); // git just rewrote files under this branch
   hocuspocus.documents.forEach((doc: Y.Doc & { name: string }, name: string) => {
     const parsed = parseDocName(name);

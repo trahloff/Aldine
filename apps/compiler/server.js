@@ -6,6 +6,7 @@
  *   POST /compile  { projectDir, rootFile, engine? }  ->
  *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs }
  *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' } }
+ *   GET  /catalog  -> { ok, generatedAt, classes: [{ id, cls, kind, license, sample }] }
  *
  * The compiler shares the projects volume (read) and an output cache volume
  * (write) with the app server, so no file transfer is needed.
@@ -17,6 +18,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { getCatalog } = require('./catalog.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4020;
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../.data');
@@ -69,6 +71,54 @@ function parseLog(log) {
     }
   }
   return errors;
+}
+
+/**
+ * Parse the bibliography log (.blg, written by both bibtex and biber) for
+ * errors. They never reach the LaTeX log: a malformed .bib entry makes bibtex
+ * write no .bbl at all, and the LaTeX log then shows only the fallout — one
+ * "Citation undefined" warning per citation, hundreds of them, none of which
+ * names the file and line to fix. bibtex's own `Warning--` lines are the noise
+ * the user cannot act on and stay out.
+ */
+function parseBibLog(log) {
+  const errors = [];
+  for (const line of log.split('\n')) {
+    // bibtex: "I was expecting a `,' or a `}'---line 42 of file refs.bib".
+    // A `Warning--` continuation is "--line N of file X" (two dashes) and so
+    // does not match.
+    const located = line.match(/^(.*\S)---line (\d+) of file (\S+)/);
+    if (located) {
+      errors.push({ type: 'error', file: located[3], line: Number(located[2]), message: `BibTeX: ${located[1].trim()}` });
+      continue;
+    }
+    // bibtex failures with no place to point at: a missing .bst or .bib file.
+    if (/^(I couldn't open|Sorry---you)/.test(line)) {
+      errors.push({ type: 'error', line: null, message: `BibTeX: ${line.trim()}` });
+      continue;
+    }
+    // biber: "[0] ... ERROR - Cannot find 'refs.bib'!"
+    const biber = line.match(/\b(ERROR|WARN) - (.*\S)/);
+    if (biber) errors.push({ type: biber[1] === 'ERROR' ? 'error' : 'warning', line: null, message: `Biber: ${biber[2].trim()}` });
+  }
+  return errors;
+}
+
+/**
+ * latexmk's own reason for failing, for a run whose logs parse to no error at
+ * all — a missing input file, an engine that would not start. Without it the
+ * UI can only say "typesetting failed" and leave the user nothing to act on.
+ */
+function latexmkFailure(out) {
+  const at = out.lastIndexOf('Collected error summary');
+  if (at < 0) return [];
+  const items = [];
+  for (const line of out.slice(at).split('\n').slice(1)) {
+    if (!/^\s+\S/.test(line)) break;
+    const text = line.trim();
+    if (!text.startsWith('Refer to')) items.push(text);
+  }
+  return items.map((message) => ({ type: 'error', line: null, message: `Typesetting failed: ${message}` }));
 }
 
 function run(cmd, args, opts, timeoutMs) {
@@ -142,10 +192,23 @@ async function compile(body) {
   }
 }
 
+/**
+ * A root file is a relative path inside the project. A segment starting with
+ * "-" is refused because the name ends up on a latexmk command line, and
+ * latexmk reads "-pdflatex=<program>" as an option that runs <program>: with
+ * it, whoever can name the main document runs commands in this container.
+ * The "./" prefix in mkArgs is the second lock on the same door.
+ */
+function invalidRootFile(rootFile) {
+  if (typeof rootFile !== 'string' || !rootFile) return true;
+  if (rootFile.includes('..') || path.isAbsolute(rootFile)) return true;
+  return rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'));
+}
+
 async function compileInner(body) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
@@ -166,16 +229,25 @@ async function compileInner(body) {
     // still exits non-zero when errors occurred, so the caller gets a complete
     // PDF plus the error list (the default). With it, the run stops at the
     // first error and the PDF on disk is truncated at that page.
-    ...(haltOnError ? ['-halt-on-error'] : []),
+    //
+    // -f is the other half of running to completion, and only nonstopmode
+    // without it looks like it works: latexmk gives up after the pass that
+    // errored ("Errors, so I did not complete making targets"), so bibtex and
+    // the reruns that resolve citations and cross-references never happen. A
+    // paper with one bad macro then renders every \cite as [?] and every
+    // \ref as ??. latexmk still exits non-zero, so `ok` stays false.
+    ...(haltOnError ? ['-halt-on-error'] : ['-f']),
     '-file-line-error',
     // no -no-shell-escape: the image sets texmf shell_escape=p (restricted),
     // so only whitelisted programs (epstopdf, kpsewhich, bibtex, …) run.
     '-synctex=1',
     '-cd', // chdir to the root file's directory before compiling
     `-outdir=${OUT_SUBDIR}`,
-    rootFile,
+    `./${rootFile}`, // never bare: a name starting with "-" must stay a file, not an option
   ];
-  const base = path.basename(rootFile).replace(/\.tex$/, '');
+  // Case-insensitive: the root picker accepts MAIN.TEX, and latexmk writes
+  // MAIN.pdf for it; stripping only ".tex" would look for MAIN.TEX.pdf.
+  const base = path.basename(rootFile).replace(/\.tex$/i, '');
   const rel = (f) => path.join(rootDir, OUT_SUBDIR, f); // path relative to the project dir
   const outAbs = path.join(absDir, rootDir, OUT_SUBDIR);
   const pdfPath = path.join(outAbs, `${base}.pdf`);
@@ -203,7 +275,13 @@ async function compileInner(body) {
   // leftover .aux/.bcf artifacts make an otherwise-valid document fail with an
   // undefined-control-sequence in the .aux (\abx@aux@…, \bibcite, …). Wipe the
   // regenerable aux files once and rebuild — the .aux is not source of truth.
-  if (code !== 0 && !timedOut && /(\\abx@aux@|\\bibcite|\\@writefile|undefined)/i.test(readLog(out)) && /\.(aux|bcf)\b/i.test(readLog(out))) {
+  // The bare word "undefined" and a mention of the .aux are in nearly every
+  // failing log; only an error located in the .aux/.bcf next to one of its own
+  // macros is the stale-artifact case. Otherwise every failing compile would
+  // pay a second full -g build (each invocation is a complete multi-pass run
+  // under -f).
+  const staleAux = (l) => /\.(aux|bcf):\d+:/i.test(l) && /(\\abx@aux@|\\bibcite|\\@writefile)/.test(l);
+  if (code !== 0 && !timedOut && staleAux(readLog(out))) {
     for (const ext of ['aux', 'bcf', 'bbl', 'blg', 'run.xml', 'toc', 'out', 'fls', 'fdb_latexmk']) {
       try { fs.rmSync(path.join(outAbs, `${base}.${ext}`), { force: true }); } catch { /* best effort */ }
     }
@@ -211,7 +289,22 @@ async function compileInner(body) {
   }
   const durationMs = Date.now() - t0;
   let log = readLog(out);
+  // A previous run's outputs stay on disk when this run fails, so existence
+  // alone says nothing about which run wrote them. "Fresh" = written by this
+  // run: mtime at or after the sentinel's (same clock, second granularity at
+  // worst, and a write in the sentinel's own second still counts).
+  const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  const bibLogPath = path.join(outAbs, `${base}.blg`);
   const errors = parseLog(log);
+  // This run's .blg, or an older one that latexmk still holds against the
+  // document: latexmk does not re-run bibtex/biber until the .bib changes, and
+  // until then reports "gave an error in previous invocation", whose located
+  // errors are the ones in that older .blg. A stale .blg from a .bib the user
+  // already fixed cannot reach here, because fixing the .bib re-runs the rule.
+  const bibRuleFailed = /\b(bibtex|biber)\b[^\n]*gave an error/i.test(out);
+  if (isFresh(bibLogPath) || bibRuleFailed) {
+    try { errors.push(...parseBibLog(fs.readFileSync(bibLogPath, 'utf8'))); } catch { /* unreadable is not an error */ }
+  }
   // -file-line-error paths are relative to the compile dir (the root file's
   // dir, thanks to -cd) — reduce in-project ones to project-relative paths so
   // the editor's error links and the AI-fix prompt name files the way the rest
@@ -220,13 +313,31 @@ async function compileInner(body) {
     if (typeof e.file !== 'string' || !e.file) continue;
     const abs = path.resolve(absDir, rootDir, e.file);
     if (abs === absDir || abs.startsWith(absDir + path.sep)) e.file = path.relative(absDir, abs);
+    // An error inside a generated file (the .bbl bibtex just wrote, an .aux)
+    // has a real line number in a file the user cannot open or fix. Say which
+    // file it was and drop the link, so the row explains the fallout while the
+    // .bib error above it stays the one to click.
+    if (e.file.split(path.sep).includes(OUT_SUBDIR)) {
+      e.message = `${path.basename(e.file)} (generated)${e.line != null ? ` line ${e.line}` : ''}: ${e.message}`;
+      e.file = null;
+      e.line = null;
+    }
   }
+  // One broken .bib entry makes every pass report the same generated-file error;
+  // identical rows tell the user nothing the first one did not.
+  const seen = new Set();
+  const deduped = errors.filter((e) => {
+    const key = `${e.type}\u0000${e.file ?? ''}\u0000${e.line ?? ''}\u0000${e.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  errors.length = 0;
+  errors.push(...deduped);
   const ok = code === 0 && fs.existsSync(pdfPath);
-  // A previous run's PDF/SyncTeX stay on disk when this run fails, so existence
-  // alone says nothing about which run wrote them. "Fresh" = written by this
-  // run: mtime at or after the sentinel's (same clock, second granularity at
-  // worst, and a write in the sentinel's own second still counts).
-  const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  // Never report a failure the user cannot read: a run that fails with nothing
+  // in either log falls back to latexmk's own summary.
+  if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
@@ -248,11 +359,11 @@ async function compileInner(body) {
 async function synctex(body) {
   const { projectDir, rootFile = 'main.tex', direction, line, column = 0, page, x, y } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
-  if (!rootFile || rootFile.includes('..') || path.isAbsolute(rootFile)) throw new Error('invalid rootFile');
+  if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   const rootDir = path.dirname(rootFile);
-  const base = path.basename(rootFile).replace(/\.tex$/, '');
+  const base = path.basename(rootFile).replace(/\.tex$/i, '');
   const pdf = path.join(rootDir, OUT_SUBDIR, `${base}.pdf`);
   let args;
   if (direction === 'forward') {
@@ -291,6 +402,10 @@ async function synctex(body) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive });
+  if (req.method === 'GET' && (req.url === '/catalog' || req.url.startsWith('/catalog?'))) {
+    return getCatalog().then((c) => json(res, 200, c), (err) => json(res, 500, { ok: false, error: String(err && err.message || err) }));
+  }
+
   if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex')) {
     let raw = '';
     req.on('data', (d) => { raw += d; });
@@ -308,6 +423,12 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { ok: false, error: 'not found' });
 });
 
-probeTexLive().finally(() => {
-  server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
-});
+// The log parsers are pure and worth testing without a TeX Live image; the
+// server only starts when this file is run directly (the image's CMD).
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile };
+
+if (require.main === module) {
+  probeTexLive().finally(() => {
+    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
+  });
+}

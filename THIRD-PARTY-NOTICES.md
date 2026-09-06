@@ -13735,7 +13735,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
 ```
 
-## hono 4.13.5
+## hono 4.13.7
 
 License: MIT
 
@@ -14191,7 +14191,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim._**
 ```
 
-## jose 6.2.10
+## jose 6.2.12
 
 License: MIT
 

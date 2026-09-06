@@ -3,5 +3,12 @@
   "name": "IAC Conference Paper",
   "description": "International Astronautical Congress manuscript (unofficial iac class, biblatex). Not affiliated with or endorsed by the IAF.",
   "icon": "🛰",
-  "order": 2
+  "order": 2,
+  "category": "General",
+  "license": "LPPL 1.3c",
+  "licenseUrl": "https://www.latex-project.org/lppl/lppl-1-3c.txt",
+  "source": {
+    "url": "https://github.com/trahloff/Aldine/tree/main/templates/iac-paper",
+    "version": "0.3.0"
+  }
 }

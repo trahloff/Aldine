@@ -1,3 +1,3 @@
-# Overleaf-style build settings: $pdf_mode 4 selects XeLaTeX.
-$pdf_mode = 4;
+# Overleaf-style build settings: $pdf_mode 5 selects XeLaTeX (4 is LuaLaTeX).
+$pdf_mode = 5;
 $bibtex_use = 2;

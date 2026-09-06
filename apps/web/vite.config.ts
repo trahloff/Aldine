@@ -19,6 +19,10 @@ function gitRev(): string {
 }
 
 export default defineConfig({
+  // Relative base: chunk and asset URLs resolve from the loading script's own
+  // URL, so one build serves at the root or under ALDINE_BASE_PATH. The server
+  // pins index.html's own references to the base path when it serves it.
+  base: './',
   define: {
     __ALDINE_VERSION__: JSON.stringify(pkg.version),
     __ALDINE_REV__: JSON.stringify(gitRev()),

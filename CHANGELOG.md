@@ -88,63 +88,6 @@ All notable changes to Aldine are documented here. The format follows
   Connect carry a "via Connect" badge, and the manual token section is kept
   for scripts. Signing in on the consent page through an SSO provider resumes
   the consent afterwards.
-- Blank projects: a "Blank" tile leads the template grid and creates a project
-  with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
-  does the same. The editor's empty state says "Create a file to start writing"
-  with a New file button that suggests `main.tex`. A project without a `.tex`
-  file has no typeset root and is not auto-typeset; the first `.tex` created,
-  renamed in, or found at typeset time (files can arrive through git) becomes
-  the root, and deleting the last `.tex` unsets it again. Typesetting a project
-  with no `.tex` answers 400 "No .tex file to typeset" instead of reaching the
-  compiler, and the PDF pane says so instead of suggesting the shortcut. A root
-  derived from the tree (at typeset time, on the first `.tex`, after the root
-  is deleted) is ranked like an import: `main.tex` at the top level over a
-  nested one, a file with `\documentclass` over one without.
-- `POST /api/projects` validates `files`: a key that would land in `.git` or
-  `.aldine*`, escapes the project, is empty, is both a file and a directory, or
-  carries non-string content answers 400 and no project is created (previously
-  a seeded `.git/config` reached the fresh repo before its initial commit ran
-  git). Keys are normalised like ZIP entries (`./a.tex`, backslashes), as are
-  roots adopted from a file write or rename. `.git` and `.aldine*` are screened
-  without regard to letter case or a trailing dot or space (`.GIT/config`,
-  `.git./config`), which reach `.git/config` on macOS and Windows; the same
-  screen guards file writes, renames, ZIP imports and the file listing. A seed
-  that makes `.gitignore` a directory is refused with 400 rather than failing
-  the write of the project's own `.gitignore`.
-- The New project dialog only posts a template id the server listed; on a
-  server without a templates directory the pick stays empty and Create seeds
-  the default article, with the Blank tile still there to choose.
-- Project settings dialog (toolbar "Settings", command palette) with a
-  Compiler section: main document, compiler (pdfLaTeX, XeLaTeX, LuaLaTeX),
-  the connected compiler's TeX Live release and scheme ("2026, full"), "Stop
-  on first error" and "Auto-typeset". The preview-header engine picker and
-  the log dialog's checkbox stay as shortcuts to the same settings. The
-  project name is editable there too. (#7)
-- Engine detection on ZIP import: a `latexmkrc` in the archive (`$pdf_mode`
-  4 or 5, or a `$pdflatex`/`$xelatex`/`$lualatex` line), a `% !TEX program`
-  line, or a root file using fontspec, unicode-math, polyglossia, xepersian,
-  bidi or luacode sets the project to XeLaTeX or LuaLaTeX; the import toast
-  says which and why, and the settings panel repeats the reason. A
-  `$pdflatex` line that only passes flags to pdflatex (the Overleaf
-  `-shell-escape` idiom), or an rc that assigns all three engine commands,
-  chooses nothing, so the root file still decides.
-  Sources that are not UTF-8 are transcoded to UTF-8: Windows-1252 (a
-  superset of Latin-1, so Word-era quotes and dashes survive), or Latin-9 /
-  Mac Roman when the inputenc option names them; the option is switched to
-  `utf8` and the file is named in the toast. A UTF-8 file with a stray byte
-  is left as it was, multibyte characters intact. Overleaf exports that need
-  XeLaTeX now typeset on first open. (#7)
-- The compiler reports its TeX Live release and scheme at `GET /health`
-  (`texlive: { release, scheme }`; "unknown" outside the image), and the
-  server exposes it, cached, at `GET /api/compiler`. Switching between
-  several TeX Live versions (`ALDINE_COMPILERS`) is not part of this change;
-  the panel displays the one compiler the server is connected to.
-- The e2e suites take `E2E_PORT`, `E2E_MOCK_PORT` and `E2E_AUTH_PORT` so two
-  checkouts can run side by side (see AGENTS.md).
-- AWS deployment: an optional staging service on the same load balancer
-  (`staging_domain_name`), with its own filesystem, log group and certificate,
-  so a feature branch can be tried at a real URL before it reaches prod. The
-  deploy and rollback workflows take a `target` input (production or staging).
 - Optimistic concurrency for REST file access: `GET /file` returns the branch's
   content version in an `x-aldine-content-version` header, `GET /files` returns
   `{ files, contentVersion }` (previously a bare array), and `PUT /file` accepts
@@ -259,6 +202,190 @@ All notable changes to Aldine are documented here. The format follows
   project-scoped PAT with nothing created, created and owner-visible for an
   unscoped one, template and unknown-template paths.
 
+### Fixed
+- A typeset that stops on an error and removes the PDF (what pdfTeX does once
+  a page has shipped out) no longer drops the preview's stale flag: the pages
+  on screen stay marked as the last successful typeset and the download link
+  goes away until the next successful run. The 0.4.0 fix for linking a
+  deleted file had cleared the flag with the link.
+- `GET`/`PUT /api/projects/:id/file` now flush open collaboration documents to
+  disk first, like every other disk-touching route already did. Before, a REST
+  read could be up to ~8 s staler than the editor, and a REST write landing on
+  that stale disk state would silently discard a live collaborator's unflushed
+  keystrokes when the document refreshed.
+- `GET /api/projects/:id/wordcount` (and the `wordcount` MCP tool) no longer
+  serve the previous root file's count after the root file is switched in
+  project settings: the cache is now keyed by root file as well as branch
+  content version, so a switch with no edit is reflected immediately.
+
+## [0.6.0] — 2026-09-06
+
+### Added
+- Sign in with ORCID. Set `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET` from a
+  Public API client (`ORCID_SANDBOX=1` for the sandbox) and the sign-in page
+  offers it next to Google and GitHub. Most researchers keep their ORCID
+  email private, so such an account has no email address: it is keyed by the
+  iD, shown in account settings, skipped by password reset and welcome mail,
+  and invited to a project by its ORCID iD instead of an address. A public,
+  verified ORCID email still matches an existing ORCID account with that
+  address. Postgres deployments get the migration on start (`users.email`
+  nullable, new `users.subject`). (#10)
+
+## [0.5.0] — 2026-09-05
+
+### Added
+- Aldine can live under a URL prefix, for hosts that put several apps behind
+  one origin (`https://server/internal/aldine/`). Set `ALDINE_BASE_PATH`, or
+  give `ALDINE_PUBLIC_URL` a path: the app, the API, the collaboration
+  websocket, plugin assets, OAuth callbacks, reset links and share links all
+  follow it, the session cookie is scoped to it, and anything outside the
+  prefix is not served — except the two probes an orchestrator aims at the
+  container itself: `/api/health` and a bare `GET /`, which answers 200 with
+  a pointer to the prefix, so compose healthchecks and load balancers keep
+  working. (#27)
+
+### Security
+- The hosted staging deployment is isolated from production. It had shared
+  the task security group that alone authorises the production filesystem
+  (including the secrets directory), received every production SSM secret,
+  pushed to the ECR repositories production task definitions resolve, and
+  was rolled by the same IAM role a feature branch could assume. Staging now
+  has its own security groups, secrets under `/papyr/staging/`, execution
+  role, repositories and deploy role; feature branches listed in
+  `github_deploy_branches` can reach staging only, and the production deploy
+  refuses to build on a task definition the staging role registered.
+
+### Fixed
+- Staging no longer inherits `ALDINE_SSO_ONLY` from production, so password
+  sign-in works there as documented.
+- The demo box pulls `main` and rebuilds during its nightly wipe instead of
+  running the commit it was provisioned with.
+
+## [0.4.1] — 2026-09-05
+
+0.4.0 was built but never published: its medium compiler image had been
+stitched from the full variant's manifests as well as its own, the release
+smoke test refused it, and version tags are never rewritten. 0.4.1 is the
+first published 0.4 release and carries everything listed under 0.4.0.
+
+### Fixed
+- The release pipeline's per-architecture digest artifacts are named with a
+  delimiter the variant cannot contain, so a variant's merge step only sees
+  its own manifests.
+- The file tree follows what others do. It was a snapshot from page load:
+  a file created, renamed or deleted in another tab, by a collaborator or by
+  the agent API stayed invisible until reload, and a tab that still had a
+  deleted file open wrote it back on its next keystroke. The server now
+  signals every open editor on a branch when its files change on disk (the
+  same channel the review comments use), a tab coming back to the foreground
+  refetches, and an editor whose open file was removed elsewhere moves off it
+  and says so; the collab socket for a deleted file is closed and refuses to
+  reopen it while the deletion is fresh.
+- Uploading a file whose name already exists asks before replacing it; it
+  used to swap the content in place, including the file open in the editor,
+  with typed work unrecoverable.
+- Create in the New project dialog accepts one click: a double-click or a
+  held Enter made two identical projects and opened the second.
+- Deleting a branch that has checkpoints main does not have says how many
+  and names the newest before asking; the question was the same one-liner as
+  for an empty branch, and the delete is permanent.
+- A typeset that finishes after you switched branch is dropped instead of
+  landing its PDF, status and errors on the branch now on screen; and the
+  preview resets on a branch change that arrives through Back/Forward, not
+  only through the branch menu.
+
+## [0.4.0] — 2026-09-05
+
+### Added
+- A theme control in project settings, under Appearance. Dark and light were
+  only switchable from the home screen or the command palette, so once you
+  were in a project there was no visible way back. It says it applies to this
+  browser, like the auto-typeset switch beside it.
+- Venue kits fetched from the publisher: 25 more venues in the template
+  gallery (NeurIPS, ICLR, ICML, AISTATS, AAAI, IJCAI, ECAI, ACL/EMNLP/NAACL,
+  COLING, CVPR, ICCV, ECCV, USENIX and USENIX Security, SIAM, MDPI,
+  Copernicus, Springer Nature, IOP, Taylor and Francis, Frontiers, eLife,
+  Wiley, Optica, Cell Press) whose class files TeX Live does not carry. The
+  tile says "Downloads the official kit from <host>"; picking it downloads the
+  publisher's own kit when the project is created, takes only the files the
+  registry names, and starts the paper from the kit's own document. Aldine
+  redistributes nothing: no publisher file is stored in the repo, and each
+  tile links the venue's terms instead of claiming a licence.
+  `templates/venues.json` is the only source of kit URLs, so no request can
+  influence what is fetched; an entry that is not https, or points off the
+  host it declares, is dropped when the registry loads. Caps are 20 seconds,
+  25 MB and three same-host redirects, and a successful kit is cached under
+  `CACHE_DIR/venue-kits/` for 7 days (and used at any age when the publisher
+  is down); the cache is keyed to the registry entry, so changing a venue's
+  kit URL or file list refetches instead of serving last year's files. A kit
+  that cannot be downloaded never fails project creation: the project is
+  created from a skeleton plus a `README-venue.md` naming the kit and what to
+  do, and a toast says so. That skeleton typesets as it stands: it stands on
+  `article`, keeps the venue's page options where those are article's own (the
+  two-column 10pt letterpaper CVPR and USENIX ask for), and leaves the class
+  and style lines the kit was going to bring as comments, because the one thing
+  a failed kit did not deliver is the venue's class. A venue the
+  compiler image already has installed is listed once, as the installed class,
+  which needs no download, and the installed and fetched venues are listed in
+  one alphabet inside each category.
+- Blank projects: a "Blank" tile leads the template grid and creates a project
+  with no files; `POST /api/projects` with `template: "blank"` (or `files: {}`)
+  does the same. The editor's empty state says "Create a file to start writing"
+  with a New file button that suggests `main.tex`. A project without a `.tex`
+  file has no typeset root and is not auto-typeset; the first `.tex` created,
+  renamed in, or found at typeset time (files can arrive through git) becomes
+  the root, and deleting the last `.tex` unsets it again. Typesetting a project
+  with no `.tex` answers 400 "No .tex file to typeset" instead of reaching the
+  compiler, and the PDF pane says so instead of suggesting the shortcut. A root
+  derived from the tree (at typeset time, on the first `.tex`, after the root
+  is deleted) is ranked like an import: `main.tex` at the top level over a
+  nested one, a file with `\documentclass` over one without.
+- `POST /api/projects` validates `files`: a key that would land in `.git` or
+  `.aldine*`, escapes the project, is empty, is both a file and a directory, or
+  carries non-string content answers 400 and no project is created (previously
+  a seeded `.git/config` reached the fresh repo before its initial commit ran
+  git). Keys are normalised like ZIP entries (`./a.tex`, backslashes), as are
+  roots adopted from a file write or rename. `.git` and `.aldine*` are screened
+  without regard to letter case or a trailing dot or space (`.GIT/config`,
+  `.git./config`), which reach `.git/config` on macOS and Windows; the same
+  screen guards file writes, renames, ZIP imports and the file listing. A seed
+  that makes `.gitignore` a directory is refused with 400 rather than failing
+  the write of the project's own `.gitignore`.
+- The New project dialog only posts a template id the server listed; on a
+  server without a templates directory the pick stays empty and Create seeds
+  the default article, with the Blank tile still there to choose.
+- Project settings dialog (toolbar "Settings", command palette) with a
+  Compiler section: main document, compiler (pdfLaTeX, XeLaTeX, LuaLaTeX),
+  the connected compiler's TeX Live release and scheme ("2026, full"), "Stop
+  on first error" and "Auto-typeset". The preview-header engine picker and
+  the log dialog's checkbox stay as shortcuts to the same settings. The
+  project name is editable there too. (#7)
+- Engine detection on ZIP import: a `latexmkrc` in the archive (`$pdf_mode`
+  4 or 5, or a `$pdflatex`/`$xelatex`/`$lualatex` line), a `% !TEX program`
+  line, or a root file using fontspec, unicode-math, polyglossia, xepersian,
+  bidi or luacode sets the project to XeLaTeX or LuaLaTeX; the import toast
+  says which and why, and the settings panel repeats the reason. A
+  `$pdflatex` line that only passes flags to pdflatex (the Overleaf
+  `-shell-escape` idiom), or an rc that assigns all three engine commands,
+  chooses nothing, so the root file still decides.
+  Sources that are not UTF-8 are transcoded to UTF-8: Windows-1252 (a
+  superset of Latin-1, so Word-era quotes and dashes survive), or Latin-9 /
+  Mac Roman when the inputenc option names them; the option is switched to
+  `utf8` and the file is named in the toast. A UTF-8 file with a stray byte
+  is left as it was, multibyte characters intact. Overleaf exports that need
+  XeLaTeX now typeset on first open. (#7)
+- The compiler reports its TeX Live release and scheme at `GET /health`
+  (`texlive: { release, scheme }`; "unknown" outside the image), and the
+  server exposes it, cached, at `GET /api/compiler`. Switching between
+  several TeX Live versions (`ALDINE_COMPILERS`) is not part of this change;
+  the panel displays the one compiler the server is connected to.
+- The e2e suites take `E2E_PORT`, `E2E_MOCK_PORT` and `E2E_AUTH_PORT` so two
+  checkouts can run side by side (see AGENTS.md).
+- AWS deployment: an optional staging service on the same load balancer
+  (`staging_domain_name`), with its own filesystem, log group and certificate,
+  so a feature branch can be tried at a real URL before it reaches prod. The
+  deploy and rollback workflows take a `target` input (production or staging).
+
 - Download PDF button in the preview toolbar — saves the compiled PDF named
   after the project.
 - Public-demo hardening: `ALDINE_PROTECTED_PROJECTS` serves listed projects
@@ -287,7 +414,49 @@ All notable changes to Aldine are documented here. The format follows
   self-hosted edition stays AGPL, and that no feature that works today moves
   behind a paid tier.
 
+- Template gallery: the New project dialog groups templates by category
+  (Journals, Conferences, Theses, Slides, General), has a search box, and shows
+  each template's licence. Beside the four templates in `templates/`, the
+  gallery now offers a template per venue class installed in the compiler image
+  (fifteen on the full TeX Live image: Elsevier, IEEE Transactions and
+  conference, ACM, REVTeX, Springer LNCS, JMLR, AMS, MNRAS, APA 7, ACS, AIAA,
+  ASCE, ASME conference and SPIE): the compiler
+  answers `GET /catalog` with the classes it actually
+  has, their licence from `tlmgr`, and the class's own sample document when the
+  image ships one; where it does not, Aldine generates a skeleton with the
+  title block, abstract, a section and the class's usual bibliography style. No
+  publisher file is vendored into the repo, and an image without those classes
+  (or an older compiler) simply shows the four folder templates.
+- Every template folder carries a `LICENSE` file, and `template.json` carries
+  `license`, `licenseUrl` and `source` (upstream URL and version). `npm run
+  templates:check` fails on a template missing either, and CI runs it.
+- AWS deployment: an optional staging service on the same load balancer
+  (`staging_domain_name`), with its own filesystem, log group and certificate,
+  so a feature branch can be tried at a real URL before it reaches prod. The
+  deploy and rollback workflows take a `target` input (production or staging).
+
 ### Changed
+- Releases no longer move `:latest` on their own. A version tag now runs the
+  full CI suite on the tagged commit, builds `aldine-app` and
+  `aldine-compiler` as immutable `x.y.z` (and `sha-<commit>`) images, boots
+  those exact digests with the user-facing compose file and typesets a
+  document with a bibliography inside the sandbox, then waits for a human to
+  approve the promote step before `:latest` and the GitHub Release follow.
+  The same "Promote to latest" workflow, run by hand with an older version,
+  is the rollback: it re-tags what already exists, no rebuild. The compose
+  file and the README block pin `${ALDINE_VERSION:-0.3.0}` instead of
+  `:latest`, so a running install never changes under you; upgrading is
+  `ALDINE_VERSION=x.y.z docker compose pull && docker compose up -d`, and
+  rolling back is the same line with the previous version. CI now also runs
+  the web unit tests, checks that every place naming the version agrees, and
+  discovers the server unit test files instead of listing them (two branches
+  each adding a test used to conflict on that line, and the merge dropped one
+  side's tests without anything noticing). The server image installs from
+  the lockfile (`npm ci`), so the shipped dependency tree is the one CI
+  tested; a `.dockerignore` keeps a checkout's `node_modules`, `.git` and
+  `.data` out of the build context (a local `--build` used to copy the host's
+  `node_modules` over the installed one); and `deploy/backup.sh` and
+  `deploy/restore.sh` pin the `alpine` image by digest.
 - `POST /api/projects/import` accepts `multipart/form-data` with a `zip` file
   part (and an optional `name` field); the web client uploads the file that
   way, so the browser holds one copy of a 60 MB archive instead of four (file,
@@ -300,12 +469,16 @@ All notable changes to Aldine are documented here. The format follows
   `PATCH /api/projects/:id`); with it on, a failing run keeps the previous PDF
   on screen as before.
 
-- The compiler image defaults to full TeX Live (`TEXLIVE_SCHEME=full`): every
-  script and language compiles out of the box. The `medium` scheme stays for
-  constrained hosts and now includes the publisher classes and the Arabic/Persian,
-  Cyrillic, Greek and other-script collections (Persian via xepersian or
-  polyglossia verified). Self-hosters: rebuild the compiler image; expect ~9 GB
-  on disk for the default.
+
+- The compiler image is published in two variants. `aldine-compiler:<version>`
+  is the `medium` scheme, which now includes the publisher classes and the
+  Arabic/Persian, Cyrillic, Greek and other-script collections (Persian via
+  xepersian or polyglossia verified), about 3.7 GB on disk.
+  `aldine-compiler:<version>-full` is all of TeX Live (about 9 GB on disk):
+  every script and language, CJK included. Pick it with `ALDINE_TEXLIVE=-full`
+  next to `ALDINE_VERSION` in the compose environment; `latest-full` tracks
+  `latest`. A missing-package error hint names that switch. Building from
+  source (`docker-compose.full.yml`) still takes `ALDINE_TEXLIVE_SCHEME`.
 - The compiler image installs `collection-publishers` (elsarticle, IEEEtran,
   acmart, revtex4-2, agujournal, copernicus, and the other journal and
   conference classes) on the medium scheme, and the full scheme's base image
@@ -324,6 +497,106 @@ All notable changes to Aldine are documented here. The format follows
   want your instance indexed.
 
 ### Fixed
+- The hosted deploy (`deploy-aws.yml`) pins the compiler build to full TeX
+  Live now that the Dockerfile defaults to medium, assumes its AWS role
+  again before rolling the service (the hour-long compiler build outlived
+  the first session's token, so the roll failed after the images were
+  pushed), and no longer defaults its target to production; the rollback
+  workflow reads its revision input from the environment and accepts only
+  digits.
+- Switching the main document and back no longer shows the other document
+  as a clean typeset. The remembered preview URL was keyed on the branch
+  only, so a typeset of an unchanged `main.tex` after a spell on `arxiv.tex`
+  handed back the URL that still named `arxiv.pdf`. The URL now stands only
+  for the PDF the current main document produces. In the same place: with
+  "stop on first error" on, a halted run deletes the PDF, and the preview
+  kept linking it; a previous PDF is offered only while its file exists.
+- Two scans in ZIP import were quadratic on a crafted archive: an upload of
+  unterminated `\usepackage{` runs held the server for ten seconds at 256 KB
+  and without bound at the 40 MB per-file cap, with no login needed on a
+  default install. Both scans are bounded now (190 ms on the same input).
+- A ZIP with more than 20 000 entries is refused up front. ZIP64 support
+  lifted the old 65 535-entry ceiling, and every entry costs a write and a
+  git add whatever its size, so a 60 MB archive of empty entries meant
+  hundreds of thousands of them.
+- A compiler that is slow to answer its first catalog probe no longer
+  empties the venue gallery for the life of the process, and a failed
+  refresh on the server keeps the last list it had instead of an empty one
+  (which made a tile the gallery had just shown fail with "unknown
+  template" on create).
+- A project whose main document is `MAIN.TEX` (any capitalisation but
+  `.tex`) typesets again. The root picker accepted it, latexmk wrote
+  `MAIN.pdf`, and the compiler looked for `MAIN.TEX.pdf`, so every typeset
+  came back as a failure with no error to show and a second full rebuild each
+  time. The editor's auto-typeset and empty state now recognise it too.
+- A `latexmkrc` with `$pdf_mode = 4` now selects LuaLaTeX and `= 5` XeLaTeX,
+  which is what latexmk means by them (`-pdflua` sets 4, `-pdfxe` sets 5);
+  they were swapped, so an archive that named its engine that way imported
+  with the other one and failed its first typeset.
+- A bibliography error stays visible on the typesets that follow it. latexmk
+  does not re-run bibtex or biber until the `.bib` changes, and only reports
+  that the rule "gave an error in previous invocation"; the located error
+  from that run (file and line in the `.bib`) was dropped as stale, leaving
+  a row with no file to click.
+- A failing typeset no longer pays a second full rebuild. The stale-aux
+  recovery matched the word "undefined" in any error and the `.aux` mention
+  in any log, so nearly every failed compile ran twice; with runs to
+  completion, that doubled the wait. It now fires only for an error located
+  in the `.aux`/`.bcf` next to one of that file's own macros.
+- A cookie on the same host that is not valid percent-encoding (another
+  app's `x=100%`, a truncated `%E0%A4%A`) no longer turns every request into
+  `{"error":"Internal server error"}` until the user clears site cookies. Such
+  a value is now kept as-is and simply fails session lookup; the rest of the
+  Cookie header is parsed normally. (#26)
+
+- The preview toolbar fits on one line at ordinary pane widths again. It had
+  outgrown the pane, so it wrapped to a second row and left the two pane
+  headers at different heights. The pane's own "Preview" title now appears
+  only when the pane is wide enough to spare it, and the download button says
+  "Download"; the wrap stays as the backstop for narrower panes.
+- A dialog taller than the window no longer hides its own buttons. The panel
+  caps at 70% of the window height and scrolls; the action row scrolled away
+  with the content, so on a laptop-sized window the New project dialog showed
+  no Create button and Project settings no Close. The row is pinned to the
+  bottom of the panel now, in every dialog.
+- The editor no longer scrolls sideways. The preview toolbar (status, engine,
+  zoom, Download, Auto) is wider than a narrow preview pane, and it pushed the
+  page out instead of fitting: the app toolbar slid off the right edge and the
+  Auto switch went with it. The toolbar wraps instead, and shrinking the window
+  now pulls an over-wide preview pane back with it rather than leaving it at
+  the width it had when the tab was opened.
+- Typesetting now really runs to completion: latexmk is forced past a failing
+  pass, so bibtex and the reruns that resolve citations and cross-references
+  still happen. Dropping `-halt-on-error` alone was not enough — latexmk gave
+  up after the pass that errored ("Errors, so I did not complete making
+  targets"), and a paper with one bad macro or one malformed `.bib` entry
+  rendered with every `\cite` as `[?]` and every `\ref` as `??`. Two real
+  papers that used to typeset that way now come out complete (one grew from 41
+  pages to 53 once its bibliography returned). "Stop on first error" keeps the
+  old behaviour.
+- Bibliography errors are reported with the file and line to fix. bibtex and
+  biber write them to the `.blg`, never the LaTeX log, so a malformed entry
+  used to surface only as hundreds of "Citation undefined" warnings and a
+  preview header that said "Failed" with nothing in the problems list. A
+  broken `.bib` now lists rows like "refs.bib · line 42 — BibTeX: I was
+  expecting a `,' or a `}'" that jump straight to the entry.
+- An error inside a generated file (the `.bbl` bibtex just wrote) says which
+  file it came from instead of offering a link into the output directory the
+  user cannot open, and identical error rows are listed once.
+- A failed typeset always says why: a run whose logs parse to no error at all
+  falls back to latexmk's own summary rather than an unexplained "Failed".
+- `POST /api/projects` rejects a seed whose file name is longer than the 255
+  bytes a filesystem accepts, naming the path, instead of failing halfway
+  through the write. A creation that fails for any other reason is now a 500
+  saying "Could not create the project", with the reason in the server log:
+  a full disk or a read-only data directory is this server's fault, not a bad
+  request, and its error text names the data directory.
+- Templates are read as bytes instead of UTF-8 text, so a template carrying a
+  logo, a figure or any other binary file reaches the new project intact.
+- A SyncTeX jump from the PDF is refused (409, with a toast) when the preview
+  on screen and the SyncTeX file on disk come from different typeset runs,
+  instead of landing on the wrong line. Compile results carry a `compileId`
+  that the lookup sends back.
 - ZIP import reads ZIP64 archives (64-bit sizes and offsets, the ZIP64
   end-of-central-directory record), so exports from tools that write ZIP64
   headers no longer fail as "not a zip file" or import partially. An entry
@@ -343,16 +616,6 @@ All notable changes to Aldine are documented here. The format follows
   on screen and the SyncTeX file on disk come from different typeset runs,
   instead of landing on the wrong line. Compile results carry a `compileId`
   that the lookup sends back.
-- `GET`/`PUT /api/projects/:id/file` now flush open collaboration documents to
-  disk first, like every other disk-touching route already did. Before, a REST
-  read could be up to ~8 s staler than the editor, and a REST write landing on
-  that stale disk state would silently discard a live collaborator's unflushed
-  keystrokes when the document refreshed.
-- `GET /api/projects/:id/wordcount` (and the `wordcount` MCP tool) no longer
-  serve the previous root file's count after the root file is switched in
-  project settings: the cache is now keyed by root file as well as branch
-  content version, so a switch with no edit is reflected immediately.
-
 
 - Importing a ZIP larger than about 24 MB no longer fails with a bare
   "Payload Too Large": the import route now accepts the 60 MB the dialog
@@ -521,6 +784,26 @@ All notable changes to Aldine are documented here. The format follows
   seconds"; the README says ~2s, so the page does now too.
 
 ### Security
+- The main document's name could carry latexmk options. A root file such as
+  `-pdflatex=<command>` landed bare on the compiler's command line, and
+  latexmk ran the command; with auth off, or as any project member with it
+  on, that was command execution inside the compiler container, which mounts
+  every project. The compiler and the settings route now refuse a path
+  segment starting with `-`, and the compiler passes the root file as
+  `./<name>` so it can never be read as an option. Reported by the September
+  regression review; present since the compiler was written.
+- A SyncTeX lookup could name another project's directory in its body and
+  read that project's SyncTeX records (file names and line numbers). Only the
+  lookup fields cross to the compiler now.
+- The minimal `docker-compose.yml` carries the compiler sandbox again: an
+  `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
+  `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
+  in `docker-compose.full.yml` while SECURITY.md and the README went on
+  promising it, so quick-start instances were compiling untrusted LaTeX in a
+  container with full egress and every capability. The README quick start is the
+  same file, verbatim, including the `name: aldine` line that fixes the volume
+  names.
+
 - The minimal `docker-compose.yml` carries the compiler sandbox again: an
   `internal: true` network with no route to the internet, `cap_drop: [ALL]`,
   `no-new-privileges`, and memory/PID bounds. The 0.3.0 split had left all of it
@@ -701,7 +984,11 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/trahloff/Aldine/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trahloff/Aldine/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trahloff/Aldine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/trahloff/Aldine/releases/tag/v0.1.0

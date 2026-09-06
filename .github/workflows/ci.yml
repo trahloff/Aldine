@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # release.yml runs this suite on the tagged commit before building images:
+  # a tag push does not trigger the push/pull_request events above.
+  workflow_call:
 
 jobs:
   check:
@@ -50,6 +53,19 @@ jobs:
       # edition. Same command checks both.
       - name: Third-party notices and licence gate
         run: npm run notices:check
+      # A starter file whose licence nobody recorded is one nobody can safely
+      # copy into a paper, and the gallery shows a licence on every tile.
+      - name: Template licence gate
+        run: npm run templates:check
+      - name: Server unit tests
+        run: npm run test:unit -w apps/server
+      - name: Web unit tests
+        run: npm run test -w apps/web
+      # package.json versions, the compose default and the README block all
+      # name the release by hand; a tag whose pins disagree is refused by
+      # release.yml, so catch the drift on the PR instead.
+      - name: Release pins agree
+        run: node scripts/check-release-pins.mjs
 
   compose:
     name: docker compose config is valid

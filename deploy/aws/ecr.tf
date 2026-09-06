@@ -1,10 +1,18 @@
 locals {
-  ecr_repos = ["papyr-server", "papyr-compiler"]
+  # One repository pair per deployment. Staging (when enabled) gets its own so
+  # a feature-branch push can never overwrite a tag a prod task definition
+  # resolves, and staging churn never evicts the SHA-tagged images older prod
+  # revisions roll back to. `keep` is the lifecycle window: prod revisions are
+  # rollback targets, staging ones are disposable.
+  ecr_repos = merge(
+    { "papyr-server" = { keep = 30 }, "papyr-compiler" = { keep = 30 } },
+    local.staging_enabled ? { "papyr-staging-server" = { keep = 10 }, "papyr-staging-compiler" = { keep = 10 } } : {},
+  )
 }
 
 resource "aws_ecr_repository" "repos" {
-  for_each             = toset(local.ecr_repos)
-  name                 = each.value
+  for_each             = local.ecr_repos
+  name                 = each.key
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -36,11 +44,11 @@ resource "aws_ecr_lifecycle_policy" "repos" {
       },
       {
         rulePriority = 2
-        description  = "Keep the last 30 tagged images"
+        description  = "Keep the last ${local.ecr_repos[each.key].keep} tagged images"
         selection = {
           tagStatus   = "any"
           countType   = "imageCountMoreThan"
-          countNumber = 30
+          countNumber = local.ecr_repos[each.key].keep
         }
         action = { type = "expire" }
       },

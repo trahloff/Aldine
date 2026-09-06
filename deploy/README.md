@@ -38,6 +38,11 @@ GOOGLE_OAUTH_CLIENT_SECRET=...
 # GitHub login (SSO):  https://github.com/settings/developers
 GITHUB_LOGIN_CLIENT_ID=...
 GITHUB_LOGIN_CLIENT_SECRET=...
+# ORCID login (SSO): https://orcid.org/developer-tools (Public API client; the
+# callback must be HTTPS). Researchers whose ORCID email is private get an
+# account without an email; invite them by ORCID iD.
+ORCID_CLIENT_ID=...
+ORCID_CLIENT_SECRET=...
 
 # GitHub sync (import repos as projects, push/pull) — a SEPARATE OAuth app with
 # repo scope. Callback: <ALDINE_PUBLIC_URL>/api/github/oauth/callback
@@ -225,11 +230,13 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 |---|---|
 | `ALDINE_DOMAIN` | Domain Caddy serves + provisions TLS for (`tls` profile) |
 | `ALDINE_PUBLIC_URL` | Absolute origin used in OAuth callbacks and reset links — required for SSO and email |
+| `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
+| `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
 | `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |
@@ -247,5 +254,6 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `RL_COMPILE_CONCURRENCY` | Max concurrent compiles the app forwards (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
-| `ALDINE_TEXLIVE_SCHEME` | Compiler image build: `full` (default, all of TeX Live, ~9 GB on disk) or `medium` (curated set + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~3 GB) |
+| `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; curated set + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~3.7 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
+| `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (curated TeX Live) or `-full` (all of TeX Live, from 0.4.0) |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |

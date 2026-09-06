@@ -3,5 +3,12 @@
   "name": "Presentation",
   "description": "Beamer slides with a restrained metropolis-like look.",
   "icon": "🎞",
-  "order": 3
+  "order": 3,
+  "category": "General",
+  "license": "MIT",
+  "licenseUrl": "https://opensource.org/license/mit",
+  "source": {
+    "url": "https://github.com/trahloff/Aldine/tree/main/templates/beamer",
+    "version": "0.3.0"
+  }
 }

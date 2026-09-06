@@ -18,10 +18,11 @@ on:
         description: Service to roll back
         type: choice
         options: [production, staging]
-        default: production
+        required: true
 
 env:
   SERVICE: ${{ inputs.target == 'staging' && 'papyr-staging' || 'papyr' }}
+  DEPLOY_ROLE_ARN: ${{ inputs.target == 'staging' && vars.AWS_STAGING_DEPLOY_ROLE_ARN || vars.AWS_DEPLOY_ROLE_ARN }}
 
 permissions:
   id-token: write # OIDC
@@ -34,16 +35,22 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Roll the service back
+        # The revision is free text; it reaches the script through the
+        # environment, never by interpolation into the script body, and only
+        # digits are accepted.
+        env:
+          REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
           CURRENT=$(aws ecs describe-services --cluster papyr --services "$SERVICE" \
             --query 'services[0].taskDefinition' --output text --region "${{ vars.AWS_REGION }}")
           CUR_REV="${CURRENT##*:}"
-          REV="${{ inputs.revision }}"
+          REV="$REVISION"
+          case "$REV" in *[!0-9]*) echo "revision must be a number, got '$REV'"; exit 1;; esac
           if [ -z "$REV" ]; then REV=$((CUR_REV - 1)); fi
           if [ "$REV" -lt 1 ] || [ "$REV" = "$CUR_REV" ]; then
             echo "Nothing to do (current revision: $CUR_REV, requested: $REV)"; exit 1
@@ -57,6 +64,6 @@ jobs:
             --task-definition "$SERVICE:$REV" --region "${{ vars.AWS_REGION }}"
           aws ecs wait services-stable --cluster papyr --services "$SERVICE" \
             --region "${{ vars.AWS_REGION }}"
-          echo "## Rolled back (${{ inputs.target || 'production' }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Rolled back (${{ inputs.target }})" >> "$GITHUB_STEP_SUMMARY"
           echo "- from: \`$SERVICE:$CUR_REV\` → to: \`$SERVICE:$REV\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- server image: \`$IMG\`" >> "$GITHUB_STEP_SUMMARY"

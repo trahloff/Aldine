@@ -22,9 +22,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const push = useCallback((text: string, kind: Toast['kind'] = 'info', action?: ToastAction) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind, action }]);
-    // a toast carrying an action needs time to be acted on; a sticky one waits
+    // a toast carrying an action needs time to be acted on; a sticky one waits.
+    // An error carries a sentence to read and usually something to do about
+    // it, so it stays about twice as long as a confirmation.
     if (action?.sticky) return;
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : 3400);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : kind === 'error' ? 7000 : 3400);
   }, []);
   return (
     <ToastCtx.Provider value={push}>

@@ -11,11 +11,13 @@ import * as github from './github.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
-import { listTemplates, templateFiles } from './templates.js';
+import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
+import { warmVenueCache } from './catalog.js';
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
 import { guessRoot, detectRoot } from './root.js';
+import { config } from './config.js';
 import { detectEngine, decodeText } from './detect.js';
 import { multipartBoundary, parseMultipart } from './multipart.js';
 import { aiConfigured, aiModel, diagnose } from './ai.js';
@@ -25,7 +27,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, publicBase } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
@@ -84,6 +86,8 @@ async function adoptRootIfUnset(id: string, branch: string, rel: string): Promis
     return root;
   } catch { return undefined; }
 }
+
+const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, ...rest } = meta;
@@ -169,7 +173,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // Fire-and-forget a simple welcome email (no verification step). Never let
       // a mail failure affect the signup response.
       const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
-      if (email.emailConfigured() && base) {
+      if (email.emailConfigured() && base && user.email) {
         const greeting = user.name ? `Hi ${user.name},` : 'Hi there,';
         email.sendMail({
           to: user.email,
@@ -224,9 +228,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // Build the reset link from the CONFIGURED public URL only — never the
       // request Host/X-Forwarded-Host, which an attacker controls and could use
       // to redirect the victim's valid token to their own domain (takeover).
-      const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
+      const base = config.publicUrl;
       const link = `${base}/?reset_token=${encodeURIComponent(r.token)}`;
-      if (email.emailConfigured() && base) {
+      if (email.emailConfigured() && base && r.user.email) {
         // send in the background so the response time doesn't leak whether the
         // address exists, and a slow SMTP/SES call can't hang the request
         email.sendMail({
@@ -259,7 +263,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
     if (!provider) return reply.code(404).send({ error: 'This sign-in provider is not configured' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    reply.header('set-cookie', `aldine_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     const redirect = `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`;
     return reply.redirect(provider.authorizeUrl(state, redirect));
   });
@@ -274,9 +278,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       try {
         const profile = await provider.exchange(req.query.code, `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`);
-        const user = await auth.findOrCreateOAuth(profile.email, profile.name, provider.id);
-        reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), 'aldine_oauth_state=; Path=/; Max-Age=0']);
-        return reply.redirect('/');
+        const user = await auth.findOrCreateOAuth(profile, provider.id);
+        reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), `aldine_oauth_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`]);
+        return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
         return reply.code(400).send({ error: `${provider.label} sign-in failed: ${err.message}` });
       }
@@ -431,21 +435,35 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // `template: "blank"` creates a project with no files at all.
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
     const { name = 'Untitled Project', files, template } = req.body || {};
-    let seed: Record<string, string> | undefined;
+    let seed: Record<string, string | Buffer> | undefined;
+    let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {
       const bad = seedError(files);
       if (bad) return reply.code(400).send({ error: bad });
       seed = files;
-    }
-    if (template) {
+    }    if (template) {
       try {
-        seed = templateFiles(template);
+        resolved = await resolveTemplateSeed(template);
+        seed = resolved.files;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
       }
     }
-    const meta = await store.createProject(name, seed, reqUser(req)?.id);
-    return publicMeta(meta, reqUser(req));  // Promise; Fastify awaits
+    // Every path shape the caller controls is screened by seedError and
+    // kitSeedProblem, so a write that still fails here is this server's fault
+    // (a full disk, a read-only data directory) and answers 5xx. The errno
+    // text names DATA_DIR, so it is logged and not returned.
+    let meta: Awaited<ReturnType<typeof store.createProject>>;
+    try {
+      meta = await store.createProject(name, seed, reqUser(req)?.id);
+    } catch (err: any) {
+      req.log.error({ err }, 'createProject failed');
+      return reply.code(500).send({ error: 'Could not create the project' });
+    }
+    const body = await publicMeta(meta, reqUser(req));
+    // A venue kit that could not be downloaded still creates the project (from
+    // a skeleton); the client says so rather than the request failing.
+    return resolved?.venueKit ? { ...body, venueKit: resolved.venueKit } : body;
   });
 
   // ---------- sharing (owner only) ----------
@@ -454,8 +472,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const meta = await store.readMeta(req.params.id);
       if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can change sharing' });
       const mode = req.body?.mode === 'link' ? 'link' : 'private';
+      // An entry is an email address or an ORCID iD (the only way to invite a
+      // researcher whose ORCID account shares no email).
       const collaborators = Array.isArray(req.body?.collaborators)
-        ? req.body!.collaborators.map((c) => c.trim().toLowerCase()).filter((c) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
+        ? req.body!.collaborators.map((c) => String(c).trim()).map((c) => (isOrcidId(c) ? c.toUpperCase() : c.toLowerCase()))
+          .filter((c) => isOrcidId(c) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
         : (meta.share?.collaborators || []);
       meta.share = { mode, collaborators };
       await store.writeMeta(meta);
@@ -507,7 +528,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     });
   }
 
-  app.get('/api/templates', async () => listTemplates());
+  // Asked for at boot so the first gallery request is served from the cache
+  // instead of waiting on the compiler.
+  warmVenueCache();
+  app.get('/api/templates', async () => listAllTemplates());
 
   // What the connected compiler runs. Not project-scoped, so it is not behind
   // the project auth hook; it discloses nothing beyond a TeX Live release.
@@ -567,9 +591,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         const p = importPath(entry);
         if (p === null) return fail(400, `ZIP entry "${entry}" points outside the project`);
         if (p.startsWith('__MACOSX/') || isHiddenPath(p)) continue;
+        // Screened here, not at the write: fs would answer ENAMETOOLONG with
+        // the server's absolute path in the message, and the catch below
+        // would hand that to the caller.
+        const tooLong = overlongPath(p);
+        if (tooLong) return fail(400, `ZIP entry "${entry}" has ${tooLong}`);
         files[p] = data;
       }
       if (!Object.keys(files).length) return fail(400, 'ZIP had no usable files');
+      const clash = pathConflict(Object.keys(files));
+      if (clash) return fail(400, `The archive uses "${clash}" as both a file and a directory`);
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
@@ -598,7 +629,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
       if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
-      return fail(400, `Could not import ZIP: ${err.message}`);
+      // A ZipError names the entry and the reason and is the caller's to fix;
+      // anything else is a server fault whose message may carry on-disk paths.
+      if (err instanceof ZipError) return fail(400, `Could not import ZIP: ${err.message}`);
+      req.log.error({ err }, 'ZIP import failed unexpectedly');
+      return fail(500, 'Could not import the ZIP. Try again, or send the archive to the instance operator.');
     }
   });
 
@@ -623,7 +658,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         if (trimmed.length > 200) return reply.code(400).send({ error: 'Project name is too long (max 200 characters)' });
         meta.name = trimmed;
       }
-      if (rootFile) meta.rootFile = rootFile;
+      if (rootFile) {
+        const bad = invalidRootFile(rootFile);
+        if (bad) return reply.code(400).send({ error: bad });
+        meta.rootFile = rootFile;
+      }
       if (engine !== undefined) {
         if (!(ENGINES as readonly string[]).includes(engine as string)) {
           return reply.code(400).send({ error: `Unknown engine "${String(engine)}" — use one of ${ENGINES.join(', ')}` });
@@ -932,6 +971,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     });
 
+  // What deleting a branch would discard, so the client can ask properly.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/branches/unmerged', async (req, reply) => {
+    const { name } = req.query;
+    if (!name) return reply.code(400).send({ error: 'name required' });
+    if (name === 'main') return { count: 0, newest: null };
+    try {
+      return await gitops.unmergedCommits(req.params.id, name);
+    } catch (err) {
+      return reply.code(404).send({ error: `No such branch: ${(err as Error).message}` });
+    }
+  });
+
   app.delete<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/branches', async (req, reply) => {
     const { name } = req.query;
     if (!name) return reply.code(400).send({ error: 'name required' });
@@ -1233,7 +1284,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     return reply.redirect(github.connectUrl(state, `${publicBase(req)}/api/github/oauth/callback`));
   });
 
@@ -1247,8 +1298,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const token = await github.exchangeCode(req.query.code, `${publicBase(req)}/api/github/oauth/callback`);
       const me = await github.whoami(token);
       await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
-      reply.header('set-cookie', 'aldine_gh_state=; Path=/; Max-Age=0');
-      return reply.redirect('/?github=connected');
+      reply.header('set-cookie', `aldine_gh_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
+      return reply.redirect(`${config.basePath}/?github=connected`);
     } catch (err: any) {
       return reply.code(400).send({ error: `GitHub connect failed: ${err.message}` });
     }

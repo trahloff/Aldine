@@ -44,6 +44,10 @@ const mockCompiler = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (d) => { raw += d; });
   req.on('end', () => {
+    // Route registration warms the venue catalog with a bodiless GET; this
+    // mock compiles and nothing else, so anything but /compile is a 404 —
+    // catalog.ts treats that as "no venue classes", which is what the test wants.
+    if (req.method !== 'POST' || req.url !== '/compile') { res.writeHead(404).end('not found'); return; }
     const body = JSON.parse(raw);
     compilerRequests.push(body);
     const reply = compilerQueue.shift() ?? { ok: false, error: 'mock compiler queue empty' };

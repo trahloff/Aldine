@@ -18,7 +18,7 @@ import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
-import { useCommentSignal } from '../editor/commentSignal';
+import { useCommentSignal, useFilesSignal } from '../editor/commentSignal';
 import GithubSync from '../components/GithubSync';
 import GithubPublish from '../components/GithubPublish';
 import CommentComposer from '../components/CommentComposer';
@@ -61,6 +61,14 @@ export default function Editor() {
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
   const [pdfWidth, setPdfWidth] = useState(() => Math.max(360, Math.round(window.innerWidth * 0.4)));
+  // The pane keeps an absolute width, so shrinking the window would otherwise
+  // leave a preview wider than the room for it and squeeze the editor away.
+  // Same bound as the resizer's.
+  useEffect(() => {
+    const fit = () => setPdfWidth((w) => Math.min(w, Math.max(280, window.innerWidth - 500)));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [auto, setAuto] = useState(() => localStorage.getItem('aldine.autoTypeset') !== '0');
@@ -77,6 +85,11 @@ export default function Editor() {
     });
   }, []);
   const [showLog, setShowLog] = useState(false);
+  // Scroll the log to its first error once the dialog has rendered.
+  const logHit = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (showLog) logHit.current?.scrollIntoView({ block: 'center' });
+  }, [showLog]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -97,6 +110,8 @@ export default function Editor() {
   const pdfRef = useRef<PdfPaneHandle>(null);
   const compilingRef = useRef(false);
   const pendingRef = useRef(false);
+  /** The branch on screen, for a typeset that finishes after a switch. */
+  const branchRef = useRef(branch);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRef = useRef(auto);
   autoRef.current = auto;
@@ -104,7 +119,7 @@ export default function Editor() {
   // so they neither open on load nor count against the empty state.
   const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
   const hasFiles = files.some(isUserFile);
-  const hasTex = files.some((f) => f.type === 'file' && f.path.endsWith('.tex'));
+  const hasTex = files.some((f) => f.type === 'file' && /\.tex$/i.test(f.path));
   const hasTexRef = useRef(hasTex);
   hasTexRef.current = hasTex;
 
@@ -218,8 +233,12 @@ export default function Editor() {
     const t0 = Date.now();
     try {
       const result = await api.compile(id, branch);
+      // The user may have switched branch while this ran: the result belongs
+      // to the branch it was asked for, not to whatever is on screen now.
+      if (branchRef.current !== branch) return;
       setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
     } catch (err: any) {
+      if (branchRef.current !== branch) return;
       // A capacity rejection is the server being busy, not a broken document —
       // keep the busy state and retry with backoff instead of showing "Failed".
       if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
@@ -320,8 +339,13 @@ export default function Editor() {
 
   const switchBranch = (name: string) => {
     setParams(name === 'main' ? {} : { branch: name });
-    setCompile({ status: 'idle', result: null });
   };
+  // The branch can also change through the URL (Back/Forward), not only
+  // through switchBranch, and the preview belongs to the old one either way.
+  useEffect(() => {
+    branchRef.current = branch;
+    setCompile({ status: 'idle', result: null });
+  }, [id, branch]);
 
   const saveName = useCallback(async (name: string) => {
     try {
@@ -400,6 +424,29 @@ export default function Editor() {
   useEffect(() => { loadComments(); }, [id, branch]);
   // live-sync: re-fetch when any collaborator changes comments
   const bumpComments = useCommentSignal(id, branch, loadComments);
+  // The file list is a REST snapshot. The server bumps this signal whenever
+  // the branch's files change on disk (another tab, a collaborator, the agent
+  // API, a pull), and a tab coming back to the foreground refetches anyway.
+  useFilesSignal(id, branch, loadFiles);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') loadFiles(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadFiles]);
+  // A file this tab has open can be deleted or renamed elsewhere. Keeping the
+  // editor on it would write it back on the next keystroke; move off it and
+  // say so. This tab's own delete/rename names the path first, so it stays
+  // silent for those.
+  const localRemoval = useRef<string | null>(null);
+  useEffect(() => {
+    if (!filesLoaded || !activeFile || localRemoval.current === activeFile) return;
+    if (files.some((f) => f.path === activeFile)) return;
+    const next = files.find((e) => e.path === project?.rootFile)
+      || files.find((e) => e.type === 'file' && /\.tex$/i.test(e.path))
+      || files.find((e) => isUserFile(e) && !e.binary);
+    setActiveFile(next?.path || null);
+    toast(`${activeFile} was removed from the project by someone else`);
+  }, [files]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // push this file's comment ranges into the editor as highlight decorations
   useEffect(() => {
@@ -723,12 +770,18 @@ export default function Editor() {
                   toast(paths.length === 1 ? `Uploaded ${paths[0]}` : `Uploaded ${paths.length} files`, 'ok');
                 }}
                 onDelete={async (path) => {
-                  await api.deleteFile(id, branch, path);
-                  await loadFiles();
-                  loadProject(); // deleting the root re-derives (or unsets) it
-                  if (activeFile === path) setActiveFile(null);
+                  localRemoval.current = path;
+                  try {
+                    await api.deleteFile(id, branch, path);
+                    await loadFiles();
+                    loadProject(); // deleting the root re-derives (or unsets) it
+                    if (activeFile === path) setActiveFile(null);
+                  } finally {
+                    setTimeout(() => { if (localRemoval.current === path) localRemoval.current = null; }, 0);
+                  }
                 }}
                 onRename={async (from, to) => {
+                  localRemoval.current = from;
                   try {
                     await api.renameFile(id, branch, from, to);
                     await loadFiles();
@@ -736,6 +789,8 @@ export default function Editor() {
                     if (activeFile === from) setActiveFile(to);
                   } catch (err: any) {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
+                  } finally {
+                    setTimeout(() => { if (localRemoval.current === from) localRemoval.current = null; }, 0);
                   }
                 }}
                 onSetRoot={setRootFile}
@@ -763,7 +818,7 @@ export default function Editor() {
           {activeFile ? (
             <>
               <div className="pane__header">
-                <span className="statusbar__file">{activeFile}</span>
+                <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
                 <span className="toolbar__spacer" />
                 <button
@@ -890,9 +945,9 @@ export default function Editor() {
           }}
         />
 
-        <section className="pane" style={{ width: pdfWidth, flex: 'none' }}>
+        <section className="pane pane--preview" style={{ width: pdfWidth, flex: 'none' }}>
           <div className="pane__header">
-            <span>Preview</span>
+            <span className="pane__title">Preview</span>
             <span className="pdf-status" data-testid="pdf-status" style={{ marginLeft: 10 }}>
               {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
               {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
@@ -922,7 +977,7 @@ export default function Editor() {
                 title="Download the compiled PDF"
                 data-testid="download-pdf"
               >
-                Download PDF
+                Download
               </a>
             )}
             <button
@@ -1011,7 +1066,19 @@ export default function Editor() {
         <Modal onClose={() => setShowLog(false)} label="Typesetting log" wide>
           <div>
             <h2>Typesetting log</h2>
-            <pre className="logview" data-testid="log-view">{compile.result.log || '(no log)'}</pre>
+            <pre className="logview" data-testid="log-view">{(() => {
+              const log = compile.result.log || '(no log)';
+              // Open at the first error, not at the pdfTeX banner: the reason
+              // for opening the log is 300 lines below the top.
+              const at = log.search(/^(?:! |[^\n]*:\d+: )/m);
+              if (at < 0) return log;
+              const end = log.indexOf('\n', at);
+              return (<>
+                {log.slice(0, at)}
+                <mark className="logview__hit" ref={logHit} data-testid="log-first-error">{log.slice(at, end < 0 ? undefined : end)}</mark>
+                {end < 0 ? '' : log.slice(end)}
+              </>);
+            })()}</pre>
             <div className="modal__row">
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 12.5 }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
                 <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} />

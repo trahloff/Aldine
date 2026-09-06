@@ -99,31 +99,39 @@ export class PgStore implements DataStore {
         user_id text NOT NULL, provider text NOT NULL, data jsonb NOT NULL,
         PRIMARY KEY (user_id, provider)
       );
+      -- 0.6: accounts keyed by provider subject may have no email (ORCID).
+      -- UNIQUE(email) still holds for non-null values; NULLs never collide.
+      ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS subject text;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_subject_idx ON users(subject);
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
 
   // ---- users ----
   private rowToUser(r: any): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined };
   }
   async createUser(u: User) {
     try {
       await this.pool.query(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null],
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null],
       );
     } catch (err: any) {
-      // Same message as the JSON backend, so register() surfaces one user-facing
-      // error regardless of datastore (unique_violation on users.email).
-      if (err?.code === '23505') throw new Error('An account with that email already exists');
+      // Same messages as the JSON backend, so register() surfaces one
+      // user-facing error regardless of datastore (unique_violation on
+      // users.email or users_subject_idx).
+      if (err?.code === '23505') {
+        throw new Error(String(err.constraint).includes('subject') ? 'An account for that identity already exists' : 'An account with that email already exists');
+      }
       throw err;
     }
   }
   async updateUser(u: User) {
     await this.pool.query(
-      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7 WHERE id=$1`,
-      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null],
+      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8 WHERE id=$1`,
+      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null],
     );
   }
   async getUser(id: string) {
@@ -132,6 +140,10 @@ export class PgStore implements DataStore {
   }
   async findUserByEmail(email: string) {
     const { rows } = await this.pool.query(`SELECT * FROM users WHERE email=$1`, [email]);
+    return rows[0] ? this.rowToUser(rows[0]) : null;
+  }
+  async findUserBySubject(subject: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM users WHERE subject=$1`, [subject]);
     return rows[0] ? this.rowToUser(rows[0]) : null;
   }
 

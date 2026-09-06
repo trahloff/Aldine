@@ -1,0 +1,15 @@
+# What the app image build must never see from a developer's checkout. The
+# Dockerfiles install from the lockfile and build dist/ themselves; a host
+# node_modules copied over the top (COPY apps/web apps/web) breaks the build
+# or ships whatever was installed locally, and .data holds real projects.
+.git
+**/node_modules
+**/dist
+.data*
+.env
+.env.*
+e2e
+site
+docs
+deploy
+*.log

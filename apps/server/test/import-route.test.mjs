@@ -73,7 +73,7 @@ try {
   const bin = Buffer.concat([Buffer.from([0, 1, 2, 3]), crypto.randomBytes(64)]);
   res = await importZip({ 'main.tex': doc, 'figs': 'a text file named like the dir', 'figs/plot.png': bin });
   eq(res.statusCode, 400, 'collision → 400');
-  check(res.json().error.startsWith('Could not import ZIP'), `collision reports the import failure: ${res.json().error}`);
+  check(/both a file and a directory/.test(res.json().error), `collision names the clashing entry: ${res.json().error}`);
   eq(await projectIds(), before, 'half-imported project removed');
   eq(fs.readdirSync(path.join(process.env.DATA_DIR, 'projects')), [], 'orphan repo dir removed');
 
@@ -188,7 +188,7 @@ try {
   eq((await store.readMeta(id)).engine, 'xelatex', 'engine untouched by a name-only patch');
 
   // ---- engine detection on import ----
-  res = await importZip({ 'latexmkrc': '$pdf_mode = 4;\n', 'main.tex': doc });
+  res = await importZip({ 'latexmkrc': '$pdf_mode = 5;\n', 'main.tex': doc });
   eq(res.statusCode, 200, 'latexmkrc archive imports');
   eq(res.json().engine, 'xelatex', 'engine set from latexmkrc');
   eq(res.json().import, { engine: 'xelatex', engineReason: 'latexmkrc in the archive', transcoded: [] }, 'response says why');

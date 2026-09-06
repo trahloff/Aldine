@@ -47,8 +47,7 @@ export function listProjects(): Promise<ProjectMeta[]> {
  *  ZIP entries and may not reach `.git` or `.aldine*`: the initial commit runs
  *  git on the fresh repo, so a seeded `.git/config` would execute on the
  *  server. A rejected key or a failed write leaves no repo dir behind. */
-export async function createProject(name: string, files?: Record<string, string>, ownerId?: string): Promise<ProjectMeta> {
-  const id = newId();
+export async function createProject(name: string, files?: Record<string, string | Buffer>, ownerId?: string): Promise<ProjectMeta> {  const id = newId();
   const dir = repoDir(id);
   fs.mkdirSync(dir, { recursive: true });
   const seed = files ?? {
@@ -64,7 +63,9 @@ export async function createProject(name: string, files?: Record<string, string>
     for (const [rel, content] of Object.entries(seed)) {
       const norm = importPath(rel);
       if (norm === null || isHiddenPath(norm)) throw new Error(`file path "${rel}" is not allowed`);
-      if (typeof content !== 'string') throw new Error(`content of "${rel}" must be a string`);
+      // Templates seed Buffers (a logo or figure must not go through UTF-8);
+      // user-supplied seeds are screened by seedError before they get here.
+      if (typeof content !== 'string' && !Buffer.isBuffer(content)) throw new Error(`content of "${rel}" must be text or bytes`);
       const abs = safeJoin(dir, norm);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, content);

@@ -1,13 +1,15 @@
 # Two selectable TeX Live schemes (build arg TEXLIVE_SCHEME=medium|full):
 #
-#   full (default) — everything on CTAN preinstalled (~9 GB on disk). Every
-#     script and language TeX Live supports compiles out of the box; this is what
-#     an Overleaf user expects.
-#   medium — ~1.3 GB of packages plus a pinned set of extras real papers commonly
-#     need, the publisher classes, and the Arabic/Persian, Cyrillic, Greek and
-#     "other" script collections (CJK is the one family left to full). For
-#     constrained hosts:
-#       ALDINE_TEXLIVE_SCHEME=medium docker compose up -d --build
+#   medium (default) — ~1.3 GB of packages plus a pinned set of extras real
+#     papers commonly need, the publisher classes, and the Arabic/Persian,
+#     Cyrillic, Greek and "other" script collections. CJK is the one family
+#     left to full. About 3.7 GB on disk; this is the published
+#     aldine-compiler:<version> image.
+#   full — everything on CTAN preinstalled (~9 GB on disk). Every script and
+#     language TeX Live supports compiles out of the box. Published as
+#     aldine-compiler:<version>-full (ALDINE_TEXLIVE=-full in compose), or
+#     built locally:
+#       ALDINE_TEXLIVE_SCHEME=full docker compose -f docker-compose.full.yml up -d --build
 #
 # Both bases are pinned by digest. For medium the pin keeps tlmgr revisions
 # reproducible (a floating tag makes the snapshot-repository date below drift
@@ -17,7 +19,7 @@
 # index digest reported by
 #   docker buildx imagetools inspect texlive/texlive:<tag>
 # (the top-level "Digest:" line, not a per-platform manifest).
-ARG TEXLIVE_SCHEME=full
+ARG TEXLIVE_SCHEME=medium
 
 FROM texlive/texlive:latest-medium@sha256:0a5aa82d0d9d6e3b3a25f87e221ef61d7c077e83639ab5065cf298b1a01ec00c AS texlive-medium
 
@@ -56,12 +58,11 @@ RUN biber --version
 RUN tlmgr conf texmf shell_escape p
 
 WORKDIR /srv
-COPY server.js .
+COPY server.js catalog.js ./
 # server.js reports the scheme at GET /health; the ARG must be re-declared
 # after FROM to be visible in this stage.
 ARG TEXLIVE_SCHEME
 RUN echo "${TEXLIVE_SCHEME}" > /srv/texlive-scheme
-
 ENV PORT=4020 \
     DATA_DIR=/data \
     openin_any=p \

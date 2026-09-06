@@ -48,6 +48,24 @@ async function runSuite(store, label) {
   await store.updateUser({ ...user, name: 'Ada L.' });
   eq((await store.getUser(user.id)).name, 'Ada L.', `${label}: updateUser`);
 
+  // ---- accounts keyed by provider subject, with no email (ORCID) ----
+  const orcidUser = { id: `u3-${t}`, email: null, name: 'Josiah', salt: 's', hash: '', createdAt: new Date().toISOString(), provider: 'orcid', subject: `orcid:${t}` };
+  await store.createUser(orcidUser);
+  eq(await store.getUser(orcidUser.id), orcidUser, `${label}: null-email user roundtrip`);
+  eq(await store.findUserBySubject(orcidUser.subject), orcidUser, `${label}: findUserBySubject`);
+  check((await store.findUserBySubject(`orcid:missing-${t}`)) === null, `${label}: findUserBySubject missing → null`);
+  // Two email-less accounts must not collide on the (nullable) unique email.
+  await store.createUser({ ...orcidUser, id: `u4-${t}`, subject: `orcid:other-${t}` });
+  await throws(
+    () => store.createUser({ ...orcidUser, id: `u5-${t}` }),
+    'An account for that identity already exists',
+    `${label}: duplicate subject message`,
+  );
+  // Binding a subject to an existing email account (first sign-in after the
+  // provider started reporting one) is an update, not a new row.
+  await store.updateUser({ ...user, name: 'Ada L.', subject: `github:${t}` });
+  eq((await store.findUserBySubject(`github:${t}`)).id, user.id, `${label}: updateUser binds a subject`);
+
   // ---- sessions ----
   const sid = `sid-${t}`;
   const exp = Date.now() + 60_000;

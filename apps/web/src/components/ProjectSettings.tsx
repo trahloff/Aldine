@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
+import { getTheme, setTheme, Theme } from '../theme';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>;
@@ -25,6 +26,7 @@ interface Props {
  */
 export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset }: Props) {
   const [name, setName] = useState(project.name);
+  const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
   useEffect(() => {
     let live = true;
@@ -135,6 +137,27 @@ export default function ProjectSettings({ project, files, autoTypeset, importNot
                 data-testid="settings-auto-typeset"
               />
               <span className="settings__hint">{autoTypeset ? 'Typesets shortly after you stop typing, on this browser' : 'Typeset by hand only, on this browser'}</span>
+            </span>
+          </div>
+        </section>
+
+        <section data-testid="appearance-settings">
+          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Appearance</div>
+
+          <div className="settings__row">
+            <label className="settings__label" htmlFor="settings-theme">Theme</label>
+            <span className="settings__control settings__control--check">
+              <select
+                id="settings-theme"
+                className="input"
+                value={theme}
+                onChange={(e) => { const t = e.target.value as Theme; setTheme(t); setThemeChoice(t); }}
+                data-testid="settings-theme"
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+              <span className="settings__hint">Applies to this browser</span>
             </span>
           </div>
         </section>

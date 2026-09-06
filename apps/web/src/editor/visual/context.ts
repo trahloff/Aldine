@@ -1,4 +1,5 @@
 import { api, BibEntry } from '../../api';
+import { withBase } from '../../basePath';
 import { pokeViews } from './refresh';
 
 /**
@@ -59,11 +60,11 @@ function joinPath(dir: string, p: string): string {
  */
 export function fileUrl(path: string): string | null {
   if (!ctx) return null;
-  return `/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath(ctx.rootDir, path))}`;
+  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath(ctx.rootDir, path))}`);
 }
 
 /** Same file URL without root-dir resolution (fallback for fileUrl misses). */
 export function projectFileUrl(path: string): string | null {
   if (!ctx || !ctx.rootDir) return null; // identical to fileUrl when the root is top-level
-  return `/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath('', path))}`;
+  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath('', path))}`);
 }

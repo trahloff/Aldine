@@ -18,6 +18,7 @@ services:
     environment:
       # set these in a .env file next to docker-compose.yml (see deploy/README.md)
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
+      ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
       COOKIE_SECURE: "1"          # HTTPS-only session cookies in production
       TRUST_PROXY: "1"            # req.ip comes from Caddy's X-Forwarded-For
       ALDINE_COMPILE_QUOTA_MIN: ${ALDINE_COMPILE_QUOTA_MIN:-}  # monthly compile-minutes/user (blank = unmetered)

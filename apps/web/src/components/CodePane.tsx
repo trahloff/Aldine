@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { wsUrl } from '../basePath';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
 import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
@@ -261,10 +262,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     let statsTimer: ReturnType<typeof setTimeout> | null = null;
     warmBib(projectId, branch); // so \cite hover tooltips have data immediately
     const docName = `${projectId}::${branch}::${filePath}`;
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ydoc = new Y.Doc();
     const provider = new HocuspocusProvider({
-      url: `${proto}//${location.host}/collab`,
+      url: wsUrl('/collab'),
       name: docName,
       document: ydoc,
       // When auth is enabled the server defines onAuthenticate, which makes

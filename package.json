@@ -1,7 +1,7 @@
 {
   "name": "aldine",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.6.0",
   "description": "Slim, fast, open-source LaTeX collaboration platform",
   "workspaces": [
     "apps/server",
@@ -14,8 +14,11 @@
     "build": "npm run build -w apps/web && npm run build -w apps/server",
     "notices": "node scripts/gen-notices.mjs",
     "notices:check": "node scripts/gen-notices.mjs --check",
+    "templates:check": "node scripts/check-templates.mjs",
     "test:e2e": "npx playwright test -c e2e",
-    "test:e2e:auth": "npx playwright test -c e2e/playwright.auth.config.ts"
+    "test:e2e:auth": "npx playwright test -c e2e/playwright.auth.config.ts",
+    "test:e2e:base-path": "npx playwright test -c e2e/playwright.base-path.config.ts",
+    "test:e2e:remote": "npx playwright test -c e2e/playwright.remote.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.0"

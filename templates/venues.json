@@ -1,0 +1,543 @@
+{
+  "note": "Venue kits Aldine downloads from the publisher when a project is created. This file is the only source of kit URLs: nothing in a request can influence them. No publisher file is stored in this repo. See docs/venue-kits-spec.md.",
+  "venues": [
+    {
+      "id": "neurips",
+      "name": "NeurIPS",
+      "category": "Conferences",
+      "description": "Neural Information Processing Systems submission (2026 style files).",
+      "icon": "🧠",
+      "homepage": "https://neurips.cc/Conferences/2026/CallForPapers",
+      "termsUrl": "https://neurips.cc/Conferences/2026/CallForPapers",
+      "kit": {
+        "url": "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
+        "host": "media.neurips.cc",
+        "take": ["neurips_2026.sty", "neurips_2026.tex", "checklist.tex"]
+      },
+      "documentClass": "article",
+      "preamble": ["\\usepackage{neurips_2026}"],
+      "bibStyle": "plainnat",
+      "main": "neurips_2026.tex"
+    },
+    {
+      "id": "iclr",
+      "name": "ICLR",
+      "category": "Conferences",
+      "description": "International Conference on Learning Representations submission (2027 style files).",
+      "icon": "🧩",
+      "homepage": "https://iclr.cc/Conferences/2027/AuthorGuidelines",
+      "termsUrl": "https://iclr.cc/Conferences/2027/AuthorGuidelines",
+      "kit": {
+        "url": "https://media.iclr.cc/Conferences/ICLR2027/iclr-2027-style-files.zip",
+        "host": "media.iclr.cc",
+        "take": [
+          "iclr2027_conference.sty",
+          "iclr2027_conference.bst",
+          "iclr2027_conference.tex",
+          "iclr2027_conference.bib",
+          "math_commands.tex"
+        ]
+      },
+      "documentClass": "article",
+      "preamble": ["\\usepackage{iclr2027_conference}"],
+      "bibStyle": "iclr2027_conference",
+      "main": "iclr2027_conference.tex"
+    },
+    {
+      "id": "icml",
+      "name": "ICML",
+      "category": "Conferences",
+      "description": "International Conference on Machine Learning submission (2026 style files).",
+      "icon": "📈",
+      "homepage": "https://icml.cc/Conferences/2026/AuthorInstructions",
+      "termsUrl": "https://icml.cc/Conferences/2026/AuthorInstructions",
+      "kit": {
+        "url": "https://media.icml.cc/Conferences/ICML2026/Styles/icml2026.zip",
+        "host": "media.icml.cc",
+        "take": [
+          "icml2026.sty",
+          "icml2026.bst",
+          "example_paper.tex",
+          "example_paper.bib",
+          "algorithm.sty",
+          "algorithmic.sty"
+        ]
+      },
+      "documentClass": "article",
+      "preamble": ["\\usepackage{icml2026}"],
+      "bibStyle": "icml2026",
+      "main": "example_paper.tex"
+    },
+    {
+      "id": "aistats",
+      "name": "AISTATS",
+      "category": "Conferences",
+      "description": "Artificial Intelligence and Statistics submission (2026 paper pack).",
+      "icon": "📊",
+      "homepage": "https://virtual.aistats.org/Conferences/2026/CallForPapers",
+      "termsUrl": "https://virtual.aistats.org/Conferences/2026/CameraReadyInstructions",
+      "kit": {
+        "url": "https://aistats.org/aistats2026/AISTATS2026PaperPack.zip",
+        "host": "aistats.org",
+        "take": ["aistats2026.sty", "sample_paper.tex", "supplement.tex"]
+      },
+      "documentClass": "article",
+      "preamble": ["\\usepackage{aistats2026}"],
+      "bibStyle": "plainnat",
+      "main": "sample_paper.tex"
+    },
+    {
+      "id": "aaai",
+      "name": "AAAI",
+      "category": "Conferences",
+      "description": "AAAI conference submission (AAAI-27 author kit, anonymous version).",
+      "icon": "🎓",
+      "homepage": "https://aaai.org/conference/aaai/aaai-27/submission-instructions/",
+      "termsUrl": "https://aaai.org/conference/aaai/aaai-27/submission-instructions/",
+      "kit": {
+        "url": "https://aaai.org/wp-content/uploads/2026/05/AuthorKit27.zip",
+        "host": "aaai.org",
+        "take": [
+          "aaai2027.sty",
+          "aaai2027.bst",
+          "aaai2027.bib",
+          "AnonymousSubmission2027.tex",
+          "ReproducibilityChecklist.tex",
+          "**/Figures/*.pdf"
+        ]
+      },
+      "documentClass": "article",
+      "classOptions": "letterpaper",
+      "preamble": ["\\usepackage[submission]{aaai2027}"],
+      "bibStyle": "aaai2027",
+      "main": "AnonymousSubmission2027.tex"
+    },
+    {
+      "id": "ijcai",
+      "name": "IJCAI",
+      "category": "Conferences",
+      "description": "IJCAI-ECAI 2026 main track submission.",
+      "icon": "🕹",
+      "homepage": "https://www.ijcai.org/authors_kit",
+      "termsUrl": "https://2026.ijcai.org/ijcai-ecai-2026-call-for-papers-main-track/",
+      "kit": {
+        "url": "https://www.ijcai.org/sites/default/files/Guidelines/FormattingGuidelines-IJCAI-ECAI-26.zip",
+        "host": "www.ijcai.org",
+        "take": ["ijcai26.sty", "ijcai26.tex", "ijcai26.bib", "named.bst"]
+      },
+      "documentClass": "article",
+      "preamble": ["\\usepackage{ijcai26}"],
+      "bibStyle": "named",
+      "main": "ijcai26.tex"
+    },
+    {
+      "id": "ecai",
+      "name": "ECAI proceedings",
+      "category": "Conferences",
+      "description": "European Conference on Artificial Intelligence proceedings (IOS Press ecai class).",
+      "icon": "🇪🇺",
+      "homepage": "https://vtex-soft.github.io/texsupport.iospress-ecai/",
+      "termsUrl": "https://ecai2025.org/call-for-papers/",
+      "kit": {
+        "url": "https://codeload.github.com/vtex-soft/texsupport.iospress-ecai/zip/refs/heads/master",
+        "host": "codeload.github.com",
+        "take": ["ecai.cls", "ecai.bst", "ecai.bib", "ecai-sample-and-instructions.tex", "ecaif01.pdf"]
+      },
+      "documentClass": "ecai",
+      "bibStyle": "ecai",
+      "main": "ecai-sample-and-instructions.tex"
+    },
+    {
+      "id": "acl",
+      "name": "ACL, EMNLP and NAACL",
+      "category": "Conferences",
+      "description": "The rolling *ACL style files, used by ACL, EMNLP and NAACL.",
+      "icon": "💬",
+      "homepage": "https://github.com/acl-org/acl-style-files",
+      "termsUrl": "https://github.com/acl-org/acl-style-files#instructions-for-authors",
+      "kit": {
+        "url": "https://codeload.github.com/acl-org/acl-style-files/zip/refs/heads/master",
+        "host": "codeload.github.com",
+        "take": ["acl.sty", "acl_natbib.bst", "acl_latex.tex", "custom.bib"]
+      },
+      "documentClass": "article",
+      "classOptions": "11pt",
+      "preamble": ["\\usepackage{acl}"],
+      "bibStyle": "acl_natbib",
+      "main": "acl_latex.tex"
+    },
+    {
+      "id": "coling",
+      "name": "COLING",
+      "category": "Conferences",
+      "description": "International Conference on Computational Linguistics submission (COLING 2025 style files).",
+      "icon": "🗣",
+      "homepage": "https://coling2025.org/calls/submission_guidlines/",
+      "termsUrl": "https://coling2025.org/calls/submission_guidlines/",
+      "kit": {
+        "url": "https://coling2025.org/downloads/coling-2025.zip",
+        "host": "coling2025.org",
+        "take": ["coling.sty", "coling_natbib.bst", "coling_latex.tex", "custom.bib"]
+      },
+      "documentClass": "article",
+      "classOptions": "11pt",
+      "preamble": ["\\usepackage{coling}"],
+      "bibStyle": "coling_natbib",
+      "main": "coling_latex.tex"
+    },
+    {
+      "id": "cvpr",
+      "name": "CVPR",
+      "category": "Conferences",
+      "description": "Computer Vision and Pattern Recognition submission (CVPR 2026 author kit).",
+      "icon": "👁",
+      "homepage": "https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines",
+      "termsUrl": "https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines",
+      "kit": {
+        "url": "https://codeload.github.com/cvpr-org/author-kit/zip/refs/tags/CVPR2026-v1(latex)",
+        "host": "codeload.github.com",
+        "take": [
+          "cvpr.sty",
+          "ieeenat_fullname.bst",
+          "main.tex",
+          "preamble.tex",
+          "main.bib",
+          "**/sec/*.tex"
+        ]
+      },
+      "documentClass": "article",
+      "classOptions": "10pt,twocolumn,letterpaper",
+      "preamble": ["\\usepackage[review]{cvpr}"],
+      "bibStyle": "ieeenat_fullname",
+      "main": "main.tex"
+    },
+    {
+      "id": "iccv",
+      "name": "ICCV",
+      "category": "Conferences",
+      "description": "International Conference on Computer Vision submission (ICCV 2025 author kit).",
+      "icon": "🖼",
+      "homepage": "https://iccv.thecvf.com/Conferences/2025/AuthorGuidelines",
+      "termsUrl": "https://iccv.thecvf.com/Conferences/2025/AuthorGuidelines",
+      "kit": {
+        "url": "https://media.eventhosts.cc/Conferences/ICCV2025/ICCV2025-Author-Kit-Feb.zip",
+        "host": "media.eventhosts.cc",
+        "take": [
+          "iccv.sty",
+          "ieeenat_fullname.bst",
+          "main.tex",
+          "preamble.tex",
+          "main.bib",
+          "**/sec/*.tex"
+        ]
+      },
+      "documentClass": "article",
+      "classOptions": "10pt,twocolumn,letterpaper",
+      "preamble": ["\\usepackage[review]{iccv}"],
+      "bibStyle": "ieeenat_fullname",
+      "main": "main.tex"
+    },
+    {
+      "id": "eccv",
+      "name": "ECCV",
+      "category": "Conferences",
+      "description": "European Conference on Computer Vision submission (ECCV paper template).",
+      "icon": "🎥",
+      "homepage": "https://eccv.ecva.net/Conferences/2026/SubmissionPolicies",
+      "termsUrl": "https://eccv.ecva.net/Conferences/2026/SubmissionPolicies",
+      "kit": {
+        "url": "https://codeload.github.com/paolo-favaro/paper-template/zip/refs/tags/Latest",
+        "host": "codeload.github.com",
+        "take": [
+          "eccv.sty",
+          "eccvabbrv.sty",
+          "llncs.cls",
+          "splncs04.bst",
+          "main.tex",
+          "main.bib",
+          "*.eps"
+        ]
+      },
+      "documentClass": "llncs",
+      "classOptions": "runningheads",
+      "preamble": ["\\usepackage{eccv}"],
+      "bibStyle": "splncs04",
+      "main": "main.tex"
+    },
+    {
+      "id": "usenix-security",
+      "name": "USENIX Security",
+      "category": "Conferences",
+      "description": "USENIX Security submission (2026 template). The template may not be altered.",
+      "icon": "🔐",
+      "homepage": "https://www.usenix.org/conference/usenixsecurity26/instructions-presenters-and-authors",
+      "termsUrl": "https://www.usenix.org/conference/usenixsecurity26/call-for-papers",
+      "kit": {
+        "url": "https://www.usenix.org/sites/default/files/conference-files/usenixsecurity2026_latex_templates.zip",
+        "host": "www.usenix.org",
+        "take": ["usenix.sty", "usenixsecurity2026.tex"]
+      },
+      "documentClass": "article",
+      "classOptions": "letterpaper,twocolumn,10pt",
+      "preamble": ["\\usepackage{usenix}"],
+      "bibStyle": "plainurl",
+      "main": "usenixsecurity2026.tex"
+    },
+    {
+      "id": "usenix",
+      "name": "USENIX (OSDI, ATC, NSDI, FAST)",
+      "category": "Conferences",
+      "description": "The shared USENIX conference template used by OSDI, ATC, NSDI and FAST.",
+      "icon": "🖥",
+      "homepage": "https://www.usenix.org/conferences/author-resources/paper-templates",
+      "termsUrl": "https://www.usenix.org/conferences/author-resources/paper-templates",
+      "kit": {
+        "urls": [
+          "https://www.usenix.org/sites/default/files/usenix2019_v3.1.tex",
+          "https://www.usenix.org/sites/default/files/usenix-2020-09.sty"
+        ],
+        "host": "www.usenix.org",
+        "rename": { "usenix-2020-09.sty": "usenix2019_v3.sty" }
+      },
+      "documentClass": "article",
+      "classOptions": "letterpaper,twocolumn,10pt",
+      "preamble": ["\\usepackage{usenix2019_v3}"],
+      "bibStyle": "plain",
+      "main": "usenix2019_v3.1.tex"
+    },
+    {
+      "id": "siamart",
+      "name": "SIAM journals",
+      "category": "Journals",
+      "description": "Society for Industrial and Applied Mathematics submission (siamart macros).",
+      "icon": "📐",
+      "homepage": "https://epubs.siam.org/journal-authors",
+      "termsUrl": "https://epubs.siam.org/journal-authors",
+      "kit": {
+        "url": "https://epubs.siam.org/pb-assets/macros/standard/siamart_251216.zip",
+        "host": "epubs.siam.org",
+        "take": [
+          "siamart251216.cls",
+          "siamplain.bst",
+          "ex_article.tex",
+          "ex_shared.tex",
+          "references.bib",
+          "*.eps",
+          "*.dat"
+        ]
+      },
+      "documentClass": "siamart251216",
+      "classOptions": "review",
+      "bibStyle": "siamplain",
+      "main": "ex_article.tex"
+    },
+    {
+      "id": "mdpi",
+      "name": "MDPI journals",
+      "category": "Journals",
+      "description": "MDPI submission (Sensors, Applied Sciences and siblings).",
+      "icon": "📗",
+      "homepage": "https://www.mdpi.com/authors/latex",
+      "termsUrl": "https://www.mdpi.com/authors/latex",
+      "kit": {
+        "url": "https://mdpi-res.com/data/MDPI_template_ACS.zip",
+        "host": "mdpi-res.com",
+        "take": ["template.tex", "**/Definitions/*"]
+      },
+      "documentClass": "Definitions/mdpi",
+      "classOptions": "journal,article,submit,moreauthors",
+      "bibStyle": "mdpi",
+      "main": "template.tex"
+    },
+    {
+      "id": "copernicus",
+      "name": "Copernicus journals",
+      "category": "Journals",
+      "description": "Copernicus Publications submission. Pick your journal abbreviation as a class option.",
+      "icon": "🛰",
+      "homepage": "https://publications.copernicus.org/for_authors/manuscript_preparation.html",
+      "termsUrl": "https://publications.copernicus.org/for_authors/licence_and_copyright.html",
+      "kit": {
+        "url": "https://publications.copernicus.org/Copernicus_LaTeX_Package.zip",
+        "host": "publications.copernicus.org",
+        "take": ["copernicus.cls", "copernicus.cfg", "copernicus.bst", "*.sty", "template.tex"]
+      },
+      "documentClass": "copernicus",
+      "classOptions": "acp, manuscript",
+      "bibStyle": "copernicus",
+      "main": "template.tex"
+    },
+    {
+      "id": "springernature",
+      "name": "Springer Nature journals",
+      "category": "Journals",
+      "description": "Springer Nature journal article (sn-jnl). The class picks the bibliography style.",
+      "icon": "📔",
+      "homepage": "https://www.springernature.com/gp/authors/campaigns/latex-author-support",
+      "termsUrl": "https://www.springernature.com/gp/authors/campaigns/latex-author-support",
+      "kit": {
+        "url": "https://cms-resources.apps.public.k8s.springernature.io/springer-cms/rest/v1/content/18782940/data/v12",
+        "host": "cms-resources.apps.public.k8s.springernature.io",
+        "take": ["sn-jnl.cls", "sn-article.tex", "sn-bibliography.bib", "*.bst", "*.eps"],
+        "flatten": true
+      },
+      "documentClass": "sn-jnl",
+      "classOptions": "pdflatex,sn-mathphys-num",
+      "classSetsBibStyle": true,
+      "main": "sn-article.tex"
+    },
+    {
+      "id": "iop",
+      "name": "IOP Publishing",
+      "category": "Journals",
+      "description": "IOP Publishing journal article (iopjournal class).",
+      "icon": "🧲",
+      "homepage": "https://publishingsupport.iopscience.iop.org/questions/latex-template/",
+      "termsUrl": "https://publishingsupport.iopscience.iop.org/questions/latex-template/",
+      "kit": {
+        "url": "https://publishingsupport.iopscience.iop.org/wp-content/uploads/2025/07/ioplatextemplate.zip",
+        "host": "publishingsupport.iopscience.iop.org",
+        "take": ["iopjournal.cls", "iopjournal-template.tex", "figure*.pdf"]
+      },
+      "documentClass": "iopjournal",
+      "bibStyle": "unsrt",
+      "main": "iopjournal-template.tex"
+    },
+    {
+      "id": "tandf",
+      "name": "Taylor and Francis (Interact)",
+      "category": "Journals",
+      "description": "Taylor and Francis journal article, Chicago author-date variant of the Interact bundle.",
+      "icon": "📙",
+      "homepage": "https://authorservices.taylorandfrancis.com/publishing-your-research/writing-your-paper/formatting-and-templates/",
+      "termsUrl": "https://authorservices.taylorandfrancis.com/publishing-your-research/writing-your-paper/formatting-and-templates/",
+      "kit": {
+        "url": "https://files.taylorandfrancis.com/interactcadlatex.zip",
+        "host": "files.taylorandfrancis.com",
+        "take": ["interact.cls", "tfcad.bst", "interactcadsample.tex", "interactcadsample.bib"]
+      },
+      "documentClass": "interact",
+      "bibStyle": "tfcad",
+      "main": "interactcadsample.tex"
+    },
+    {
+      "id": "frontiers",
+      "name": "Frontiers",
+      "category": "Journals",
+      "description": "Frontiers journal article, Vancouver reference style.",
+      "icon": "🏔",
+      "homepage": "https://www.frontiersin.org/guidelines/author-guidelines",
+      "termsUrl": "https://www.frontiersin.org/guidelines/author-guidelines",
+      "kit": {
+        "url": "https://www.frontiersin.org/design/zip/Frontiers_LaTeX_Templates.zip",
+        "host": "www.frontiersin.org",
+        "take": [
+          "FrontiersinVancouver.cls",
+          "Frontiers-Vancouver.bst",
+          "frontiers.tex",
+          "test.bib",
+          "logo*.pdf",
+          "*-logo.pdf"
+        ],
+        "flatten": true
+      },
+      "documentClass": "FrontiersinVancouver",
+      "bibStyle": "Frontiers-Vancouver",
+      "main": "frontiers.tex"
+    },
+    {
+      "id": "elife",
+      "name": "eLife",
+      "category": "Journals",
+      "description": "eLife submission (elife class).",
+      "icon": "🧬",
+      "homepage": "https://reviewer.elifesciences.org/author-guide",
+      "termsUrl": "https://reviewer.elifesciences.org/author-guide",
+      "kit": {
+        "url": "https://cdn.elifesciences.org/author-guide/elife-latex-template.zip",
+        "host": "cdn.elifesciences.org",
+        "take": [
+          "elife.cls",
+          "vancouver-elife.bst",
+          "elife-template.tex",
+          "elife-sample.bib",
+          "*.jpg",
+          "elife-*-fig*.pdf"
+        ]
+      },
+      "documentClass": "elife",
+      "bibStyle": "vancouver-elife",
+      "main": "elife-template.tex"
+    },
+    {
+      "id": "wiley",
+      "name": "Wiley journals",
+      "category": "Journals",
+      "description": "Wiley journal article in the Optimal Design layout. Needs XeLaTeX or LuaLaTeX for its STIX fonts.",
+      "icon": "📘",
+      "homepage": "https://authors.wiley.com/author-resources/Journal-Authors/Prepare/latex-template.html",
+      "termsUrl": "https://authors.wiley.com/author-resources/Journal-Authors/Prepare/latex-template.html",
+      "kit": {
+        "url": "https://authors.wiley.com/asset/WileyDesign.zip",
+        "host": "authors.wiley.com",
+        "take": [
+          "USG.cls",
+          "wileyNJD-Chicago.bst",
+          "wileyNJD-Chicago.bib",
+          "Optimal-Design-layout.tex",
+          "NJDnatbib.sty",
+          "NJDapacite.sty",
+          "mla.sty",
+          "LETTERSP.STY",
+          "**/Fonts/Stix/*.otf"
+        ]
+      },
+      "documentClass": "USG",
+      "bibStyle": "wileyNJD-Chicago",
+      "main": "Optimal-Design-layout.tex"
+    },
+    {
+      "id": "optica",
+      "name": "Optica Publishing Group",
+      "category": "Journals",
+      "description": "Optica journal article (Optics Express, Optics Letters and siblings).",
+      "icon": "🔆",
+      "homepage": "https://opg.optica.org/content/author/portal/item/templates-default/",
+      "termsUrl": "https://opg.optica.org/content/author/portal/item/templates-default/",
+      "kit": {
+        "url": "https://opg.optica.org/resources/author/templates/latex-universal-template.zip",
+        "host": "opg.optica.org",
+        "take": [
+          "optica-article.cls",
+          "opticajnl.bst",
+          "Optica-template.tex",
+          "sample.bib",
+          "**/styles/*.sty",
+          "opticafig*.pdf"
+        ]
+      },
+      "documentClass": "optica-article",
+      "bibStyle": "opticajnl",
+      "main": "Optica-template.tex"
+    },
+    {
+      "id": "cellpress",
+      "name": "Cell Press",
+      "category": "Journals",
+      "description": "Cell Press article template. Plain article class plus the publisher's citation style.",
+      "icon": "🔬",
+      "homepage": "https://www.cell.com/information-for-authors/article-templates",
+      "termsUrl": "https://www.cell.com/information-for-authors/article-templates",
+      "kit": {
+        "url": "https://www.cell.com/pb-assets/journals/platform/authour-resources/cell-press-latex-template-1747231785383.zip",
+        "host": "www.cell.com",
+        "take": ["article-template.tex", "numbered.bst", "numcompress.sty", "references.bib", "Figure*.jpg"]
+      },
+      "documentClass": "article",
+      "classOptions": "12pt,letterpaper",
+      "preamble": ["\\usepackage{numcompress}"],
+      "bibStyle": "numbered",
+      "main": "article-template.tex"
+    }
+  ]
+}

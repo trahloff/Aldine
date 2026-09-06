@@ -3,11 +3,19 @@
  * id/secret env vars, so configuring one is purely deployment config. The flow
  * is the standard authorization-code grant with a CSRF `state` cookie; we only
  * ever trust a VERIFIED email from the provider, then find-or-create the user.
+ * A provider that can vouch for a stable identity without an email (ORCID)
+ * returns a `subject` instead; the account is then keyed by that.
  *
  * Add a provider by pushing another entry onto `providers`.
  */
 
-export interface OAuthProfile { email: string; name: string }
+export interface OAuthProfile {
+  /** A verified address, or null when the provider has none to share. */
+  email: string | null;
+  name: string;
+  /** Provider-scoped stable id (`orcid:0000-…`). Required when email is null. */
+  subject?: string;
+}
 
 export interface OAuthProvider {
   id: string;
@@ -96,7 +104,65 @@ const google: OAuthProvider = {
   },
 };
 
-export const providers: OAuthProvider[] = [google, github];
+/**
+ * ORCID: the token response already carries the iD and name (scope
+ * /authenticate); the address is fetched from the public API and is only
+ * present when the researcher made it public, so most accounts arrive
+ * without one. ORCID_SANDBOX=1 targets sandbox.orcid.org for testing; the
+ * *_API_BASE overrides exist for the e2e stub.
+ */
+const ORCID_ID = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/;
+function orcidBases() {
+  const sandbox = process.env.ORCID_SANDBOX === '1';
+  return {
+    auth: process.env.ORCID_API_BASE || (sandbox ? 'https://sandbox.orcid.org' : 'https://orcid.org'),
+    pub: process.env.ORCID_PUB_API_BASE || (sandbox ? 'https://pub.sandbox.orcid.org' : 'https://pub.orcid.org'),
+  };
+}
+const orcid: OAuthProvider = {
+  id: 'orcid',
+  label: 'ORCID',
+  configured: () => !!(process.env.ORCID_CLIENT_ID && process.env.ORCID_CLIENT_SECRET),
+  authorizeUrl(state, redirectUri) {
+    const p = new URLSearchParams({
+      client_id: process.env.ORCID_CLIENT_ID!,
+      response_type: 'code',
+      scope: '/authenticate',
+      redirect_uri: redirectUri,
+      state,
+    });
+    return `${orcidBases().auth}/oauth/authorize?${p}`;
+  },
+  async exchange(code, redirectUri) {
+    const bases = orcidBases();
+    const tokRes = await fetch(`${bases.auth}/oauth/token`, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.ORCID_CLIENT_ID!,
+        client_secret: process.env.ORCID_CLIENT_SECRET!,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+    const tok = (await tokRes.json()) as { access_token?: string; orcid?: string; name?: string; error_description?: string };
+    if (!tok.access_token) throw new Error(tok.error_description || 'no access token');
+    if (!tok.orcid || !ORCID_ID.test(tok.orcid)) throw new Error('no ORCID iD in the token response');
+    let email: string | null = null;
+    try {
+      const res = await fetch(`${bases.pub}/v3.0/${tok.orcid}/email`, { headers: { accept: 'application/json' } });
+      if (res.ok) {
+        const body = (await res.json()) as { email?: Array<{ email?: string; verified?: boolean; primary?: boolean }> };
+        const list = (body.email || []).filter((e) => e.email && e.verified);
+        email = (list.find((e) => e.primary) || list[0])?.email || null;
+      }
+    } catch { /* a public-API hiccup must not block sign-in: the iD is enough */ }
+    return { email, name: (tok.name || '').trim() || tok.orcid, subject: `orcid:${tok.orcid}` };
+  },
+};
+
+export const providers: OAuthProvider[] = [google, github, orcid];
 
 export function configuredProviders(): OAuthProvider[] {
   return providers.filter((p) => p.configured());

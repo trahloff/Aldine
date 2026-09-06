@@ -1,15 +1,16 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { config } from './config.js';
 
 /** Public origin for OAuth redirects and the OAuth issuer — ALDINE_PUBLIC_URL,
  *  else derived from the request. Behind a proxy set ALDINE_PUBLIC_URL: the
  *  Host/X-Forwarded-Host fallback is attacker-influenced on a request the
  *  attacker sends, and only that request's response reflects it. */
 export function publicBase(req: { headers: Record<string, string | string[] | undefined>; protocol?: string }): string {
-  if (process.env.ALDINE_PUBLIC_URL) return process.env.ALDINE_PUBLIC_URL.replace(/\/$/, '');
+  if (config.publicUrl) return config.publicUrl;
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-  return `${proto}://${host}`;
+  return `${proto}://${host}${config.basePath}`;
 }
 
 export function newId(len = 10): string {
@@ -56,6 +57,19 @@ export function rootSiblingPath(rootFile: string, name: string): string {
  *  Windows `.GIT/config` and `.git./config` open `.git/config`, and the
  *  initial commit runs git on whatever the seed wrote there. `.gitignore` is
  *  not hidden. */
+/**
+ * Why a value cannot be the project's main document, or null when it can. The
+ * compiler puts this name on latexmk's command line; a segment starting with
+ * "-" would be read as an option there ("-pdflatex=<program>" runs the
+ * program), so it is refused here as well as in the compiler.
+ */
+export function invalidRootFile(rootFile: unknown): string | null {
+  if (typeof rootFile !== 'string' || !rootFile.trim()) return 'Main document cannot be empty';
+  if (rootFile.includes('..') || rootFile.startsWith('/') || rootFile.startsWith('\\')) return 'Main document must be a path inside the project';
+  if (rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'))) return 'Main document name cannot start with "-"';
+  return null;
+}
+
 export function isHiddenName(seg: string): boolean {
   const s = seg.toLowerCase().replace(/[. ]+$/, '');
   return s === '.git' || s.startsWith('.aldine');
@@ -70,6 +84,43 @@ export function isHiddenPath(rel: string): boolean {
 
 export const SEED_MAX_FILES = 1000;
 export const SEED_MAX_BYTES = 32 * 1024 * 1024;
+/** POSIX NAME_MAX. A longer path component is ENAMETOOLONG inside
+ *  createProject, which can only be reported as a server fault; caught here it
+ *  is the caller's own path and a 400 that names it. */
+export const SEED_MAX_NAME_BYTES = 255;
+
+/** A whole path can be too long even when every component fits: PATH_MAX is
+ *  1024 on macOS and 4096 on Linux, and DATA_DIR/projects/<id>/ goes in front
+ *  of every key. 900 bytes leaves room for the longest prefix we deploy. */
+export const SEED_MAX_PATH_BYTES = 900;
+
+/** The first path component too long for the filesystem, or null. */
+export function overlongName(rel: string): string | null {
+  return rel.split('/').find((seg) => Buffer.byteLength(seg) > SEED_MAX_NAME_BYTES) ?? null;
+}
+
+/** The first name used as both a file and a directory, or null: writing
+ *  `a` and then `a/b` fails halfway through with ENOTDIR, and the message
+ *  carries the server's absolute path. */
+export function pathConflict(paths: Iterable<string>): string | null {
+  const taken = new Set(paths);
+  for (const p of taken) {
+    const segs = p.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const dir = segs.slice(0, i).join('/');
+      if (taken.has(dir)) return dir;
+    }
+  }
+  return null;
+}
+
+/** Why a path cannot be written (component or whole path too long), or null. */
+export function overlongPath(rel: string): string | null {
+  const seg = overlongName(rel);
+  if (seg) return `a name longer than ${SEED_MAX_NAME_BYTES} bytes`;
+  if (Buffer.byteLength(rel) > SEED_MAX_PATH_BYTES) return `a path longer than ${SEED_MAX_PATH_BYTES} bytes`;
+  return null;
+}
 
 /**
  * Why a `files` map cannot seed a project, or null when it can. Keys are
@@ -87,6 +138,8 @@ export function seedError(files: unknown): string | null {
   for (const [rel, content] of entries) {
     const norm = importPath(rel);
     if (norm === null || isHiddenPath(norm)) return `File path "${rel}" is not allowed`;
+    const tooLong = overlongPath(norm);
+    if (tooLong) return `File path "${rel}" has ${tooLong}`;
     if (typeof content !== 'string') return `Content of "${rel}" must be a string`;
     total += Buffer.byteLength(content);
     if (total > SEED_MAX_BYTES) return `Files total more than ${Math.round(SEED_MAX_BYTES / (1024 * 1024))} MB`;

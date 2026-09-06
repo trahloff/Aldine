@@ -34,7 +34,7 @@ async function importFile(page: import('@playwright/test').Page, file: string, s
 }
 
 test.describe('engine detection on import', () => {
-  test('a latexmkrc with $pdf_mode 4 selects XeLaTeX and the import typesets with it', async ({ page, request }) => {
+  test('a latexmkrc with $pdf_mode 5 selects XeLaTeX and the import typesets with it', async ({ page, request }) => {
     const { dir, file, stem } = zipFixture('import-latexmkrc');
     let id: string | null = null;
     try {
@@ -126,6 +126,15 @@ test.describe('compiler settings panel', () => {
       await page.getByTestId('settings-auto-typeset').check();
       await expect.poll(() => page.evaluate(() => window.localStorage.getItem('aldine.autoTypeset'))).toBe('1');
       await expect(page.getByTestId('auto-toggle')).toHaveClass(/auto-toggle--on/);
+
+      // Theme lives here too: the editor has no visible theme control, and
+      // outside the command palette this dialog is the only way back to dark.
+      await expect(page.getByTestId('settings-theme')).toHaveValue('dark');
+      await page.getByTestId('settings-theme').selectOption('light');
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('light');
+      await expect.poll(() => page.evaluate(() => window.localStorage.getItem('aldine.theme'))).toBe('light');
+      await page.getByTestId('settings-theme').selectOption('dark');
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
 
       await page.getByTestId('settings-root-file').selectOption('other.tex');
       await expect.poll(async () => (await meta(request, id)).rootFile).toBe('other.tex');
