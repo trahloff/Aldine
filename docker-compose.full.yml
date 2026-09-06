@@ -52,6 +52,8 @@ services:
       AWS_REGION: ${AWS_REGION:-}
       # Optional error tracking.
       SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       # Public-demo hardening: comma-separated project ids everyone may read
       # and typeset but nobody may edit; per-client typeset budget per minute.
       ALDINE_PROTECTED_PROJECTS: ${ALDINE_PROTECTED_PROJECTS:-}
