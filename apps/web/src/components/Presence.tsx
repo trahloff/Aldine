@@ -22,8 +22,10 @@ export default function Presence({ users }: { users: PresenceUser[] }) {
     <div className="presence" title={users.map((u) => u.name).join(', ')} data-testid="presence">
       {users.slice(0, 5).map((u, i) => (
         u.isAgent ? (
-          <span key={i} className="presence__avatar presence__avatar--agent" title={agentTitle(u)} aria-label={agentTitle(u)} style={{ background: u.color }} data-testid="presence-agent">
-            <IconSpark />
+          // role + tabIndex: aria-label on a bare span is ignored by most screen
+          // readers, and the session-start tooltip must be reachable by keyboard.
+          <span key={i} className="presence__avatar presence__avatar--agent" role="img" tabIndex={0} title={agentTitle(u)} aria-label={agentTitle(u)} style={{ background: u.color }} data-testid="presence-agent">
+            <span aria-hidden="true" style={{ display: 'contents' }}><IconSpark /></span>
           </span>
         ) : (
           <span key={i} className="presence__avatar" title={u.name} aria-label={u.name} style={{ background: u.color }}>

@@ -35,7 +35,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className="toast">
             {t.kind === 'error' ? <span className="dot dot--error" /> : t.kind === 'ok' ? <span className="dot dot--ok" /> : null}
-            {t.text}
+            <span className="toast__text">{t.text}</span>
             {t.action && (
               <button
                 className="btn btn--small"

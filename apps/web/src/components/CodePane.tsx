@@ -48,7 +48,8 @@ function reanchor(doc: Text, r: CommentRange): CommentRange {
 export interface CodePaneHandle {
   /** Deferred until the collab doc has synced: a fresh pane holds an empty
    *  document until then, and line N of nothing is line 1. */
-  gotoLine(line: number, opts?: { flash?: boolean }): void;
+  /** onClamped fires (with the line count) when `line` is past the end of the doc. */
+  gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }): void;
   insertAtCursor(text: string): void;
   currentLine(): number | null;
   getSelection(): { from: number; to: number; quote: string } | null;
@@ -185,11 +186,12 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
   const syncedRef = useRef(false);
-  const pendingGoto = useRef<{ line: number; flash: boolean } | null>(null);
+  const pendingGoto = useRef<{ line: number; flash: boolean; onClamped?: (lines: number) => void } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyGoto = (view: EditorView, line: number, flash: boolean) => {
+  const applyGoto = (view: EditorView, line: number, flash: boolean, onClamped?: (lines: number) => void) => {
     const l = Math.min(Math.max(1, line), view.state.doc.lines);
+    if (line > view.state.doc.lines) onClamped?.(view.state.doc.lines);
     const pos = view.state.doc.line(l).from;
     const effects = [EditorView.scrollIntoView(pos, { y: 'center' }), ...(flash ? [flashLine.of(pos)] : [])];
     view.dispatch({ selection: { anchor: pos }, scrollIntoView: true, effects });
@@ -204,12 +206,12 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   };
 
   useImperativeHandle(ref, () => ({
-    gotoLine(line: number, opts?: { flash?: boolean }) {
+    gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }) {
       const view = viewRef.current;
       // Before the view exists (handle is live from the first commit, the
       // view from the mount effect) or before the doc has synced: queue it.
-      if (!view || !syncedRef.current) { pendingGoto.current = { line, flash: !!opts?.flash }; return; }
-      applyGoto(view, line, !!opts?.flash);
+      if (!view || !syncedRef.current) { pendingGoto.current = { line, flash: !!opts?.flash, onClamped: opts?.onClamped }; return; }
+      applyGoto(view, line, !!opts?.flash, opts?.onClamped);
     },
     insertAtCursor(text: string) {
       const view = viewRef.current;
@@ -384,7 +386,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       syncedRef.current = true;
       const goto = pendingGoto.current;
       pendingGoto.current = null;
-      if (goto) applyGoto(view, goto.line, goto.flash);
+      if (goto) applyGoto(view, goto.line, goto.flash, goto.onClamped);
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.

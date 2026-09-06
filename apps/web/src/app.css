@@ -28,8 +28,11 @@
   color: var(--on-accent);
 }
 .btn--primary:hover { background: var(--accent-fill-hover); }
-/* the hero action stays saturated while working — the spinner carries the state */
-.btn--primary:disabled { opacity: 1; background: var(--accent-fill); cursor: progress; }
+.btn--primary:disabled { background: var(--accent-fill); }
+/* The hero action stays saturated while WORKING (aria-busy) — the spinner
+   carries the state. Disabled for validation it fades like any button, or a
+   click that does nothing looks like a broken one. */
+.btn--primary[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }
 
 .btn--ghost { border-color: transparent; background: transparent; }
 .btn--ghost:hover { background: var(--bg-hover); }
@@ -641,8 +644,9 @@
 .diff__ctx { color: var(--text-2); }
 .diff__file { color: var(--text); font-weight: 600; background: var(--bg-active); }
 .diff__hunk { color: var(--accent); }
-.diff__add { color: var(--ok); background: rgba(40, 167, 69, 0.10); }
-.diff__del { color: var(--error); background: var(--error-soft); }
+/* text-grade colors: the raw --ok/--error fills sit below 4.5:1 on their tints */
+.diff__add { color: var(--ok-text); background: rgba(40, 167, 69, 0.10); }
+.diff__del { color: color-mix(in srgb, var(--error) 80%, var(--text)); background: var(--error-soft); }
 
 /* log viewer */
 .modal--wide { width: 760px; }
@@ -814,8 +818,9 @@
 .palette__hint { font-size: 11px; color: var(--text-2); }
 .palette__empty { padding: 18px; text-align: center; color: var(--text-2); font-size: 13px; }
 
-/* toast */
-.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; }
+/* toast — capped to the viewport; on a phone the action buttons drop under
+   the sentence instead of squeezing it into three words per line */
+.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; width: max-content; max-width: min(560px, calc(100vw - 24px)); }
 .toast {
   background: var(--bg-panel);
   border-radius: var(--radius-l);
@@ -823,10 +828,12 @@
   padding: 9px 16px;
   font-size: 13px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   animation: toast-in 200ms var(--ease);
 }
+.toast__text { flex: 1 1 auto; min-width: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* comment highlights in the editor */
@@ -919,11 +926,16 @@
   .toolbar { flex-wrap: wrap; height: auto; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .toolbar__name { max-width: 40vw; }
 }
+.sidebar-toggle { display: none; }
 @media (max-width: 640px) {
   .home__bar { flex-direction: column; align-items: stretch; gap: 12px; }
   .home__bar > div:last-child { flex-wrap: wrap; }
   .split-pdf, .pdf-pane { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
+  /* The overlay hides the editor; a deep link to a line collapses it and the
+     toolbar button brings it back. */
+  .sidebar--hidden { display: none; }
+  .sidebar-toggle { display: inline-flex; }
 }
 
 /* ---------- OAuth consent (/oauth/authorize) ---------- */
@@ -933,6 +945,11 @@
 .consent__origin { color: var(--text-2); font-size: 12.5px; margin: 0 0 10px; }
 .consent__origin code { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
 .consent__warn { color: var(--warn-text); background: var(--warn-soft); border-radius: var(--radius-m); padding: 8px 10px; font-size: 12.5px; margin: 0 0 10px; }
+/* light theme: --warn-text on --warn-soft is 4.35:1 at 12.5px; a darker amber reads */
+:root:not([data-theme="dark"]) .consent__warn { color: #6f5700; }
+.consent__detail { margin: 0 0 14px; font-size: 12px; color: var(--text-3); }
+.consent__detail summary { cursor: pointer; }
+.consent__detail code { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); word-break: break-word; }
 .consent__what { color: var(--text-2); font-size: 13px; line-height: 1.45; margin: 0 0 14px; }
 .consent__scope { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .consent__option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); cursor: pointer; }
@@ -940,6 +957,8 @@
 .consent__option input { margin: 3px 0 0; accent-color: var(--accent); }
 .consent__option-title { display: block; font-size: 13.5px; font-weight: 550; }
 .consent__option-sub { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
+/* --text-2 on the selected card's accent tint is 4.3:1; blend toward --text */
+.consent__option:has(input:checked) .consent__option-sub { color: color-mix(in srgb, var(--text) 80%, var(--text-2)); }
 .consent__projects { max-height: 180px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 4px 10px; background: var(--bg-inset); }
 .consent__project { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; cursor: pointer; }
 .consent__project input { accent-color: var(--accent); }

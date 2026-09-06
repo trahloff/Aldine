@@ -28,6 +28,7 @@ interface Payload {
   errors?: CompileError[];
   errorsTotal?: number;
   timedOut?: boolean;
+  logTail?: string;
   /** Set by the viewer when the host hands over a prose error (isError). */
   failureText?: string;
 }
@@ -255,8 +256,8 @@ function renderStatus(p: Payload, pages: number | null): void {
     parts.push(sep(), s);
   }
   if (p.head) {
-    const h = span('head', p.head);
-    h.title = 'Commit';
+    const h = span('head', `commit ${p.head}`);
+    h.title = 'The commit this result was typeset from';
     parts.push(sep(), h);
   }
   statusEl.append(...parts);
@@ -379,7 +380,14 @@ function hydrate(p: Payload): void {
   }
   const n = p.errorsTotal ?? p.errors?.length ?? 0;
   const title = p.timedOut ? 'Typesetting timed out' : 'No PDF from this run';
-  const hint = p.failureText ? undefined : (n ? `Fix the ${n === 1 ? 'error' : `${n} errors`} above, then ask for a recompile.` : 'Ask for a recompile once the source is fixed.');
+  // No parsed error means the failure is not in the source (compiler
+  // unreachable, wrong volume, root file missing): the log's last line says
+  // what happened; "fix the source" would send the person to a healthy document.
+  const lastLogLine = (p.logTail ?? '').split('\n').map((l) => l.trim()).filter(Boolean).pop();
+  const hint = p.failureText ? undefined
+    : n ? `Fix the ${n === 1 ? 'error' : `${n} errors`} above, then ask for a recompile.`
+    : lastLogLine ? `Aldine could not run the typesetter: ${lastLogLine} — open the project in Aldine and check the log.`
+    : 'Aldine could not run the typesetter — open the project in Aldine and check the log.';
   if (!p.pdfUrl) {
     showNotice(title, hint);
     return;
@@ -420,7 +428,7 @@ async function loadPdf(url: string): Promise<void> {
     if (gen !== state.generation) return;
     if (!res.ok) {
       const expired = res.status === 403;
-      throw new Error(expired ? 'This PDF link has expired — ask for a fresh one (get_pdf_url) or open the project in Aldine.' : `The PDF could not be fetched (HTTP ${res.status}).`);
+      throw new Error(expired ? 'This PDF link has expired — ask Claude for a fresh link, or open the project in Aldine.' : `The PDF could not be fetched (HTTP ${res.status}).`);
     }
     const declared = Number(res.headers.get('content-length') || 0);
     if (declared > MAX_PDF_BYTES) throw new Error(`This PDF is ${fmtBytes(declared)} — too large to preview here. Open it in Aldine instead.`);
@@ -536,6 +544,7 @@ function sizeSlot(s: PageSlot): void {
 function layout(): void {
   for (const s of state.slots) sizeSlot(s);
   zoomBtn.textContent = `${Math.round(state.zoom * 100)}%`;
+  zoomBtn.setAttribute('aria-label', `Zoom ${Math.round(state.zoom * 100)}% — reset to fit width`);
   zoomOut.disabled = state.zoom <= ZOOM_STEPS[0];
   zoomIn.disabled = state.zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1];
 }

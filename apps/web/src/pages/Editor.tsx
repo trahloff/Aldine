@@ -95,7 +95,14 @@ export default function Editor() {
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled } = useAuth();
+  const { authEnabled, user } = useAuth();
+  // Bumped whenever the branch's history may have moved (files signal, a
+  // revert, an agent session ending) so an open History panel refetches.
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const bumpHistory = useCallback(() => setHistoryVersion((v) => v + 1), []);
+  // Phones show the sidebar as an overlay; a deep link to a line collapses
+  // it so the flagged line is on screen, and the toolbar button restores it.
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
   // Visual mode is gated by an experimental flag until it graduates.
   const visualEnabled = localStorage.getItem('aldine.experimental.visualEditor') === '1';
@@ -187,11 +194,16 @@ export default function Editor() {
     // not here means nothing (line 12 of a missing chapter is not line 12 of main).
     const line = target || !norm ? dl.line : null;
     if (line != null && line > 0) {
+      if (window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
       // The pane for `open` mounts on the next render; poll briefly for it.
       const jump = (tries: number) => {
         const code = codeRef.current;
-        if (code) code.gotoLine(line, { flash: true });
-        else if (tries < 40) setTimeout(() => jump(tries + 1), 50);
+        if (code) {
+          code.gotoLine(line, {
+            flash: true,
+            onClamped: (lines) => toast(`"${open}" has only ${lines} line${lines === 1 ? '' : 's'} — the link may be from an older typeset`),
+          });
+        } else if (tries < 40) setTimeout(() => jump(tries + 1), 50);
       };
       requestAnimationFrame(() => jump(0));
     }
@@ -281,7 +293,7 @@ export default function Editor() {
   agentPresentRef.current = agentPresent;
   const agentSessionStart = useRef<number | null>(null);
   const agentEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [agentReview, setAgentReview] = useState<{ patch: string; files: string[]; hashes: string[] } | null>(null);
+  const [agentReview, setAgentReview] = useState<{ patch: string; files: string[]; hashes: string[]; commits: Array<{ hash: string; message: string; patch: string }> } | null>(null);
 
   useEffect(() => {
     if (agentPresent) {
@@ -302,34 +314,40 @@ export default function Editor() {
         // git dates carry second precision — allow slack around the session start
         const session = log.filter((c) => c.author === 'Claude' && new Date(c.date).getTime() >= startedAt - 10_000);
         if (!session.length) return;
+        bumpHistory();
         const diffs = await Promise.all(session.map((c) => api.commitDiff(id, c.hash)));
         const patch = diffs.map((d) => d.patch).join('\n');
         const files = filesInPatch(patch);
+        // Read oldest first (the log is newest first): the story of the session.
+        const commits = session.map((c, i) => ({ hash: c.hash, message: c.message, patch: diffs[i].patch })).reverse();
         toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
           // Arrives a minute after the last edit, when the person has usually
           // looked away — it must wait for them.
           sticky: true,
-          onClick: () => setAgentReview({ patch, files, hashes: session.map((c) => c.hash) }),
+          onClick: () => setAgentReview({ patch, files, hashes: session.map((c) => c.hash), commits }),
         });
       } catch { /* history unavailable — nothing to review */ }
     }, 4000);
-  }, [agentPresent, id, branch, toast]);
+  }, [agentPresent, id, branch, toast, bumpHistory]);
   useEffect(() => () => { if (agentEndTimer.current) clearTimeout(agentEndTimer.current); }, []);
 
   const revertAgent = useCallback(async () => {
     if (!agentReview) return;
     try {
-      // log order is newest-first — exactly what the revert endpoint expects
-      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', localUser().name);
+      // log order is newest-first — exactly what the revert endpoint expects.
+      // The signed-in name is the audit author; the anonymous collab identity
+      // is only right without accounts (the server applies the same rule).
+      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', user?.name || localUser().name);
       setAgentReview(null);
-      toast(res.ok ? 'Reverted Claude’s edits' : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
+      toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
+      bumpHistory();
       await loadFiles();
     } catch (err: any) {
       toast(`Could not revert: ${err.message}`, 'error');
     }
-  }, [agentReview, id, branch, loadFiles, toast]);
+  }, [agentReview, id, branch, user, loadFiles, toast, bumpHistory]);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -427,7 +445,8 @@ export default function Editor() {
   // The file list is a REST snapshot. The server bumps this signal whenever
   // the branch's files change on disk (another tab, a collaborator, the agent
   // API, a pull), and a tab coming back to the foreground refetches anyway.
-  useFilesSignal(id, branch, loadFiles);
+  const onFilesSignal = useCallback(() => { loadFiles(); bumpHistory(); }, [loadFiles, bumpHistory]);
+  useFilesSignal(id, branch, onFilesSignal);
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') loadFiles(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -715,11 +734,15 @@ export default function Editor() {
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
         <button className="btn" onClick={startComment} data-testid="add-comment" title="Comment on the selected text">Comment</button>
         <Presence users={users} />
+        <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
+          {sidebarHidden ? 'Files' : 'Hide files'}
+        </button>
         <div className="toolbar__group">
           <button
             className="btn btn--primary"
             onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
+            aria-busy={compile.status === 'compiling' || undefined}
             data-testid="typeset-button"
             title={`Typeset (${shortcut('S')})`}
           >
@@ -730,7 +753,7 @@ export default function Editor() {
       </header>
 
       <div className="workspace">
-        <aside className="pane sidebar">
+        <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
             <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab" data-testid="tab-history">History</button>
@@ -796,7 +819,7 @@ export default function Editor() {
                 onSetRoot={setRootFile}
               />
             )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} />}
+            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} />}
             {tab === 'review' && (
               <ReviewPanel
                 comments={comments}
@@ -1028,7 +1051,15 @@ export default function Editor() {
             <p className="modal__sub">
               {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {branch}
             </p>
-            <DiffView patch={agentReview.patch} />
+            <p className="modal__sub" data-testid="agent-review-caveat">
+              A commit holds Claude’s change plus anything typed into the same file in the seconds before it was saved; reverting undoes both.
+            </p>
+            {agentReview.commits.map((c) => (
+              <div key={c.hash} data-testid="agent-review-commit">
+                <div className="review__divider" title={c.hash}>{c.message}</div>
+                <DiffView patch={c.patch} />
+              </div>
+            ))}
             <div className="modal__row">
               <button className="btn" onClick={() => setAgentReview(null)}>Close</button>
               <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">

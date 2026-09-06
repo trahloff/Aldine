@@ -190,13 +190,19 @@ export const api = {
 
   listFiles: (id: string, branch: string) =>
     req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),
+  // GET /file answers with `x-aldine-content-version` (the branch version —
+  // pass it back as `baseVersion`) and `x-aldine-file-version` (when this
+  // file last changed). PUT with `baseVersion` is refused with
+  // `409 { error: 'version_conflict', currentVersion, fileVersion }` only when
+  // THIS file changed after that version, or when the version is newer than
+  // the branch knows; writes to other files never conflict.
   readFile: async (id: string, branch: string, path: string) => {
     const res = await fetch(withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
-  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean } = {}) =>
-    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}) }) }),
+  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean; baseVersion?: number } = {}) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}), ...(opts.baseVersion !== undefined ? { baseVersion: opts.baseVersion } : {}) }) }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
   deleteFile: (id: string, branch: string, path: string) =>
@@ -225,7 +231,7 @@ export const api = {
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
-    req<{ ok: boolean; hash?: string }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
+    req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
 
   // GitHub sync
   githubStatus: () => req<GithubStatus>('/api/github/status'),
@@ -276,7 +282,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[] }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; mcpEnabled?: boolean; publicUrl?: string | null }>('/api/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   resetRequest: (email: string) =>

@@ -155,7 +155,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #9a9a95;
+  color: #6b6b66; /* ≥ 5:1 on the white page: the only text a slow link shows */
   font-size: 12px;
   pointer-events: none;
 }
