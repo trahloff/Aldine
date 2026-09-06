@@ -89,8 +89,14 @@ in this agreement is or has become inaccurate.
 
 ---
 
-**How to sign:** open a pull request. A bot will comment with a one-line
-sentence to post as a comment on that pull request. Your signature is recorded
-once and covers every contribution you make afterwards.
+**How to sign:** open a pull request. The `license/cla` status check on it
+links to [CLA assistant](https://cla-assistant.io/trahloff/Aldine), where you
+sign in with GitHub and click once. Your signature is recorded once and covers
+every contribution you make afterwards.
+
+This file is the canonical text. CLA assistant reads agreements from a Gist,
+so the same text is mirrored at
+<https://gist.github.com/trahloff/4d2919111e5e662fdcee9a6c59bec85b>; the two
+are kept identical, and a change to either means every contributor signs again.
 
 Questions about these terms are welcome in a GitHub issue before you sign.

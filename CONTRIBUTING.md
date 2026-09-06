@@ -72,9 +72,10 @@ Live image, so run them locally before a PR that touches a headline feature.
 
 ## Contributor License Agreement
 
-The first pull request you open gets a bot comment asking you to sign the
-[CLA](CLA.md) by posting one sentence back. It takes a few seconds and covers
-everything you contribute afterwards.
+The first pull request you open gets a `license/cla` status check that links
+to [CLA assistant](https://cla-assistant.io/trahloff/Aldine). Sign in with
+GitHub there and click once; it takes a few seconds and covers everything you
+contribute afterwards. The text you sign is [CLA.md](CLA.md).
 
 You keep the copyright to your work. What the agreement grants Aldine is the
 right to distribute your contribution, including under licence terms that differ
