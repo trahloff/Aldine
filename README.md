@@ -297,8 +297,9 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=
-# error tracking
+# error tracking, and which instance the errors came from
 SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
 ```
 
 ```bash

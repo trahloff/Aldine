@@ -7,6 +7,16 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Error tracking says which instance and which build an error came from, and
+  keeps the document out of it. `SENTRY_ENVIRONMENT` names the instance
+  (`staging`, `production`) instead of the environment being read from
+  `NODE_ENV`, which every deployed build sets to `production`; the release is
+  `SENTRY_RELEASE`, else the running `ALDINE_VERSION`, else the package
+  version. Events are stripped of the request body, cookies and headers, and a
+  URL is sent without its query string, which is where the file path, the
+  branch and a PDF link's signature live. A run with the test hooks on never
+  reports at all, so a developer machine that exports `SENTRY_DSN` for another
+  project does not file this app's test errors into it.
 - Contributors sign the CLA with one click on
   [cla-assistant.io](https://cla-assistant.io/trahloff/Aldine) instead of
   posting a sentence as a pull-request comment. The `contributor-assistant`

@@ -76,8 +76,10 @@ SMTP_FROM="Aldine <no-reply@aldine.example.com>"
 # Useful when hosting for a group; over-quota compiles return HTTP 402.
 ALDINE_COMPILE_QUOTA_MIN=
 
-# error tracking (optional)
+# error tracking (optional). SENTRY_ENVIRONMENT separates this instance from
+# your others in the issue list; without it every instance files as production.
 SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
 
 # Shared rate limits and cross-node access-revocation events (the `redis`
 # profile). This does NOT make multiple app nodes a supported topology: routing
@@ -247,7 +249,9 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `DATABASE_URL` | Postgres datastore (blank = flat JSON files) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |
 | `REDIS_URL` | Shared rate limits + collab sync across app nodes |
-| `SENTRY_DSN` | Error tracking |
+| `SENTRY_DSN` | Error tracking. Server errors only (5xx and unhandled rejections); URLs are sent without their query string, and request bodies, cookies and headers are dropped |
+| `SENTRY_ENVIRONMENT` | Which instance an error came from (`production`, `staging`, …). Defaults to `NODE_ENV`, then `production` |
+| `SENTRY_RELEASE` | Build an error belongs to. Defaults to `ALDINE_VERSION`, then the package version |
 | `TRUST_PROXY` | `1` = trust `X-Forwarded-For` (set by the prod overlay; needed behind any proxy) |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST` | Rate-limit tuning (sane defaults) |

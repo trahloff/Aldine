@@ -115,9 +115,13 @@ jobs:
               echo "Register a clean revision with terraform apply, then rerun."; exit 1;;
             esac
           fi
-          jq --arg s "$REG/$IMAGE_PREFIX-server:$SHA" --arg c "$REG/$IMAGE_PREFIX-compiler:$SHA" '
+          # SENTRY_RELEASE rides along with the image tags: terraform owns the rest
+          # of the container env and has no commit to name, so the deploy sets it
+          # here and re-sets it on every deploy, exactly like the image swap.
+          jq --arg s "$REG/$IMAGE_PREFIX-server:$SHA" --arg c "$REG/$IMAGE_PREFIX-compiler:$SHA" --arg rel "$SHA" '
             .containerDefinitions |= map(
               if .name == "server" then .image = $s
+                | .environment = (((.environment // []) | map(select(.name != "SENTRY_RELEASE"))) + [{name: "SENTRY_RELEASE", value: $rel}])
               elif .name == "compiler" then .image = $c
               else . end)
             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,

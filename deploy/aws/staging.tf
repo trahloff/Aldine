@@ -22,7 +22,7 @@ locals {
 
   staging_server_env = merge(
     { for k, v in local.server_env : k => v if k != "ALDINE_SSO_ONLY" },
-    { ALDINE_PUBLIC_URL = "https://${var.staging_domain_name}" },
+    { ALDINE_PUBLIC_URL = "https://${var.staging_domain_name}", SENTRY_ENVIRONMENT = "staging" },
     var.staging_env,
   )
 

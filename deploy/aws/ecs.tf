@@ -18,15 +18,16 @@ locals {
   # Plain (non-secret) env for the server. Secrets come from SSM below.
   server_env = merge(
     {
-      NODE_ENV          = "production"
-      PORT              = "3000"
-      DATA_DIR          = "/data"
-      META_DIR          = "/secrets"
-      COMPILER_URL      = "http://localhost:4020"
-      ALDINE_PUBLIC_URL = "https://${var.domain_name}"
-      COOKIE_SECURE     = "1"
-      TRUST_PROXY       = "1" # behind the ALB, so X-Forwarded-For is trusted for rate-limit keys
-      ALDINE_AI_MODEL   = var.ai_model
+      NODE_ENV           = "production"
+      SENTRY_ENVIRONMENT = "production"
+      PORT               = "3000"
+      DATA_DIR           = "/data"
+      META_DIR           = "/secrets"
+      COMPILER_URL       = "http://localhost:4020"
+      ALDINE_PUBLIC_URL  = "https://${var.domain_name}"
+      COOKIE_SECURE      = "1"
+      TRUST_PROXY        = "1" # behind the ALB, so X-Forwarded-For is trusted for rate-limit keys
+      ALDINE_AI_MODEL    = var.ai_model
     },
     var.auth_enabled ? { AUTH_ENABLED = "1" } : {},
     var.sso_only ? { ALDINE_SSO_ONLY = "1" } : {},
