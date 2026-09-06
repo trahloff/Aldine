@@ -307,6 +307,13 @@ All notable changes to Aldine are documented here. The format follows
   `currentVersion`, and `batch_write` accepts `base_version` per entry (a
   conflict on any entry writes nothing).
 
+- Contributors sign the CLA with one click on
+  [cla-assistant.io](https://cla-assistant.io/trahloff/Aldine) instead of
+  posting a sentence as a pull-request comment. The `contributor-assistant`
+  workflow is gone (its upstream was archived in March 2026); the signatures
+  it collected were imported, so nobody signs twice, and the
+  `cla-signatures` branch stays as the historical record. (#29)
+
 ### Fixed
 - A typeset that stops on an error and removes the PDF (what pdfTeX does once
   a page has shipped out) no longer drops the preview's stale flag: the pages
