@@ -73,12 +73,15 @@ test.describe('agent presence and audit UI', () => {
       await expect(page.locator('.cm-agent-edit').first()).toBeVisible({ timeout: 3000 });
       await expect(page.locator('.cm-content')).toContainText('Results improve markedly across trials.');
 
-      // Commits authored Claude get the violet dot in history.
+      // Commits authored Claude get the violet dot in history — and the
+      // panel, opened BEFORE the commit, shows it without a tab switch (it
+      // polls while the agent is present).
+      await page.getByRole('tab', { name: 'History' }).click();
+      await expect(page.getByTestId('history-panel')).toBeVisible();
       const committed = await call(client, 'commit', { project: id, message: 'Adjust opening and results lines' });
       expect(committed.isError).toBeFalsy();
       expect(committed.body.committed).toBe(true);
-      await page.getByRole('tab', { name: 'History' }).click();
-      await expect(page.getByTestId('history-panel')).toContainText('Adjust opening and results lines', { timeout: 10_000 });
+      await expect(page.getByTestId('history-panel')).toContainText('Adjust opening and results lines', { timeout: 15_000 });
       await expect(page.getByTestId('agent-commit-dot').first()).toBeVisible();
     } finally {
       await client.close().catch(() => {});
@@ -111,6 +114,9 @@ test.describe('agent presence and audit UI', () => {
       await page.getByTestId('agent-session-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
       await expect(page.getByTestId('agent-review-modal')).toContainText('AGENT-ADDED-SENTENCE');
+      // each commit is a titled section; the git header lines never show
+      await expect(page.getByTestId('agent-review-commit').first()).toContainText('Add a sentence to the results');
+      await expect(page.getByTestId('agent-review-modal')).not.toContainText('diff --git');
 
       // Revert creates a new commit undoing the session; the open editor
       // refreshes in place.

@@ -10,19 +10,37 @@
  * edits out of the agent's commit, and an agent path that vanished before the
  * fire does not drag the other agent paths into the anonymous sweep.
  *
+ * The same-file cases use the tools' write shape — checkpoint, write and
+ * register inside ONE repo-lock span; outside it a fire already in flight
+ * can stage the agent's file between the write and the registration and
+ * sweep it into the autosave.
+ *
  * Env must be set before any src import; ALDINE_AUTOCOMMIT_MS shrinks the
  * 20 s debounce so the fire can be awaited.
  */
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { check } from './assert.mjs';
+
+process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-autocommit-'));
 process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 process.env.ALDINE_AUTOCOMMIT_MS = '250';
+// Mock Zotero: one biblatex item, whatever is asked — zotero.ts reads the
+// base URL at import time.
+const zoteroMock = http.createServer((_req, res) => {
+  res.setHeader('content-type', 'text/plain');
+  res.setHeader('Last-Modified-Version', '7');
+  res.setHeader('Total-Results', '1');
+  res.end('@article{fromzotero,\n  title = {From Zotero},\n}\n');
+});
+await new Promise((r) => zoteroMock.listen(0, '127.0.0.1', r));
+process.env.ZOTERO_API_BASE = `http://127.0.0.1:${zoteroMock.address().port}`;
 delete process.env.AUTH_ENABLED;
 delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
@@ -31,7 +49,7 @@ const { initDb } = await import('../src/db/index.ts');
 await initDb();
 const store = await import('../src/store.ts');
 const gitops = await import('../src/gitops.ts');
-const { scheduleCommit } = await import('../src/collab.ts');
+const { scheduleCommit, shutdownFlushSet } = await import('../src/collab.ts');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The debounce fires on a timer the test cannot observe; poll the log instead of
@@ -45,6 +63,12 @@ const untilLog = async (id, branch, pred, maxMs = 6000) => {
     await sleep(100);
   }
 };
+// The agent write shape the tools use: checkpoint, write and register in ONE lock span.
+const agentWrite = (id, rel, content, message) => gitops.withRepoLock(id, async () => {
+  await gitops.checkpointPathsHeld(id, 'main', [rel]);
+  store.writeFile(id, 'main', rel, content);
+  scheduleCommit(id, 'main', message, 'Claude', [rel]);
+});
 
 // ---- direction 1: human schedules first, agent second — before the fix the
 // agent's message/author claimed the whole window, so the human's file landed
@@ -115,9 +139,7 @@ check(!log.some((c) => c.author === 'Claude'), 'no Claude commit survives an exp
 const p5 = await store.createProject('Split same-file checkpoint', {});
 store.writeFile(p5.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
 scheduleCommit(p5.id, 'main'); // typing keeps re-arming the debounce; nothing has landed
-await gitops.checkpointPaths(p5.id, 'main', ['main.tex']);
-store.writeFile(p5.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n');
-scheduleCommit(p5.id, 'main', 'Edit main.tex', 'Claude', ['main.tex']);
+await agentWrite(p5.id, 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n', 'Edit main.tex');
 log = await untilLog(p5.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
 const claude5 = log.find((c) => c.author === 'Claude');
 check(claude5 !== undefined, 'the agent edit commits under Claude');
@@ -126,6 +148,44 @@ check(patch5.includes('+agent sentence') && !patch5.includes('+human paragraph')
 const checkpoint5 = log.find((c) => c.message === 'aldine: autosave');
 check(checkpoint5 !== undefined && checkpoint5.author !== 'Claude', "the human's pending paragraphs were checkpointed as an anonymous autosave");
 check((await gitops.commitDiff(p5.id, checkpoint5.hash)).patch.includes('+human paragraph two'), 'the checkpoint holds the human paragraphs');
+
+// ---- fire in flight BEFORE the span: the autosave already running when the
+// agent arrives commits the human's paragraphs; the checkpoint then finds the
+// file clean and the attributed commit that follows is exactly the delta ----
+const p5b = await store.createProject('Split fire before span', {});
+store.writeFile(p5b.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
+scheduleCommit(p5b.id, 'main');
+const fire5b = gitops.autoCommit(p5b.id, 'main'); // not awaited: in flight
+await agentWrite(p5b.id, 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n', 'Edit main.tex');
+await fire5b;
+log = await untilLog(p5b.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
+const claudes5b = log.filter((c) => c.author === 'Claude');
+check(claudes5b.length === 1, `exactly one Claude commit after a fire in flight (got ${claudes5b.length})`);
+const patch5b = claudes5b[0] ? (await gitops.commitDiff(p5b.id, claudes5b[0].hash)).patch : '';
+check(patch5b.includes('+agent sentence') && !patch5b.includes('+human paragraph'), "the in-flight fire did not sweep the agent's delta: the Claude commit is exactly the delta");
+const autosaves5b = log.filter((c) => c.message === 'aldine: autosave');
+check(autosaves5b.length === 1 && autosaves5b[0].author !== 'Claude', `exactly one anonymous autosave (got ${autosaves5b.length})`);
+check(autosaves5b[0] && (await gitops.commitDiff(p5b.id, autosaves5b[0].hash)).patch.includes('+human paragraph two'), 'the in-flight fire committed the human paragraphs');
+check(log.indexOf(claudes5b[0]) < log.indexOf(autosaves5b[0]), 'the Claude commit is newer than the autosave');
+
+// ---- fire queued BEHIND the span: the autosave that arrives while the agent
+// span holds the lock takes the attribution the span registered, so the
+// agent's delta commits under Claude and nothing is left for the sweep ----
+const p5c = await store.createProject('Split fire behind span', {});
+store.writeFile(p5c.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
+scheduleCommit(p5c.id, 'main');
+const span5c = agentWrite(p5c.id, 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n', 'Edit main.tex');
+const fire5c = gitops.autoCommit(p5c.id, 'main');
+await Promise.all([span5c, fire5c]);
+log = await gitops.log(p5c.id, 'main');
+check(log[0].author === 'Claude' && log[0].message === 'Edit main.tex', 'the queued fire commits the agent delta under Claude, newest');
+const patch5c = (await gitops.commitDiff(p5c.id, log[0].hash)).patch;
+check(patch5c.includes('+agent sentence') && !patch5c.includes('+human paragraph'), "the queued fire's Claude commit is exactly the agent's delta");
+check(log[1].message === 'aldine: autosave' && log[1].author !== 'Claude', 'the checkpoint before it is the anonymous autosave');
+check((await gitops.commitDiff(p5c.id, log[1].hash)).patch.includes('+human paragraph two'), 'and it holds the human paragraphs');
+const len5c = log.length;
+await sleep(600);
+check((await gitops.log(p5c.id, 'main')).length === len5c, 'the re-armed debounce finds nothing: no duplicate or empty commit');
 
 // ---- consecutive agent edits to one file: the checkpoint before the second
 // edit must keep the first edit's attribution, not bury it in an autosave ----
@@ -155,6 +215,79 @@ const claude7 = log.find((c) => c.author === 'Claude');
 check(claude7 !== undefined && (await gitops.commitDiff(p7.id, claude7.hash)).stat.includes('other.tex'), 'the surviving agent path still commits under Claude');
 check(!log.some((c) => c.message === 'aldine: autosave'), 'nothing is left for the anonymous sweep');
 
+// ---- intents are per path, not per window: an edit_file to main.tex and a
+// later write_file to notes.tex must land as two commits, each titled by its
+// own message, and a checkpoint of main.tex before a third write must carry
+// main.tex's intent — not the newer write's ----
+const p8 = await store.createProject('Split per-path intents', {});
+const base8 = (await gitops.log(p8.id, 'main')).length;
+await agentWrite(p8.id, 'main.tex', 'tightened abstract\n', 'Tighten the abstract');
+await agentWrite(p8.id, 'notes.tex', 'a note\n', 'Add reviewer notes');
+// a third write to main.tex checkpoints the pending main.tex under ITS intent
+await agentWrite(p8.id, 'main.tex', 'tightened abstract\nsecond pass\n', 'Second pass on the abstract');
+await sleep(1200);
+log = await gitops.log(p8.id, 'main');
+const titles8 = log.slice(0, log.length - base8).map((c) => `${c.author}: ${c.message}`);
+check(log.length === base8 + 3 && log.slice(0, 3).every((c) => c.author === 'Claude'), `three agent intents yield three Claude commits, no autosave (got ${JSON.stringify(titles8)})`);
+const byMsg8 = Object.fromEntries(await Promise.all(log.slice(0, 3).map(async (c) => [c.message, (await gitops.commitDiff(p8.id, c.hash)).stat])));
+check(byMsg8['Tighten the abstract']?.includes('main.tex') && !byMsg8['Tighten the abstract']?.includes('notes.tex'), 'the checkpoint of main.tex is titled with main.tex\'s own intent and holds only main.tex');
+check(byMsg8['Add reviewer notes']?.includes('notes.tex') && !byMsg8['Add reviewer notes']?.includes('main.tex'), 'notes.tex commits under its own intent and never under main.tex\'s');
+check(byMsg8['Second pass on the abstract']?.includes('main.tex') && !byMsg8['Second pass on the abstract']?.includes('notes.tex'), 'the fire commits the last main.tex write under the message it was scheduled with');
+
+// ---- shutdown set: a branch with a pending intent and no open doc must be
+// flushed too — an MCP client with no browser tab has no doc, and the
+// ledger dies with the process ----
+const p9 = await store.createProject('Split shutdown set', {});
+await agentWrite(p9.id, 'main.tex', 'agent-only branch\n', 'Add a line');
+check(shutdownFlushSet().some((d) => d.projectId === p9.id && d.branch === 'main'), 'a branch with pending agent work and no open doc is in the shutdown flush set');
+await gitops.autoCommit(p9.id, 'main', 'aldine: autosave on shutdown');
+check(!shutdownFlushSet().some((d) => d.projectId === p9.id), 'once committed it leaves the set');
+log = await gitops.log(p9.id, 'main');
+check(log[0].author === 'Claude' && log[0].message === 'Add a line', 'the shutdown flush lands the agent work under Claude');
+
+// ---- a person's whole-tree commit inside the agent window (checkpoint,
+// revert, merge, GitHub push) must not sign Claude's pending delta ----
+const p10 = await store.createProject('Split manual checkpoint', {});
+await agentWrite(p10.id, 'main.tex', 'agent sentence\n', 'Tighten the abstract');
+store.writeFile(p10.id, 'main', 'human.tex', 'human paragraph\n');
+const manual = await gitops.autoCommit(p10.id, 'main', 'Checkpoint', 'Alice');
+log = await gitops.log(p10.id, 'main');
+check(manual.committed === true && log[0].author === 'Alice' && log[0].message === 'Checkpoint', `the person's checkpoint is the newest commit under their name (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
+check((await gitops.commitDiff(p10.id, log[0].hash)).stat.includes('human.tex') && !(await gitops.commitDiff(p10.id, log[0].hash)).stat.includes('main.tex'), "the checkpoint holds the person's file only");
+check(log[1].author === 'Claude' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p10.id, log[1].hash)).stat.includes('main.tex'), 'the agent delta committed first, under Claude and its intent');
+
+// ---- fail closed, not stuck: an attributed commit that fails is retried
+// under a neutral title, so a subject git cannot take never blocks the
+// anonymous sweep of everyone else's work ----
+const p11 = await store.createProject('Split failing intent', {});
+store.writeFile(p11.id, 'main', 'main.tex', 'agent edit\n');
+gitops.registerAttributedPaths(p11.id, 'main', 'bad\u0000subject', 'Claude', ['main.tex']);
+const failed = await gitops.autoCommit(p11.id, 'main').then(() => null, (e) => e);
+check(failed instanceof Error, 'a subject git cannot take fails that fire');
+check(shutdownFlushSet().some((d) => d.projectId === p11.id), 'the attribution is kept for the next fire');
+store.writeFile(p11.id, 'main', 'human.tex', 'human line\n');
+await gitops.autoCommit(p11.id, 'main');
+log = await gitops.log(p11.id, 'main');
+check(log[0].message === 'aldine: autosave' && (await gitops.commitDiff(p11.id, log[0].hash)).stat.includes('human.tex'), `the next fire sweeps the person's file (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+check(log[1].author === 'Claude' && log[1].message === 'aldine: agent edit' && (await gitops.commitDiff(p11.id, log[1].hash)).stat.includes('main.tex'), 'and the agent delta landed under Claude with the retry title');
+
+// ---- a Zotero sync inside the agent window is a whole-tree commit a
+// person triggers: it must land Claude's pending delta under Claude first
+// and hold only the synced .bib itself ----
+const { syncProject } = await import('../src/zotero.ts');
+const p12 = await store.createProject('Split Zotero sync', {});
+await agentWrite(p12.id, 'main.tex', 'agent sentence\n', 'Tighten the abstract');
+await store.writeMeta({ ...(await store.readMeta(p12.id)), zotero: { apiKey: 'k', userId: 1, libraryPrefix: 'users/1', bibFile: 'references.bib' } });
+const synced = await syncProject(p12.id);
+check(synced.synced === true && synced.itemCount === 1, `the sync lands the mock library (got ${JSON.stringify(synced)})`);
+log = await gitops.log(p12.id, 'main');
+const titles12 = log.slice(0, 2).map((c) => `${c.author}: ${c.message}`);
+check(log[0].message === 'aldine: sync Zotero library into references.bib' && log[0].author !== 'Claude', `the sync commit is newest and not Claude's (got ${JSON.stringify(titles12)})`);
+const syncStat = (await gitops.commitDiff(p12.id, log[0].hash)).stat;
+check(syncStat.includes('references.bib') && !syncStat.includes('main.tex'), 'the sync commit holds only the .bib');
+check(log[1].author === 'Claude' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p12.id, log[1].hash)).stat.includes('main.tex'), "Claude's pending edit committed first, under Claude and its intent");
+
+zoteroMock.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('Auto-commit attribution split: ALL PASSED');
 process.exit(0);

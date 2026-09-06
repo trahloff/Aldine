@@ -44,8 +44,50 @@ Conventions:
   flushed typing lands under Claude's name and explicit commits consume
   pending attribution. The description now warns and steers to
   `batch_write` for scoped commits.
+- 2026-09-06 · `edit_file`/`write_file`/`batch_write`/`references_add` · unit
+  (`autocommit-split.test.mjs` p5, `autocommit-race.test.mjs`) · An autosave
+  firing during the pre-write checkpoint swept the agent's delta into
+  `aldine: autosave` (no Claude commit, no review coverage) or collided on
+  `index.lock`; reproduced 5 of 8 runs at a 120 ms debounce. Fixed with the
+  per-repo write lock (`gitops.withRepoLock`) and the attribution taken
+  under it. Still open by design: keystrokes typed into the same file
+  between the agent's write and the debounce fire land in the Claude commit
+  — closing that needs the attributed commit built from the agent's
+  snapshot with plumbing (hash-object / commit-tree), not from the working
+  tree.
+
+- 2026-09-06 · `edit_file`/`write_file` + checkpoint · QA (PM loop) ·
+  Commit titles misattributed intent: one pending message per branch window
+  meant a checkpoint of `main.tex` was titled with the later `write_file`'s
+  "Update notes.tex", and `references_add`'s "Add reference …" swallowed a
+  15-line rewrite of `main.tex`. Fixed: intents are per path
+  (`gitops.registerAttributedPaths`), one commit per intent at the fire and
+  at the checkpoint; `edit_file`/`write_file` take an optional `message`.
+  Pinned in `autocommit-split.test.mjs` (p8), `mcp-tools.test.mjs` and
+  `15-mcp` ("commit titles follow each write's own intent").
+- 2026-09-06 · `compile` · QA (PM loop, compiler on a different DATA_DIR) ·
+  "root file not found" came back as a normal failed compile with no errors,
+  which the description tells the model to fix-and-retry — a write loop on a
+  healthy project. Fixed: compiler-side setup errors are `isError` results
+  that tell the model to relay; no `[metric] agent_compile` line for them.
+  A missing `.sty` (BasicTeX without biblatex) is now a `hint` naming the
+  package; rows without a file fall back to the root file.
+- 2026-09-06 · revert · QA (auth on) · "Revert these changes" was authored
+  "Writer 457" for a signed-in "PM Stranger". Fixed server-side: with
+  `AUTH_ENABLED` the revert, checkpoint and merge routes commit under the
+  account name and ignore the browser's name; the toast says "Reverted
+  Claude's edits as <name>". Pinned in the auth suite (`mcp.spec.ts`).
+- 2026-09-06 · History panel · QA · Did not refresh while open: agent
+  commits and the revert stayed invisible until a tab switch. Fixed: refetch
+  on the files signal, after a revert, when the session toast fires, and
+  every 5 s while the agent is present.
 
 ## To confirm in real sessions
+
+Owed before PR #13 leaves draft:
+- [ ] A real claude.ai Connect run against staging, with the consent screenshot.
+- [ ] A Claude Code HTTP session entry under "Observed".
+- [ ] The live presence check (chip appears and leaves after the TTL).
 
 Tool descriptions (§2.2):
 - Does the model actually re-read after `stale_anchor`, or does it guess a
@@ -115,6 +157,13 @@ hosted client metadata"):
       card).
 - [ ] Wrong host settings: connector URL without `/mcp` → the discovery
       probe fails cleanly (no HTML answer from `/.well-known/*`).
+- [ ] Auth off (static token): Add custom connector with
+      `X-Aldine-Token: <ALDINE_MCP_TOKEN>` in the additional request headers
+      and no Connect → `list_projects` lists every project. Record the exact
+      label of that field in the dialog; docs/AGENT_API.md "With a static
+      token (auth off)" describes it from the 2026-09-02 staging session and
+      must match. If the field only exists for OAuth connectors, the doc must
+      say auth-off instances get Claude Code only.
 
 Claude Code (`claude mcp add --transport http aldine https://<staging>/mcp`,
 then `/mcp` → login):
@@ -131,6 +180,11 @@ Operational:
 - [ ] Server logs show no token, code, or refresh secret on any OAuth error.
 - [ ] `RL_OAUTH_*` defaults were not hit during the manual run (no 429 in
       the logs).
+- [ ] Prefix deployment (`ALDINE_BASE_PATH`): the Agent access card shows
+      `<origin><prefix>/mcp`,
+      `curl https://<host>/.well-known/oauth-authorization-server<prefix>`
+      answers with `issuer` = `<origin><prefix>`, and claude.ai's Connect
+      completes (the proxy forwards the origin-root well-known paths).
 
 ## Observed in real sessions
 
@@ -151,8 +205,7 @@ Friction, ranked:
    references.bib and bumped it, so a simultaneous edit_file on main.tex with
    the version from its own read got `version_conflict` although main.tex had
    not changed. A model working two tools in parallel hits this every time.
-   Options: per-file versions in the read result, or a conflict check on the
-   file's own hash. (Design change; not applied.)
+   Applied 2026-09-06 (per-file conflict check, see Applied tuning).
 2. A clean compile returned 4 KB of font-loading log as `logTail`. Applied:
    empty tail on success.
 3. `errors` came in log order; the one real error was item four behind rerun
@@ -230,6 +283,10 @@ Server side, once per host:
       `sig=`.
 - [ ] `ALDINE_SIGNING_SECRET` unset → `META_DIR/output-signing-secret`
       exists (0600) and survives a redeploy; set → no file.
+- [ ] Run the three Logs Insights queries from deploy/README.md once against
+      real prod `[metric]` lines: `user` and `project` parse as bare ids
+      (no `ok=…`/`ms=…` tail in either field) and query 2 shows one row per
+      project, not one per compile.
 - [ ] Record the GIF (web, light theme): typeset → card → scroll → error
       strip → deep link.
 
@@ -258,6 +315,15 @@ Server side, once per host:
   status ("Reference lookup failed: DOI lookup failed (HTTP 404)"); a bare
   network failure is worded as "could not be reached from your Aldine
   server" so the model does not claim the DOI is wrong.
+- 2026-09-06 · `edit_file` / `write_file` / `batch_write` / `PUT /file` ·
+  Conflicts are per file (session 1 friction #1): the branch
+  `contentVersion` stays the `base_version` a model passes, but a write is
+  refused only when its own file changed after that version — git-level
+  rewrites (revert, merge, pull, reset) count for every path, a base newer
+  than the branch is refused as unknowable. `read_file` and the write
+  results carry `fileVersion`; `batch_write` takes `base_version` per entry;
+  descriptions say "writes to other files never conflict, so parallel tools
+  on different files are safe".
 
 Next revision: after ≥1 week of daily use (spec §2.2), fill "Observed" from
 transcripts and move each answered question here with the change it drove.

@@ -63,6 +63,14 @@ r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/push`,paylo
 check(r.statusCode===200,'push2 '+r.body);
 check(execSync(`git --git-dir="${bare}" log -1 --format=%s main`).toString().trim()==='my custom message','custom commit message on remote');
 
+// a message git cannot take (a NUL fails the spawn) is cleaned, not dropped:
+// before, the commit silently failed and the stale HEAD was pushed as a success
+fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'v3\n');
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/push`,payload:{message:'nul\u0000inside\tand tab'}});
+check(r.statusCode===200,'push3 '+r.body);
+check(execSync(`git --git-dir="${bare}" log -1 --format=%s main`).toString().trim()==='nulinside and tab','the cleaned message is the remote commit subject');
+check(execSync(`git --git-dir="${bare}" show main:main.tex`).toString()==='v3\n','the edit behind a NUL-bearing message still reached the remote');
+
 // divergent edits to the same line → pull conflicts (409), then take-remote resolves
 execSync(`cd "${seed}" && git pull -q && printf 'REMOTE VERSION\\n' > main.tex && git commit -qam remoteedit && git push -q`);
 fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'LOCAL VERSION\n');

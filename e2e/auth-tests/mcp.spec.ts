@@ -75,6 +75,40 @@ test.describe('MCP over PAT auth', () => {
     expect((await request.post('/mcp', { data: { jsonrpc: '2.0', method: 'ping', id: 2 } })).status()).toBe(401);
   });
 
+  test('reverting Claude\'s edits is committed under the signed-in account, not the browser\'s anonymous writer name', async ({ request, baseURL }) => {
+    const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ada Researcher' } });
+    expect(reg.ok()).toBeTruthy();
+    const project = await (await request.post('/api/projects', { data: { name: 'MCP Revert Author' } })).json();
+    await request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\n' } });
+    const minted = await (await request.post('/api/tokens', { data: { name: 'MCP revert' } })).json();
+    const client = await connect(baseURL!, minted.token);
+    try {
+      const edit = await call(client, 'edit_file', {
+        project: project.id, path: 'main.tex',
+        edits: [{ quote: 'Original line.', replacement: 'Original line, changed by Claude.' }],
+        message: 'Change the opening line',
+      });
+      expect(edit.isError).toBeFalsy();
+      const committed = await call(client, 'commit', { project: project.id, message: 'Change the opening line' });
+      expect(committed.body.committed).toBe(true);
+      const log = await (await request.get(`/api/projects/${project.id}/log?branch=main`)).json();
+      const claude = log.find((c: any) => c.author === 'Claude');
+      expect(claude).toBeTruthy();
+
+      // the client claims the anonymous collab identity; the session wins
+      const reverted = await (await request.post(`/api/projects/${project.id}/revert`, { data: { branch: 'main', hashes: [claude.hash], message: 'Revert Claude’s edits', author: 'Writer 457' } })).json();
+      expect(reverted.ok).toBe(true);
+      expect(reverted.author).toBe('Ada Researcher');
+      const after = await (await request.get(`/api/projects/${project.id}/log?branch=main`)).json();
+      expect(after[0].message).toBe('Revert Claude’s edits');
+      expect(after[0].author).toBe('Ada Researcher');
+      const read = await call(client, 'read_file', { project: project.id, path: 'main.tex' });
+      expect(read.body.content).toBe('Original line.\n');
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
+
   test('create_project: a project-scoped PAT is refused at tool level, an unscoped PAT creates a project the user owns', async ({ request, baseURL }) => {
     const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'MCP Creator' } });
     expect(reg.ok()).toBeTruthy();

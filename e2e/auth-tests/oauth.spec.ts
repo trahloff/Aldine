@@ -163,7 +163,11 @@ test.describe('OAuth Connect flow', () => {
     await expect(page.getByTestId('oauth-consent')).toBeVisible();
     await page.getByTestId('oauth-scope-pick').check();
     await expect(page.getByTestId(`oauth-project-${other.id}`)).toBeVisible();
+    // nothing picked yet: the hint says so and Allow stays disabled
+    await expect(page.getByTestId('oauth-pick-hint')).toContainText('Pick at least one project to continue');
+    await expect(page.getByTestId('oauth-allow')).toBeDisabled();
     await page.getByTestId(`oauth-project-${picked.id}`).check();
+    await expect(page.getByTestId('oauth-pick-hint')).toHaveCount(0);
 
     const landed = loopback.next();
     await page.getByTestId('oauth-allow').click();
@@ -226,8 +230,11 @@ test.describe('OAuth Connect flow', () => {
     await expect(page.getByTestId('account-settings')).toBeVisible();
     await expect(page.getByTestId('agent-token-via-connect')).toBeVisible();
     await expect(page.getByTestId('account-settings')).toContainText('Loopback e2e client');
-    page.on('dialog', (d) => d.accept());
+    // a Connect row shows its scope and never the daily access-token expiry
+    await expect(page.getByTestId('agent-token-scope').first()).toContainText('1 project');
+    await expect(page.getByTestId('account-settings')).not.toContainText('Expires');
     await page.getByTestId('agent-token-revoke').first().click();
+    await page.getByTestId('agent-token-revoke-confirm').click();
     await expect(page.getByTestId('agent-token-via-connect')).toHaveCount(0);
     expect((await anon.post('/mcp', { data: { jsonrpc: '2.0', method: 'ping', id: 1 }, headers: { authorization: `Bearer ${rotated.access_token}` } })).status()).toBe(401);
     const dead = await anon.post('/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: rotated.refresh_token, client_id: clientId } });

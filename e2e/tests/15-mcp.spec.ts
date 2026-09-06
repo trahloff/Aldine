@@ -210,6 +210,94 @@ test.describe('MCP connector (static-token mode)', () => {
     }
   });
 
+  test('a person\'s unsaved typing stays out of the agent commit and the agent edit is never swept into the autosave', async ({ page, request }) => {
+    test.setTimeout(120_000); // waits out the real 20 s autosave debounce
+    const id = await createProject(request, 'MCP Autosave Race');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+
+      await openProject(page, id);
+      await typeAtEnd(page, 'HUMAN-TYPED-LINE ');
+      // past the 1.5 s store debounce (the typing is on disk, uncommitted)
+      // and well inside the 20 s autosave, so the pending autosave is what
+      // the agent edit has to keep out of its own commit
+      await page.waitForTimeout(2000);
+
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results improve markedly across trials.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+      expect(edit.body.applied).toBe(1);
+
+      // the attributed commit lands with the real debounce, not before
+      let log: Array<{ hash: string; author: string; message: string }> = [];
+      await expect.poll(async () => {
+        log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+        return log.some((c) => c.author === 'Claude' && c.message === 'Edit main.tex');
+      }, { timeout: 60_000, intervals: [1000] }).toBe(true);
+      const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
+
+      const claude = log.filter((c) => c.author === 'Claude');
+      expect(claude).toHaveLength(1);
+      const claudePatch = await patchOf(claude[0].hash);
+      expect(claudePatch).toMatch(/^\+.*markedly/m);
+      // added lines only: the typed line may appear as unchanged hunk context
+      expect(claudePatch).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
+
+      const autosaves = log.filter((c) => c.message === 'aldine: autosave');
+      expect(autosaves.length).toBeGreaterThan(0);
+      const autosavePatches = await Promise.all(autosaves.map((c) => patchOf(c.hash)));
+      expect(autosavePatches.some((p) => /^\+.*HUMAN-TYPED-LINE/m.test(p))).toBe(true);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('commit titles follow each write\'s own intent: a checkpoint never inherits the next tool\'s message', async ({ request }) => {
+    test.setTimeout(120_000); // waits out the real 20 s autosave debounce
+    const id = await createProject(request, 'MCP Intent Titles');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results improve markedly across trials.' }],
+        message: 'Strengthen the results claim',
+      });
+      expect(edit.isError).toBeFalsy();
+      const notes = await call(client, 'write_file', { project: id, path: 'notes.tex', content: 'Reviewer notes.\n', message: 'Add reviewer notes' });
+      expect(notes.isError).toBeFalsy();
+      // a second edit of main.tex checkpoints the first under ITS message
+      const again = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'Edited opening line.' }],
+      });
+      expect(again.isError).toBeFalsy();
+
+      let log: Array<{ hash: string; author: string; message: string }> = [];
+      await expect.poll(async () => {
+        log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+        return log.filter((c) => c.author === 'Claude').length;
+      }, { timeout: 60_000, intervals: [1000] }).toBe(3);
+      const statOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).stat;
+      const byMessage: Record<string, string> = {};
+      for (const c of log.filter((x) => x.author === 'Claude')) byMessage[c.message] = await statOf(c.hash);
+      expect(Object.keys(byMessage).sort()).toEqual(['Add reviewer notes', 'Edit main.tex', 'Strengthen the results claim']);
+      expect(byMessage['Strengthen the results claim']).toContain('main.tex');
+      expect(byMessage['Strengthen the results claim']).not.toContain('notes.tex');
+      expect(byMessage['Add reviewer notes']).toContain('notes.tex');
+      expect(byMessage['Add reviewer notes']).not.toContain('main.tex');
+      expect(byMessage['Edit main.tex']).toContain('main.tex');
+      expect(byMessage['Edit main.tex']).not.toContain('notes.tex');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
   test('reference tools: list_citations, list_labels, wordcount over an \\input graph, references_add (mock upstream)', async ({ request }) => {
     const id = await createProject(request, 'MCP References');
     const client = await connect();
@@ -337,6 +425,96 @@ test.describe('MCP connector (static-token mode)', () => {
       const refCommit = log.find((c: any) => c.message === 'Add reference doe2020');
       expect(refCommit).toBeTruthy();
       expect(refCommit.author).toBe('Claude');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('conflicts are per file: references_add and edit_file share one read, a same-file rewrite conflicts, a revert conflicts everything', async ({ request }) => {
+    const id = await createProject(request, 'MCP Per-file versions');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const read = await call(client, 'read_file', { project: id, path: 'main.tex' });
+      expect(read.isError).toBeFalsy();
+      const base: number = read.body.contentVersion;
+      expect(typeof read.body.fileVersion).toBe('number');
+      expect(read.body.fileVersion).toBeLessThanOrEqual(base);
+
+      // dogfood session 1, friction #1: a model runs two tools in parallel on
+      // different files — the bib write must not stale the main.tex base
+      const [added, edit] = await Promise.all([
+        call(client, 'references_add', { project: id, query: '10.1145/mock.12345' }),
+        call(client, 'edit_file', {
+          project: id, path: 'main.tex',
+          edits: [{ quote: 'Stable opening line.', replacement: 'Stable opening line, edited once.' }],
+          base_version: base,
+        }),
+      ]);
+      expect(added.isError).toBeFalsy();
+      expect(added.body).toMatchObject({ key: 'doe2020', duplicate: false });
+      expect(edit.isError).toBeFalsy();
+      expect(edit.body.error).toBeUndefined();
+      expect(edit.body.applied).toBe(1);
+      expect(edit.body.fileVersion).toBeLessThanOrEqual(edit.body.contentVersion);
+
+      // the same base is stale once main.tex itself changed
+      const again = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line, edited once.', replacement: 'Stable opening line, edited twice.' }],
+        base_version: base,
+      });
+      expect(again.isError).toBeFalsy();
+      expect(again.body.error).toBe('version_conflict');
+      expect(again.body.fileVersion).toBeGreaterThan(base);
+      expect(again.body.currentVersion).toBeGreaterThanOrEqual(again.body.fileVersion);
+      const onDisk = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
+      expect(onDisk).toContain('edited once');
+      expect(onDisk).not.toContain('edited twice');
+
+      // REST carries both versions and applies the same per-file rule
+      const bibRes = await request.get(`/api/projects/${id}/file?branch=main&path=references.bib`);
+      expect(bibRes.ok()).toBeTruthy();
+      const bibV = Number(bibRes.headers()['x-aldine-content-version']);
+      const bibFv = Number(bibRes.headers()['x-aldine-file-version']);
+      expect(Number.isFinite(bibV)).toBeTruthy();
+      expect(Number.isFinite(bibFv)).toBeTruthy();
+      expect(bibFv).toBeLessThanOrEqual(bibV);
+      const bibText = await bibRes.text();
+      const mainPut = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: onDisk.replace('edited once', 'edited over REST') } });
+      expect(mainPut.ok()).toBeTruthy();
+      const bibPut = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'references.bib', content: bibText + '% touched\n', baseVersion: bibV } });
+      expect(bibPut.ok()).toBeTruthy();
+
+      // a git revert rewrites the tree: every path counts as changed
+      const committed = await call(client, 'commit', { project: id, message: 'Land the per-file edits' });
+      expect(committed.isError).toBeFalsy();
+      const hash: string = committed.body.hash ?? (await (await request.get(`/api/projects/${id}/log?branch=main`)).json())[0].hash;
+      expect(hash).toMatch(/^[0-9a-f]{7,}$/);
+      const pre = await call(client, 'read_file', { project: id, path: 'main.tex' });
+      const V: number = pre.body.contentVersion;
+      const revert = await request.post(`/api/projects/${id}/revert`, { data: { branch: 'main', hashes: [hash] } });
+      expect(revert.ok()).toBeTruthy();
+      expect((await revert.json()).ok).toBe(true);
+      const reverted = await call(client, 'read_file', { project: id, path: 'main.tex' });
+      const firstLine: string = reverted.body.content.split('\n')[0];
+      expect(firstLine.length).toBeGreaterThanOrEqual(8);
+      const stale = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: firstLine, replacement: '\\documentclass[11pt]{article}' }],
+        base_version: V,
+      });
+      expect(stale.isError).toBeFalsy();
+      expect(stale.body.error).toBe('version_conflict');
+      expect(stale.body.fileVersion).toBeGreaterThan(V);
+      const fresh = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: firstLine, replacement: '\\documentclass[11pt]{article}' }],
+        base_version: reverted.body.contentVersion,
+      });
+      expect(fresh.isError).toBeFalsy();
+      expect(fresh.body.applied).toBe(1);
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);

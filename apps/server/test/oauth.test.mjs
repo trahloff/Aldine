@@ -137,6 +137,14 @@ for (const url of ['/.well-known/oauth-protected-resource', '/.well-known/oauth-
   const r = await app.inject({ method: 'GET', url: '/.well-known/oauth-authorization-server', headers: { host: 'evil.example', 'x-forwarded-host': 'evil.example' } });
   eq(r.json().issuer, ISSUER, 'AS metadata: forwarded host is ignored while ALDINE_PUBLIC_URL is set');
 }
+{
+  // The challenge's resource_metadata URL: unchanged at the root, path-inserted under a prefix.
+  eq(oauth.resourceMetadataUrl('https://aldine.test'), 'https://aldine.test/.well-known/oauth-protected-resource/mcp', 'no prefix: PRM URL is unchanged');
+  eq(oauth.resourceMetadataUrl('https://aldine.test/'), 'https://aldine.test/.well-known/oauth-protected-resource/mcp', 'trailing slash on the issuer is dropped');
+  eq(oauth.resourceMetadataUrl('https://aldine.test/internal/aldine'), 'https://aldine.test/.well-known/oauth-protected-resource/internal/aldine/mcp', 'prefixed issuer: the path is inserted after the well-known segment (RFC 9728 §3.1)');
+  check(oauth.wwwAuthenticate('https://aldine.test/internal/aldine', { invalidToken: false }).includes('resource_metadata="https://aldine.test/.well-known/oauth-protected-resource/internal/aldine/mcp"'), 'the challenge names the path-inserted document');
+  check(oauth.isOurResource('https://aldine.test/internal/aldine', 'https://aldine.test/internal/aldine/mcp') && !oauth.isOurResource('https://aldine.test/internal/aldine', 'https://aldine.test/mcp'), 'resource check is prefix-aware');
+}
 
 // =====================================================================
 // /mcp challenge
@@ -472,6 +480,7 @@ let happy;
   const g = await grant([projA.id]);
   const t1 = (await tokenReq(exchangeBody(g), ip)).json();
   check(await mcpAccepts(t1.access_token), 'first access token works');
+  const rec1 = await db().getToken((await auth.userFromToken(`Bearer ${t1.access_token}`)).tokenScope.tokenId);
 
   let r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t1.refresh_token, client_id: clientId, resource: `${ISSUER}/mcp` }, ip);
   check(r.statusCode === 200, `refresh → 200 (got ${r.statusCode} ${r.body})`);
@@ -482,7 +491,9 @@ let happy;
   check(!(await mcpAccepts(t1.access_token)), 'the previous access token is revoked by the rotation');
   const hit = await auth.userFromToken(`Bearer ${t2.access_token}`);
   eq(hit.tokenScope.projectIds, [projA.id], 'the rotated token keeps the consented scope');
-  const family = (await db().getToken(hit.tokenScope.tokenId)).family;
+  const rec2 = await db().getToken(hit.tokenScope.tokenId);
+  check(rec2.createdAt === rec1.createdAt && rec2.lastUsedAt === rec1.lastUsedAt, 'the rotated-in token keeps the connection\'s createdAt and lastUsedAt (the card shows the connection, not the rotation)');
+  const family = rec2.family;
   const live = (await db().listTokensForUser(user.id)).filter((t) => t.family === family && !t.revokedAt);
   eq(live.map((t) => t.id), [hit.tokenScope.tokenId], 'only the rotated-in token of the family stays live');
 

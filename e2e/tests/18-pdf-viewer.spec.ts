@@ -230,7 +230,8 @@ test.describe('MCP App PDF viewer', () => {
       const tampered = { ...again.body, pdfUrl: String(again.body.pdfUrl).replace(/sig=[^&]+/, 'sig=AAAA') };
       await openViewer(page, tampered);
       await expect(page.getByTestId('viewer-notice')).toContainText('This PDF link has expired');
-      await expect(page.getByTestId('viewer-notice')).toContainText('get_pdf_url');
+      await expect(page.getByTestId('viewer-notice')).toContainText('ask Claude for a fresh link');
+      await expect(page.getByTestId('viewer-notice')).not.toContainText('get_pdf_url');
       await expect(page.getByTestId('viewer-page')).toHaveCount(0);
       await expect(page.getByTestId('viewer-open')).toHaveAttribute('href', again.body.deepLink);
     } finally {

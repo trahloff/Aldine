@@ -156,7 +156,10 @@ check(Number.isFinite(v), 'GET /file returns x-aldine-content-version');
 
 res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'main.tex', content: 'CLOBBER', baseVersion: v + 1 } });
 check(res.statusCode === 409, `stale baseVersion → 409 (got ${res.statusCode})`);
-eq(res.json(), { error: 'version_conflict', currentVersion: v }, '409 body names the current version');
+{
+  const body = res.json();
+  check(body.error === 'version_conflict' && body.currentVersion === v && typeof body.fileVersion === 'number', '409 body names currentVersion and fileVersion');
+}
 check(store.readFile(projA.id, 'main', 'main.tex').toString('utf8') === 'aaa', 'conflicting write left disk untouched');
 
 res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'main.tex', content: 'updated', baseVersion: v } });
@@ -167,6 +170,20 @@ check(Number(res.headers['x-aldine-content-version']) > v, 'a write bumps the se
 
 res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'main.tex', content: 'no version given' } });
 check(res.statusCode === 200, 'PUT without baseVersion still writes (opt-in concurrency)');
+
+// ---- conflicts are per file: a sibling write does not stale main.tex ----
+res = await app.inject({ method: 'GET', url: `/api/projects/${projA.id}/file?branch=main&path=main.tex`, headers: { cookie } });
+const v2 = Number(res.headers['x-aldine-content-version']);
+const fv2 = Number(res.headers['x-aldine-file-version']);
+check(Number.isFinite(fv2), 'GET /file returns x-aldine-file-version');
+check(fv2 <= v2, 'the file version never exceeds the branch version');
+res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'notes-sibling.tex', content: 'a sibling file' } });
+check(res.statusCode === 200, 'sibling write lands');
+res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'main.tex', content: 'after sibling', baseVersion: v2 } });
+check(res.statusCode === 200, `a sibling write does not stale main.tex baseVersion → 200 (got ${res.statusCode})`);
+check(store.readFile(projA.id, 'main', 'main.tex').toString('utf8') === 'after sibling', 'the per-file check let the write through');
+res = await app.inject({ method: 'PUT', url: `/api/projects/${projA.id}/file`, headers: { cookie }, payload: { branch: 'main', path: 'main.tex', content: 'stale again', baseVersion: v2 } });
+check(res.statusCode === 409 && res.json().fileVersion > v2, 'the same base is stale once main.tex itself changed');
 
 // ---- collab onAuthenticate: a presented bearer is authoritative ----
 const { hocuspocus } = await import('../src/collab.ts');

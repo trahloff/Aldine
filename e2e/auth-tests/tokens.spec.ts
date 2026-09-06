@@ -33,8 +33,11 @@ test.describe('agent access tokens', () => {
     await expect(page.getByTestId('agent-token-value')).toBeVisible();
     const token = await page.getByTestId('agent-token-value').inputValue();
     expect(token).toMatch(/^aldn_/);
-    // connector onboarding copy points at /mcp
+    // connector onboarding copy points at /mcp; on localhost the card says
+    // claude.ai cannot reach it and gives the Claude Code command instead
     await expect(page.getByTestId('agent-connector-url')).toContainText('/mcp');
+    await expect(page.getByTestId('agent-connector-unreachable')).toBeVisible();
+    await expect(page.getByTestId('account-settings')).toContainText('claude mcp add');
     await page.getByTestId('agent-token-done').click();
     // shown exactly once — dismissing removes the plaintext from the page
     await expect(page.getByTestId('agent-token-value')).toHaveCount(0);
@@ -54,9 +57,11 @@ test.describe('agent access tokens', () => {
       expect((await agent.get(`/api/projects/${outScope.id}/files?branch=main`)).status()).toBe(403);
       expect((await agent.get(`/api/projects/${outScope.id}`)).status()).toBe(403);
 
-      // revoke through the card (confirm dialog) — the row disappears
-      page.on('dialog', (d) => d.accept());
+      // revoke through the card's own dialog (names the token and its last use) — the row disappears
+      await expect(page.getByTestId('agent-token-scope')).toContainText('1 project');
       await page.getByTestId('agent-token-revoke').click();
+      await expect(page.getByTestId('agent-token-revoke-dialog')).toContainText('Claude e2e');
+      await page.getByTestId('agent-token-revoke-confirm').click();
       await expect(page.getByTestId('agent-token-revoke')).toHaveCount(0);
 
       // the same bearer is rejected on the very next request

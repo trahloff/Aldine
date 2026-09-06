@@ -222,6 +222,58 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
 See [../docs/SCALING.md](../docs/SCALING.md) for the full multi-node picture
 and the remaining single-node walls.
 
+## Agent API metrics
+
+The app writes one log line per agent-initiated typeset and one per revert
+of Claude-authored commits — no extra storage, so any log store that can
+filter lines answers the three questions from
+[docs/plans/agent-api/00-overview.md](../docs/plans/agent-api/00-overview.md):
+
+```
+[metric] agent_compile user=<id> project=<id> ok=<true|false> ms=<n>
+[metric] agent_revert user=<id> project=<id> commits=<n>
+```
+
+`user` is `operator` on an auth-off instance. On the AWS stack the app's
+log group is in CloudWatch; these Logs Insights queries run over a 14-day
+window (Claude's own commits are those authored "Claude"; the total agent
+commit count for the revert share is
+`git log --author=Claude --since=… --oneline | wc -l` over the project
+repos, or the History panel):
+
+```
+# 1. second-week agent compile: users whose SUCCESSFUL agent compiles span
+#    more than a week (first and last more than 7 days apart); a broken
+#    compiler or a user who never got a PDF must not count as retained
+filter @message like /\[metric\] agent_compile/
+| parse @message "user=* project=* ok=* ms=*" as user, project, ok, ms
+| filter ok = "true"
+| stats min(@timestamp) as first, max(@timestamp) as last by user
+| filter last - first > 7 * 24 * 3600 * 1000
+
+# 2. agent compiles per connected project per week
+filter @message like /\[metric\] agent_compile/
+| parse @message "user=* project=* ok=* ms=*" as user, project, ok, ms
+| stats count() / 2 as perWeek by project
+| sort perWeek desc
+
+# 3. reverted agent commits (divide by the Claude-authored commit count)
+filter @message like /\[metric\] agent_revert/
+| parse @message "commits=*" as commits
+| stats sum(commits) as reverted
+```
+
+Connections are logged as `[metric] agent_connect user=… via=pat|oauth
+scope=all|N` when a token is minted or a Connect consent is granted, so
+"connected" in query 2 can be the set of users with an `agent_connect` line
+rather than one inferred from compiles. A compile the compiler refused
+before running (its `DATA_DIR` is not the server's) is logged as
+`[aldine] agent compile could not start …`, not as a metric line. Metric 4
+(the demo-connector → self-host funnel) is Phase 4 and not instrumented.
+
+Without CloudWatch: `docker compose logs app | grep '\[metric\]'` and the
+same arithmetic.
+
 ## All configuration
 
 Everything is env-gated; blank/unset means "off" or the listed default.
@@ -229,8 +281,11 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | Variable | Purpose |
 |---|---|
 | `ALDINE_DOMAIN` | Domain Caddy serves + provisions TLS for (`tls` profile) |
-| `ALDINE_PUBLIC_URL` | Absolute origin used in OAuth callbacks and reset links — required for SSO and email |
-| `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks |
+| `ALDINE_PUBLIC_URL` | The public URL of the instance — origin plus the path prefix when Aldine is served under one (`https://aldine.example.com` or `https://server/internal/aldine`). Used in OAuth callbacks, reset links, and by the MCP connector (OAuth issuer, PDF links, the in-chat viewer's fetch allowlist) — required for SSO, email and the connector |
+| `ALDINE_MCP` | `1` = serve the MCP endpoint at `/mcp` for Claude (see [docs/AGENT_API.md](../docs/AGENT_API.md)). Needs a credential: `AUTH_ENABLED=1` (Connect button or personal access tokens) or `ALDINE_MCP_TOKEN`; with neither, every request is 401. `RL_MCP_BURST` tunes its rate limit (default 60) |
+| `ALDINE_MCP_TOKEN` | Static bearer for `/mcp` when `AUTH_ENABLED` is off (single-tenant); ignored with auth on. Sent as `Authorization: Bearer …` or `X-Aldine-Token` |
+| `ALDINE_SIGNING_SECRET` | Signs the connector's 15-minute PDF links; at least 32 characters (`openssl rand -base64 32`), shorter refuses to boot. Blank = generated once into `META_DIR`; set it when app nodes do not share that volume, rotate it to expire every outstanding link |
+| `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks. The Claude connector URL is `<ALDINE_PUBLIC_URL>/mcp`; OAuth discovery also lives at the origin root with the prefix inserted (`/.well-known/oauth-authorization-server<prefix>`, `/.well-known/oauth-protected-resource<prefix>/mcp`), so the proxy must forward those two paths to Aldine as well as the prefix itself |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
