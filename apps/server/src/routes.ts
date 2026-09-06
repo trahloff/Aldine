@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -8,14 +8,13 @@ import * as zotero from './zotero.js';
 import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
-import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
-import { fetchBibEntry, searchWorks } from './references.js';
-import { latexWordCount, documentFiles } from './wordcount.js';
+import { addReference, fetchBibEntry, searchWorks } from './references.js';
+import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
 import { guessRoot, detectRoot } from './root.js';
 import { config } from './config.js';
@@ -28,7 +27,9 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, BRANCH_RE, invalidRootFile } from './util.js';
+import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
+import { registerOAuth } from './oauth/routes.js';
+import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -57,15 +58,6 @@ function badCredentials(body: { email?: unknown; password?: unknown } | undefine
 function oauthProviders(): Array<{ id: string; label: string }> {
   return oauth.configuredProviders().map((p) => ({ id: p.id, label: p.label }));
 }
-/** Public URL of the app root (origin + base path, no trailing slash) for OAuth
- *  redirects — ALDINE_PUBLIC_URL's origin, else derived from the request. */
-function publicBase(req: FastifyRequest): string {
-  if (config.publicUrl) return config.publicUrl;
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-  return `${proto}://${host}${config.basePath}`;
-}
-
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
  *  network push. In-memory (single-node); cleared on restart → push-when-unsure. */
 const lastPushedHead = new Map<string, string>();
@@ -93,12 +85,6 @@ async function adoptRootIfUnset(id: string, branch: string, rel: string): Promis
     await store.writeMeta(meta);
     return root;
   } catch { return undefined; }
-}
-
-/** "<root file's dir>/<name>" — where \addbibresource{<name>} actually resolves. */
-function rootSiblingPath(rootFile: string, name: string): string {
-  const dir = path.dirname(rootFile || 'main.tex');
-  return dir === '.' ? name : path.posix.join(dir, name);
 }
 
 const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
@@ -170,7 +156,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }
 
   // ---------- auth (env-gated) ----------
-  app.get('/api/auth/me', async (req) => ({ authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders() }));
+  // mcpEnabled/publicUrl let the Agent access card say whether the connector
+  // URL it shows is served at all, and whether claude.ai could reach it.
+  app.get('/api/auth/me', async (req) => ({
+    authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders(),
+    mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null,
+  }));
+
+  /** Author for a human commit (checkpoint, merge, revert): the account name
+   *  whenever there is one — the browser's anonymous "Writer N" identity is
+   *  only right without accounts, and the audit trail must name the person
+   *  who undid Claude's work. */
+  const commitAuthor = (req: any, fallback?: string): string | undefined => {
+    const u = reqUser(req);
+    return (auth.AUTH_ENABLED && u && (u.name || u.email)) || fallback;
+  };
 
   /** 403 when password sign-in is disabled (SSO-only mode). */
   const passwordDisabled = (reply: any) => reply.code(403).send({ error: 'Password sign-in is disabled — use single sign-on.' });
@@ -303,6 +303,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Resolve the request's user once (awaiting the async datastore) and cache it,
   // so reqUser() is a synchronous read everywhere downstream.
   app.addHook('onRequest', async (req) => {
+    const header = req.headers.authorization;
+    if (auth.AUTH_ENABLED && typeof header === 'string' && header.startsWith(`Bearer ${auth.TOKEN_PREFIX}`)) {
+      // A presented bearer token is authoritative: when it doesn't resolve the
+      // request stays anonymous — an invalid token must not silently borrow
+      // the browser session's identity from the cookie.
+      const t = await auth.userFromToken(header);
+      (req as any)._user = t?.user ?? null;
+      (req as any)._tokenScope = t?.tokenScope ?? null;
+      return;
+    }
     (req as any)._user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
   });
 
@@ -321,6 +331,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'project not found' });
       }
     }
+    // A signed /output link authorized itself in the route's onRequest hook
+    // (output-signing.ts) — the only route where the cookie guard yields.
+    if ((req as any)._signedOutput) return;
     if (!auth.AUTH_ENABLED) return;
     const id = reqId;
     if (id !== undefined) {
@@ -329,6 +342,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const user = reqUser(req);
       if (!user) return reply.code(401).send({ error: 'Sign in required' });
       if (!canAccess(meta, user)) return reply.code(403).send({ error: 'You do not have access to this project' });
+      // Project-scoped tokens: enforce the scope here, in the one shared guard,
+      // so no per-route copy can drift.
+      const scope = (req as any)._tokenScope as auth.TokenScope | null;
+      if (scope?.projectIds && !scope.projectIds.includes(id)) {
+        return reply.code(403).send({ error: 'This token does not have access to this project' });
+      }
       return;
     }
     // non-id routes: require sign-in for the project list / create / import
@@ -336,6 +355,82 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (/^\/api\/projects(\/import|\/trash)?$/.test(path) && !reqUser(req)) {
       return reply.code(401).send({ error: 'Sign in required' });
     }
+    // Bearer tokens are project credentials, not the account. Off the
+    // /api/projects/:id surface (scope-checked above) they reach only
+    // project-neutral read routes. Account surfaces stay session-only:
+    // /api/auth mutations (an OAuth account's empty password hash lets
+    // changePassword skip current-password verification, so a leaked token
+    // could set a password and mint itself a session), the GitHub connection
+    // (stored PAT), and token CRUD. A project-scoped token must not enumerate
+    // projects beyond its scope either (db/types.ts: projectIds restricts the
+    // token to exactly those ids).
+    const scope = (req as any)._tokenScope as auth.TokenScope | null;
+    if (scope && path.startsWith('/api/')) {
+      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(path);
+      const allProjects = !scope.projectIds && /^\/api\/projects(\/import|\/trash)?$/.test(path);
+      if (!neutral && !allProjects) {
+        return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
+      }
+    }
+  });
+
+  // OAuth 2.1 authorization server for the MCP connector (src/oauth/). Wired
+  // here, after the hooks above, so /api/oauth/* sees the resolved user and the
+  // bearer-scope guard like every other /api route.
+  await registerOAuth(app);
+
+  // ---------- personal access tokens (agent credentials) ----------
+  // Session-cookie auth ONLY: a leaked token must not be able to mint, list,
+  // or revoke tokens, so bearer-authenticated requests are refused outright.
+  const tokenRouteUser = (req: any, reply: any): auth.PublicUser | null => {
+    if (!auth.AUTH_ENABLED) { reply.code(404).send({ error: 'not found' }); return null; }
+    if ((req as any)._tokenScope) { reply.code(403).send({ error: 'Access tokens cannot manage tokens — sign in to do this' }); return null; }
+    const user = reqUser(req);
+    if (!user) { reply.code(401).send({ error: 'Sign in required' }); return null; }
+    return user;
+  };
+
+  app.get('/api/tokens', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    return auth.listAccessTokens(user.id);
+  });
+
+  app.post<{ Body: { name?: string; projectIds?: string[]; expiresAt?: string } }>('/api/tokens', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    const name = (req.body?.name || '').trim();
+    if (!name) return reply.code(400).send({ error: 'Token name is required' });
+    if (name.length > 100) return reply.code(400).send({ error: 'Token name is too long (max 100 characters)' });
+    let projectIds: string[] | null = null;
+    if (req.body?.projectIds !== undefined) {
+      const ids = req.body.projectIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || ids.some((p) => typeof p !== 'string' || !PROJECT_ID_RE.test(p))) {
+        return reply.code(400).send({ error: 'projectIds must be a list of project ids' });
+      }
+      projectIds = ids;
+    }
+    let expiresAt: string | null = null;
+    if (req.body?.expiresAt !== undefined) {
+      const exp = Date.parse(String(req.body.expiresAt));
+      if (Number.isNaN(exp)) return reply.code(400).send({ error: 'expiresAt must be an ISO 8601 date' });
+      if (exp <= Date.now()) return reply.code(400).send({ error: 'Expiry must be in the future' });
+      expiresAt = new Date(exp).toISOString();
+    }
+    const { token, record } = await auth.createAccessToken(user.id, name, projectIds, expiresAt);
+    // Success-metric line (deploy/README.md): a connection exists from here on.
+    console.log(`[metric] agent_connect user=${user.id} via=pat scope=${projectIds ? projectIds.length : 'all'}`);
+    // the plaintext token appears in this response and never again
+    return { token, ...record };
+  });
+
+  app.delete<{ Params: { tokenId: string } }>('/api/tokens/:tokenId', async (req, reply) => {
+    const user = tokenRouteUser(req, reply);
+    if (!user) return;
+    if (!(await auth.revokeAccessToken(user.id, req.params.tokenId))) {
+      return reply.code(404).send({ error: 'Token not found' });
+    }
+    return { ok: true };
   });
 
   // ---------- projects ----------
@@ -538,7 +633,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const meta = await store.createProject(name, textFiles, reqUser(req)?.id);
       created = meta;
       for (const p of binFiles) store.writeFile(meta.id, 'main', p, files[p]);
-      if (binFiles.length) await gitops.commitAll(meta.id, 'main', 'aldine: import assets').catch(() => {});
+      if (binFiles.length) await gitops.autoCommit(meta.id, 'main', 'aldine: import assets').catch(() => {});
       const root = guessRoot(files);
       // Detection reads the archive bytes, not the transcoded text: the package
       // names it looks for are ASCII either way, and the latexmkrc is never transcoded.
@@ -627,7 +722,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const branch = req.query.branch || 'main';
     try {
       await gitops.ensureWorktree(req.params.id, branch);
-      return store.listFiles(req.params.id, branch);
+      // Flush before reading the version so it matches what a subsequent
+      // GET /file (which also flushes) will serve — otherwise a pending edit
+      // would bump the version between the two calls and fake a conflict.
+      flushBranchDocs(req.params.id, branch);
+      return { files: store.listFiles(req.params.id, branch), contentVersion: contentVersion(req.params.id, branch) };
     } catch {
       return reply.code(404).send({ error: 'Project or branch not found' });
     }
@@ -637,6 +736,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
+    // Flush open docs first: the disk copy is up to ~8 s (maxDebounce) behind
+    // the live editor, and REST read-modify-write is racy on a stale read.
+    flushBranchDocs(req.params.id, branch);
     try {
       const buf = store.readFile(req.params.id, branch, rel);
       const ext = path.extname(rel).toLowerCase();
@@ -647,7 +749,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // A committed .svg (or sniffed .html) served on our own origin would run its
       // scripts on top-level navigation, acting as the viewer. nosniff pins the
       // type and the sandbox CSP neutralizes any script while <img> embeds still render.
+      // content-version is the branch version a caller passes back as
+      // baseVersion; file-version is when this file itself last changed (PUT
+      // refuses only when that moved past baseVersion).
       return reply
+        .header('x-aldine-content-version', String(contentVersion(req.params.id, branch)))
+        .header('x-aldine-file-version', String(fileVersion(req.params.id, branch, rel)))
         .header('X-Content-Type-Options', 'nosniff')
         .header('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox")
         .type(mime).send(buf);
@@ -656,12 +763,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean } }>(
+  app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean; baseVersion?: number } }>(
     '/api/projects/:id/file', async (req, reply) => {
-      const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false } = req.body || {};
+      const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false, baseVersion } = req.body || {};
       if (!rel) return reply.code(400).send({ error: 'path required' });
       if (isHiddenPath(rel) || rel.includes('..')) return reply.code(403).send({ error: 'Invalid file path' });
+      if (optionLikePath(rel)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       await gitops.ensureWorktree(req.params.id, branch);
+      // Flush open docs BEFORE writing: the store debounce means up to ~8 s of
+      // a live collaborator's typing exists only in memory, and writing over
+      // the stale disk copy would refresh those keystrokes away.
+      flushBranchDocs(req.params.id, branch);
+      // Optimistic concurrency: a caller that read at baseVersion writes only
+      // if THIS file did not change since. Checked after the flush so pending
+      // typing in this file counts as a change, not a silent overwrite; a
+      // change to any other file on the branch does not (per-file by design).
+      // A base newer than the branch knows is refused as unknowable.
+      if (baseVersion !== undefined) {
+        const conflict = versionConflict(req.params.id, branch, rel, baseVersion);
+        if (conflict) return reply.code(409).send(conflict);
+      }
       // createOnly (new-file flow): never clobber an existing file with empty content
       if (createOnly && store.fileExists(req.params.id, branch, rel)) {
         return reply.code(409).send({ error: 'A file with that name already exists' });
@@ -671,7 +792,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       } catch {
         return reply.code(400).send({ error: 'Could not write that file path' });
       }
-      refreshBranchDocsFromDisk(req.params.id, branch);
+      refreshBranchDocsFromDisk(req.params.id, branch, [rel]);
       scheduleCommit(req.params.id, branch); // non-collab write → still reach git history
       const newRoot = await adoptRootIfUnset(req.params.id, branch, rel);
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
@@ -682,6 +803,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { branch = 'main', from, to } = req.body || {};
       if (!from || !to) return reply.code(400).send({ error: 'from/to required' });
       if (isHiddenPath(from) || isHiddenPath(to)) return reply.code(403).send({ error: 'forbidden path' });
+      if (optionLikePath(to)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       if (from === to) return { ok: true };
       // never overwrite an existing file — that would destroy both it and the source
       if (store.fileExists(req.params.id, branch, to)) {
@@ -694,10 +816,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // tombstoned doc is never written, so anything typed inside the autosave
       // debounce window would be renamed away and lost.
       flushBranchDocs(req.params.id, branch);
+      const wasDir = store.isDirectory(req.params.id, branch, from);
       // evict the source doc so its final store can't recreate the old file
       evictDoc(req.params.id, branch, from);
       store.renameFile(req.params.id, branch, from, to);
-      bumpContentVersion(req.params.id, branch); // bib/label indexes carry file paths
+      // bib/label indexes carry file paths; a directory rename moves every child
+      if (wasDir) markTreeChanged(req.params.id, branch);
+      else markPathsChanged(req.params.id, branch, [from, to]);
       scheduleCommit(req.params.id, branch);
       // The typeset root keeps its designation through a rename (deletion
       // already re-derives it; a rename must not orphan it). A rename that
@@ -722,9 +847,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
+    const wasDir = store.isDirectory(req.params.id, branch, rel);
     evictDoc(req.params.id, branch, rel); // prevent resurrection via pending store
     store.deleteFile(req.params.id, branch, rel);
-    bumpContentVersion(req.params.id, branch);
+    // a directory delete removes every child, which a single path mark would miss
+    if (wasDir) markTreeChanged(req.params.id, branch);
+    else markPathsChanged(req.params.id, branch, [rel]);
     scheduleCommit(req.params.id, branch);
     // If the typeset root was deleted, re-point it at the best remaining .tex
     // so the next compile doesn't fail with "root file not found". With no
@@ -742,11 +870,34 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, ...(newRoot ? { newRoot } : {}) };
   });
 
+  /**
+   * Signed-link authorization for /output ONLY (SECURITY.md risk #5). Runs in
+   * onRequest, before the global preHandler's cookie/token guard, and only
+   * when the link carries a signature: a valid one marks the request so the
+   * guard yields; a bad or expired one is refused here rather than falling
+   * through to cookie auth, so a tampered link never quietly succeeds on a
+   * signed-in browser. Links without a signature take the cookie path as
+   * before. The MCP App viewer fetches from a sandboxed origin, so signed
+   * responses also answer CORS — the link is the credential, `*` adds no
+   * exposure a curl of the same URL would not have.
+   */
+  type OutputQ = Q & { exp?: string; sig?: string };
+  const verifySignedOutput = async (req: FastifyRequest<{ Params: { id: string }; Querystring: OutputQ }>, reply: FastifyReply) => {
+    const { branch = 'main', path: rel = '', exp, sig } = req.query;
+    if (exp === undefined && sig === undefined) return;
+    const status = verifyOutputSignature(req.params.id, branch, rel, exp, sig);
+    // The refusals answer CORS as well: without the header a cross-origin
+    // fetch rejects opaquely and the viewer cannot tell "expired" from "down".
+    reply.header('access-control-allow-origin', '*');
+    if (status === 'expired') return reply.code(403).send({ error: 'This PDF link has expired — typeset again or ask for a fresh link' });
+    if (status !== 'ok') return reply.code(403).send({ error: 'invalid signature' });
+    (req as any)._signedOutput = true;
+  };
+
   /** Serve compile artifacts (PDF, synctex) from the branch's .aldine-out. */
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/output', async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: OutputQ }>('/api/projects/:id/output', { onRequest: verifySignedOutput }, async (req, reply) => {
     const { branch = 'main', path: rel } = req.query;
-    // artifacts live in a .aldine-out dir (at the project root or beside a subdir'd root file)
-    if (!rel || rel.includes('..') || !/(^|\/)\.aldine-out\/[^/]+$/.test(rel)) return reply.code(400).send({ error: 'bad output path' });
+    if (!rel || !isOutputPath(rel)) return reply.code(400).send({ error: 'bad output path' });
     try {
       const abs = safeJoin(store.branchDir(req.params.id, branch), rel);
       fs.accessSync(abs); // throws → 404 below if the artifact is missing
@@ -759,6 +910,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(404).send({ error: 'artifact not found' });
     }
+  });
+
+  // CORS preflight for signed links only: pdf.js probes with a Range header,
+  // which is not a safelisted header and so triggers one. An unsigned
+  // preflight has nothing to allow.
+  app.options<{ Params: { id: string }; Querystring: OutputQ }>('/api/projects/:id/output', { onRequest: verifySignedOutput }, async (req, reply) => {
+    if (!(req as any)._signedOutput) return reply.code(403).send({ error: 'invalid signature' });
+    return reply.code(204)
+      .header('access-control-allow-methods', 'GET')
+      .header('access-control-allow-headers', 'range')
+      .header('access-control-max-age', '600')
+      .send();
   });
 
   // ---------- compile ----------
@@ -804,82 +967,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return res;
     });
 
-  // ---------- bib + label indexes (for \cite / \ref autocomplete) ----------
-  // Both walk the whole branch (readdir + read + parse every .bib/.tex), which
-  // used to run on EVERY autocomplete request. Cache per branch, keyed by the
-  // content version that every write path bumps (collab.ts) — a hit costs a
-  // Map lookup, a miss exactly one walk.
-  const bibIndexCache = new Map<string, { v: number; entries: BibEntry[] }>();
-  const labelIndexCache = new Map<string, { v: number; labels: Array<{ label: string; file: string }> }>();
+  // ---------- bib + label indexes (for \cite / \ref autocomplete), word count ----------
+  // Implementations live in indexes.ts, shared with the MCP tools.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/bib', async (req) =>
+    bibIndex(req.params.id, req.query.branch || 'main'));
 
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/bib', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch); // may bump the version (pending edits reach disk)
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = bibIndexCache.get(key);
-    if (hit && hit.v === v) return hit.entries;
-    const entries: BibEntry[] = [];
-    for (const f of store.listFiles(req.params.id, branch)) {
-      if (f.type === 'file' && f.path.endsWith('.bib')) {
-        try {
-          entries.push(...parseBib(store.readFile(req.params.id, branch, f.path).toString('utf8'), f.path));
-        } catch { /* skip broken bib */ }
-      }
-    }
-    bibIndexCache.set(key, { v, entries });
-    return entries;
-  });
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/labels', async (req) =>
+    labelIndex(req.params.id, req.query.branch || 'main'));
 
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/labels', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch);
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = labelIndexCache.get(key);
-    if (hit && hit.v === v) return hit.labels;
-    const labels: Array<{ label: string; file: string }> = [];
-    const re = /\\label\{([^}]+)\}/g;
-    for (const f of store.listFiles(req.params.id, branch)) {
-      if (f.type !== 'file' || !f.path.endsWith('.tex')) continue;
-      try {
-        const text = store.readFile(req.params.id, branch, f.path).toString('utf8');
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(text))) labels.push({ label: m[1], file: f.path });
-      } catch { /* skip */ }
-    }
-    labelIndexCache.set(key, { v, labels });
-    return labels;
-  });
-
-  // Whole-document word count: the status bar's per-file count is misleading
-  // for multi-file projects (the root is mostly preamble + \input lines), so
-  // the client sums the include graph via this endpoint. Same cache discipline
-  // as /bib and /labels.
-  const wordCountCache = new Map<string, { v: number; body: { rootFile: string; total: number; files: Record<string, number> } }>();
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/wordcount', async (req) => {
-    const branch = req.query.branch || 'main';
-    flushBranchDocs(req.params.id, branch);
-    const key = `${req.params.id}::${branch}`;
-    const v = contentVersion(req.params.id, branch);
-    const hit = wordCountCache.get(key);
-    if (hit && hit.v === v) return hit.body;
-    const meta = await store.readMeta(req.params.id);
-    const read = (p: string): string | null => {
-      if (isHiddenPath(p)) return null;
-      try { return store.readFile(req.params.id, branch, p).toString('utf8'); } catch { return null; }
-    };
-    const files: Record<string, number> = {};
-    let total = 0;
-    for (const f of documentFiles(meta.rootFile, read)) {
-      const n = latexWordCount(read(f) ?? '');
-      files[f] = n;
-      total += n;
-    }
-    const body = { rootFile: meta.rootFile, total, files };
-    wordCountCache.set(key, { v, body });
-    return body;
-  });
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/wordcount', async (req) =>
+    wordCount(req.params.id, req.query.branch || 'main'));
 
   // ---------- git ----------
   app.get<{ Params: { id: string } }>('/api/projects/:id/branches', async (req) => gitops.listBranches(req.params.id));
@@ -893,12 +990,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       // capture latest edits so the new branch starts from what the user sees
       flushBranchDocs(req.params.id, from);
-      await gitops.commitAll(req.params.id, from, 'aldine: checkpoint before branching').catch(() => {});
+      await gitops.autoCommit(req.params.id, from, 'aldine: checkpoint before branching').catch(() => {});
       try {
         await gitops.createBranch(req.params.id, name, from);
       } catch (err) {
         return reply.code(409).send({ error: `Could not create branch: ${(err as Error).message}` });
       }
+      // A recreated name must not inherit the deleted branch's version log:
+      // a base_version read before the delete would otherwise pass the
+      // per-file conflict check against a tree it never saw.
+      markTreeChanged(req.params.id, name);
       return { ok: true };
     });
 
@@ -923,15 +1024,45 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       return reply.code(409).send({ error: `Could not delete branch: ${(err as Error).message}` });
     }
+    markTreeChanged(req.params.id, name); // see the create route
     forgetPdfUrls(req.params.id, name);
     return { ok: true };
   });
 
   app.post<{ Params: { id: string }; Body: { branch?: string; message?: string; author?: string } }>(
     '/api/projects/:id/commit', async (req) => {
-      const { branch = 'main', message = 'aldine: manual commit', author } = req.body || {};
+      const { branch = 'main', message, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
       flushBranchDocs(req.params.id, branch);
-      return gitops.commitAll(req.params.id, branch, message, author);
+      // autoCommit, not commitAll: a person's checkpoint inside the agent's
+      // debounce window must not sign Claude's pending delta with their name.
+      return gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
+    });
+
+  // Revert a set of commits (newest-first) as one new commit — the session
+  // toast's "Revert these changes". Additive history only, never a rewrite.
+  app.post<{ Params: { id: string }; Body: { branch?: string; hashes?: string[]; message?: string; author?: string } }>(
+    '/api/projects/:id/revert', async (req, reply) => {
+      const { branch = 'main', hashes, message: rawMessage, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
+      const message = cleanCommitMessage(rawMessage, 'Revert agent changes');
+      if (!Array.isArray(hashes) || hashes.length === 0) return reply.code(400).send({ error: 'hashes required' });
+      // capture pending edits first so the revert never collides with a dirty tree
+      flushBranchDocs(req.params.id, branch);
+      await gitops.autoCommit(req.params.id, branch, 'aldine: checkpoint before revert', author).catch(() => {});
+      try {
+        const result = await gitops.revertCommits(req.params.id, branch, hashes, message, author);
+        if (result.ok) {
+          refreshBranchDocsFromDisk(req.params.id, branch);
+          // Success-metric line (docs/plans/agent-api/00-overview.md, "% of
+          // agent commits reverted"): only reverts that undo Claude's work.
+          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === 'Claude').length;
+          if (agentCommits) console.log(`[metric] agent_revert user=${reqUser(req)?.id ?? 'operator'} project=${req.params.id} commits=${agentCommits}`);
+        }
+        return { ...result, author: author ?? null };
+      } catch (err) {
+        return reply.code(409).send({ error: (err as Error).message });
+      }
     });
 
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/log', async (req) => {
@@ -945,7 +1076,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string }; Body: { from: string; into: string; author?: string } }>(
     '/api/projects/:id/merge', async (req, reply) => {
-      const { from, into, author } = req.body || {};
+      const { from, into, author: claimed } = req.body || {};
+      const author = commitAuthor(req, claimed);
       if (!from || !into) return reply.code(400).send({ error: 'from/into required' });
       flushBranchDocs(req.params.id, from);
       flushBranchDocs(req.params.id, into);
@@ -1034,6 +1166,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- reference lookup (DOI / arXiv → BibTeX) ----------
+  // Implementation in references.ts (addReference), shared with the MCP tool.
   app.post<{ Params: { id: string }; Body: { query: string; branch?: string; bibFile?: string } }>(
     '/api/projects/:id/references/add', async (req, reply) => {
       const { query, branch = 'main' } = req.body || {};
@@ -1044,23 +1177,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         // land in a .bib the document actually reads
         const bibFile = req.body?.bibFile || rootSiblingPath((await store.readMeta(req.params.id)).rootFile, 'references.bib');
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
-        const entry = await fetchBibEntry(query.trim());
-        if (!entry) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
-        // append to the .bib (create if missing), skipping duplicate keys
-        await gitops.ensureWorktree(req.params.id, branch);
-        let existing = '';
-        try { existing = store.readFile(req.params.id, branch, bibFile).toString('utf8'); } catch { /* new file */ }
-        // key-only dedup via the shared bibKeys scanner — consistent with the
-        // /bib index (skips @comment/@string) but without parsing every field
-        // of every existing entry just to compare keys.
-        const key = [...bibKeys(entry)][0];
-        if (key && bibKeys(existing).has(key)) {
-          return { ok: true, key, duplicate: true };
-        }
-        store.writeFile(req.params.id, branch, bibFile, existing.trimEnd() + '\n\n' + entry.trim() + '\n');
-        refreshBranchDocsFromDisk(req.params.id, branch);
-        scheduleCommit(req.params.id, branch);
-        return { ok: true, key, bibFile };
+        const added = await addReference(req.params.id, branch, query, bibFile);
+        if (!added) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
+        return { ok: true, ...added };
       } catch (err: any) {
         return reply.code(502).send({ error: err.message });
       }
@@ -1144,12 +1263,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         }
         if (next === null) { outcome = 'stale'; } else {
           store.writeFile(req.params.id, branch, c.file, next);
-          refreshBranchDocsFromDisk(req.params.id, branch);
+          refreshBranchDocsFromDisk(req.params.id, branch, [c.file]);
           outcome = 'applied';
         }
       }
       if (outcome === 'stale') return reply.code(409).send({ error: 'The commented text has changed — apply the suggestion manually.' });
-      bumpContentVersion(req.params.id, branch);
+      markPathsChanged(req.params.id, branch, [c.file]);
       scheduleCommit(req.params.id, branch);
       await comments.resolveComment(req.params.id, req.params.cid, true);
       return { ok: true };
@@ -1297,7 +1416,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     try { info = await github.createRepo(conn.token, name, req.body?.private !== false); }
     catch (err: any) { return reply.code(400).send({ error: `Could not create repo: ${err.message}` }); }
     flushBranchDocs(req.params.id, 'main');
-    await gitops.commitAll(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
     meta.github = { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) };
     await store.writeMeta(meta);
     try { await gitops.pushToRemote(req.params.id, 'main', github.tokenUrl(info.cloneUrl, conn.token)); }
@@ -1317,8 +1436,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string }; Body: { message?: string; auto?: boolean } }>('/api/projects/:id/github/push', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing
-    const message = (req.body?.message || '').trim() || 'Update from Aldine';
-    const commit = await gitops.commitAll(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
+    const message = cleanCommitMessage(req.body?.message, 'Update from Aldine');
+    const commit = await gitops.autoCommit(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
     // HEAD is the commit hash we just made (when we committed), else look it up.
     const head = commit.committed ? commit.hash ?? null : await gitops.headCommit(req.params.id).catch(() => null);
     // Auto-sync (client sends auto:true, fires ~every 20s) skips the full git-push
@@ -1339,7 +1458,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>('/api/projects/:id/github/pull', async (req, reply) => {
     const link = await linkedRemote(req, reply); if (!link) return;
     flushBranchDocs(req.params.id, 'main');
-    await gitops.commitAll(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
     try {
       const result = await gitops.pullFromRemote(req.params.id, link.remoteBranch, link.url);
       if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts });
@@ -1383,7 +1502,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (target === link.remoteBranch) return { ok: true };
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.commitAll(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url).catch(() => {}); // best-effort save
       await gitops.resetToRemote(req.params.id, target, link.url);
       const meta = link.meta; meta.github!.remoteBranch = target; await store.writeMeta(meta);
@@ -1401,7 +1520,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.commitAll(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, name, link.url); // push creates the remote branch
       const meta = link.meta; meta.github!.remoteBranch = name; await store.writeMeta(meta);
       return { ok: true, branch: name };
@@ -1413,7 +1532,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const link = await linkedRemote(req, reply); if (!link) return;
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.commitAll(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url);
       const repo = await github.getRepo(link.token, link.owner, link.repo);
       if (link.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });

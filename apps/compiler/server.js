@@ -256,7 +256,7 @@ async function compileInner(body) {
 
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
-  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp' } };
+  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000' } };
   // Freshness reference on the SAME filesystem clock as the outputs: a file
   // touched now. Comparing output mtimes against Date.now() needs slack for
   // coarse or skewed clocks, and that slack lets a run started right after

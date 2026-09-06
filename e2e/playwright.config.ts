@@ -38,10 +38,16 @@ export default defineConfig({
     {
       // OPENROUTER_API_KEY/OPENAI_API_KEY are emptied so an ambient key can't
       // override the mock Anthropic endpoint the AI-fix test relies on.
+      // ALDINE_MCP_TOKEN matches MCP_TOKEN in tests/15-mcp.spec.ts (auth is off
+      // in this suite, so /mcp runs in static-token mode).
+      // ALDINE_AGENT_PRESENCE_TTL_MS shortens the 60 s agent-presence expiry so
+      // the session-review toast test (16-agent-ui) doesn't idle for a minute.
+      // build:viewer emits apps/server/assets/pdf-viewer.html, which
+      // 18-pdf-viewer loads directly.
       // VENUES_FILE points at the registry the mock server writes (it names the
       // mock's own port), so no venue test ever reaches a real publisher;
       // ALDINE_TEST_HOOKS is what makes a loopback kit URL fetchable at all.
-      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e ALDINE_TEST_HOOKS=1 VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      command: `npm run build -w apps/web && npm run build:viewer -w apps/server && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp ALDINE_AGENT_PRESENCE_TTL_MS=5000 ALDINE_TEST_HOOKS=1 VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,

@@ -1,7 +1,11 @@
 /**
  * Serving under a URL prefix (#27): routes stay declared at '/api/…', the
  * prefix is peeled off before routing, everything outside it is not ours, and
- * the served index.html carries the prefix for the client.
+ * the served index.html carries the prefix for the client. The one exception
+ * at the origin root besides the health probes: the OAuth discovery documents
+ * in their path-inserted form (/.well-known/<doc><prefix>…, RFC 8414 §3.1 /
+ * RFC 9728 §3.1), which map onto the same handlers as the app-relative form —
+ * and, with auth off, onto the same 404 JSON.
  *
  * Env must be set before any src import — the base path and the data/meta
  * roots are read at module load.
@@ -22,6 +26,9 @@ delete process.env.AUTH_ENABLED;
 delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
 delete process.env.ALDINE_PROTECTED_PROJECTS;
+// registerMcp reads both at call time: static-token mode under the prefix.
+process.env.ALDINE_MCP = '1';
+process.env.ALDINE_MCP_TOKEN = 'unit-mcp-token';
 
 // A Vite build with base './': asset references relative to index.html.
 fs.mkdirSync(path.join(tmp, 'dist', 'assets'), { recursive: true });
@@ -73,6 +80,21 @@ check(isCollabUpgrade('/internal/aldine/collab?token=x'), 'prefixed collab upgra
 check(!isCollabUpgrade('/collab'), 'unprefixed collab upgrade refused');
 check(!isCollabUpgrade(undefined), 'missing url refused');
 
+// OAuth discovery at the origin root, prefix inserted after the well-known segment.
+eq(rewriteUrl('/.well-known/oauth-authorization-server/internal/aldine'), '/.well-known/oauth-authorization-server', 'path-inserted AS metadata maps to the handler');
+eq(rewriteUrl('/.well-known/oauth-authorization-server/internal/aldine?v=1'), '/.well-known/oauth-authorization-server?v=1', 'path-inserted form keeps its query');
+eq(rewriteUrl('/.well-known/oauth-protected-resource/internal/aldine/mcp'), '/.well-known/oauth-protected-resource/mcp', 'path-inserted PRM for /mcp');
+eq(rewriteUrl('/.well-known/oauth-protected-resource/internal/aldine'), '/.well-known/oauth-protected-resource', 'path-inserted PRM for the issuer');
+eq(rewriteUrl('/internal/aldine/.well-known/oauth-authorization-server'), '/.well-known/oauth-authorization-server', 'app-relative form is a plain peel');
+for (const url of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-authorization-server/internal/aldine-other', '/.well-known/openid-configuration/internal/aldine', '/.well-known/other/internal/aldine']) {
+  check(rewriteUrl(url).startsWith('/__outside-base-path__/'), `${url} is outside`);
+}
+// Only the issuer document and the /mcp resource are aliased; any other
+// remainder after the prefix is not a document and stays outside.
+for (const url of ['/.well-known/oauth-authorization-server/internal/aldine/', '/.well-known/oauth-authorization-server/internal/aldine/mcp/x', '/.well-known/oauth-protected-resource/internal/aldine/other', '/.well-known/oauth-authorization-server/internal/aldine/..%2f..%2findex.html', '/.well-known/oauth-protected-resource/internal/aldine/mcp/..%2f..%2f..%2findex.html']) {
+  check(rewriteUrl(url).startsWith('/__outside-base-path__/'), `${url} names no document and is outside`);
+}
+
 check(auth.sessionCookie('sid').includes('Path=/internal/aldine;'), 'session cookie scoped to the base path');
 check(auth.clearCookie().includes('Path=/internal/aldine;'), 'cleared cookie uses the same path');
 
@@ -116,6 +138,49 @@ for (const url of ['/?x=1', '/other', '/internal', '/internal/aldine-other', '/a
   eq(res.statusCode, 404, `${url} is outside the base path`);
   check(!res.body.includes('aldine-base-path'), `${url} does not leak the app`);
 }
+
+// Auth off: discovery is 404 JSON under a prefix, in both shapes — never the app.
+for (const url of [
+  '/.well-known/oauth-authorization-server/internal/aldine',
+  '/.well-known/oauth-protected-resource/internal/aldine',
+  '/.well-known/oauth-protected-resource/internal/aldine/mcp',
+  '/.well-known/oauth-authorization-server/internal/aldine/',
+  '/internal/aldine/.well-known/oauth-authorization-server',
+  '/internal/aldine/.well-known/oauth-protected-resource/mcp',
+  '/.well-known/oauth-authorization-server',
+  '/.well-known/openid-configuration/internal/aldine',
+]) {
+  res = await get(url);
+  eq(res.statusCode, 404, `auth off: ${url} is 404`);
+  check(res.headers['content-type'].startsWith('application/json'), `auth off: ${url} is json`);
+  check(!res.body.includes('aldine-base-path'), `auth off: ${url} does not leak the app`);
+}
+// The static plugin decodes its wildcard and send() collapses dot segments,
+// so an encoded remainder that reached it would serve the raw web dist —
+// index.html included — at the origin root. Those URLs must never leave
+// the outside-base-path 404; the same walk under the prefix gets the SPA
+// fallback (the rendered index), never the raw file.
+for (const url of ['/.well-known/oauth-authorization-server/internal/aldine/..%2f..%2findex.html', '/.well-known/oauth-protected-resource/internal/aldine/mcp/..%2f..%2f..%2findex.html', '/.well-known/oauth-protected-resource/internal/aldine/mcp/..%2f..%2f..%2fassets/index-abc.js']) {
+  res = await get(url);
+  eq(res.statusCode, 404, `${url} is 404`);
+  check(res.headers['content-type'].startsWith('application/json'), `${url} is json`);
+  check(!res.body.includes('<html') && !res.body.includes('console.log'), `${url} does not serve the web dist`);
+}
+for (const url of ['/internal/aldine/assets/..%2findex.html', '/internal/aldine/assets/../index.html']) {
+  res = await get(url);
+  eq(res.statusCode, 200, `${url} falls back to the app`);
+  check(res.body.includes('aldine-base-path'), `${url} is the rendered index, not the raw file`);
+}
+res = await get('/internal/aldine/.well-known/x/..%2f..%2findex.html');
+eq(res.statusCode, 404, 'a dot-segment walk under /.well-known/ is 404');
+check(res.headers['content-type'].startsWith('application/json') && !res.body.includes('<html'), 'and json, never html');
+res = await app.inject({ method: 'POST', url: '/internal/aldine/mcp', payload: { jsonrpc: '2.0', method: 'ping', id: 1 } });
+eq(res.statusCode, 401, '/mcp under the prefix without a credential is 401');
+eq(res.headers['www-authenticate'], undefined, 'auth off: no WWW-Authenticate challenge under the prefix');
+res = await app.inject({ method: 'GET', url: '/internal/aldine/mcp', headers: { authorization: 'Bearer unit-mcp-token' } });
+eq(res.statusCode, 405, 'the static token passes the guard under the prefix (GET → 405)');
+res = await app.inject({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer unit-mcp-token' } });
+eq(res.statusCode, 404, '/mcp at the root is outside the base path');
 
 await app.close();
 fs.rmSync(tmp, { recursive: true, force: true });

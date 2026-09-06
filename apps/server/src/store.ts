@@ -150,6 +150,10 @@ export function fileExists(id: string, branch: string, rel: string): boolean {
   try { return fs.existsSync(safeJoin(branchDir(id, branch), rel)); } catch { return false; }
 }
 
+export function isDirectory(id: string, branch: string, rel: string): boolean {
+  try { return fs.statSync(safeJoin(branchDir(id, branch), rel)).isDirectory(); } catch { return false; }
+}
+
 export function writeFile(id: string, branch: string, rel: string, content: string | Buffer): void {
   const abs = safeJoin(branchDir(id, branch), rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });

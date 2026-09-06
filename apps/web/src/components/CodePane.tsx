@@ -15,6 +15,7 @@ import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, type VisualDeps } from '../editor/visual';
+import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
@@ -45,7 +46,10 @@ function reanchor(doc: Text, r: CommentRange): CommentRange {
 }
 
 export interface CodePaneHandle {
-  gotoLine(line: number): void;
+  /** Deferred until the collab doc has synced: a fresh pane holds an empty
+   *  document until then, and line N of nothing is line 1. */
+  /** onClamped fires (with the line count) when `line` is past the end of the doc. */
+  gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }): void;
   insertAtCursor(text: string): void;
   currentLine(): number | null;
   getSelection(): { from: number; to: number; quote: string } | null;
@@ -73,6 +77,25 @@ const commentField = StateField.define<DecorationSet>({
           true,
         );
       }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** One-shot line highlight for deep links (?file=&line=): a line decoration
+ *  the CSS animates out; cleared by a timer, tracked through edits meanwhile. */
+const FLASH_MS = 1600;
+const flashLine = StateEffect.define<number>(); // doc offset of the line start
+const clearFlash = StateEffect.define<null>();
+const flashMark = Decoration.line({ class: 'cm-deeplink-flash', attributes: { 'data-testid': 'deeplink-flash' } });
+const flashField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(flashLine)) deco = Decoration.set([flashMark.range(tr.state.doc.lineAt(e.value).from)]);
+      else if (e.is(clearFlash)) deco = Decoration.none;
     }
     return deco;
   },
@@ -162,15 +185,33 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
+  const syncedRef = useRef(false);
+  const pendingGoto = useRef<{ line: number; flash: boolean; onClamped?: (lines: number) => void } | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyGoto = (view: EditorView, line: number, flash: boolean, onClamped?: (lines: number) => void) => {
+    const l = Math.min(Math.max(1, line), view.state.doc.lines);
+    if (line > view.state.doc.lines) onClamped?.(view.state.doc.lines);
+    const pos = view.state.doc.line(l).from;
+    const effects = [EditorView.scrollIntoView(pos, { y: 'center' }), ...(flash ? [flashLine.of(pos)] : [])];
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true, effects });
+    view.focus();
+    if (flash) {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => {
+        flashTimer.current = null;
+        if (viewRef.current === view) view.dispatch({ effects: clearFlash.of(null) });
+      }, FLASH_MS);
+    }
+  };
 
   useImperativeHandle(ref, () => ({
-    gotoLine(line: number) {
+    gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }) {
       const view = viewRef.current;
-      if (!view) return;
-      const l = Math.min(Math.max(1, line), view.state.doc.lines);
-      const pos = view.state.doc.line(l).from;
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
-      view.focus();
+      // Before the view exists (handle is live from the first commit, the
+      // view from the mount effect) or before the doc has synced: queue it.
+      if (!view || !syncedRef.current) { pendingGoto.current = { line, flash: !!opts?.flash, onClamped: opts?.onClamped }; return; }
+      applyGoto(view, line, !!opts?.flash, opts?.onClamped);
     },
     insertAtCursor(text: string) {
       const view = viewRef.current;
@@ -249,13 +290,20 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const modeComp = new Compartment();
     const spellComp = new Compartment();
     const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness };
+    // First-seen times per agent client, so the presence tooltip can say when
+    // the session started; entries drop with the awareness state so the next
+    // session (same server-side clientID) gets a fresh start time.
+    const agentSince = new Map<number, number>();
     const reportUsers = () => {
       // key by Yjs clientID so two collaborators with the same display name stay distinct
       const byClient = new Map<number, PresenceUser>();
       awareness.getStates().forEach((s, clientId) => {
         const u = (s as { user?: PresenceUser }).user;
-        if (u?.name) byClient.set(clientId, u);
+        if (!u?.name) return;
+        if (u.isAgent && !agentSince.has(clientId)) agentSince.set(clientId, Date.now());
+        byClient.set(clientId, u.isAgent ? { ...u, startedAt: agentSince.get(clientId) } : u);
       });
+      for (const cid of [...agentSince.keys()]) if (!byClient.has(cid)) agentSince.delete(cid);
       onUsers(Array.from(byClient.values()));
     };
     awareness.on('change', reportUsers);
@@ -316,19 +364,29 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             }
           }),
           commentField,
+          flashField,
           aldineTheme,
           EditorView.lineWrapping,
           // browser-native spellcheck on prose (only meaningful for .tex/.md)
           spellComp.of(spellcheckAttrs(spellcheck, filePath)),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, provider.awareness),
+          // after yCollab on purpose — see agentHighlight's ordering contract
+          ...(localStorage.getItem('aldine.experimental.agentPresence') === '1'
+            ? [agentHighlight(ytext, awareness)]
+            : []),
         ],
       }),
     });
     viewRef.current = view;
     reconfRef.current = { modeComp, spellComp, deps };
 
+    syncedRef.current = false;
     const initialStats = () => {
+      syncedRef.current = true;
+      const goto = pendingGoto.current;
+      pendingGoto.current = null;
+      if (goto) applyGoto(view, goto.line, goto.flash, goto.onClamped);
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.
@@ -340,6 +398,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
 
     return () => {
       if (statsTimer) clearTimeout(statsTimer);
+      if (flashTimer.current) { clearTimeout(flashTimer.current); flashTimer.current = null; }
+      pendingGoto.current = null;
       ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
       awareness.off('change', reportUsers);

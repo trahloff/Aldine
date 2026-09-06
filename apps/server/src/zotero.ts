@@ -1,6 +1,6 @@
 import { readMeta, writeMeta, writeFile, ProjectMeta } from './store.js';
 import { refreshBranchDocsFromDisk } from './collab.js';
-import { commitAll } from './gitops.js';
+import { autoCommit } from './gitops.js';
 
 const API = process.env.ZOTERO_API_BASE || 'https://api.zotero.org';
 const HEADERS = (key: string) => ({ 'Zotero-API-Version': '3', 'Zotero-API-Key': key });
@@ -84,10 +84,12 @@ export async function syncProject(projectId: string, branch = 'main', force = fa
   if (result === 'unchanged') return { synced: false, unchanged: true };
   const header = `% Auto-generated from Zotero (${z.libraryPrefix}${z.collectionKey ? ', collection ' + z.collectionKey : ''})\n% Synced ${new Date().toISOString()} — edits will be overwritten on next sync.\n\n`;
   writeFile(projectId, branch, z.bibFile, header + result.bib);
-  refreshBranchDocsFromDisk(projectId, branch);
+  refreshBranchDocsFromDisk(projectId, branch, [z.bibFile]);
   const updated: ProjectMeta = { ...meta, zotero: { ...z, lastVersion: result.version, lastSyncedAt: new Date().toISOString() } };
   await writeMeta(updated);
-  await commitAll(projectId, branch, `aldine: sync Zotero library into ${z.bibFile}`).catch(() => {});
+  // autoCommit, not commitAll: a whole-tree sweep would sign an agent edit
+  // pending in the autosave window as the sync, with no Claude commit to review.
+  await autoCommit(projectId, branch, `aldine: sync Zotero library into ${z.bibFile}`).catch(() => {});
   const itemCount = (result.bib.match(/^@/gm) || []).length;
   return { synced: true, bibFile: z.bibFile, itemCount };
 }

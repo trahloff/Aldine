@@ -1,8 +1,17 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 
-interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok' }
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+  testId?: string;
+  /** Stay until acted on or dismissed — for a review prompt that arrives
+   *  when nobody is looking at the screen. */
+  sticky?: boolean;
+}
 
-const ToastCtx = createContext<(text: string, kind?: Toast['kind']) => void>(() => {});
+interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok'; action?: ToastAction }
+
+const ToastCtx = createContext<(text: string, kind?: Toast['kind'], action?: ToastAction) => void>(() => {});
 
 export function useToast() {
   return useContext(ToastCtx);
@@ -10,12 +19,14 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, kind: Toast['kind'] = 'info') => {
+  const push = useCallback((text: string, kind: Toast['kind'] = 'info', action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, kind }]);
+    setToasts((t) => [...t, { id, text, kind, action }]);
+    // a toast carrying an action needs time to be acted on; a sticky one waits.
     // An error carries a sentence to read and usually something to do about
     // it, so it stays about twice as long as a confirmation.
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 7000 : 3400);
+    if (action?.sticky) return;
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : kind === 'error' ? 7000 : 3400);
   }, []);
   return (
     <ToastCtx.Provider value={push}>
@@ -24,7 +35,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className="toast">
             {t.kind === 'error' ? <span className="dot dot--error" /> : t.kind === 'ok' ? <span className="dot dot--ok" /> : null}
-            {t.text}
+            <span className="toast__text">{t.text}</span>
+            {t.action && (
+              <button
+                className="btn btn--small"
+                data-testid={t.action.testId}
+                onClick={() => {
+                  setToasts((cur) => cur.filter((x) => x.id !== t.id));
+                  t.action!.onClick();
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
+            {t.action?.sticky && (
+              <button className="btn btn--ghost btn--small" aria-label="Dismiss" data-testid="toast-dismiss" onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}>×</button>
+            )}
           </div>
         ))}
       </div>

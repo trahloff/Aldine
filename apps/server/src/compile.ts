@@ -16,6 +16,16 @@ export interface CompileResult {
   pdfUrl: string | null;   // URL the client can fetch
   /** This run produced no PDF: pdfUrl is the last one that did, unchanged. */
   pdfStale?: boolean;
+  /** Page count of this run's PDF (from the engine's log); absent when unknown or stale. */
+  pages?: number;
+  /** mtime (ms) of the file behind pdfUrl when it was last shown. With pdfStale
+   *  a newer file on disk means that PDF was overwritten (a halt-on-error run
+   *  truncates it), so the "previous" one no longer exists to link to. */
+  pdfWrittenAt?: number;
+  /** This run halted on an error after it had started writing the PDF: the
+   *  file on disk is its partial output, and the previous typeset's PDF no
+   *  longer exists anywhere but in clients that already loaded it. */
+  pdfTruncated?: boolean;
   /** Identifies the run whose PDF pdfUrl serves; SyncTeX lookups pass it back
    *  so a jump is refused instead of resolving against a different run. */
   compileId?: number;
@@ -26,10 +36,59 @@ export interface CompileResult {
   error?: string;
 }
 
-/** The PDF the compiler writes for a root, relative to the branch dir (the compiler's `pdf` field). */
-function expectedPdfRel(rootFile: string): string {
-  const base = path.posix.basename(rootFile).replace(/\.tex$/i, '');
-  return path.posix.join(path.posix.dirname(rootFile), '.aldine-out', `${base}.pdf`);
+/** The engine's "Output written on x.pdf (N pages, …)" line — the last one
+ *  wins (a rerun for cross-references logs several). Only the log tail is
+ *  scanned: a 200 KB log with the line at the end must not cost a full pass.
+ *  TeX wraps log lines at max_print_line (79 unless the compiler raises it),
+ *  so a long output path may push "(N pages" onto the next line. */
+export function pagesFromLog(log: string): number | null {
+  const tail = log.length > 65_536 ? log.slice(-65_536) : log;
+  let pages: number | null = null;
+  for (const m of tail.matchAll(/Output written on [^\n]*?(?:\n[^\n]*?)?\(\n?(\d+)[ \n]pages?/g)) pages = Number(m[1]);
+  return pages;
+}
+
+/** Where latexmk writes the PDF for rootFile (the compiler's `pdf` field): "paper/main.tex" → "paper/.aldine-out/main.pdf". */
+export function outputPdfRel(rootFile: string): string {
+  const dir = path.posix.dirname(rootFile || 'main.tex');
+  const base = path.posix.basename(rootFile || 'main.tex').replace(/\.tex$/i, '');
+  return path.posix.join(dir === '.' ? '' : dir, '.aldine-out', `${base}.pdf`);
+}
+
+/**
+ * The PDF currently on disk for a branch, whichever run wrote it — what the
+ * MCP get_pdf_url tool hands out without recompiling. `pages` comes from the
+ * .log beside it and is null when that log belongs to a later failed run
+ * ("No pages of output"). `partial` is set when that log records a run that
+ * stopped on an error AND wrote this very file (mtimes within a second):
+ * a halt-on-error run's truncated output, which is nobody's to hand out.
+ * A run that halted before touching the PDF leaves an older PDF beside a
+ * newer log, so the previous typeset stays available. The worktree must
+ * exist already.
+ */
+export function outputOnDisk(projectId: string, branch: string, rootFile: string): { pdf: string; typesetAt: string; pages: number | null; partial: boolean } | null {
+  const rel = outputPdfRel(rootFile);
+  const abs = path.join(branchDir(projectId, branch), rel);
+  let st: fs.Stats;
+  try { st = fs.statSync(abs); } catch { return null; }
+  let pages: number | null = null;
+  let partial = false;
+  try {
+    const logPath = abs.replace(/\.pdf$/, '.log');
+    const logSt = fs.statSync(logPath);
+    const fd = fs.openSync(logPath, 'r');
+    try {
+      const len = Math.min(logSt.size, 65_536);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, logSt.size - len);
+      const tail = buf.toString('utf8');
+      pages = pagesFromLog(tail);
+      // "! " lines are fatal only under -halt-on-error; without it TeX runs on
+      // and the caller (which knows the project's setting) ignores this flag.
+      partial = st.mtimeMs >= logSt.mtimeMs - 1000 && /^(?:! |==> Fatal error occurred)/m.test(tail);
+    } finally { fs.closeSync(fd); }
+  } catch { /* no log — page count unknown */ }
+  return { pdf: rel, typesetAt: st.mtime.toISOString(), pages, partial };
 }
 
 /** projectDir sent to the compiler is relative to the shared data volume root. */
@@ -51,7 +110,7 @@ const compileChain = new Map<string, Promise<unknown>>();
  * and misalign SyncTeX with the source. In-memory: after a restart the first
  * failed compile reports no PDF rather than an unknown one.
  */
-const lastGoodPdfUrl = new Map<string, { url: string; compileId: number; pdf: string }>();
+const lastGoodPdfUrl = new Map<string, { url: string; compileId: number; pdf: string; writtenAt?: number }>();
 
 /** compileId of the run whose SyncTeX file is on disk, per project::branch. */
 const lastSynctexId = new Map<string, number>();
@@ -177,31 +236,51 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   // that path is the one this root produces: switching the main document and
   // back would otherwise serve the other document as a clean success.
   const remembered = lastGoodPdfUrl.get(key) ?? null;
-  const expectedPdf = body.pdf ?? expectedPdfRel(meta.rootFile);
+  const expectedPdf = body.pdf ?? outputPdfRel(meta.rootFile);
   const previous = remembered && remembered.pdf === expectedPdf ? remembered : null;
   if (!previous && remembered) lastGoodPdfUrl.delete(key);
-  if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) {
-    const pdfUrl = `${config.basePath}/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${compileId}`;
-    lastGoodPdfUrl.set(key, { url: pdfUrl, compileId, pdf: body.pdf });
-    return { ...body, pdfUrl, compileId };
-  }
+  const pdfAbs = body.pdf ? path.join(branchDir(projectId, branch), body.pdf) : null;
+  const mtime = () => { try { return pdfAbs ? fs.statSync(pdfAbs).mtimeMs : undefined; } catch { return undefined; } };
+  const mintUrl = (id: number) => `${config.basePath}/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf!)}&t=${id}`;
+  // The shown file's mtime travels with the URL: a later run can tell whether
+  // the file behind a remembered link was rewritten since (the MCP tool hands
+  // out no link to a file another node's halted run has replaced).
+  const shown = (url: string, id: number) => {
+    const writtenAt = mtime();
+    lastGoodPdfUrl.set(key, { url, compileId: id, pdf: body.pdf!, writtenAt });
+    const pages = pagesFromLog(body.log);
+    return { ...body, pdfUrl: url, compileId: id, ...(pages !== null ? { pages } : {}), ...(writtenAt !== undefined ? { pdfWrittenAt: writtenAt } : {}) };
+  };
+  if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) return shown(mintUrl(compileId), compileId);
   // latexmk found nothing to redo: the PDF on disk is this run's result even
   // though nothing was rewritten. It keeps its URL and compileId — a fresh
   // cache-buster would refetch identical bytes and unbind SyncTeX, and
   // calling it stale would flag every typeset of an unchanged document.
   if (body.ok && body.pdf) {
     const id = previous?.compileId ?? compileId;
-    const pdfUrl = previous?.url ?? `${config.basePath}/api/projects/${projectId}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(body.pdf)}&t=${id}`;
-    if (!previous) lastGoodPdfUrl.set(key, { url: pdfUrl, compileId: id, pdf: body.pdf });
     if (!lastSynctexId.has(key) && body.synctex) lastSynctexId.set(key, id);
-    return { ...body, pdfUrl, compileId: id };
+    return shown(previous?.url ?? mintUrl(id), id);
   }
-  // No PDF from this run. The previous one is offered only while its file is
-  // still there: a halted run under stopOnFirstError deletes the output, and
-  // a URL to a deleted file is worse than no URL.
+  // No PDF from this run: whatever a client shows is the last successful
+  // typeset, so pdfStale says so whenever one was shown. Its link is offered
+  // only while the file is still there — a halted run under stopOnFirstError
+  // deletes the output once a page has shipped out, and a URL to a deleted
+  // file is worse than no URL (the preview keeps its pages on screen without
+  // one). A halted run that got as far as writing the file left a torso
+  // behind the previous link: clients that already loaded the previous PDF
+  // keep showing it, and pdfTruncated tells everyone else (the MCP tool) not
+  // to hand the link out.
+  const truncated = !!body.pdf && pdfFresh;
   const kept = previous && fs.existsSync(path.join(branchDir(projectId, branch), previous.pdf)) ? previous : null;
   if (!kept) lastGoodPdfUrl.delete(key);
-  return { ...body, pdfUrl: kept?.url ?? null, pdfStale: kept !== null, compileId: kept?.compileId };
+  return {
+    ...body,
+    pdfUrl: kept?.url ?? null,
+    pdfStale: previous !== null,
+    compileId: kept?.compileId,
+    ...(kept?.writtenAt !== undefined ? { pdfWrittenAt: kept.writtenAt } : {}),
+    ...(truncated ? { pdfTruncated: true } : {}),
+  };
 }
 
 /** `{ stale: true }` when the caller's preview (compileId) is not the run whose SyncTeX is on disk. */

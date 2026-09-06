@@ -39,6 +39,12 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
+      # MCP endpoint for Claude (docs/AGENT_API.md). ALDINE_MCP=1 serves /mcp;
+      # with AUTH_ENABLED off, ALDINE_MCP_TOKEN is the credential. The signing
+      # secret (>= 32 chars) is generated into META_DIR when blank.
+      ALDINE_MCP: ${ALDINE_MCP:-}
+      ALDINE_MCP_TOKEN: ${ALDINE_MCP_TOKEN:-}
+      ALDINE_SIGNING_SECRET: ${ALDINE_SIGNING_SECRET:-}
       # Optional outbound email for password resets: SMTP (any provider) or AWS
       # SES (SES_FROM + AWS_REGION). Without a transport, reset tokens are
       # logged server-side instead of emailed.

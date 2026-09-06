@@ -4,7 +4,10 @@ import { useToast } from './Toast';
 import { friendlyDate } from '../util/dates';
 import DiffView from './DiffView';
 
-export default function HistoryPanel({ projectId, branch }: { projectId: string; branch: string }) {
+/** `version` bumps whenever the branch changed elsewhere (the files signal,
+ *  a revert, an agent session ending); `live` polls while an agent is present,
+ *  because its commits land on the autosave debounce, after the signal. */
+export default function HistoryPanel({ projectId, branch, version = 0, live = false }: { projectId: string; branch: string; version?: number; live?: boolean }) {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [msg, setMsg] = useState('');
   const [diff, setDiff] = useState<{ entry: LogEntry; patch: string } | null>(null);
@@ -20,7 +23,12 @@ export default function HistoryPanel({ projectId, branch }: { projectId: string;
   };
 
   const load = () => api.log(projectId, branch).then(setLog).catch(() => setLog([]));
-  useEffect(() => { load(); }, [projectId, branch]);
+  useEffect(() => { load(); }, [projectId, branch, version]);
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [live, projectId, branch]);
 
   const commit = async () => {
     const message = msg.trim() || 'Checkpoint';
@@ -49,9 +57,12 @@ export default function HistoryPanel({ projectId, branch }: { projectId: string;
         <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>Save</button>
       </div>
       {log.map((c) => (
-        <button key={c.hash} className="history__item" title={`${c.hash} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
+        <button key={c.hash} className={`history__item${c.author === 'Claude' ? ' history__item--agent' : ''}`} title={`${c.hash} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
           <div className="history__msg">{c.message}</div>
-          <div className="history__meta">{c.author} · {friendlyDate(c.date)}</div>
+          <div className="history__meta">
+            {c.author === 'Claude' && <span className="dot dot--agent" aria-hidden="true" data-testid="agent-commit-dot" />}
+            {c.author} · {friendlyDate(c.date)}
+          </div>
         </button>
       ))}
       {log.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8 }}>No history yet on this branch.</p>}

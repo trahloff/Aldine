@@ -7,11 +7,21 @@ interface AuthState {
   authEnabled: boolean;
   user: AuthUser | null;
   providers: OAuthProviderInfo[];
+  passwordAuth: boolean;
+  /** ALDINE_MCP=1 on this server — the Agent access card must not advertise a connector URL that answers 404. */
+  mcpEnabled: boolean;
+  /** ALDINE_PUBLIC_URL as the server knows it (null when unset). */
+  publicUrl: string | null;
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, setUser: () => {}, refresh: async () => {} });
+
+/** The OAuth consent page validates the requesting client BEFORE asking for
+ *  credentials and renders the sign-in form itself, so the provider's gate
+ *  must let it mount while signed out. */
+const SELF_GATED_PATHS = ['/oauth/authorize'];
 
 export function useAuth() { return useContext(Ctx); }
 
@@ -21,6 +31,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
   const [passwordAuth, setPasswordAuth] = useState(true);
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -29,6 +41,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(me.user);
       setProviders(me.providers || []);
       setPasswordAuth(me.passwordAuth !== false);
+      setMcpEnabled(me.mcpEnabled === true);
+      setPublicUrl(me.publicUrl || null);
     } catch {
       setAuthEnabled(false);
       setUser(null);
@@ -43,9 +57,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Show the login/reset screen when signed out, OR when a reset link was opened
   // in an already-signed-in session (otherwise the ?reset_token= link does nothing).
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
-  if (authEnabled && (!user || hasResetToken)) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
+  const selfGated = typeof window !== 'undefined' && SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p));
+  if (authEnabled && (!user || hasResetToken) && !selfGated) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, providers, setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, providers, passwordAuth, mcpEnabled, publicUrl, setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';
@@ -62,14 +77,17 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
   ),
 };
 
-function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void }) {
+/** `heading`/`registerHeading` keep the caller's context ("connect Claude")
+ *  on both the sign-in and the sign-up step; `notice` is an info line shown
+ *  on arrival (why the person is back at the form). */
+export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
+  const [info, setInfo] = useState(notice ?? '');
   const [busy, setBusy] = useState(false);
 
   const reset = () => { setError(''); setInfo(''); };
@@ -113,8 +131,8 @@ function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthPr
     }
   };
 
-  const title = mode === 'login' ? 'Sign in to your projects.'
-    : mode === 'register' ? 'Create an account to get started.'
+  const title = mode === 'login' ? (heading ?? 'Sign in to your projects.')
+    : mode === 'register' ? (registerHeading ?? 'Create an account to get started.')
     : mode === 'forgot' ? 'Reset your password.'
     : 'Set a new password.';
 
@@ -154,7 +172,7 @@ function LoginScreen({ providers, passwordAuth, onAuthed }: { providers: OAuthPr
             {error && <p className="login__error" data-testid="auth-error">{error}</p>}
             {info && <p className="login__info" data-testid="auth-info">{info}</p>}
 
-            <button className="btn btn--primary login__submit" onClick={submit} disabled={busy} data-testid="auth-submit">
+            <button className="btn btn--primary login__submit" onClick={submit} disabled={busy} aria-busy={busy || undefined} data-testid="auth-submit">
               {busy ? '…' : mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Set password'}
             </button>
 

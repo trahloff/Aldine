@@ -33,6 +33,10 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/plugins': 'http://localhost:3000',
+      '/oauth/token': 'http://localhost:3000',
+      '/oauth/register': 'http://localhost:3000',
+      '/oauth/revoke': 'http://localhost:3000',
+      '/.well-known': 'http://localhost:3000',
       '/collab': { target: 'ws://localhost:3000', ws: true },
     },
   },

@@ -68,7 +68,7 @@ test.describe('ZIP import', () => {
     const res = await request.post('/api/projects/import', { data: { name: 'Evil', zipBase64: b64 } });
     expect(res.ok()).toBeTruthy();
     const { id } = await res.json();
-    const files = await (await request.get(`/api/projects/${id}/files?branch=main`)).json();
+    const { files } = await (await request.get(`/api/projects/${id}/files?branch=main`)).json();
     const paths = files.filter((f: { type: string }) => f.type === 'file').map((f: { path: string }) => f.path);
     expect(paths).toContain('main.tex');
     expect(paths.some((p: string) => p.startsWith('.git/'))).toBeFalsy();

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from './db/index.js';
-import type { User } from './db/types.js';
+import type { TokenRecord, User } from './db/types.js';
 import { config } from './config.js';
 import type { OAuthProfile } from './oauth.js';
 
@@ -163,6 +163,101 @@ export async function verifyToken(sid: string | undefined): Promise<PublicUser |
   if (!s || s.exp < Date.now()) return null;
   const user = await db().getUser(s.userId);
   return user ? pub(user) : null;
+}
+
+// ---------- personal access tokens (headless agent credentials) ----------
+/** The prefix makes leaked tokens identifiable in logs and secret scanners. */
+export const TOKEN_PREFIX = 'aldn_';
+export interface TokenScope { tokenId: string; projectIds: string[] | null }
+/** Token record without the digest — safe to serialize in API responses. */
+export interface PublicToken { id: string; name: string; projectIds: string[] | null; createdAt: string; lastUsedAt: string | null; expiresAt: string | null; clientName: string | null }
+
+// SHA-256, not scrypt: a 256-bit random token needs no slow hashing, and the
+// digest doubles as the constant-time lookup key.
+const tokenDigest = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
+
+function pubToken(t: TokenRecord): PublicToken {
+  return { id: t.id, name: t.name, projectIds: t.projectIds, createdAt: t.createdAt, lastUsedAt: t.lastUsedAt, expiresAt: t.expiresAt, clientName: t.clientName ?? null };
+}
+
+/** OAuth provenance of a token; both null for hand-made tokens. A rotation
+ *  passes the record it replaces so the Agent access card keeps showing when
+ *  the connection was made and last used, not when the token last rotated. */
+export interface TokenOrigin { clientName: string | null; family: string | null; carry?: { createdAt: string; lastUsedAt: string | null } }
+
+/** Mint a token. The plaintext value is returned exactly once — only its digest is stored. */
+export async function createAccessToken(userId: string, name: string, projectIds: string[] | null, expiresAt: string | null, origin: TokenOrigin = { clientName: null, family: null }): Promise<{ token: string; record: PublicToken }> {
+  const token = TOKEN_PREFIX + crypto.randomBytes(32).toString('base64url');
+  const record: TokenRecord = {
+    id: crypto.randomBytes(9).toString('base64url'),
+    userId,
+    name,
+    hash: tokenDigest(token),
+    projectIds,
+    createdAt: origin.carry?.createdAt ?? new Date().toISOString(),
+    lastUsedAt: origin.carry?.lastUsedAt ?? null,
+    expiresAt,
+    revokedAt: null,
+    clientName: origin.clientName,
+    family: origin.family,
+  };
+  await db().createToken(record);
+  return { token, record: pubToken(record) };
+}
+
+/** Digest a token or refresh-token secret for storage and lookup. */
+export function secretDigest(secret: string): string { return tokenDigest(secret); }
+
+export async function listAccessTokens(userId: string): Promise<PublicToken[]> {
+  return (await db().listTokensForUser(userId)).filter((t) => !t.revokedAt).map(pubToken);
+}
+
+/** Revoke (effective on the next bearer request). False when the token isn't the caller's. */
+export async function revokeAccessToken(userId: string, tokenId: string): Promise<boolean> {
+  const t = await db().getToken(tokenId);
+  if (!t || t.userId !== userId || t.revokedAt) return false;
+  const now = new Date().toISOString();
+  t.revokedAt = now;
+  await db().updateToken(t);
+  // An OAuth token's refresh token would otherwise mint a replacement on the
+  // connector's next refresh, silently undoing the user's revoke.
+  if (t.family) {
+    await db().revokeRefreshFamily(t.family, now);
+    await db().revokeTokensInFamily(t.family, now);
+  }
+  return true;
+}
+
+/** lastUsedAt writes are throttled to once per minute per token — every bearer
+ *  request would otherwise rewrite tokens.json (JsonStore write amplification). */
+const LAST_USED_THROTTLE_MS = 60_000;
+
+/** Resolve a `Bearer aldn_…` header to its user. Null for anything else —
+ *  malformed, unknown, revoked, or expired — so callers can't tell which. */
+export async function userFromToken(authorizationHeader: string | undefined): Promise<{ user: PublicUser; tokenScope: TokenScope } | null> {
+  if (!AUTH_ENABLED || !authorizationHeader) return null;
+  const m = /^Bearer\s+(aldn_[A-Za-z0-9_-]+)$/.exec(authorizationHeader.trim());
+  if (!m) return null;
+  const digest = tokenDigest(m[1]);
+  const rec = await db().getTokenByHash(digest);
+  if (!rec) return null;
+  // Re-compare digests timing-safely so equality never rides on the
+  // datastore's (indexed, non-constant-time) string comparison.
+  const a = Buffer.from(rec.hash, 'hex');
+  const b = Buffer.from(digest, 'hex');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (rec.revokedAt) return null;
+  if (rec.expiresAt && Date.parse(rec.expiresAt) <= Date.now()) return null;
+  const user = await db().getUser(rec.userId);
+  if (!user) return null;
+  if (!rec.lastUsedAt || Date.now() - Date.parse(rec.lastUsedAt) >= LAST_USED_THROTTLE_MS) {
+    // best effort: a bookkeeping write must never fail an authenticated request.
+    // touchToken, never updateToken(rec): writing this whole in-memory record
+    // back would overwrite a revocation persisted since getTokenByHash —
+    // silently un-revoking the token.
+    await db().touchToken(rec.id, new Date().toISOString()).catch(() => {});
+  }
+  return { user: pub(user), tokenScope: { tokenId: rec.id, projectIds: rec.projectIds } };
 }
 
 // ---------- cookies ----------

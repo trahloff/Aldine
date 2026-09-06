@@ -54,6 +54,11 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   collection*, no premium tier required; keep a `.bib` in sync with cheap
   version-aware refresh, insert citations from a search panel or via `\cite{`
   autocomplete.
+- **Claude as a collaborator** (optional, `ALDINE_MCP=1`): connect your
+  instance to claude.ai, Claude Desktop, Cowork or Claude Code over MCP and
+  Claude edits, typesets and shows the PDF in the chat; every change is a git
+  commit authored "Claude" with a review-and-revert toast in the editor.
+  Setup, reachability and the security model: [docs/AGENT_API.md](docs/AGENT_API.md).
 
 <details>
 <summary><strong>Everything else</strong>: visual editor, review mode, AI error fix, SyncTeX, plugins, auth, scaling…</summary>
@@ -269,9 +274,19 @@ is not `1`, so auth silently stays off.
 ```dotenv
 # app on loopback only; your reverse proxy fronts it
 ALDINE_APP_BIND=127.0.0.1
-# absolute URL of the app, used in OAuth callbacks and password-reset links.
-# Give it a path to serve Aldine under a prefix (https://server/internal/aldine)
+# absolute URL of the app, used in OAuth callbacks, password-reset links and
+# the PDF links the MCP connector hands out. Give it a path to serve Aldine
+# under a prefix (https://server/internal/aldine); the Claude connector URL
+# is <ALDINE_PUBLIC_URL>/mcp
 ALDINE_PUBLIC_URL=https://aldine.example.com
+# signs the connector's 15-minute PDF links; generated into META_DIR when
+# unset — set it explicitly when several nodes do not share that volume.
+# At least 32 characters (`openssl rand -base64 32`); shorter values refuse to boot
+ALDINE_SIGNING_SECRET=
+# MCP endpoint for Claude (docs/AGENT_API.md); needs AUTH_ENABLED=1 or ALDINE_MCP_TOKEN
+ALDINE_MCP=
+# static bearer for /mcp with auth off (single-tenant); ignored when AUTH_ENABLED=1
+ALDINE_MCP_TOKEN=
 
 # Everything below is optional and off unless set.
 # multi-user login, ownership and sharing (unset = single-tenant)
