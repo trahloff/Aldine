@@ -6,6 +6,14 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Contributors sign the CLA with one click on
+  [cla-assistant.io](https://cla-assistant.io/trahloff/Aldine) instead of
+  posting a sentence as a pull-request comment. The `contributor-assistant`
+  workflow is gone (its upstream was archived in March 2026); the signatures
+  it collected were imported, so nobody signs twice, and the
+  `cla-signatures` branch stays as the historical record. (#29)
+
 ## [0.6.0] — 2026-09-06
 
 ### Added
