@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-09
+
 ### Changed
 - The default compiler image installs whole TeX Live collections instead of
   a hand-picked list: `collection-pictures` (pgfplots, tikz-cd),
@@ -801,7 +803,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/trahloff/Aldine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1
