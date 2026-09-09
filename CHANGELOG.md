@@ -327,23 +327,6 @@ All notable changes to Aldine are documented here. The format follows
   `currentVersion`, and `batch_write` accepts `base_version` per entry (a
   conflict on any entry writes nothing).
 
-- Error tracking says which instance and which build an error came from, and
-  keeps the document out of it. `SENTRY_ENVIRONMENT` names the instance
-  (`staging`, `production`) instead of the environment being read from
-  `NODE_ENV`, which every deployed build sets to `production`; the release is
-  `SENTRY_RELEASE`, else the running `ALDINE_VERSION`, else the package
-  version. Events are stripped of the request body, cookies and headers, and a
-  URL is sent without its query string, which is where the file path, the
-  branch and a PDF link's signature live. A run with the test hooks on never
-  reports at all, so a developer machine that exports `SENTRY_DSN` for another
-  project does not file this app's test errors into it.
-- Contributors sign the CLA with one click on
-  [cla-assistant.io](https://cla-assistant.io/trahloff/Aldine) instead of
-  posting a sentence as a pull-request comment. The `contributor-assistant`
-  workflow is gone (its upstream was archived in March 2026); the signatures
-  it collected were imported, so nobody signs twice, and the
-  `cla-signatures` branch stays as the historical record. (#29)
-
 - The Agent API's `commit` tool commits only what Claude wrote. It used to
   commit the whole working tree under Claude's name, so a collaborator's
   unsaved typing — flushed to disk by the tool itself — landed as Claude's
@@ -420,6 +403,37 @@ All notable changes to Aldine are documented here. The format follows
   name that is a valid glob or pathspec magic (`*.tex`, `:!x.tex`,
   `:(icase)MAIN.TEX`) commits literally: before, `*.tex` staged every dirty
   `.tex` file — a collaborator's uncommitted edits — into the Claude commit.
+
+## [0.7.0] — 2026-09-09
+
+### Changed
+- The default compiler image installs whole TeX Live collections instead of
+  a hand-picked list: `collection-pictures` (pgfplots, tikz-cd),
+  `collection-latexextra` (about 1900 packages: cleveref, todonotes, minted,
+  standalone, …) and `collection-bibtexextra` join the publisher classes and
+  the script collections. Every "package not found" report so far was one
+  of those three; the image grows by about 360 MB (4.3 GB on disk) and CJK
+  stays with `-full`. For anything still missing, the README shows a
+  three-line `docker-compose.override.yml` that adds `RUN tlmgr install
+  <pkg>` on top of the release image, and the missing-package hint in the
+  editor points at it; the image keeps its dated TeX Live snapshot
+  configured so that install works after the release has aged. (#4)
+- Error tracking says which instance and which build an error came from, and
+  keeps the document out of it. `SENTRY_ENVIRONMENT` names the instance
+  (`staging`, `production`) instead of the environment being read from
+  `NODE_ENV`, which every deployed build sets to `production`; the release is
+  `SENTRY_RELEASE`, else the running `ALDINE_VERSION`, else the package
+  version. Events are stripped of the request body, cookies and headers, and a
+  URL is sent without its query string, which is where the file path, the
+  branch and a PDF link's signature live. A run with the test hooks on never
+  reports at all, so a developer machine that exports `SENTRY_DSN` for another
+  project does not file this app's test errors into it.
+- Contributors sign the CLA with one click on
+  [cla-assistant.io](https://cla-assistant.io/trahloff/Aldine) instead of
+  posting a sentence as a pull-request comment. The `contributor-assistant`
+  workflow is gone (its upstream was archived in March 2026); the signatures
+  it collected were imported, so nobody signs twice, and the
+  `cla-signatures` branch stays as the historical record. (#29)
 
 ## [0.6.0] — 2026-09-06
 
@@ -1187,7 +1201,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/trahloff/Aldine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/trahloff/Aldine/compare/v0.4.0...v0.4.1

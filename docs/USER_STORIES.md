@@ -70,7 +70,8 @@ flag; everything else works in the default single-tenant deploy.
 - **COMP-5** — I zoom the PDF and the setting holds.
 - **COMP-6** — SyncTeX: double-clicking the PDF jumps the editor to the source
   line; ⌘J jumps the PDF to my cursor with a flash.
-- **COMP-7** — A missing-package error names the package and points at
+- **COMP-7** — A missing-package error names the package and says how to add
+  it: one `tlmgr install` line in a derived compiler image, or
   `ALDINE_TEXLIVE=-full`.
 
 ## Collaboration (COLLAB)
