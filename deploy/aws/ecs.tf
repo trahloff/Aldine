@@ -166,6 +166,10 @@ resource "aws_ecs_service" "app" {
   task_definition = aws_ecs_task_definition.app.arn
   desired_count   = var.desired_count
 
+  # Takes effect for tasks started after the change: a running task keeps
+  # the setting it was launched with until the next deploy.
+  enable_execute_command = var.enable_ecs_exec
+
   capacity_provider_strategy {
     capacity_provider = var.use_fargate_spot ? "FARGATE_SPOT" : "FARGATE"
     weight            = 1
