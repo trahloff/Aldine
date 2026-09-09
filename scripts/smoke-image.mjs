@@ -22,8 +22,21 @@ function ok(msg) {
   console.log(`smoke: ok  ${msg}`);
 }
 
+// fetch() against a port that still refuses connections can leave its promise
+// unsettled (undici on Node 22/24); with nothing else on the event loop the
+// script then exits 13 ("unsettled top-level await") instead of retrying. The
+// timer must stay referenced (no AbortSignal.timeout, which unrefs its timer)
+// so the loop lives until the race settles.
+function fetchWithTimeout(url, init, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`fetch ${url} timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([fetch(url, init), timeout]).finally(() => clearTimeout(timer));
+}
+
 async function json(path, init) {
-  const res = await fetch(BASE + path, init);
+  const res = await fetchWithTimeout(BASE + path, init, 30_000);
   const text = await res.text();
   let body;
   try { body = JSON.parse(text); } catch { body = text; }
@@ -62,7 +75,7 @@ if (!compiler.texlive || compiler.texlive.release === 'unknown') fail(`/api/comp
 if (EXPECT_SCHEME && compiler.texlive.scheme !== EXPECT_SCHEME) fail(`/api/compiler: scheme ${compiler.texlive.scheme}, expected ${EXPECT_SCHEME}`);
 ok(`/api/compiler TeX Live ${compiler.texlive.release} (${compiler.texlive.scheme})`);
 
-const index = await fetch(BASE + '/');
+const index = await fetchWithTimeout(BASE + '/', undefined, 30_000);
 const html = await index.text();
 if (index.status !== 200 || !/<div id="root"|<script/.test(html)) fail(`GET / returned ${index.status} without the SPA shell`);
 ok('GET / serves the SPA');
@@ -117,7 +130,7 @@ if (/undefined (references|citations)|Citation .* undefined|Please \(re\)run Bib
 }
 ok(`compiled in ${result.durationMs} ms`);
 
-const pdfRes = await fetch(BASE + result.pdfUrl);
+const pdfRes = await fetchWithTimeout(BASE + result.pdfUrl, undefined, 30_000);
 const pdf = Buffer.from(await pdfRes.arrayBuffer());
 if (pdfRes.status !== 200 || pdf.subarray(0, 5).toString() !== '%PDF-') fail(`pdf fetch returned ${pdfRes.status}, ${pdf.length} bytes`);
 // pdfTeX compresses its object streams, so the page tree is not greppable in
