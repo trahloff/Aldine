@@ -6,6 +6,13 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
+  in the running server container with `aws ecs execute-command`, for one-off
+  inspection of the datastore on EFS. It grants the task role the SSM
+  messaging permissions ECS Exec needs; who may open a session stays with IAM.
+  Documented in `deploy/aws/README.md`.
+
 ### Changed
 - The default compiler image installs whole TeX Live collections instead of
   a hand-picked list: `collection-pictures` (pgfplots, tikz-cd),

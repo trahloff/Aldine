@@ -89,6 +89,18 @@ Set the corresponding client id/secret in `secret_env`.
   the previous task-definition revision; pass a revision number to go further
   back. Nothing is rebuilt, so it takes about as long as one deploy cycle.
 - **Infra change:** edit the `.tf` files → `terraform apply`.
+- **A shell in the running container** (`enable_ecs_exec = true`, then one
+  deploy so the task starts with it): needs the
+  [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+  on your machine and `ecs:ExecuteCommand` on your IAM principal.
+  ```bash
+  TASK=$(aws ecs list-tasks --cluster papyr --service-name papyr --query 'taskArns[0]' --output text)
+  aws ecs execute-command --cluster papyr --task "$TASK" --container server \
+    --interactive --command "/bin/sh"
+  ```
+  The JSON datastore lives under `META_DIR` (`/secrets` in the task), so
+  `users.json` there is the account list. Leave it off when nobody needs it:
+  it is a door into the container that IAM alone guards.
 
 The ECS deployment circuit breaker also rolls back on its own if the new tasks
 never reach a healthy state.
