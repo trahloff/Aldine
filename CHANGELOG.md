@@ -292,8 +292,12 @@ All notable changes to Aldine are documented here. The format follows
 - The session-review prompt now also reaches whoever was away: opening a
   project whose branch carries Claude commits newer than that person's last
   acknowledged visit raises the same sticky toast — "Claude edited N files
-  while you were away" — where Review opens the existing diff dialog over
-  those commits with the same "Revert these changes". The mark is per person,
+  while you were away", or "in this project" for a person who has never
+  opened it, with the commit count added when the dialog cannot show every
+  commit — where Review opens the existing diff dialog over those commits
+  with the same "Revert these changes". While an agent session is still
+  running the live prompt owns the report, so the away check stays quiet
+  and asks again next time. The mark is per person,
   project and branch: with accounts it lives in the datastore
   (`project_visits` on Postgres, `visits.json` on the JSON backend), without
   accounts in the browser (`aldine.agentSeen.<project>.<branch>`). Reviewing
@@ -348,8 +352,10 @@ All notable changes to Aldine are documented here. The format follows
   yet, as one commit under the given message; everything else stays pending
   for the ordinary anonymous autosave. The result lists the `files` that
   landed, and with nothing of Claude's waiting it is `committed:false` with
-  the current head instead of an error. The tool description no longer warns
-  about the behaviour it had.
+  the current head and Claude's latest commits on the branch
+  (`recentClaudeCommits`) instead of an error, so the model can name the
+  commit that holds its edits. The tool description no longer warns about
+  the behaviour it had.
 - Auto-typeset now follows Claude, not only the person typing: an agent edit
   arms the same debounce a keystroke arms, so the preview updates without
   anyone touching the keyboard. With several tabs open on a branch exactly one
@@ -359,9 +365,19 @@ All notable changes to Aldine are documented here. The format follows
   of a second rebuild of the same PDF. `POST /api/projects/:id/compile` takes
   `reason: "agent"` to say a run followed agent edits, and
   `GET /api/projects/:id/compile-status` reports the branch's last run. With
-  auto-typeset off, or on a branch no agent touches, nothing changes.
+  auto-typeset off nothing is armed and Claude's run is not adopted: the
+  preview moves only when the person presses Typeset. On a branch no agent
+  touches nothing changes.
 
 ### Fixed
+- The server's git commands can no longer reach outside `DATA_DIR`
+  (`GIT_CEILING_DIRECTORIES`): a project directory that lost its repository
+  used to let git discover an enclosing checkout, which committed a developer's
+  worktree as `aldine: autosave` when the e2e data dir lived inside it.
+- A project or branch deleted inside the autosave window no longer logs
+  `[collab] autocommit failed Cannot use simple-git on a directory that does
+  not exist` on every debounce that fires afterwards; there is nothing left
+  to commit, so the sweep is skipped.
 - A typeset that stops on an error and removes the PDF (what pdfTeX does once
   a page has shipped out) no longer drops the preview's stale flag: the pages
   on screen stay marked as the last successful typeset and the download link

@@ -79,6 +79,9 @@ const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') ||
  *  consumes it. */
 const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   const [projectId, branch] = key.split('::');
+  // A project or branch deleted inside the debounce window has nothing left
+  // to commit; that is the ordinary end of a test or a trash action, not an error.
+  if (!fs.existsSync(branchDir(projectId, branch))) return;
   void autoCommit(projectId, branch).catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 

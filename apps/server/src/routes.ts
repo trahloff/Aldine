@@ -26,7 +26,7 @@ import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
-import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
@@ -1123,6 +1123,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // Without accounts there is no user to key a mark on; the browser keeps
       // its own (apps/web/src/util/agentSeen.ts) and `stored` says so.
       if (!auth.AUTH_ENABLED || !user) return { ok: true, stored: false };
+      if (!(await visitLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+      // A row is only ever keyed on a branch that exists: a made-up branch
+      // name must not grow the visit table.
+      if (!(await gitops.branchHead(req.params.id, branch))) return reply.code(404).send({ error: 'branch not found' });
       const kind = req.body?.kind === 'acknowledged' ? 'acknowledged' : 'prompted';
       const prev = await store.getProjectVisit(user.id, req.params.id, branch);
       // A second sighting of the identical batch acknowledges it: an ignored
@@ -1133,7 +1137,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         projectId: req.params.id,
         branch,
         head: acknowledge ? head : (prev?.head ?? ''),
-        at: acknowledge ? new Date().toISOString() : (prev?.at ?? new Date().toISOString()),
+        // A first sighting records no time: a fresh mark stamped "now" would
+        // bound the next answer to commits newer than the prompt, hiding the
+        // very batch it was raised for.
+        at: acknowledge ? new Date().toISOString() : (prev?.at ?? ''),
         promptedHead: head,
       });
       return { ok: true, stored: true, acknowledged: acknowledge };

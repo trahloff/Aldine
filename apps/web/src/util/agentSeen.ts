@@ -31,7 +31,9 @@ export function markPrompted(projectId: string, branch: string, head: string): v
     write(projectId, branch, { head, at: new Date().toISOString(), promptedHead: head });
     return;
   }
-  write(projectId, branch, { head: prev?.head ?? '', at: prev?.at ?? new Date().toISOString(), promptedHead: head });
+  // No acknowledged head means no time either: an empty mark must not bound
+  // the next answer to commits newer than the prompt it was raised by.
+  write(projectId, branch, { head: prev?.head ?? '', at: prev?.at ?? '', promptedHead: head });
 }
 
 export function markAcknowledged(projectId: string, branch: string, head: string): void {

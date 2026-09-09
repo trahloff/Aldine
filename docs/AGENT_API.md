@@ -179,7 +179,7 @@ configuration file, using the command from the previous section.
 | `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. | no |
 | `compile` | Typesets with latexmk: errors before warnings (file, line, message — every row names a file), a short log tail on failure, page count, a signed PDF link, a deep link into the editor; a missing package is reported as a `hint` to relay. | no |
 | `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling. | yes |
-| `commit` | Commits the files Claude wrote on the branch and has not committed yet, as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Nothing pending is `committed:false` with the current head, not an error. | no |
+| `commit` | Commits the files Claude wrote on the branch and has not committed yet, as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Nothing pending is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | no |
 | `references_add` | Resolves a DOI, arXiv or OpenAlex id (`query`) to BibTeX and appends it to the project's `.bib` (`bibFile?`). | no |
 | `list_citations` | Citation keys in the project's `.bib` files, with title, author, year. | yes |
 | `list_labels` | `\label` targets across the project's `.tex` files. | yes |
@@ -218,8 +218,10 @@ to GitHub or manages tokens.
   collaborator's unsaved typing, and anything a person changed over REST,
   stays pending and reaches history as an ordinary anonymous autosave. When
   Claude's edits already auto-committed there is nothing to do: the result is
-  `committed:false` with the current head, not a failure. Claude is still
-  steered to `batch_write` when the change is one it is making right now.
+  `committed:false` with the current head and the latest Claude commits on
+  the branch (`recentClaudeCommits`), so it can name the commit that holds
+  its edits. Claude is still steered to `batch_write` when the change is one
+  it is making right now.
 - **Human authors.** With `AUTH_ENABLED`, a person's checkpoints, merges and
   reverts are committed under their account name (the server ignores the
   name the browser sends); the anonymous "Writer N" identity applies only
@@ -237,8 +239,10 @@ to GitHub or manages tokens.
   adopt its result), and a typeset Claude issues itself within a few seconds
   cancels the pending one — the status line reads "Typesetting Claude's
   edits…" and every open preview ends up showing that run, its errors and
-  its jump-to-source included. With auto-typeset off nothing is armed, and a
-  branch no agent touches behaves exactly as before.
+  its jump-to-source included. With auto-typeset off nothing is armed, no
+  status line appears and Claude's run is not adopted: the preview moves
+  only when the person presses Typeset. A branch no agent touches behaves
+  exactly as before.
 - **Review.** When a session that produced commits goes quiet, the editor
   shows a sticky toast, "Claude edited N files", with a **Review** action
   that opens the diff of the session's commits and a **Revert these changes**

@@ -146,7 +146,7 @@ test.describe('agent presence and audit UI', () => {
 
       await openProject(page, id);
       await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator('.toast')).toContainText('while you were away');
+      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file in this project');
 
       await page.getByTestId('agent-away-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
@@ -160,6 +160,39 @@ test.describe('agent presence and audit UI', () => {
       await page.reload();
       expect((await (await answer).json()).commitCount).toBe(0);
       await expect(page.locator('.cm-content')).toContainText('AWAY-EDITED-OPENING-LINE');
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('an ignored away prompt returns once, then counts as seen', async ({ page, request }) => {
+    const id = await createProject(request, 'Agent Away Ignored');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'IGNORED-ONCE-OPENING-LINE.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+      expect((await call(client, 'commit', { project: id, message: 'Rewrite the opening line' })).body.committed).toBe(true);
+
+      // First open: nobody had ever seen this project, so the wording says so.
+      await openProject(page, id);
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file in this project');
+
+      // Second open without acting: the same batch is raised again.
+      await page.reload();
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+
+      // Third open: the ignored prompt counts as seen.
+      const answer = page.waitForResponse((r) => r.url().includes('/agent-activity') && r.request().method() === 'GET');
+      await page.reload();
+      expect((await (await answer).json()).commitCount).toBe(0);
+      await expect(page.locator('.cm-content')).toContainText('IGNORED-ONCE-OPENING-LINE');
       await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
     } finally {
       await client.close().catch(() => {});
@@ -250,6 +283,42 @@ test.describe('auto-typeset follows the agent', () => {
       // Past the agent window: the cancelled timer never comes back.
       await page.waitForTimeout(8000);
       expect(compiles()).toBe(0);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('with auto-typeset off the preview stays where the person left it', async ({ page, request }) => {
+    test.setTimeout(180_000);
+    await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+    const id = await createProject(request, 'Agent Typeset Off');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      await openProject(page, id);
+      await expect(page.getByTestId('auto-toggle')).not.toHaveClass(/auto-toggle--on/);
+      await page.getByTestId('typeset-button').click();
+      await expectTypesetOk(page);
+      const before = await previewRun(page);
+      expect(before).toBeTruthy();
+      const compiles = countClientCompiles(page);
+
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'Line nobody asked to see yet.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+      const run = await call(client, 'compile', { project: id });
+      expect(run.isError).toBeFalsy();
+      expect(new URL(run.body.pdfUrl, BASE).searchParams.get('t')).not.toBe(before);
+
+      // Past both the agent window and the run: no status line, no rebuild,
+      // and the preview still shows the person's own run.
+      await page.waitForTimeout(8000);
+      expect(await previewRun(page)).toBe(before);
+      expect(compiles()).toBe(0);
+      await expect(page.getByTestId('agent-typesetting')).toHaveCount(0);
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);

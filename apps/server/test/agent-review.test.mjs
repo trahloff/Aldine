@@ -137,6 +137,38 @@ const quietAnswer = (await app.inject({ method: 'GET', url: `/api/projects/${qui
 eq(quietAnswer.commitCount, 0, 'no Claude commits, no prompt');
 check(/^[0-9a-f]{40}$/.test(quietAnswer.head), 'and the head is still reported');
 
+// ---- (12) a person with no mark at all: the first prompt hides nothing ----
+// The defect this pins: a first sighting stamped "now" bounded the next
+// answer to commits newer than the prompt, so an ignored prompt never
+// returned and the batch counted as seen without anyone looking.
+const cy = await auth.register('cy@example.com', 'password123', 'Cy');
+const cyCookie = `aldine_session=${await auth.createSession(cy.id)}`;
+let cyAnswer = await activity({ cookie: cyCookie });
+check(cyAnswer.since === null && cyAnswer.commitCount === 27, 'a fresh person sees every Claude commit');
+res = await seen({ branch: 'main', head: cyAnswer.head, kind: 'prompted' }, { cookie: cyCookie });
+eq(res.json(), { ok: true, stored: true, acknowledged: false }, 'the first sighting is recorded as a prompt');
+eq((await store.getProjectVisit(cy.id, id, 'main')).at, '', 'and carries no time');
+cyAnswer = await activity({ cookie: cyCookie });
+eq(cyAnswer.commitCount, 27, 'the batch is still reported on the next open');
+check(cyAnswer.since && cyAnswer.since.head === '', 'against an empty mark');
+res = await seen({ branch: 'main', head: cyAnswer.head, kind: 'prompted' }, { cookie: cyCookie });
+eq(res.json(), { ok: true, stored: true, acknowledged: true }, 'the second sighting acknowledges');
+eq((await activity({ cookie: cyCookie })).commitCount, 0, 'and the batch is seen');
+
+// ---- (13) a mark is only ever keyed on a branch that exists ----
+res = await seen({ branch: 'no-such-branch', head: a.head, kind: 'prompted' });
+eq(res.statusCode, 404, 'a branch the project does not have is refused');
+eq(await store.getProjectVisit(ada.id, id, 'no-such-branch'), null, 'and no row was written');
+
+// ---- (14) control characters in a subject cannot shift the fields ----
+const odd = 'Odd\x1fsubject\x1ewith markers';
+const hOdd = await commitAs('Claude', 'main.tex', 'Odd subject.\n', odd);
+const logged = (await gitops.log(id, 'main')).find((c) => c.hash === hOdd);
+eq(logged.author, 'Claude', 'the author field survives a subject full of separators');
+eq(logged.message, odd, 'and the subject is intact');
+a = await activity();
+check(a.commits[0].hash === hOdd && a.commits[0].message === logged.message && a.commits[0].files.length === 1, 'the activity answer parses it the same way');
+
 await app.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('agent-review: ALL PASSED');

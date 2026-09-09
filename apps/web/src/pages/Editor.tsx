@@ -431,8 +431,15 @@ export default function Editor() {
         const mark = authEnabled ? null : readSeen(id, branch);
         const res = await api.agentActivity(id, branch, mark && mark.head ? { head: mark.head, at: mark.at } : null);
         if (cancelled || !res.commitCount) return;
+        // A session still running is the live prompt's to report when it ends;
+        // nothing is recorded, so the next open asks again.
+        if (agentPresentRef.current) return;
         const n = res.fileCount;
-        toast(`Claude edited ${n} file${n === 1 ? '' : 's'} while you were away`, 'info', {
+        // The dialog opens the newest commits only; a batch larger than that
+        // says so here, and a scan that hit its ceiling reports a floor.
+        const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
+        const when = res.since ? 'while you were away' : 'in this project';
+        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
           sticky: true,
@@ -586,6 +593,9 @@ export default function Editor() {
   }, [id, branch, armAutoTypeset]);
   const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
   const onAgentTypesetStarted = useCallback(() => {
+    // Auto-typeset off means the preview moves only when this person asks:
+    // no status line, no adoption of Claude's run.
+    if (!autoRef.current) return;
     setAgentTypesetting(true);
     // The run flushed the branch's docs when it started, so it covers every
     // edit this client has seen; a second run would only rebuild the same PDF.
@@ -597,11 +607,16 @@ export default function Editor() {
       pendingSource.current = null;
     }
     clearAgentWatchdog();
-    agentWatchdog.current = setTimeout(() => { agentWatchdog.current = null; armAutoTypeset('agent'); }, AGENT_RUN_WATCHDOG_MS);
+    agentWatchdog.current = setTimeout(() => {
+      agentWatchdog.current = null;
+      setAgentTypesetting(false); // the run it announced is not coming
+      armAutoTypeset('agent');
+    }, AGENT_RUN_WATCHDOG_MS);
   }, [armAutoTypeset, clearAgentWatchdog]);
   const onAgentTypesetFinished = useCallback(() => {
     setAgentTypesetting(false);
     clearAgentWatchdog();
+    if (!autoRef.current) return;
     void adoptLatestRun();
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(

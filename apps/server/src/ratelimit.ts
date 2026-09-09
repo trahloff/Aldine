@@ -105,6 +105,9 @@ export const compileLimiter = compilePerMin > 0
   ? new RateLimiter('compile', Math.max(2, compilePerMin), compilePerMin / 60)
   : null;
 
+/** Review-mark writes (one per project open): 60 burst, 1/s — bounds datastore
+ *  writes from a scripted session. */
+export const visitLimiter = new RateLimiter('visit', n(process.env.RL_VISIT_BURST, 60), 1);
 /** MCP requests: 60 burst, 1/s sustained — keyed per token digest (fallback IP) by the /mcp guard. */
 export const mcpLimiter = new RateLimiter('mcp', n(process.env.RL_MCP_BURST, 60), 1);
 

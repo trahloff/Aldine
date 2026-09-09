@@ -347,19 +347,32 @@ export async function branchShortHead(id: string, branch: string): Promise<strin
 
 export interface LogEntry { hash: string; date: string; message: string; author: string }
 
-/** Records are split on 0x1e/0x1f, which git never emits from %s or %an
- *  (simple-git's default parser splits on a printable marker a commit
- *  subject can contain, letting a message move itself into the author
- *  field — the field the History panel and the session review key on).
- *  %an, not %aN: a .mailmap committed into the project would otherwise
- *  rename authors. */
+/** Fields are split on NUL, the one byte no git field can hold: a commit
+ *  subject may carry any other byte, including the control characters a
+ *  parser might pick as markers, and simple-git's default parser splits on a
+ *  printable one, letting a message move itself into the author field — the
+ *  field the History panel and the session review key on. %an, not %aN: a
+ *  .mailmap committed into the project would otherwise rename authors. */
 export async function log(id: string, branch: string, limit = 50): Promise<LogEntry[]> {
   if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
-  const raw = await git(repoDir(id)).raw(['log', branch, `--max-count=${limit}`, '--format=%H%x1f%aI%x1f%an%x1f%s%x1e', '--']);
-  return raw.split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => {
-    const [hash, date, author, ...message] = r.split('\x1f');
-    return { hash, date, message: message.join('\x1f'), author };
-  });
+  const raw = await git(repoDir(id)).raw(['log', branch, `--max-count=${limit}`, '--format=%H%x00%aI%x00%an%x00%s%x00', '--']);
+  const f = raw.split('\0');
+  const out: LogEntry[] = [];
+  for (let i = 0; i + 3 < f.length; i += 4) {
+    const hash = f[i].trim(); // the newline git prints after each record leads the next hash
+    if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3] });
+  }
+  return out;
+}
+
+/** The branch's head, or '' when the project or the branch does not exist.
+ *  Read-only, no lock. */
+export async function branchHead(id: string, branch: string): Promise<string> {
+  if (!BRANCH_RE.test(branch) || branch.includes('..')) return '';
+  try {
+    return await git(repoDir(id)).revparse(['--verify', '--quiet', `refs/heads/${branch}`]).then((h) => h.trim());
+  } catch { return ''; }
 }
 
 /** Author string every agent write commits under; the History dot, the
@@ -393,9 +406,9 @@ export interface AgentActivity {
  */
 export async function agentActivitySince(id: string, branch: string, mark: { head: string; at: string } | null): Promise<AgentActivity> {
   if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
-  const g = git(repoDir(id));
-  const head = await g.revparse([branch]).then((h) => h.trim()).catch(() => '');
+  const head = await branchHead(id, branch);
   if (!head) return { since: mark, head: '', commits: [], commitCount: 0, fileCount: 0, truncated: false };
+  const g = git(repoDir(id));
 
   // A mark whose commit is no longer on the branch (a reset to the remote, a
   // recreated branch) cannot bound a range; the date bound below is one
@@ -405,13 +418,13 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   if (mark?.head && /^[0-9a-f]{4,40}$/.test(mark.head)) {
     usable = await g.raw(['merge-base', '--is-ancestor', mark.head, branch]).then(() => true, () => false);
   }
-  // The record separator LEADS the format here (log() trails it): --name-only
-  // prints the file list after the header, so a trailing separator would
-  // attach each commit's files to the next record. %an, not %aN: a committed
-  // .mailmap must not be able to rename the agent.
+  // NUL-separated like log(), but the record separator LEADS the format here:
+  // --name-only prints the file list after the header, so a trailing one
+  // would attach each commit's files to the next record. %an, not %aN: a
+  // committed .mailmap must not be able to rename the agent.
   const args = ['log', usable ? `${mark!.head}..${branch}` : branch,
                 `--max-count=${AGENT_SCAN_LIMIT}`,
-                '--format=%x1e%H%x1f%aI%x1f%an%x1f%s', '--name-only'];
+                '--format=%x00%H%x00%aI%x00%an%x00%s', '--name-only'];
   if (!usable && mark?.at) {
     const t = Date.parse(mark.at);
     if (!Number.isNaN(t)) args.push(`--since=${new Date(t - 1000).toISOString()}`);
@@ -419,12 +432,16 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   args.push('--');
   const raw = await g.raw(args).catch(() => '');
 
-  const records = raw.split('\x1e').slice(1); // the output opens with a separator
+  const f = raw.split('\0'); // opens with the text before the first separator: nothing
   const files = new Set<string>();
   const commits: AgentCommit[] = [];
+  let records = 0;
   let commitCount = 0;
-  for (const rec of records) {
-    const [hash, date, author, rest = ''] = rec.split('\x1f');
+  for (let i = 1; i + 3 < f.length; i += 4) {
+    const hash = f[i].trim();
+    if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+    records++;
+    const [date, author, rest] = [f[i + 1], f[i + 2], f[i + 3]];
     if (author !== AGENT_COMMIT_AUTHOR) continue;
     const lines = rest.split('\n');
     const message = lines[0] ?? '';
@@ -433,7 +450,7 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
     if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched });
     commitCount++;
   }
-  return { since: mark, head, commits, commitCount, fileCount: files.size, truncated: records.length >= AGENT_SCAN_LIMIT };
+  return { since: mark, head, commits, commitCount, fileCount: files.size, truncated: records >= AGENT_SCAN_LIMIT };
 }
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }

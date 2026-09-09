@@ -755,7 +755,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('commit', {
-    description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — your writes already commit on their own within about 20 seconds, so {committed:false} is not a failure: it means they landed already, and the result names the current head. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
+    description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — your writes already commit on their own within about 20 seconds, so {committed:false} is not a failure: it means they landed already, and the result names the current head and your latest commits on the branch. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -773,6 +773,11 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         flushBranchDocs(meta.id, branch);
         const res = await gitops.commitAttributedHeld(meta.id, branch, cleanCommitMessage(message, 'Checkpoint'));
         const e = await echo(meta.id, branch);
+        // Where the edits went when nothing was waiting: the model can name
+        // the commit that holds them instead of guessing.
+        const recent = res.committed ? [] : (await gitops.log(meta.id, branch, 30))
+          .filter((c) => c.author === gitops.AGENT_COMMIT_AUTHOR).slice(0, 5)
+          .map((c) => ({ hash: c.hash, date: c.date, message: c.message }));
         return ok({
           committed: res.committed,
           hash: res.committed ? e.head : null,
@@ -780,7 +785,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           // "Nothing was waiting", not "everything is committed": after a
           // restart inside the debounce window the ledger is empty while the
           // delta is still on disk, waiting for the anonymous sweep.
-          ...(res.committed ? {} : { note: `Nothing was waiting to commit — your edits already landed on their own; head is ${e.head}.` }),
+          ...(res.committed ? {} : { note: `Nothing was waiting to commit — your edits already landed on their own; head is ${e.head}.`, recentClaudeCommits: recent }),
           contentVersion: contentVersion(meta.id, branch),
           ...e,
         });

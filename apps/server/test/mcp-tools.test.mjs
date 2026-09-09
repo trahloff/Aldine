@@ -432,6 +432,8 @@ check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a messa
   ({ body } = await call('commit', { project: pc.id, message: 'Nothing new' }));
   check(body.committed === false && body.hash === null && JSON.stringify(body.files) === '[]', `nothing pending reports committed:false with no files (got ${JSON.stringify(body)})`);
   check(typeof body.note === 'string' && body.note.includes(body.head), `the note names the current head (got ${JSON.stringify(body.note)})`);
+  check(Array.isArray(body.recentClaudeCommits) && body.recentClaudeCommits.length > 0 && body.recentClaudeCommits.every((c) => /^[0-9a-f]{40}$/.test(c.hash) && typeof c.message === 'string'),
+    `and lists Claude's latest commits so the model can name where its edits went (got ${JSON.stringify(body.recentClaudeCommits)})`);
   clog = await gitops.log(pc.id, 'main');
   check(clog.length === before.length && clog[0].hash === before[0].hash, 'nothing pending creates no commit');
   check(!clog.some((c) => c.message === 'Nothing new'), 'and nothing is titled with that message');
