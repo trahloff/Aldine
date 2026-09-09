@@ -127,6 +127,23 @@ export interface RefreshTokenRecord {
 }
 
 /**
+ * How far one person has been shown Claude's work on one branch. `head` is
+ * the branch commit they acknowledged; `at` bounds the answer when that
+ * commit is no longer on the branch (a reset to a remote, a recreated
+ * branch). `promptedHead` is the head of the last prompt raised for them:
+ * a second sighting of the identical batch acknowledges it, so an ignored
+ * prompt appears twice and never again.
+ */
+export interface ProjectVisit {
+  userId: string;
+  projectId: string;
+  branch: string;
+  head: string;
+  at: string;
+  promptedHead: string | null;
+}
+
+/**
  * Every method is async so a network-backed implementation (Postgres) is a
  * drop-in for the file-backed one. Implementations must be safe for concurrent
  * callers (the JSON backend writes atomically; Postgres is transactional).
@@ -196,6 +213,12 @@ export interface DataStore {
   // review comments (stored per project)
   loadComments(projectId: string): Promise<Comment[]>;
   saveComments(projectId: string, list: Comment[]): Promise<void>;
+
+  // agent-review marks: how far each user has been shown Claude's commits
+  getProjectVisit(userId: string, projectId: string, branch: string): Promise<ProjectVisit | null>;
+  setProjectVisit(v: ProjectVisit): Promise<void>;
+  /** Purge a project's marks; called when the project itself is deleted. */
+  deleteProjectVisits(projectId: string): Promise<void>;
 
   // compile-time usage metering: seconds consumed per (user, month YYYY-MM)
   getUsageSeconds(userId: string, month: string): Promise<number>;

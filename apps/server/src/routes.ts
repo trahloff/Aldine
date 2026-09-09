@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as github from './github.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects } from './collab.js';
@@ -925,8 +925,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- compile ----------
-  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/compile', async (req, reply) => {
+  // `reason` only decides whether the branch's other clients are told about
+  // this run; it grants nothing and is not trusted for anything else.
+  app.post<{ Params: { id: string }; Body: { branch?: string; reason?: string } }>('/api/projects/:id/compile', async (req, reply) => {
     const branch = req.body?.branch || 'main';
+    const agent = req.body?.reason === 'agent';
     const user = reqUser(req);
     const key = clientKey(req, user?.id);
     // plan metering: block once a signed-in user is over their monthly compile budget
@@ -942,7 +945,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(429).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Too many typesets in flight — let the current ones finish' });
     }
     try {
-      const result = await compileProject(req.params.id, branch);
+      const result = await compileProject(req.params.id, branch, { agent });
       if (user) await usage.recordCompile(user.id, result.durationMs || 0);
       return result;
     } catch (err: any) {
@@ -951,6 +954,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       compileGate.release(key);
     }
   });
+
+  // What the branch's last typeset was, so a client can adopt a run somebody
+  // else's browser or the agent made instead of rebuilding the same PDF. The
+  // shared preHandler above already enforces project access and token scope
+  // for every /api/projects/:id/* route, and this handler is an in-memory map
+  // read — it must stay one (no disk stat, no compiler call, no git call), so
+  // it cannot become a cheap amplification target.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/compile-status', async (req) =>
+    compileStatus(req.params.id, req.query.branch || 'main'));
 
   // per-user plan usage (compile-minutes this month) — for a billing/plan UI
   app.get('/api/usage', async (req, reply) => {
@@ -1056,7 +1068,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           refreshBranchDocsFromDisk(req.params.id, branch);
           // Success-metric line (docs/plans/agent-api/00-overview.md, "% of
           // agent commits reverted"): only reverts that undo Claude's work.
-          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === 'Claude').length;
+          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === gitops.AGENT_COMMIT_AUTHOR).length;
           if (agentCommits) console.log(`[metric] agent_revert user=${reqUser(req)?.id ?? 'operator'} project=${req.params.id} commits=${agentCommits}`);
         }
         return { ...result, author: author ?? null };
@@ -1073,6 +1085,59 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     try { return await gitops.commitDiff(req.params.id, req.params.hash); }
     catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
+
+  type AgentActivityQ = { branch?: string; sinceHead?: string; sinceAt?: string };
+
+  // What Claude changed on this branch since the caller last acknowledged it.
+  // Read-only: no flush, no commit, no repo lock (see gitops.agentActivitySince).
+  app.get<{ Params: { id: string }; Querystring: AgentActivityQ }>('/api/projects/:id/agent-activity', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'bad branch name' });
+    const user = reqUser(req);
+    // With accounts the mark is the server's, per user: honouring a
+    // client-supplied one would let anything holding a session — or the
+    // agent's own token — hide the audit prompt.
+    let mark: { head: string; at: string } | null = null;
+    if (auth.AUTH_ENABLED && user) {
+      const row = await store.getProjectVisit(user.id, req.params.id, branch);
+      mark = row ? { head: row.head, at: row.at } : null;
+    } else {
+      const h = req.query.sinceHead;
+      const a = req.query.sinceAt;
+      if (typeof h === 'string' && /^[0-9a-f]{4,40}$/.test(h) && typeof a === 'string' && !Number.isNaN(Date.parse(a))) mark = { head: h, at: a };
+    }
+    try { return await gitops.agentActivitySince(req.params.id, branch, mark); }
+    catch (err: any) { return reply.code(400).send({ error: err.message }); }
+  });
+
+  // Records the visit. Session-cookie only: an agent's own token must never
+  // be able to clear the human's review prompt (plan SECURITY.md §1).
+  app.post<{ Params: { id: string }; Body: { branch?: string; head?: string; kind?: 'prompted' | 'acknowledged' } }>(
+    '/api/projects/:id/agent-activity/seen', async (req, reply) => {
+      if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot clear the review prompt — sign in to do this' });
+      const branch = req.body?.branch || 'main';
+      if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'bad branch name' });
+      const head = String(req.body?.head || '');
+      if (!/^[0-9a-f]{4,40}$/.test(head)) return reply.code(400).send({ error: 'head required' });
+      const user = reqUser(req);
+      // Without accounts there is no user to key a mark on; the browser keeps
+      // its own (apps/web/src/util/agentSeen.ts) and `stored` says so.
+      if (!auth.AUTH_ENABLED || !user) return { ok: true, stored: false };
+      const kind = req.body?.kind === 'acknowledged' ? 'acknowledged' : 'prompted';
+      const prev = await store.getProjectVisit(user.id, req.params.id, branch);
+      // A second sighting of the identical batch acknowledges it: an ignored
+      // prompt is raised twice and then never again.
+      const acknowledge = kind === 'acknowledged' || prev?.promptedHead === head;
+      await store.setProjectVisit({
+        userId: user.id,
+        projectId: req.params.id,
+        branch,
+        head: acknowledge ? head : (prev?.head ?? ''),
+        at: acknowledge ? new Date().toISOString() : (prev?.at ?? new Date().toISOString()),
+        promptedHead: head,
+      });
+      return { ok: true, stored: true, acknowledged: acknowledge };
+    });
 
   app.post<{ Params: { id: string }; Body: { from: string; into: string; author?: string } }>(
     '/api/projects/:id/merge', async (req, reply) => {

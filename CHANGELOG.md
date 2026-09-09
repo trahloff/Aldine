@@ -289,6 +289,22 @@ All notable changes to Aldine are documented here. The format follows
   whether the PDF viewer is built. `[metric] agent_connect` is logged when a
   token is minted or a Connect consent is granted. The consent page's
   client-lookup burst is 60 per IP (was 20).
+- The session-review prompt now also reaches whoever was away: opening a
+  project whose branch carries Claude commits newer than that person's last
+  acknowledged visit raises the same sticky toast — "Claude edited N files
+  while you were away" — where Review opens the existing diff dialog over
+  those commits with the same "Revert these changes". The mark is per person,
+  project and branch: with accounts it lives in the datastore
+  (`project_visits` on Postgres, `visits.json` on the JSON backend), without
+  accounts in the browser (`aldine.agentSeen.<project>.<branch>`). Reviewing
+  or dismissing records the visit, and an ignored prompt is raised a second
+  time and then counts as seen, so it never repeats forever. A person's own
+  commits never count, and a branch with more agent history than the dialog
+  can show reports the count and offers the newest 20 diffs.
+  `GET /api/projects/:id/agent-activity` answers the question (read-only: no
+  flush, no commit, no repo lock) and `POST …/agent-activity/seen` records
+  the mark — session-only, so an agent's own token can never clear a
+  person's review prompt.
 
 ### Changed
 - Write conflicts for the Agent API and `PUT /file` are detected per file,
@@ -313,6 +329,27 @@ All notable changes to Aldine are documented here. The format follows
   workflow is gone (its upstream was archived in March 2026); the signatures
   it collected were imported, so nobody signs twice, and the
   `cla-signatures` branch stays as the historical record. (#29)
+
+- The Agent API's `commit` tool commits only what Claude wrote. It used to
+  commit the whole working tree under Claude's name, so a collaborator's
+  unsaved typing — flushed to disk by the tool itself — landed as Claude's
+  work in History and inside the reach of "Revert these changes". It now
+  commits exactly the paths Claude wrote on that branch and has not committed
+  yet, as one commit under the given message; everything else stays pending
+  for the ordinary anonymous autosave. The result lists the `files` that
+  landed, and with nothing of Claude's waiting it is `committed:false` with
+  the current head instead of an error. The tool description no longer warns
+  about the behaviour it had.
+- Auto-typeset now follows Claude, not only the person typing: an agent edit
+  arms the same debounce a keystroke arms, so the preview updates without
+  anyone touching the keyboard. With several tabs open on a branch exactly one
+  of them typesets (the visible tab with the lowest collaboration id), and a
+  typeset Claude starts itself cancels the pending one — every open preview
+  then shows that run, errors, stale flag and jump-to-source included, instead
+  of a second rebuild of the same PDF. `POST /api/projects/:id/compile` takes
+  `reason: "agent"` to say a run followed agent edits, and
+  `GET /api/projects/:id/compile-status` reports the branch's last run. With
+  auto-typeset off, or on a branch no agent touches, nothing changes.
 
 ### Fixed
 - A typeset that stops on an error and removes the PDF (what pdfTeX does once

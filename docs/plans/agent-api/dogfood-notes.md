@@ -43,7 +43,8 @@ Conventions:
 - 2026-09-02 · `commit` · review · Commits the whole tree, so a human's
   flushed typing lands under Claude's name and explicit commits consume
   pending attribution. The description now warns and steers to
-  `batch_write` for scoped commits.
+  `batch_write` for scoped commits. Fixed 2026-09-06 (scoped to the agent's
+  own paths, see Applied tuning).
 - 2026-09-06 · `edit_file`/`write_file`/`batch_write`/`references_add` · unit
   (`autocommit-split.test.mjs` p5, `autocommit-race.test.mjs`) · An autosave
   firing during the pre-write checkpoint swept the agent's delta into
@@ -81,6 +82,16 @@ Conventions:
   commits and the revert stayed invisible until a tab switch. Fixed: refetch
   on the files signal, after a revert, when the session toast fires, and
   every 5 s while the agent is present.
+- 2026-09-06 · session review · QA · The review prompt only reached someone
+  who had the editor open while Claude worked; a person who opened the
+  project afterwards (the claude.ai case) saw nothing but violet dots in
+  History. Fixed: the prompt is now driven by a per-user, per-branch visit
+  mark (`project_visits` / `visits.json`, localStorage without accounts)
+  instead of presence alone; `GET /api/projects/:id/agent-activity` answers
+  it read-only and the mark is cleared only by a session, never by a token.
+  Pinned in `16-agent-ui` ("a project Claude changed while nobody watched
+  prompts a review on the next open"), the auth suite (`mcp.spec.ts`,
+  per-user mark) and `agent-review.test.mjs`.
 
 ## To confirm in real sessions
 
@@ -122,6 +133,9 @@ Presence / audit:
   has been seen live yet).
 - Does the session toast fire at a sensible idle time (~60 s) for real
   conversational pacing, or mid-session?
+- [ ] The away prompt across devices: acknowledge on the laptop, open the
+  same project on another machine signed in as the same account — no second
+  prompt.
 
 Operational:
 - Progress-notification cadence vs. the ALB 60 s idle timeout on prod
@@ -311,6 +325,12 @@ Server side, once per host:
 - 2026-09-02 · `references_add` · Attribution parity with the other write
   tools (checkpoint the `.bib`, commit as "Add reference <key>" by Claude)
   so the session-review toast covers bibliography changes too.
+- 2026-09-06 · auto-typeset · PM QA note ("the source moved and the PDF did
+  not for two minutes") · An agent write now signals the branch and every
+  open editor arms the auto-typeset debounce; the branch elects one client so
+  N tabs cannot race the compile gate, and a typeset the agent starts itself
+  cancels the pending one and is adopted through the new compile-status
+  route rather than duplicated.
 - 2026-09-02 · `references_add` · Upstream errors are relayed with the
   status ("Reference lookup failed: DOI lookup failed (HTTP 404)"); a bare
   network failure is worded as "could not be reached from your Aldine
@@ -324,6 +344,18 @@ Server side, once per host:
   results carry `fileVersion`; `batch_write` takes `base_version` per entry;
   descriptions say "writes to other files never conflict, so parallel tools
   on different files are safe".
+- 2026-09-06 · `commit` · Scoped to Claude's own work: the tool commits the
+  paths the attribution ledger (`gitops.pendingAttributed`) holds for that
+  branch, as one commit under the caller's message, and leaves everything
+  else to the anonymous autosave — a whole-tree commit signed a
+  collaborator's flushed typing as Claude and put it inside "Revert these
+  changes", and the description had to warn about the tool itself. Nothing
+  pending is now `committed:false` with the head, not an error, so a model
+  calling `commit` after its edits already auto-committed reports "already
+  committed" rather than a failure. The description names the scope, keeps
+  steering to `batch_write` for a change being made now, and no longer warns
+  about a behaviour the tool does not have. Pinned in `mcp-tools.test.mjs`
+  and `15-mcp` ("the commit tool commits only the files Claude wrote").
 
 Next revision: after ≥1 week of daily use (spec §2.2), fill "Observed" from
 transcripts and move each answered question here with the change it drove.

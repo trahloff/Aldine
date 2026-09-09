@@ -109,6 +109,56 @@ test.describe('MCP over PAT auth', () => {
     }
   });
 
+  test('the away-review mark is per user: acknowledging it for one account leaves the other still prompted', async ({ request, baseURL }) => {
+    const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ada Away' } });
+    expect(reg.ok()).toBeTruthy();
+    const project = await (await request.post('/api/projects', { data: { name: 'MCP Away Mark' } })).json();
+    await request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\n' } });
+    await request.post(`/api/projects/${project.id}/share`, { data: { mode: 'link', collaborators: [] } });
+    const minted = await (await request.post('/api/tokens', { data: { name: 'MCP away' } })).json();
+
+    const client = await connect(baseURL!, minted.token);
+    try {
+      const edit = await call(client, 'edit_file', {
+        project: project.id, path: 'main.tex',
+        edits: [{ quote: 'Original line.', replacement: 'Line rewritten while Ada was away.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+      const committed = await call(client, 'commit', { project: project.id, message: 'Rewrite the opening line' });
+      expect(committed.body.committed).toBe(true);
+    } finally {
+      await client.close().catch(() => {});
+    }
+
+    const url = `/api/projects/${project.id}/agent-activity?branch=main`;
+    const first = await (await request.get(url)).json();
+    expect(first.commitCount).toBeGreaterThan(0);
+    expect(first.commits[0].files).toContain('main.tex');
+
+    const seen = await (await request.post(`/api/projects/${project.id}/agent-activity/seen`, { data: { branch: 'main', head: first.head, kind: 'acknowledged' } })).json();
+    expect(seen).toMatchObject({ ok: true, stored: true, acknowledged: true });
+    expect((await (await request.get(url)).json()).commitCount).toBe(0);
+
+    // a second account reaching the project by link has its own mark
+    const bob = await pwRequest.newContext({ baseURL });
+    try {
+      const regB = await bob.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Bob Away' } });
+      expect(regB.ok()).toBeTruthy();
+      expect((await (await bob.get(url)).json()).commitCount).toBe(first.commitCount);
+
+      // Ada's agent token must not be able to clear Bob's prompt either
+      const denied = await bob.post(`/api/projects/${project.id}/agent-activity/seen`, {
+        data: { branch: 'main', head: first.head, kind: 'acknowledged' },
+        headers: { authorization: `Bearer ${minted.token}` },
+      });
+      expect(denied.status()).toBe(403);
+      expect((await denied.json()).error).toMatch(/Access tokens cannot clear the review prompt/);
+      expect((await (await bob.get(url)).json()).commitCount).toBe(first.commitCount);
+    } finally {
+      await bob.dispose();
+    }
+  });
+
   test('create_project: a project-scoped PAT is refused at tool level, an unscoped PAT creates a project the user owns', async ({ request, baseURL }) => {
     const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'MCP Creator' } });
     expect(reg.ok()).toBeTruthy();

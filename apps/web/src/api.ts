@@ -39,14 +39,35 @@ export interface CompileResult {
   pdfStale?: boolean;
   /** The run whose PDF pdfUrl serves; sent back with SyncTeX lookups. */
   compileId?: number;
+  /** This run; never reused, so it orders runs. */
+  runId?: number;
   synctex?: string | null;
   log: string;
   errors: CompileError[];
   durationMs: number;
   error?: string;
 }
+export interface CompileStatus {
+  /** A typeset for this branch is in flight on the server. */
+  running: boolean;
+  /** The branch's last completed run, or null (restart, or another node). */
+  result: CompileResult | null;
+  finishedAt: number | null;
+  /** That run followed agent edits. */
+  agent: boolean;
+}
 export interface BibEntry { key: string; type: string; author?: string; authorLabel?: string; title?: string; year?: string; journal?: string; file: string }
 export interface LogEntry { hash: string; date: string; message: string; author: string }
+/** Claude's commits on a branch past the caller's review mark. `commitCount`
+ *  and `fileCount` are a floor when `truncated`; `commits` is capped. */
+export interface AgentActivity {
+  since: { head: string; at: string } | null;
+  head: string;
+  commits: Array<{ hash: string; date: string; message: string; files: string[] }>;
+  commitCount: number;
+  fileCount: number;
+  truncated: boolean;
+}
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
 /** Token metadata only — the `aldn_…` value itself is returned once, on create. */
 export interface AccessToken {
@@ -210,8 +231,10 @@ export const api = {
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
-  compile: (id: string, branch: string) =>
-    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  compile: (id: string, branch: string, reason?: 'agent') =>
+    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}) }) }),
+  compileStatus: (id: string, branch: string) =>
+    req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),
@@ -232,6 +255,14 @@ export const api = {
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
     req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
+  // The mark travels in the query only without accounts; with a signed-in
+  // user the server uses its own row and ignores these.
+  agentActivity: (id: string, branch: string, mark?: { head: string; at: string } | null) =>
+    req<AgentActivity>(`/api/projects/${id}/agent-activity?branch=${encodeURIComponent(branch)}`
+      + (mark ? `&sinceHead=${encodeURIComponent(mark.head)}&sinceAt=${encodeURIComponent(mark.at)}` : '')),
+  markAgentActivitySeen: (id: string, branch: string, head: string, kind: 'prompted' | 'acknowledged') =>
+    req<{ ok: boolean; stored: boolean; acknowledged?: boolean }>(`/api/projects/${id}/agent-activity/seen`,
+      { method: 'POST', body: JSON.stringify({ branch, head, kind }) }),
 
   // GitHub sync
   githubStatus: () => req<GithubStatus>('/api/github/status'),

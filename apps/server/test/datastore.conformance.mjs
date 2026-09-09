@@ -245,6 +245,45 @@ async function runSuite(store, label) {
   eq(await store.loadComments(newer.id), comments, `${label}: comments roundtrip`);
   await throws(() => store.saveComments('../evil', []), 'bad project id', `${label}: saveComments bad id throws`);
 
+  // ---- project visits (agent-review marks) ----
+  const pv1 = `v1${t}`;
+  const pv2 = `v2${t}`;
+  const other = `u9-${t}`;
+  check((await store.getProjectVisit(user.id, pv1, 'main')) === null, `${label}: unknown visit → null`);
+
+  const visit = { userId: user.id, projectId: pv1, branch: 'main', head: 'a'.repeat(40), at: '2026-09-01T00:00:00.000Z', promptedHead: null };
+  await store.setProjectVisit(visit);
+  eq(await store.getProjectVisit(user.id, pv1, 'main'), visit, `${label}: visit roundtrip (promptedHead null)`);
+
+  const prompted = { ...visit, head: 'b'.repeat(40), at: '2026-09-02T00:00:00.000Z', promptedHead: 'c'.repeat(40) };
+  await store.setProjectVisit(prompted);
+  eq(await store.getProjectVisit(user.id, pv1, 'main'), prompted, `${label}: setProjectVisit upserts in place`);
+
+  // isolation: another user, another project, another branch each stand alone
+  await store.setProjectVisit({ ...visit, userId: other });
+  await store.setProjectVisit({ ...visit, projectId: pv2 });
+  await store.setProjectVisit({ ...visit, branch: 'draft' });
+  eq((await store.getProjectVisit(user.id, pv1, 'main')).head, prompted.head, `${label}: visit unaffected by neighbours`);
+  eq((await store.getProjectVisit(other, pv1, 'main')).head, visit.head, `${label}: visit is per user`);
+  eq((await store.getProjectVisit(user.id, pv2, 'main')).head, visit.head, `${label}: visit is per project`);
+  eq((await store.getProjectVisit(user.id, pv1, 'draft')).head, visit.head, `${label}: visit is per branch`);
+
+  const vAlias = await store.getProjectVisit(user.id, pv1, 'main');
+  vAlias.head = 'TAMPERED';
+  eq((await store.getProjectVisit(user.id, pv1, 'main')).head, prompted.head, `${label}: getProjectVisit result is a copy`);
+
+  // id discipline: reads treat malformed ids as absent, writes refuse them
+  check((await store.getProjectVisit(user.id, '../evil', 'main')) === null, `${label}: getProjectVisit bad id → null`);
+  await throws(() => store.setProjectVisit({ ...visit, projectId: '../evil' }), 'bad project id', `${label}: setProjectVisit bad id throws`);
+  await throws(() => store.deleteProjectVisits('../evil'), 'bad project id', `${label}: deleteProjectVisits bad id throws`);
+
+  // purging a project takes every branch row of every user with it
+  await store.deleteProjectVisits(pv1);
+  check((await store.getProjectVisit(user.id, pv1, 'main')) === null, `${label}: deleteProjectVisits clears the owner's row`);
+  check((await store.getProjectVisit(user.id, pv1, 'draft')) === null, `${label}: deleteProjectVisits clears every branch`);
+  check((await store.getProjectVisit(other, pv1, 'main')) === null, `${label}: deleteProjectVisits clears every user`);
+  check((await store.getProjectVisit(user.id, pv2, 'main')) !== null, `${label}: deleteProjectVisits leaves another project standing`);
+
   // ---- usage ----
   const month = '2026-08';
   eq(await store.getUsageSeconds(user.id, month), 0, `${label}: usage default 0`);

@@ -211,26 +211,28 @@ export async function commitAllHeld(id: string, branch: string, message: string,
  * human deleted before the debounce fired) stages NOTHING, which would push
  * every other agent path in the window into the anonymous sweep.
  */
-export async function commitPathsHeld(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
-  if (!paths.length) return { committed: false };
+export async function commitPathsHeld(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  if (!paths.length) return { committed: false, files: [] };
   const dir = await ensureWorktree(id, branch);
   const g = git(dir);
   ensureOutputExcluded(id);
   const changed = new Set((await g.status()).files.flatMap((f) => (f.from ? [f.path, f.from] : [f.path])));
   const present = paths.filter((p) => changed.has(p));
-  if (!present.length) return { committed: false };
+  if (!present.length) return { committed: false, files: [] };
   await g.raw(['--literal-pathspecs', 'add', '--', ...present]);
   const status = await g.status();
   const staged = new Set(status.staged);
-  if (!present.some((p) => staged.has(p))) return { committed: false };
+  if (!present.some((p) => staged.has(p))) return { committed: false, files: [] };
   // Committing the explicit pathspec (not the whole index) keeps anything else
   // that happens to be staged out of the attributed commit.
   const hash = await commitArgv(g, message, author, present);
-  return { committed: true, hash };
+  // `present`, not `paths`: a requested path git saw no change in was never
+  // staged, so a caller reporting what landed must not name it.
+  return { committed: true, hash, files: present };
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
-export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
 }
 
@@ -304,6 +306,38 @@ export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: a
   return withRepoLock(id, () => autoCommitHeld(id, branch, sweepMessage, sweepAuthor));
 }
 
+/**
+ * Commit ONLY the agent work the ledger holds for this branch, as one commit
+ * under `message`: the named checkpoint the MCP `commit` tool makes. The
+ * caller is stating the intent of the checkpoint, so the per-path intents the
+ * individual writes registered are replaced, not grouped — byIntent here would
+ * title the checkpoint with an earlier write's message. Whatever else is dirty
+ * stays for the anonymous sweep: a whole-tree commit would sign a
+ * collaborator's flushed typing as the agent (HistoryPanel and the session
+ * review key on the author string). No pending work is `committed:false`, not
+ * a failure — the debounce may already have committed it.
+ * Held-only on purpose: the caller must hold the lock across its own flush, so
+ * a lock-taking wrapper would be dead code and an invitation to nest
+ * withRepoLock inside that span (the lock is a promise chain: a nested take
+ * never resolves).
+ */
+export async function commitAttributedHeld(id: string, branch: string, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  const pending = takeAttributedPaths(id, branch);
+  if (!pending) return { committed: false, files: [] };
+  const paths = [...pending.paths.keys()];
+  try {
+    // The author comes from the ledger, never from the caller: no call site
+    // can sign a commit as somebody else.
+    return await commitPathsHeld(id, branch, paths, message, pending.author);
+  } catch (err) {
+    // Same rule as autoCommitHeld: the subject is the one input the ledger
+    // cannot vouch for, and dropping the attribution would let the next sweep
+    // sign the agent's delta anonymously.
+    registerAttributedPaths(id, branch, RETRY_INTENT, pending.author, paths);
+    throw err;
+  }
+}
+
 /** Short HEAD of a branch — the `{branch, head}` echo every MCP tool result
  *  carries so the agent can narrate what it touched. '' when the ref cannot
  *  be resolved (echo is informational; it must never fail the tool call). */
@@ -326,6 +360,80 @@ export async function log(id: string, branch: string, limit = 50): Promise<LogEn
     const [hash, date, author, ...message] = r.split('\x1f');
     return { hash, date, message: message.join('\x1f'), author };
   });
+}
+
+/** Author string every agent write commits under; the History dot, the
+ *  session review and this answer all key on it. */
+export const AGENT_COMMIT_AUTHOR = 'Claude';
+/** Commits walked per answer. Past this the counts are a floor
+ *  (`truncated`), which is the honest reading of "Claude wrote 300 commits". */
+const AGENT_SCAN_LIMIT = 500;
+/** Commits handed back with a hash — the reviewer pays one diff request each. */
+const AGENT_REVIEW_LIMIT = 20;
+
+export interface AgentCommit { hash: string; date: string; message: string; files: string[] }
+export interface AgentActivity {
+  since: { head: string; at: string } | null;
+  head: string;
+  /** Newest first, at most AGENT_REVIEW_LIMIT. */
+  commits: AgentCommit[];
+  /** Claude commits newer than the mark, over the whole scan. */
+  commitCount: number;
+  /** Distinct paths across those commits. */
+  fileCount: number;
+  /** The scan hit its ceiling: the counts are a floor, not a total. */
+  truncated: boolean;
+}
+
+/**
+ * What Claude committed on `branch` past the caller's mark. Only ever runs
+ * revparse / merge-base / log in the repo dir: no flush, no commit, no
+ * `withRepoLock` — git reads take no index lock, so this is safe to answer
+ * while an autosave holds the write lock.
+ */
+export async function agentActivitySince(id: string, branch: string, mark: { head: string; at: string } | null): Promise<AgentActivity> {
+  if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
+  const g = git(repoDir(id));
+  const head = await g.revparse([branch]).then((h) => h.trim()).catch(() => '');
+  if (!head) return { since: mark, head: '', commits: [], commitCount: 0, fileCount: 0, truncated: false };
+
+  // A mark whose commit is no longer on the branch (a reset to the remote, a
+  // recreated branch) cannot bound a range; the date bound below is one
+  // second early on purpose — re-showing a commit is a smaller failure than
+  // hiding one.
+  let usable = false;
+  if (mark?.head && /^[0-9a-f]{4,40}$/.test(mark.head)) {
+    usable = await g.raw(['merge-base', '--is-ancestor', mark.head, branch]).then(() => true, () => false);
+  }
+  // The record separator LEADS the format here (log() trails it): --name-only
+  // prints the file list after the header, so a trailing separator would
+  // attach each commit's files to the next record. %an, not %aN: a committed
+  // .mailmap must not be able to rename the agent.
+  const args = ['log', usable ? `${mark!.head}..${branch}` : branch,
+                `--max-count=${AGENT_SCAN_LIMIT}`,
+                '--format=%x1e%H%x1f%aI%x1f%an%x1f%s', '--name-only'];
+  if (!usable && mark?.at) {
+    const t = Date.parse(mark.at);
+    if (!Number.isNaN(t)) args.push(`--since=${new Date(t - 1000).toISOString()}`);
+  }
+  args.push('--');
+  const raw = await g.raw(args).catch(() => '');
+
+  const records = raw.split('\x1e').slice(1); // the output opens with a separator
+  const files = new Set<string>();
+  const commits: AgentCommit[] = [];
+  let commitCount = 0;
+  for (const rec of records) {
+    const [hash, date, author, rest = ''] = rec.split('\x1f');
+    if (author !== AGENT_COMMIT_AUTHOR) continue;
+    const lines = rest.split('\n');
+    const message = lines[0] ?? '';
+    const touched = lines.slice(1).map((l) => l.trim()).filter(Boolean);
+    for (const f of touched) files.add(f);
+    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched });
+    commitCount++;
+  }
+  return { since: mark, head, commits, commitCount, fileCount: files.size, truncated: records.length >= AGENT_SCAN_LIMIT };
 }
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }

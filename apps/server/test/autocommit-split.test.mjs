@@ -287,6 +287,21 @@ const syncStat = (await gitops.commitDiff(p12.id, log[0].hash)).stat;
 check(syncStat.includes('references.bib') && !syncStat.includes('main.tex'), 'the sync commit holds only the .bib');
 check(log[1].author === 'Claude' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p12.id, log[1].hash)).stat.includes('main.tex'), "Claude's pending edit committed first, under Claude and its intent");
 
+// ---- the MCP commit tool's primitive fails the same way: a checkpoint git
+// refuses puts the attribution back, so the next sweep cannot sign the
+// agent's delta anonymously ----
+const p13 = await store.createProject('Split commit tool failure', {});
+store.writeFile(p13.id, 'main', 'main.tex', 'agent edit\n');
+// registerAttributedPaths directly, not agentWrite: no debounce is armed, so
+// the fire order below is the test's, not a timer's.
+gitops.registerAttributedPaths(p13.id, 'main', 'Tighten the abstract', 'Claude', ['main.tex']);
+const boom = await gitops.withRepoLock(p13.id, () => gitops.commitAttributedHeld(p13.id, 'main', 'bad\u0000subject')).then(() => null, (e) => e);
+check(boom instanceof Error, 'a subject git cannot take fails the attributed checkpoint');
+check(shutdownFlushSet().some((d) => d.projectId === p13.id), 'the attribution is put back, not lost');
+await gitops.autoCommit(p13.id, 'main');
+log = await gitops.log(p13.id, 'main');
+check(log[0].author === 'Claude' && log[0].message === 'aldine: agent edit', `the next fire lands the agent delta under the retry title (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+
 zoteroMock.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('Auto-commit attribution split: ALL PASSED');

@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, expectTypesetOk, cleanup } from './helpers';
 
 /**
  * Agent presence + audit trust layer (UX.md), pinned end to end in a real
@@ -123,6 +123,133 @@ test.describe('agent presence and audit UI', () => {
       await page.getByTestId('agent-revert').click();
       await expect(page.locator('.cm-content')).not.toContainText('AGENT-ADDED-SENTENCE', { timeout: 15_000 });
       await expect(page.locator('.cm-content')).toContainText('Results improve steadily across trials.');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('a project Claude changed while nobody watched prompts a review on the next open', async ({ page, request }) => {
+    // Nothing is open while the agent works — the claude.ai case. Without
+    // accounts the mark is the browser's, so this also pins agentSeen.ts.
+    const id = await createProject(request, 'Agent Away Review');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'AWAY-EDITED-OPENING-LINE.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+      const committed = await call(client, 'commit', { project: id, message: 'Rewrite the opening line' });
+      expect(committed.body.committed).toBe(true);
+
+      await openProject(page, id);
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('.toast')).toContainText('while you were away');
+
+      await page.getByTestId('agent-away-review').click();
+      await expect(page.getByTestId('agent-review-modal')).toBeVisible();
+      await expect(page.getByTestId('agent-review-commit').first()).toContainText('Rewrite the opening line');
+      await expect(page.getByTestId('agent-review-modal')).toContainText('AWAY-EDITED-OPENING-LINE');
+      await page.getByRole('button', { name: 'Close' }).click();
+
+      // The visit was recorded: the next open asks the server the same
+      // question and gets nothing back, so no toast is raised.
+      const answer = page.waitForResponse((r) => r.url().includes('/agent-activity') && r.request().method() === 'GET');
+      await page.reload();
+      expect((await (await answer).json()).commitCount).toBe(0);
+      await expect(page.locator('.cm-content')).toContainText('AWAY-EDITED-OPENING-LINE');
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+});
+
+/**
+ * Auto-typeset follows the agent: an agent write signals the branch, every
+ * open editor arms the same debounce a keystroke arms, and exactly one client
+ * runs it. Not behind the agentPresence flag — this is the auto-typeset toggle
+ * doing what it already promises, so no beforeEach here.
+ */
+test.describe('auto-typeset follows the agent', () => {
+  /** The cache-buster on the preview's PDF link: it changes iff the preview
+   *  moved to another run. */
+  async function previewRun(page: import('@playwright/test').Page): Promise<string | null> {
+    const href = await page.getByTestId('download-pdf').getAttribute('href');
+    return href ? new URL(href, BASE).searchParams.get('t') : null;
+  }
+
+  /** Counts the typesets THIS browser asks for (the agent's own go over MCP). */
+  function countClientCompiles(page: import('@playwright/test').Page): () => number {
+    let n = 0;
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/compile$/.test(new URL(r.url()).pathname)) n++;
+    });
+    return () => n;
+  }
+
+  test('an agent edit typesets the preview with nobody typing', async ({ page, request }) => {
+    test.setTimeout(180_000);
+    const id = await createProject(request, 'Agent Auto Typeset');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      await openProject(page, id);
+      await expectTypesetOk(page);
+      const before = await previewRun(page);
+      expect(before).toBeTruthy();
+      const compiles = countClientCompiles(page);
+
+      // The only input is the agent's: no keyboard, no mouse, no compile tool.
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'Line the agent typeset for us.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+
+      await expect.poll(() => previewRun(page), { timeout: 60_000 }).not.toBe(before);
+      expect(compiles()).toBe(1);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('Claude’s own typeset is the one the preview shows', async ({ page, request }) => {
+    test.setTimeout(180_000);
+    const id = await createProject(request, 'Agent Typeset Adopted');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      await openProject(page, id);
+      await expectTypesetOk(page);
+      const before = await previewRun(page);
+      const compiles = countClientCompiles(page);
+
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results the agent will typeset itself.' }],
+      });
+      expect(edit.isError).toBeFalsy();
+
+      // The common case: Claude typesets a second after editing. The pending
+      // client typeset is cancelled and the preview waits on the agent's run.
+      const compiling = call(client, 'compile', { project: id });
+      await expect(page.getByTestId('agent-typesetting')).toBeVisible({ timeout: 30_000 });
+      const run = await compiling;
+      expect(run.isError).toBeFalsy();
+      const agentT = new URL(run.body.pdfUrl, BASE).searchParams.get('t');
+      expect(agentT).toBeTruthy();
+      expect(agentT).not.toBe(before);
+
+      await expect.poll(() => previewRun(page), { timeout: 60_000 }).toBe(agentT);
+      expect(compiles()).toBe(0);
+      // Past the agent window: the cancelled timer never comes back.
+      await page.waitForTimeout(8000);
+      expect(compiles()).toBe(0);
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);

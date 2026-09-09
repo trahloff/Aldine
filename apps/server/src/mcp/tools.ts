@@ -11,7 +11,7 @@ import { compileProject, outputOnDisk, type CompileError } from '../compile.js';
 import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
-  scheduleCommit, applySuggestionToDoc, openDocContent, markAgentPresence, AGENT_ORIGIN,
+  scheduleCommit, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { isTextFile, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
@@ -494,6 +494,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             applied++;
           }
           markAgentPresence(meta.id, branch, rel);
+          signalAgentWrite(meta.id, branch);
           newContent = openDocContent(meta.id, branch, rel) ?? '';
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         } else {
@@ -511,6 +512,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           // holds under another name would otherwise write the old text back
           // over the edit on its next store.
           refreshBranchDocsFromDisk(meta.id, branch, [rel]);
+          signalAgentWrite(meta.id, branch);
           applied = edits.length;
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         }
@@ -549,6 +551,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         store.writeFile(meta.id, branch, rel, content);
         refreshBranchDocsFromDisk(meta.id, branch, [rel]);
         markAgentPresence(meta.id, branch, rel);
+        signalAgentWrite(meta.id, branch);
         scheduleCommit(meta.id, branch, cleanCommitMessage(message, `Update ${rel}`), 'Claude', [rel]);
         return ok({ ok: true, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), ...(await echo(meta.id, branch)) });
       });
@@ -626,6 +629,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         for (const w of writes) store.writeFile(meta.id, branch, w.path, w.next);
         refreshBranchDocsFromDisk(meta.id, branch, writes.map((w) => w.path));
         for (const w of writes) markAgentPresence(meta.id, branch, w.path);
+        signalAgentWrite(meta.id, branch);
         // Only the batch's own paths: the flush above put collaborators' live
         // edits in OTHER files on disk too, and a whole-tree commit would sign
         // them as Claude (and expose them to the session toast's revert). They
@@ -684,7 +688,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         }, 10_000);
         timer.unref?.();
       }
-      const result = await compileProject(meta.id, branch);
+      const result = await compileProject(meta.id, branch, { agent: true });
       // Re-read: a rootless project adopts its root inside compileProject, and
       // the root file is project-wide while the branch compiled may lack it.
       const compiled = await store.readMeta(meta.id).catch(() => meta);
@@ -751,21 +755,36 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('commit', {
-    description: 'Commit EVERYTHING pending on the branch as author Claude — including collaborators\' unsaved typing, which then reads as Claude\'s work. Your own edits already auto-commit within seconds, so call this only when the user asks for a named checkpoint; prefer batch_write for a scoped, named commit. message = the intent of the session\'s edits.',
+    description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — your writes already commit on their own within about 20 seconds, so {committed:false} is not a failure: it means they landed already, and the result names the current head. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
-      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).describe('Commit message stating the intent.'),
+      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).describe('Commit message stating the intent of the checkpoint.'),
     },
   }, async ({ project, branch = 'main', message }) => {
     try {
       const meta = await resolveProject(identity, project);
       assertWritableProject(meta.id);
       await gitops.ensureWorktree(meta.id, branch);
-      flushBranchDocs(meta.id, branch);
-      const res = await gitops.commitAll(meta.id, branch, cleanCommitMessage(message, 'Checkpoint'), 'Claude');
-      const e = await echo(meta.id, branch);
-      return ok({ committed: res.committed, hash: res.committed ? e.head : null, ...e });
+      // One lock span from the flush to the commit: outside it an autosave
+      // queued before the flush can stage the agent's delta as
+      // `aldine: autosave` (no Claude commit, no review coverage).
+      return await gitops.withRepoLock(meta.id, async () => {
+        flushBranchDocs(meta.id, branch);
+        const res = await gitops.commitAttributedHeld(meta.id, branch, cleanCommitMessage(message, 'Checkpoint'));
+        const e = await echo(meta.id, branch);
+        return ok({
+          committed: res.committed,
+          hash: res.committed ? e.head : null,
+          files: res.files,
+          // "Nothing was waiting", not "everything is committed": after a
+          // restart inside the debounce window the ledger is empty while the
+          // delta is still on disk, waiting for the anonymous sweep.
+          ...(res.committed ? {} : { note: `Nothing was waiting to commit — your edits already landed on their own; head is ${e.head}.` }),
+          contentVersion: contentVersion(meta.id, branch),
+          ...e,
+        });
+      });
     } catch (err) { return toolError(err); }
   });
 
@@ -805,7 +824,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         return toolError(err);
       }
       if (!added) return fail(`No reference found for "${query}" — pass a DOI, arXiv id, or OpenAlex id`);
-      if (!added.duplicate) markAgentPresence(meta.id, branch, added.bibFile);
+      if (!added.duplicate) { markAgentPresence(meta.id, branch, added.bibFile); signalAgentWrite(meta.id, branch); }
       return ok({ ...added, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, added.bibFile), ...(await echo(meta.id, branch)) });
     } catch (err) { return toolError(err); }
   });

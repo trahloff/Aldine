@@ -263,6 +263,7 @@ check(/relay/.test(desc.compile), 'compile tells the model to relay quota/unreac
 check(/15 minutes/.test(desc.compile) && /get_pdf_url/.test(desc.compile) && /pdfStale/.test(desc.compile), 'compile explains the signed link, its expiry, the re-fetch tool and pdfStale');
 check(/without recompiling/.test(desc.get_pdf_url) && /compile first/.test(desc.get_pdf_url), 'get_pdf_url says it does not recompile and what to do with no output');
 check(/before writing a \\cite/.test(desc.list_citations) && /never invent/.test(desc.list_citations), 'list_citations demands a call before any \\cite');
+check(/only your own/i.test(desc.commit) && /batch_write/.test(desc.commit) && !/EVERYTHING|collaborators' unsaved typing/.test(desc.commit), 'the commit description names its scope and still steers to batch_write, and no longer warns about committing collaborators\' typing');
 
 // list_projects
 let { body } = await call('list_projects');
@@ -402,13 +403,69 @@ check((await titled('Sharpen the intent line')).includes('intent.tex'), 'edit_fi
 await gitops.autoCommit(p1.id, 'main');
 check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a message the commit is titled by the file');
 
-// commit tool
-await call('write_file', { project: p1.id, path: 'extra.tex', content: 'More.\n' });
-({ body } = await call('commit', { project: p1.id, message: 'Add extra material' }));
-check(body.committed === true && typeof body.hash === 'string', 'commit commits pending changes');
-check((await gitops.log(p1.id, 'main'))[0].author === 'Claude', 'manual commit is authored Claude');
-({ body } = await call('commit', { project: p1.id, message: 'Nothing to do' }));
-check(body.committed === false, 'clean tree → committed:false');
+// commit tool: only what Claude wrote lands, under the caller's message.
+// A whole-tree commit here would sign a collaborator's flushed typing as
+// Claude (History's violet dot and the session revert key on the author).
+{
+  const collab = await import('../src/collab.ts');
+  const pc = await store.createProject('Commit scope', undefined, user.id);
+  store.writeFile(pc.id, 'main', 'human.tex', 'typed by a person, not yet autosaved\n');
+  await call('write_file', { project: pc.id, path: 'agent.tex', content: 'Written by the agent.\n', message: 'Add the agent file' });
+  ({ body } = await call('commit', { project: pc.id, message: 'Land the agent work' }));
+  check(body.committed === true && typeof body.hash === 'string' && body.hash === body.head, `commit reports the new head (got ${JSON.stringify(body)})`);
+  check(JSON.stringify(body.files) === '["agent.tex"]', `commit names exactly the paths that landed (got ${JSON.stringify(body.files)})`);
+  check(typeof body.contentVersion === 'number' && body.branch === 'main', 'commit carries contentVersion and the branch echo');
+  let clog = await gitops.log(pc.id, 'main');
+  check(clog[0].author === 'Claude' && clog[0].message === 'Land the agent work', `the checkpoint is one Claude commit under the caller's message (got ${JSON.stringify(`${clog[0].author}: ${clog[0].message}`)})`);
+  const cstat = (await gitops.commitDiff(pc.id, clog[0].hash)).stat;
+  check(cstat.includes('agent.tex') && !cstat.includes('human.tex'), `the commit holds only the agent's path (got ${JSON.stringify(cstat)})`);
+  check(!clog.some((c) => c.message === 'Add the agent file'), "the caller's message replaced the write's per-path intent");
+  const holdsHuman = async (log) => {
+    for (const c of log) if ((await gitops.commitDiff(pc.id, c.hash)).stat.includes('human.tex')) return true;
+    return false;
+  };
+  check((await holdsHuman(clog)) === false, "a person's dirty file on the same branch stays uncommitted and unattributed");
+  check(store.fileExists(pc.id, 'main', 'human.tex'), "the person's file is untouched on disk");
+
+  // nothing pending: the debounce already committed, which is a result, not a failure
+  const before = await gitops.log(pc.id, 'main');
+  ({ body } = await call('commit', { project: pc.id, message: 'Nothing new' }));
+  check(body.committed === false && body.hash === null && JSON.stringify(body.files) === '[]', `nothing pending reports committed:false with no files (got ${JSON.stringify(body)})`);
+  check(typeof body.note === 'string' && body.note.includes(body.head), `the note names the current head (got ${JSON.stringify(body.note)})`);
+  clog = await gitops.log(pc.id, 'main');
+  check(clog.length === before.length && clog[0].hash === before[0].hash, 'nothing pending creates no commit');
+  check(!clog.some((c) => c.message === 'Nothing new'), 'and nothing is titled with that message');
+  check((await holdsHuman(clog)) === false, "the committed:false path did not sweep the person's file either");
+
+  // a person's uncommitted edit to the file the agent then writes is
+  // checkpointed anonymously first, so the Claude commit is the agent's delta
+  const pd = await store.createProject('Commit same file', undefined, user.id);
+  store.writeFile(pd.id, 'main', 'main.tex', 'human paragraph one\n');
+  await gitops.commitAll(pd.id, 'main', 'seed');
+  store.writeFile(pd.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
+  await call('write_file', { project: pd.id, path: 'main.tex', content: 'human paragraph one\nhuman paragraph two\nagent sentence\n', message: 'Add the agent sentence' });
+  ({ body } = await call('commit', { project: pd.id, message: 'Checkpoint the agent work' }));
+  check(body.committed === true, 'commit lands the agent delta on a file the person had also edited');
+  let dlog = await gitops.log(pd.id, 'main');
+  check(dlog[0].author === 'Claude' && dlog[0].message === 'Checkpoint the agent work', `the newest commit is the named Claude checkpoint (got ${JSON.stringify(`${dlog[0].author}: ${dlog[0].message}`)})`);
+  const dpatch = (await gitops.commitDiff(pd.id, dlog[0].hash)).patch;
+  check(dpatch.includes('+agent sentence') && !dpatch.includes('+human paragraph two'), "the Claude commit's diff is exactly the agent's delta");
+  check(dlog[1].message === 'aldine: autosave' && dlog[1].author !== 'Claude', `the person's pending paragraph was checkpointed anonymously first (got ${JSON.stringify(`${dlog[1].author}: ${dlog[1].message}`)})`);
+  check((await gitops.commitDiff(pd.id, dlog[1].hash)).patch.includes('+human paragraph two'), 'that anonymous checkpoint holds the person\'s paragraph');
+
+  // an edit that lives only in an open document is flushed INSIDE the commit's
+  // lock span: without the flush there commit would report committed:false on
+  // real work, and outside the lock an autosave could sweep it anonymously
+  const conn = await collab.hocuspocus.openDirectConnection(collab.docName(pd.id, 'main', 'main.tex'), {});
+  check(collab.openDocContent(pd.id, 'main', 'main.tex') !== null, 'setup: main.tex is open in an editor');
+  ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence', replacement: 'agent sentence, revised' }] }));
+  check(body.applied === 1, 'setup: the edit applied through the open document');
+  ({ body } = await call('commit', { project: pd.id, message: 'Land the open-document edit' }));
+  check(body.committed === true && JSON.stringify(body.files) === '["main.tex"]', `commit flushes open documents first (got ${JSON.stringify(body)})`);
+  dlog = await gitops.log(pd.id, 'main');
+  check(dlog[0].message === 'Land the open-document edit' && (await gitops.commitDiff(pd.id, dlog[0].hash)).patch.includes('+agent sentence, revised'), 'the commit carries the edit that lived only in the document');
+  await conn.disconnect();
+}
 
 // ---- Phase 2 wrappers ----
 

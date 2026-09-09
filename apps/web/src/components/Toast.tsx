@@ -7,6 +7,8 @@ export interface ToastAction {
   /** Stay until acted on or dismissed — for a review prompt that arrives
    *  when nobody is looking at the screen. */
   sticky?: boolean;
+  /** Runs when the × is used — the review prompt records the visit either way. */
+  onDismiss?: () => void;
 }
 
 interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok'; action?: ToastAction }
@@ -49,7 +51,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               </button>
             )}
             {t.action?.sticky && (
-              <button className="btn btn--ghost btn--small" aria-label="Dismiss" data-testid="toast-dismiss" onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}>×</button>
+              <button
+                className="btn btn--ghost btn--small"
+                aria-label="Dismiss"
+                data-testid="toast-dismiss"
+                onClick={() => {
+                  setToasts((cur) => cur.filter((x) => x.id !== t.id));
+                  t.action!.onDismiss?.();
+                }}
+              >×</button>
             )}
           </div>
         ))}

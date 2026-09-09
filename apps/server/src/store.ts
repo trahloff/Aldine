@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta } from './db/types.js';
+import type { ProjectMeta, ProjectVisit } from './db/types.js';
 
-export type { ProjectMeta } from './db/types.js';
+export type { ProjectMeta, ProjectVisit } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -36,6 +36,15 @@ export async function readMeta(id: string): Promise<ProjectMeta> {
 
 export function writeMeta(meta: ProjectMeta): Promise<void> {
   return db().writeMeta(meta);
+}
+
+/** How far `userId` has been shown Claude's commits on one branch. */
+export function getProjectVisit(userId: string, id: string, branch: string): Promise<ProjectVisit | null> {
+  return db().getProjectVisit(userId, id, branch);
+}
+
+export function setProjectVisit(v: ProjectVisit): Promise<void> {
+  return db().setProjectVisit(v);
 }
 
 export function listProjects(): Promise<ProjectMeta[]> {
@@ -91,6 +100,7 @@ export async function deleteProject(id: string): Promise<void> {
   fs.rmSync(repoDir(id), { recursive: true, force: true });
   fs.rmSync(path.join(worktreesDir, id), { recursive: true, force: true });
   await db().deleteMeta(id);
+  await db().deleteProjectVisits(id);
 }
 
 /** Move a project to trash: data stays on disk, listings hide it, purge collects it later. */

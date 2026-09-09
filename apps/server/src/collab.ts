@@ -377,12 +377,43 @@ export function evictDoc(projectId: string, branch: string, filePath: string): v
  * REST listing; this bumps a shared counter in an ephemeral collab doc (the
  * same trick the review comments use) so open editors refetch instead of
  * showing a snapshot from page load. No client on the branch, nothing to do.
+ *
+ * The path is a wire identifier shared with browser tabs running an older
+ * bundle: renaming it during a rolling deploy puts old and new clients on
+ * different docs, so neither hears the other's signals.
  */
 export const FILES_SIGNAL = '.aldine/files-signal';
-export function bumpFilesSignal(projectId: string, branch: string): void {
+
+let lastSignalStamp = 0;
+/** Strictly increasing: two signals in the same millisecond must still read as
+ *  two events to clients that compare against the last value they saw. */
+function signalStamp(): number {
+  lastSignalStamp = Math.max(Date.now(), lastSignalStamp + 1);
+  return lastSignalStamp;
+}
+
+function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td'): void {
   const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as Y.Doc | undefined;
   if (!doc) return;
-  try { doc.getMap<number>('signal').set('v', Date.now()); } catch { /* best effort */ }
+  try { doc.getMap<number>('signal').set(key, signalStamp()); } catch { /* best effort */ }
+}
+
+export function bumpFilesSignal(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'v');
+}
+
+/** An agent changed this branch's source. Clients with auto-typeset on arm the
+ *  same debounce a keystroke arms; only the elected one compiles. Callers hold
+ *  the per-repo git lock, so this must stay a synchronous in-memory write. */
+export function signalAgentWrite(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'a');
+}
+
+/** An agent-caused typeset started ('start', emitted only after the branch's
+ *  docs are flushed, so it covers every edit a client can already see) or
+ *  finished ('done'). */
+export function signalAgentTypeset(projectId: string, branch: string, phase: 'start' | 'done'): void {
+  setSignal(projectId, branch, phase === 'start' ? 'ts' : 'td');
 }
 
 

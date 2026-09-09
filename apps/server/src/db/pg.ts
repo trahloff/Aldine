@@ -1,5 +1,5 @@
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
 
 /**
  * Postgres DataStore — the horizontally-scalable backend. Multiple app nodes
@@ -99,6 +99,12 @@ export class PgStore implements DataStore {
         user_id text NOT NULL, provider text NOT NULL, data jsonb NOT NULL,
         PRIMARY KEY (user_id, provider)
       );
+      CREATE TABLE IF NOT EXISTS project_visits (
+        user_id text NOT NULL, project_id text NOT NULL, branch text NOT NULL,
+        head text NOT NULL, seen_at text NOT NULL, prompted_head text,
+        PRIMARY KEY (user_id, project_id, branch)
+      );
+      CREATE INDEX IF NOT EXISTS project_visits_project_idx ON project_visits(project_id);
       -- 0.6: accounts keyed by provider subject may have no email (ORCID).
       -- UNIQUE(email) still holds for non-null values; NULLs never collide.
       ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
@@ -331,6 +337,30 @@ export class PgStore implements DataStore {
        ON CONFLICT(user_id,month) DO UPDATE SET seconds = usage.seconds + EXCLUDED.seconds`,
       [userId, month, seconds],
     );
+  }
+
+  // ---- agent-review marks ----
+  // Same id discipline as project meta: a read treats a malformed id as
+  // absent, a write or delete refuses it.
+  async getProjectVisit(userId: string, projectId: string, branch: string): Promise<ProjectVisit | null> {
+    if (!PROJECT_ID_RE.test(projectId)) return null;
+    const { rows } = await this.pool.query(
+      `SELECT head, seen_at, prompted_head FROM project_visits WHERE user_id=$1 AND project_id=$2 AND branch=$3`,
+      [userId, projectId, branch],
+    );
+    return rows[0] ? { userId, projectId, branch, head: rows[0].head, at: rows[0].seen_at, promptedHead: rows[0].prompted_head ?? null } : null;
+  }
+  async setProjectVisit(v: ProjectVisit): Promise<void> {
+    if (!PROJECT_ID_RE.test(v.projectId)) throw new Error('bad project id');
+    await this.pool.query(
+      `INSERT INTO project_visits(user_id,project_id,branch,head,seen_at,prompted_head) VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT(user_id,project_id,branch) DO UPDATE SET head=EXCLUDED.head, seen_at=EXCLUDED.seen_at, prompted_head=EXCLUDED.prompted_head`,
+      [v.userId, v.projectId, v.branch, v.head, v.at, v.promptedHead],
+    );
+  }
+  async deleteProjectVisits(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`DELETE FROM project_visits WHERE project_id=$1`, [projectId]);
   }
 
   // ---- connections ----

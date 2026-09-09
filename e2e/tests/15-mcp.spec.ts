@@ -256,6 +256,67 @@ test.describe('MCP connector (static-token mode)', () => {
     }
   });
 
+  test('the commit tool commits only the files Claude wrote; a person\'s unsaved typing waits for the autosave', async ({ page, request }) => {
+    test.setTimeout(120_000); // waits out the real 20 s autosave debounce
+    const id = await createProject(request, 'MCP Commit Scope');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+
+      await openProject(page, id);
+      await typeAtEnd(page, 'HUMAN-TYPED-LINE ');
+      // past the 1.5 s store debounce (on disk, uncommitted), well inside the
+      // 20 s autosave: the checkpoint below must leave this line alone
+      await page.waitForTimeout(2000);
+
+      const wrote = await call(client, 'write_file', { project: id, path: 'notes.tex', content: 'Reviewer notes.\n', message: 'Add reviewer notes' });
+      expect(wrote.isError).toBeFalsy();
+      const committed = await call(client, 'commit', { project: id, message: 'Checkpoint the notes' });
+      expect(committed.isError).toBeFalsy();
+      expect(committed.body.committed).toBe(true);
+      expect(committed.body.hash).toMatch(/^[0-9a-f]{7,}$/);
+      expect(committed.body.files).toEqual(['notes.tex']);
+      expect(committed.body.branch).toBe('main');
+
+      const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
+      let log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+      const claude = log.filter((c) => c.author === 'Claude');
+      expect(claude).toHaveLength(1);
+      expect(claude[0].message).toBe('Checkpoint the notes');
+      const claudePatch = await patchOf(claude[0].hash);
+      expect(claudePatch).toContain('+Reviewer notes.');
+      // added lines only: the typed line may appear as unchanged hunk context
+      expect(claudePatch).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
+      for (const c of log) expect(await patchOf(c.hash)).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
+
+      // the debounce has already taken Claude's work, so a second checkpoint
+      // is a result, not a failure
+      const again = await call(client, 'commit', { project: id, message: 'Nothing new' });
+      expect(again.isError).toBeFalsy();
+      expect(again.body.committed).toBe(false);
+      expect(again.body.hash).toBeNull();
+      expect(again.body.files).toHaveLength(0);
+      expect(typeof again.body.note).toBe('string');
+      expect(again.body.note).toContain(again.body.head);
+      const afterAgain: Array<{ hash: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+      expect(afterAgain).toHaveLength(log.length);
+
+      // the person's line reaches history on its own, anonymously
+      let human: { hash: string; author: string; message: string } | undefined;
+      await expect.poll(async () => {
+        log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+        for (const c of log.filter((x) => x.message === 'aldine: autosave')) {
+          if (/^\+.*HUMAN-TYPED-LINE/m.test(await patchOf(c.hash))) { human = c; return true; }
+        }
+        return false;
+      }, { timeout: 60_000, intervals: [1000] }).toBe(true);
+      expect(human!.author).not.toBe('Claude');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
   test('commit titles follow each write\'s own intent: a checkpoint never inherits the next tool\'s message', async ({ request }) => {
     test.setTimeout(120_000); // waits out the real 20 s autosave debounce
     const id = await createProject(request, 'MCP Intent Titles');

@@ -4,7 +4,7 @@ import { config } from './config.js';
 import { branchDir, readMeta, writeMeta } from './store.js';
 import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
-import { flushBranchDocs } from './collab.js';
+import { flushBranchDocs, signalAgentTypeset } from './collab.js';
 
 export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string; file?: string }
 
@@ -29,6 +29,10 @@ export interface CompileResult {
   /** Identifies the run whose PDF pdfUrl serves; SyncTeX lookups pass it back
    *  so a jump is refused instead of resolving against a different run. */
   compileId?: number;
+  /** Identifies THIS run; unlike compileId it is never reused (an unchanged
+   *  document recompiled keeps its compileId and URL), so it is the only safe
+   *  ordering key for "is a newer typeset already on the branch?". */
+  runId: number;
   synctex: string | null;  // path relative to branch dir; informational
   log: string;
   errors: CompileError[];
@@ -115,6 +119,12 @@ const lastGoodPdfUrl = new Map<string, { url: string; compileId: number; pdf: st
 /** compileId of the run whose SyncTeX file is on disk, per project::branch. */
 const lastSynctexId = new Map<string, number>();
 
+/** The last run this node finished per project::branch, and how many are in
+ *  flight — what compileStatus reports so a client can adopt a typeset it did
+ *  not make instead of rebuilding the same PDF. */
+const lastRun = new Map<string, { result: CompileResult; finishedAt: number; agent: boolean }>();
+const running = new Map<string, number>();
+
 let lastCompileId = 0;
 /** Strictly increasing even within one millisecond, so two quick runs never share a URL. */
 function nextCompileId(): number {
@@ -129,9 +139,15 @@ function nextCompileId(): number {
  * branch of the project is forgotten.
  */
 export function forgetPdfUrls(projectId: string, branch?: string): void {
-  if (branch !== undefined) { lastGoodPdfUrl.delete(`${projectId}::${branch}`); lastSynctexId.delete(`${projectId}::${branch}`); return; }
+  if (branch !== undefined) {
+    const key = `${projectId}::${branch}`;
+    lastGoodPdfUrl.delete(key); lastSynctexId.delete(key); lastRun.delete(key); running.delete(key);
+    return;
+  }
   for (const key of lastGoodPdfUrl.keys()) if (key.startsWith(`${projectId}::`)) lastGoodPdfUrl.delete(key);
   for (const key of lastSynctexId.keys()) if (key.startsWith(`${projectId}::`)) lastSynctexId.delete(key);
+  for (const key of lastRun.keys()) if (key.startsWith(`${projectId}::`)) lastRun.delete(key);
+  for (const key of running.keys()) if (key.startsWith(`${projectId}::`)) running.delete(key);
 }
 
 export interface CompilerInfo {
@@ -171,10 +187,10 @@ export function compilerInfo(): Promise<CompilerInfo> {
   return compilerInfoInflight;
 }
 
-export function compileProject(projectId: string, branch: string): Promise<CompileResult> {
+export function compileProject(projectId: string, branch: string, opts: { agent?: boolean } = {}): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   const prev = compileChain.get(key) || Promise.resolve();
-  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch));
+  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent));
   // The chain tail must never reject (would surface as an unhandled rejection);
   // the caller gets `result` (which may reject and is awaited/handled by the route).
   const tail = result.catch(() => undefined).then(() => {
@@ -184,10 +200,55 @@ export function compileProject(projectId: string, branch: string): Promise<Compi
   return result;
 }
 
-async function runCompile(projectId: string, branch: string): Promise<CompileResult> {
+export interface CompileStatus {
+  /** A typeset for this branch is in flight on this node. */
+  running: boolean;
+  /** The last run this node completed, or null (restart, or another node). */
+  result: CompileResult | null;
+  finishedAt: number | null;
+  /** The last run was agent-caused (an MCP compile, or a client typeset that
+   *  followed agent edits). */
+  agent: boolean;
+}
+
+/** The branch's last run as this node remembers it. A pure memory read: it is
+ *  reached once per agent-caused run per client, never polled, and must never
+ *  grow a disk stat, a git call or a compiler round trip. */
+export function compileStatus(projectId: string, branch: string): CompileStatus {
+  const key = `${projectId}::${branch}`;
+  const last = lastRun.get(key) ?? null;
+  return {
+    running: (running.get(key) ?? 0) > 0,
+    result: last?.result ?? null,
+    finishedAt: last?.finishedAt ?? null,
+    agent: last?.agent ?? false,
+  };
+}
+
+async function runCompile(projectId: string, branch: string, agent: boolean): Promise<CompileResult> {
+  const key = `${projectId}::${branch}`;
+  running.set(key, (running.get(key) ?? 0) + 1);
+  try {
+    const result = await runCompileInner(projectId, branch, agent);
+    lastRun.set(key, { result, finishedAt: Date.now(), agent });
+    return result;
+  } finally {
+    const n = (running.get(key) ?? 1) - 1;
+    if (n <= 0) running.delete(key); else running.set(key, n);
+    // In the finally: a run that throws must still release the clients that
+    // cancelled their own typeset when it started.
+    if (agent) signalAgentTypeset(projectId, branch, 'done');
+  }
+}
+
+async function runCompileInner(projectId: string, branch: string, agent: boolean): Promise<CompileResult> {
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
+  // After the flush, never before: the signal tells clients this run already
+  // contains every edit they have seen, which is what makes them cancel their
+  // own pending typeset.
+  if (agent) signalAgentTypeset(projectId, branch, 'start');
   // A rootless project (blank, or its last .tex deleted) adopts a .tex here as
   // well as on file creation: files also arrive through git (pull, GitHub
   // sync) without passing the file routes.
@@ -211,7 +272,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
   // Normalize: the compiler may return a bare {ok:false,error} on a 4xx — always
   // hand the client a well-formed CompileResult so the UI never sees undefined fields.
-  const body: Omit<CompileResult, 'pdfUrl' | 'pdfStale'> = {
+  const body: Omit<CompileResult, 'pdfUrl' | 'pdfStale' | 'runId'> = {
     ok: !!raw.ok,
     timedOut: raw.timedOut,
     exitCode: raw.exitCode,
@@ -224,6 +285,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
   };
   const key = `${projectId}::${branch}`;
   const compileId = nextCompileId();
+  const runId = compileId;
   // Older compilers report only `ok`; treat their successful output as fresh.
   const pdfFresh = raw.pdfFresh ?? body.ok;
   const synctexFresh = raw.synctexFresh ?? body.ok;
@@ -249,7 +311,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
     const writtenAt = mtime();
     lastGoodPdfUrl.set(key, { url, compileId: id, pdf: body.pdf!, writtenAt });
     const pages = pagesFromLog(body.log);
-    return { ...body, pdfUrl: url, compileId: id, ...(pages !== null ? { pages } : {}), ...(writtenAt !== undefined ? { pdfWrittenAt: writtenAt } : {}) };
+    return { ...body, pdfUrl: url, compileId: id, runId, ...(pages !== null ? { pages } : {}), ...(writtenAt !== undefined ? { pdfWrittenAt: writtenAt } : {}) };
   };
   if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) return shown(mintUrl(compileId), compileId);
   // latexmk found nothing to redo: the PDF on disk is this run's result even
@@ -278,6 +340,7 @@ async function runCompile(projectId: string, branch: string): Promise<CompileRes
     pdfUrl: kept?.url ?? null,
     pdfStale: previous !== null,
     compileId: kept?.compileId,
+    runId,
     ...(kept?.writtenAt !== undefined ? { pdfWrittenAt: kept.writtenAt } : {}),
     ...(truncated ? { pdfTruncated: true } : {}),
   };
