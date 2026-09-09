@@ -1,10 +1,11 @@
 # Two selectable TeX Live schemes (build arg TEXLIVE_SCHEME=medium|full):
 #
-#   medium (default) — ~1.3 GB of packages plus a pinned set of extras real
-#     papers commonly need, the publisher classes, and the Arabic/Persian,
-#     Cyrillic, Greek and "other" script collections. CJK is the one family
-#     left to full. About 3.7 GB on disk; this is the published
-#     aldine-compiler:<version> image.
+#   medium (default) — scheme-medium plus the collections it leaves out that
+#     papers reach for (pictures, latexextra, bibtexextra), the publisher
+#     classes, and the Arabic/Persian, Cyrillic, Greek and "other" script
+#     collections. CJK is the one family left to full. About 4.3 GB on disk;
+#     this is the published aldine-compiler:<version> image. Anything else:
+#     `RUN tlmgr install <pkg>` in a derived image (README, "Need a package").
 #   full — everything on CTAN preinstalled (~9 GB on disk). Every script and
 #     language TeX Live supports compiles out of the box. Published as
 #     aldine-compiler:<version>-full (ALDINE_TEXLIVE=-full in compose), or
@@ -23,20 +24,23 @@ ARG TEXLIVE_SCHEME=medium
 
 FROM texlive/texlive:latest-medium@sha256:0a5aa82d0d9d6e3b3a25f87e221ef61d7c077e83639ab5065cf298b1a01ec00c AS texlive-medium
 
-# Packages beyond scheme-medium that real papers commonly need (newtx fonts,
-# cleveref, etc.) plus collection-publishers: the journal and conference
-# classes (elsarticle, IEEEtran, acmart, revtex4-2, agujournal, copernicus, …)
-# that scheme-medium leaves out, the script collections (langarabic makes
-# xepersian/bidi/polyglossia compile — verified against a Persian document —
-# and needs zref from latexextra), and cyrillic/greek/other. A dated tlnet snapshot (not a random CTAN
+# scheme-medium has no collection-pictures (pgfplots, tikz-cd), no
+# collection-latexextra (~1900 packages: cleveref, todonotes, minted,
+# standalone, …) and no collection-bibtexextra; the three add ~360 MB (docs
+# and sources excluded). collection-publishers holds the journal and
+# conference classes (elsarticle, IEEEtran, acmart, revtex4-2, agujournal,
+# copernicus, …); langarabic makes xepersian/bidi/polyglossia compile
+# (verified against a Persian document), then cyrillic/greek/other. A dated tlnet snapshot (not a random CTAN
 # mirror) because live mirrors regularly lag the texlive image's revisions,
 # which makes `tlmgr install` fail with "remote database is older than the
 # local installation". Bump the date together with the base-image digest.
+# The snapshot stays configured in the image, so a derived image's
+# `tlmgr install` keeps working long after the release.
 RUN tlmgr option repository https://texlive.info/tlnet-archive/2026/07/18/tlnet/ \
     && tlmgr update --self \
-    && tlmgr install collection-publishers collection-langarabic collection-langcyrillic \
-       collection-langgreek collection-langother zref newtx txfonts fontaxes lastpage titlesec xstring fancyhdr cleveref \
-       enumitem wrapfig threeparttable placeins multirow doclicense algorithmicx xurl sttools acro translations
+    && tlmgr install collection-pictures collection-latexextra collection-bibtexextra \
+       collection-publishers collection-langarabic collection-langcyrillic \
+       collection-langgreek collection-langother
 
 FROM texlive/texlive:latest-full@sha256:4984977ccf5afe883cb382d0163f267de0d029d140bb7a9e8f4c19f0b781d57b AS texlive-full
 # scheme-full already contains every CTAN package — nothing to install.

@@ -7,6 +7,17 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- The default compiler image installs whole TeX Live collections instead of
+  a hand-picked list: `collection-pictures` (pgfplots, tikz-cd),
+  `collection-latexextra` (about 1900 packages: cleveref, todonotes, minted,
+  standalone, …) and `collection-bibtexextra` join the publisher classes and
+  the script collections. Every "package not found" report so far was one
+  of those three; the image grows by about 360 MB (4.3 GB on disk) and CJK
+  stays with `-full`. For anything still missing, the README shows a
+  three-line `docker-compose.override.yml` that adds `RUN tlmgr install
+  <pkg>` on top of the release image, and the missing-package hint in the
+  editor points at it; the image keeps its dated TeX Live snapshot
+  configured so that install works after the release has aged. (#4)
 - Error tracking says which instance and which build an error came from, and
   keeps the document out of it. `SENTRY_ENVIRONMENT` names the instance
   (`staging`, `production`) instead of the environment being read from

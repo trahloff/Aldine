@@ -173,16 +173,35 @@ what `deploy/backup.sh` looks for.
   security fixes: per [SECURITY.md](SECURITY.md), only the latest release
   gets them.
 - **The first pull is big.** TeX Live lives in the compiler image: about
-  1 GB compressed, 3.7 GB on disk. It carries a curated package set, the
-  publisher classes, and the Arabic, Persian, Cyrillic and Greek scripts;
-  the one family it leaves out is CJK. After the first pull, starts take
+  1.1 GB compressed, 4.3 GB on disk. It carries TeX Live's medium scheme plus
+  the pictures, latexextra and bibtexextra collections (pgfplots, tikz-cd,
+  cleveref, todonotes, minted, biblatex, …), the publisher classes, and the
+  Arabic, Persian, Cyrillic and Greek scripts; the one family it leaves out
+  is CJK. After the first pull, starts take
   seconds. Ready when `curl localhost:8080/api/health` returns
   `{"ok":true,"name":"aldine"}`.
-- **Need a package it does not have?** Every release from 0.4.0 also ships
-  all of TeX Live as `-full` (about 2.8 GB compressed, 9 GB on disk). Add
-  `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again; the
-  missing-package error in the editor tells you the same thing. Project
-  settings show which one you are on.
+- **Need a package it does not have?** The missing-package error in the
+  editor names it. Two ways to get it, and project settings show which
+  image you are on:
+  - Add just that package. Put a `docker-compose.override.yml` next to
+    `docker-compose.yml` that builds a derived compiler image, then
+    `docker compose up -d --build`. `tlmgr` installs from the same dated
+    TeX Live snapshot the release was built from, so this keeps working
+    after the release ages:
+    ```yaml
+    services:
+      compiler:
+        image: aldine-compiler-local
+        build:
+          dockerfile_inline: |
+            FROM ghcr.io/trahloff/aldine-compiler:0.6.0
+            RUN tlmgr install pgfplots tikz-cd
+    ```
+    Bump the `FROM` tag when you bump `ALDINE_VERSION`. Compose builds the
+    image on your machine, so this works for `arm64` servers as well.
+  - Get everything. Every release from 0.4.0 also ships all of TeX Live as
+    `-full` (about 2.8 GB compressed, 9 GB on disk; CJK is only here). Add
+    `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again.
 - **Port 8080 taken?** Change the left side of `ports:`.
 - **Everything beyond the minimum**: building from source (latest `main`,
   not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
@@ -204,7 +223,7 @@ what `deploy/backup.sh` looks for.
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
 | Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
-| Package coverage | Curated TeX Live by default (publisher classes, most scripts); **all of TeX Live** with `ALDINE_TEXLIVE=-full` | All of TeX Live | Whatever you install |
+| Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (~4.3 GB); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | All of TeX Live | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
 | Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
 | License | AGPL-3.0 | AGPL | MIT/varies |
