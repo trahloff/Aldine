@@ -71,7 +71,7 @@ test.describe('guards against losing work', () => {
       await expect(b.getByTestId('file-chapter2.tex')).toHaveCount(0, { timeout: 10_000 });
       await expect(b.getByTestId('active-file'), 'the editor moved off the deleted file').not.toHaveText('chapter2.tex');
       await b.waitForTimeout(3000);
-      const listing = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { path: string }[];
+      const { files: listing } = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { files: { path: string }[] };
       expect(listing.some((f) => f.path === 'chapter2.tex'), 'the deleted file did not come back').toBe(false);
     } finally {
       await ctxA.close();

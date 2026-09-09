@@ -23,7 +23,7 @@ export default defineConfig({
       timeout: 10_000,
     },
     {
-      command: `npm run build -w apps/web && PORT=${PORT} AUTH_ENABLED=1 ALDINE_RESET_ECHO=1 ALDINE_TEST_HOOKS=1 TRUST_PROXY=1 RL_REGISTER_BURST=200 DATA_DIR=$(pwd)/.data-auth META_DIR=$(pwd)/.secrets-auth ORCID_CLIENT_ID=test-orcid ORCID_CLIENT_SECRET=test-orcid-secret ORCID_API_BASE=http://localhost:${MOCK} ORCID_PUB_API_BASE=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      command: `npm run build -w apps/web && PORT=${PORT} AUTH_ENABLED=1 ALDINE_MCP=1 ALDINE_RESET_ECHO=1 ALDINE_TEST_HOOKS=1 TRUST_PROXY=1 RL_REGISTER_BURST=200 DATA_DIR=$(pwd)/.data-auth META_DIR=$(pwd)/.secrets-auth ORCID_CLIENT_ID=test-orcid ORCID_CLIENT_SECRET=test-orcid-secret ORCID_API_BASE=http://localhost:${MOCK} ORCID_PUB_API_BASE=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,

@@ -6,6 +6,223 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The Aldine Agent API: Claude (and any MCP client) reads and writes LaTeX in
+  Aldine projects with Aldine as the source of truth. `ALDINE_MCP=1` serves
+  the Model Context Protocol over Streamable HTTP at `POST /mcp` (stateless,
+  safe behind a load balancer; bodies capped at 2 MB; rate limited per
+  client IP and per token, 60 burst and 1/s sustained, `RL_MCP_BURST`), and
+  the same tool registry runs over stdio for local use
+  (`tsx apps/server/src/mcp/stdio.ts`). Auth is mandatory: with
+  `AUTH_ENABLED` a personal access token (`Authorization: Bearer aldn_…`, or
+  `X-Aldine-Token` for clients that reserve the Authorization header),
+  without it an operator-set `ALDINE_MCP_TOKEN`; with neither, every request
+  is 401 and the boot log says how to fix it. The boot log also prints the
+  connector URL, the credential mode and whether the PDF viewer is built.
+  Setup guide: `docs/AGENT_API.md`.
+- Personal access tokens (auth deployments): `POST /api/tokens` mints an
+  `aldn_…` bearer (shown once, only a SHA-256 digest stored), optionally
+  scoped to projects and with an expiry; `GET /api/tokens` lists, `DELETE
+  /api/tokens/:tokenId` revokes. Bearer requests follow the same project
+  access rules as sessions, scoped tokens are refused outside their scope
+  (project list included), and account surfaces accept session cookies only,
+  so a leaked token cannot mint tokens, set a password or reach a stored
+  GitHub credential. On the collab websocket an invalid or revoked bearer
+  refuses the connection instead of falling back to the browser session.
+  The "Agent access" card in account settings creates tokens, shows the
+  connector URL, lists name, scope, created and last used, and revokes
+  through a dialog that names the token; it says when the connector is off
+  and when claude.ai cannot reach the address (with the Claude Code command
+  instead). `/api/auth/me` returns `mcpEnabled` and `publicUrl`.
+- OAuth 2.1 for the connector (auth deployments): claude.ai and Claude Code
+  connect with a Connect button. Aldine serves the RFC 9728 / RFC 8414
+  discovery documents, a consent page at `/oauth/authorize` where the
+  signed-in user picks the projects the client may touch, `/oauth/token`
+  (authorization code + PKCE S256, refresh-token rotation with reuse
+  detection; concurrent rotations and code replays burn the family),
+  `/oauth/register` (public clients only, capped at 500 with LRU eviction)
+  and `/oauth/revoke`. Clients identify by a registered `aldc_` id or an
+  https client-metadata URL fetched with SSRF checks (public addresses only,
+  no redirects, 5 s and 64 KB under one deadline, 256 documents cached).
+  Access tokens are ordinary 24 h `aldn_` tokens carrying a "via Connect"
+  badge on the Agent access card; revoking one cancels its refresh tokens,
+  and rotated-out tokens are pruned a week after revocation. `/mcp` 401s
+  carry a `WWW-Authenticate` challenge pointing at the discovery document;
+  everything is 404 while `AUTH_ENABLED` is off. The consent page explains
+  protocol errors in plain sentences, says when the project list could not
+  be loaded instead of claiming there are no projects, keeps the context
+  across sign-up, SSO and an expired session, and enables Allow only once a
+  project is picked.
+- Fourteen tools: `list_projects`, `project_structure`, `read_file`,
+  `edit_file`, `write_file`, `batch_write`, `compile`, `get_pdf_url`,
+  `commit`, `references_add`, `list_citations`, `list_labels`, `wordcount`,
+  `create_project`, plus `ping`. They pass the same access, protected-project,
+  trash, hidden-path and token-scope guards as the REST API, and every
+  result echoes `{branch, head}`. Paths resolve to the spelling the file tree
+  lists (`./main.tex`, and `Main.tex` when only `main.tex` exists); a
+  whole-file write that differs from an existing name only by case is
+  refused, as is any name starting with `-`. `edit_file` anchors on exact
+  quotes (at least 8 characters, `occurrence` to disambiguate) and lands them
+  in the live collaboration document as CRDT edits that merge with concurrent
+  typing; a drifted anchor returns `stale_anchor` with up to 3 candidate
+  lines and applies nothing. `write_file` and `batch_write` honour
+  `base_version` and refuse with `version_conflict` instead of overwriting;
+  `batch_write` lands a multi-file change as one named commit and refuses a
+  path listed twice. `compile` returns parsed errors (real errors before
+  warnings, box reports left out, capped at 50 with `errorsTotal`, every row
+  naming a file, a missing `.sty` as a `hint`), a 4 KB log tail, a signed
+  PDF link and a deep link, with progress notifications every 10 s; it takes
+  at most one of a person's two typeset slots, and a compiler that cannot see
+  the project (its `DATA_DIR` is not the server's) is a relay-me error, not a
+  failed compile for the model to "fix". `references_add` resolves a DOI,
+  arXiv or OpenAlex id into the project's `.bib` (default `references.bib`
+  beside the root file, `{key, bibFile, duplicate}`), `list_citations` and
+  `list_labels` are the indexes to consult before writing `\cite` and
+  `\ref`, `wordcount` walks the root file's `\input` graph, and
+  `create_project` is refused for a project-scoped token. `/bib`, `/labels`,
+  `/wordcount` and `references/add` share their implementation with the
+  tools. Tool descriptions are written as the model's API docs: stale-anchor
+  retry etiquette, when to compile, the 3-attempt fix-loop cap, and which
+  errors to relay to the user rather than retry.
+- Every agent write is a reviewable commit under the author "Claude", titled
+  with the intent the tool was called with (`batch_write` and `commit` under
+  their message, `edit_file` and `write_file` under an optional `message`,
+  else "Edit <path>"); intents are kept per file, one commit per intent.
+  Before an agent writes a file its uncommitted state is checkpointed, so a
+  Claude commit's diff is exactly the agent's delta even when a person was
+  typing in the same file; agent-touched files commit separately from the
+  anonymous autosave; an explicit commit consumes pending attribution, so
+  what a person types afterwards is never signed Claude. `commit` lands only
+  the paths Claude wrote on the branch, as one commit; with nothing waiting
+  it is `committed:false` with the current head and `recentClaudeCommits`,
+  not an error. Every git write goes through a per-repository lock, and the
+  shutdown flush (server and stdio transport) commits pending agent work
+  under Claude's name first, on every branch, open in a browser or not.
+- Signed PDF links: `compile` returns a `pdfUrl` that opens without a session
+  for 15 minutes (HMAC-signed, one artifact on one branch, `no-store`; a bad
+  or expired signature is refused even on a signed-in browser), plus `pages`,
+  `typesetAt`, `pdfFile` and `pdfStale`; `get_pdf_url` hands out a fresh link
+  without recompiling. A run whose engine removed the PDF or halted while
+  writing it reports `pdfStale:true` and no link, also after a restart, and
+  an unchanged document compiles to a success under the same link. The
+  secret is `ALDINE_SIGNING_SECRET` (32+ characters, checked at boot) or is
+  generated once into `META_DIR`.
+- The PDF viewer (MCP App): `compile` and `get_pdf_url` results render inline
+  in hosts that speak `io.modelcontextprotocol/ui` (claude.ai, Claude Desktop,
+  Cowork; other hosts get the link). One self-contained file
+  (`npm run build:viewer -w apps/server`, part of `npm run build`, about
+  2.1 MB with pdf.js inlined; the server lists it as `ui://aldine/pdf-viewer`
+  when built) with a status row (file, branch, commit, typeset time, pages), a
+  collapsed error strip whose `file:line` rows deep-link into Aldine, a
+  fit-width page well that rasterizes only the pages near the viewport, page
+  and zoom controls, fullscreen where the host offers it and "Open in Aldine"
+  as the single exit. A failed run shows the previous PDF one click away,
+  never a blank frame; an expired link says to ask Claude for a fresh one.
+  Chrome follows the host theme; pages stay white. PDFs over 50 MB are not
+  fetched into the chat column. `e2e/tests/18-pdf-viewer.spec.ts` drives it
+  outside a host through `?payload=<base64 JSON>`.
+- Deep links into the editor: `/p/<id>?file=<path>&line=<n>` opens the file
+  (exact path, then a suffix match), scrolls the line into view and flashes
+  it once the collab doc has synced, then drops the params so a reload does
+  not replay the jump. A missing file gets a toast and the root file; a line
+  past the end says so; on a phone the file tree collapses.
+- Agent presence and review in the editor: an agent session shows in the
+  presence strip as a violet spark glyph with its start time (violet is now
+  reserved for agents), History marks Claude's commits with a violet dot and
+  refreshes while open, and behind `aldine.experimental.agentPresence`
+  incoming agent edits get a violet tint that fades. When a session that
+  produced commits goes quiet, a sticky toast ("Claude edited N files",
+  Review) opens the session's commits oldest first with their diffs and a
+  "Revert these changes" button backed by `POST /api/projects/:id/revert`,
+  which undoes the given commits as one new commit; history is never
+  rewritten. The same prompt reaches whoever was away: opening a project
+  whose branch carries Claude commits newer than that person's last
+  acknowledged visit raises it ("while you were away", or "in this project"
+  for someone who never opened it, with the commit count when the dialog
+  cannot show every commit). The mark is per person, project and branch
+  (`project_visits` on Postgres, `visits.json` on the JSON backend, the
+  browser's `aldine.agentSeen.<project>.<branch>` without accounts);
+  reviewing or dismissing records it, an ignored prompt returns once and
+  then counts as seen, a person's own commits never count, and the check
+  stays quiet while a session is still running.
+  `GET /api/projects/:id/agent-activity` answers read-only and
+  `POST …/agent-activity/seen` is session-only, so an agent's own token can
+  never clear a person's prompt.
+- The connector works under a URL prefix (`ALDINE_BASE_PATH`, #40): the
+  discovery documents are served at the origin-root, path-inserted
+  locations MCP clients probe first as well as under the prefix, and
+  `deepLink`, `pdfUrl`, the consent page and the connector URL carry it.
+  Reverse proxies must forward the two well-known paths (deploy/README.md,
+  deploy/nginx.conf).
+- Success metrics as log lines: `[metric] agent_connect`, `agent_compile
+  user=… project=… ok=… ms=…` and `agent_revert … commits=…`;
+  deploy/README.md carries the three queries for CloudWatch Logs Insights.
+- e2e coverage: `15-mcp` (tools, indexes, references against the mock DOI
+  upstream), `16-agent-ui` (presence, review, revert, the away prompt,
+  auto-typeset following the agent), `18-pdf-viewer`, the auth suite
+  (scoped tokens, OAuth Connect, `create_project`, per-user review marks)
+  and the base-path suite.
+
+### Changed
+- Write conflicts for the Agent API and `PUT /file` are detected per file,
+  not per branch. The branch `contentVersion` still keys compile results and
+  listings and is still what a caller passes as `base_version`
+  (`baseVersion` on REST), but a write is refused with `version_conflict`
+  only when that file changed after the version the caller read, so a model
+  editing two files in parallel no longer gets a spurious refusal. Git-level
+  rewrites (revert, merge, pull, reset, switching the tracked GitHub branch)
+  count as a change to every path. `GET /file` returns
+  `x-aldine-content-version` and `x-aldine-file-version`, `GET /files`
+  returns `{ files, contentVersion }` (previously a bare array), tool results
+  carry `fileVersion`, and `batch_write` accepts `base_version` per entry.
+- Auto-typeset now follows Claude, not only the person typing: an agent edit
+  arms the same debounce a keystroke arms. With several tabs open on a branch
+  exactly one typesets (the visible tab with the lowest collaboration id) and
+  the others adopt its run; a typeset Claude starts itself cancels the
+  pending one, and every open preview then shows that run, errors and
+  jump-to-source included. `POST /api/projects/:id/compile` takes
+  `reason: "agent"` and `GET /api/projects/:id/compile-status` reports the
+  branch's last run. With auto-typeset off nothing is armed and Claude's run
+  is not adopted: the preview moves only when the person presses Typeset.
+- Reverts, checkpoints and merges made by a signed-in person are committed
+  under their account name whatever the browser sends, and a person's
+  whole-tree commit inside Claude's autosave window (a checkpoint, a revert,
+  a merge, a GitHub push or pull, a Zotero sync) commits Claude's pending
+  edits under Claude's name first, so a human never signs an agent's delta.
+- Commit messages from the tools, `POST /commit`, `/revert` and the GitHub
+  push are capped at 200 characters and stripped of control characters
+  before they reach git (a NUL failed the spawn and, re-queued, blocked the
+  branch's autosave for everyone); a commit that still fails is retried
+  under a neutral title.
+
+### Fixed
+- The server's git commands can no longer reach outside `DATA_DIR`
+  (`GIT_CEILING_DIRECTORIES`): a project directory that lost its repository
+  used to let git discover an enclosing checkout, which committed a developer's
+  worktree as `aldine: autosave` when the e2e data dir lived inside it.
+- A project or branch deleted inside the autosave window no longer logs
+  `[collab] autocommit failed Cannot use simple-git on a directory that does
+  not exist` on every debounce that fires afterwards.
+- A typeset that stops on an error and removes the PDF (what pdfTeX does once
+  a page has shipped out) no longer drops the preview's stale flag: the pages
+  on screen stay marked as the last successful typeset and the download link
+  goes away until the next successful run. The 0.4.0 fix for linking a
+  deleted file had cleared the flag with the link.
+- `GET`/`PUT /api/projects/:id/file` flush open collaboration documents to
+  disk first, like every other disk-touching route. Before, a REST read could
+  be up to 8 s staler than the editor, and a REST write on that stale state
+  silently discarded a live collaborator's unflushed keystrokes.
+- `GET /api/projects/:id/wordcount` no longer serves the previous root file's
+  count after the root file is switched in project settings: the cache is
+  keyed by root file as well as branch content version.
+- A file whose name starts with `-` can no longer reach `git commit` as an
+  option (the commit primitives put `--` before every pathspec; `PUT /file`
+  and rename refuse such names), a name that is a valid glob or pathspec
+  magic (`*.tex`, `:!x.tex`) commits literally instead of staging every
+  matching dirty file, and `/api/projects/:id/log` is parsed on a delimiter
+  a subject cannot contain, so a message can no longer move itself into the
+  author field the History panel keys on.
+
 ## [0.7.0] — 2026-09-09
 
 ### Changed

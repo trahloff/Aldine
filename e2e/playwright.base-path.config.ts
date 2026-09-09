@@ -21,7 +21,7 @@ export default defineConfig({
   reporter: [['list']],
   use: { baseURL: BASE, trace: 'retain-on-failure', viewport: { width: 1440, height: 900 } },
   webServer: process.env.ALDINE_BASE_PATH_URL ? undefined : {
-    command: `npm run build -w apps/web && PORT=${PORT} ALDINE_BASE_PATH=/internal/aldine ALDINE_TEST_HOOKS=1 DATA_DIR=$(pwd)/.data-base-path META_DIR=$(pwd)/.secrets-base-path CACHE_DIR=$(pwd)/.data-base-path/cache npx tsx apps/server/src/index.ts`,
+    command: `npm run build -w apps/web && PORT=${PORT} ALDINE_BASE_PATH=/internal/aldine ALDINE_TEST_HOOKS=1 ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp DATA_DIR=$(pwd)/.data-base-path META_DIR=$(pwd)/.secrets-base-path CACHE_DIR=$(pwd)/.data-base-path/cache npx tsx apps/server/src/index.ts`,
     cwd: '..',
     port: PORT,
     reuseExistingServer: true,

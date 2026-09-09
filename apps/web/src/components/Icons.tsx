@@ -65,6 +65,15 @@ export const IconLink = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** Spark/asterisk glyph — the agent avatar (an initial would collide with human names). */
+export const IconSpark = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={12} height={12}>
+    <path d="M8 1.5v13" />
+    <path d="M2.4 4.75l11.2 6.5" />
+    <path d="M13.6 4.75l-11.2 6.5" />
+  </svg>
+);
+
 export const IconX = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={11} height={11}>
     <path d="M3 3l10 10M13 3 3 13" />

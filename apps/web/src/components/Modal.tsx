@@ -15,8 +15,13 @@ interface Props {
  * on open and restored on close, focus trapped within, Escape and
  * backdrop-click to dismiss.
  */
+/** Open dialogs, innermost last: only the top one answers Escape and Tab,
+ *  so a confirmation opened from inside a dialog does not close both. */
+const openStack: symbol[] = [];
+
 export default function Modal({ onClose, children, label, wide, width, testId }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const self = useRef(Symbol('modal'));
   const returnFocus = useRef<HTMLElement | null>(null);
   // Callers pass an inline arrow, so onClose has a new identity on every parent
   // render. Read it through a ref and mount the effect ONCE: keyed on onClose it
@@ -26,6 +31,8 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
   closeRef.current = onClose;
 
   useEffect(() => {
+    const id = self.current;
+    openStack.push(id);
     returnFocus.current = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
     // focus the first focusable control, else the panel itself
@@ -35,6 +42,7 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
     (focusables()[0] ?? panel)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      if (openStack[openStack.length - 1] !== id) return;
       if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
       if (e.key !== 'Tab') return;
       const items = focusables();
@@ -45,6 +53,8 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
     };
     document.addEventListener('keydown', onKey, true);
     return () => {
+      const at = openStack.indexOf(id);
+      if (at >= 0) openStack.splice(at, 1);
       document.removeEventListener('keydown', onKey, true);
       returnFocus.current?.focus?.();
     };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -17,11 +18,16 @@ import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
-import { useCommentSignal, useFilesSignal } from '../editor/commentSignal';
+import { useCommentSignal } from '../editor/commentSignal';
+import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
+import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, type TypesetSource } from '../editor/autoTypeset';
 import GithubSync from '../components/GithubSync';
 import GithubPublish from '../components/GithubPublish';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
+import DiffView from '../components/DiffView';
+import { filesInPatch } from '../util/patch';
+import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
@@ -29,6 +35,10 @@ import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
+
+/** Commits the review dialog will render: one diff request each, so a branch
+ *  Claude wrote hundreds of commits into shows a count, not a wall. */
+const AGENT_REVIEW_MAX_COMMITS = 20;
 
 /** A text field that is not the code editor (whose own keymap owns Mod-j). */
 function inTextField(target: EventTarget | null): boolean {
@@ -92,10 +102,19 @@ export default function Editor() {
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled } = useAuth();
+  const { authEnabled, user } = useAuth();
+  // Bumped whenever the branch's history may have moved (files signal, a
+  // revert, an agent session ending) so an open History panel refetches.
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const bumpHistory = useCallback(() => setHistoryVersion((v) => v + 1), []);
+  // Phones show the sidebar as an overlay; a deep link to a line collapses
+  // it so the flagged line is on screen, and the toolbar button restores it.
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
   // Visual mode is gated by an experimental flag until it graduates.
   const visualEnabled = localStorage.getItem('aldine.experimental.visualEditor') === '1';
+  // Agent-edit fade highlights are gated the same way (presence chip is not).
+  const agentPresenceEnabled = localStorage.getItem('aldine.experimental.agentPresence') === '1';
   const [mode, setMode] = useState<EditorMode>(() =>
     visualEnabled && localStorage.getItem('aldine.editorMode') === 'visual' ? 'visual' : 'source');
   const switchMode = (m: EditorMode) => { localStorage.setItem('aldine.editorMode', m); setMode(m); };
@@ -110,6 +129,21 @@ export default function Editor() {
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoRef = useRef(auto);
   autoRef.current = auto;
+  /** What armed autoTimer: only an agent-armed timer may be cancelled by the
+   *  branch's typeset-started signal. */
+  const pendingSource = useRef<TypesetSource | null>(null);
+  /** The run the preview shows, so a run reported by the branch is adopted
+   *  only when it is newer than what is on screen. */
+  const shownRunIdRef = useRef<number | undefined>(undefined);
+  const agentWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** This client issued the agent-caused run the branch is reporting on. A run
+   *  that threw records nothing, so without this the "no run recorded"
+   *  fallback would re-arm the typeset that just failed, forever. */
+  const ownAgentRun = useRef(false);
+  const [agentTypesetting, setAgentTypesetting] = useState(false);
+  /** Set below by useBranchSignal; the agent timer re-reads the election
+   *  through it when it fires. */
+  const signal = useRef<BranchSignalHandle | null>(null);
   // Every project carries a .gitignore; dotfiles are not what the user wrote,
   // so they neither open on load nor count against the empty state.
   const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
@@ -157,6 +191,50 @@ export default function Editor() {
     }
   }, [id, branch, toast, refreshDocWords]);
 
+  // Deep link (/p/:id?file=<path>&line=<n>, the PDF viewer's click-throughs):
+  // open the file at that line and flash it, then drop the two params so a
+  // reload or a shared URL does not replay the jump. Read once at mount; the
+  // pane defers the jump until its collab doc has synced.
+  const deepLinkRef = useRef(params.has('file') || params.has('line')
+    ? { file: params.get('file') || '', line: Math.floor(Number(params.get('line'))) || null }
+    : null);
+  const applyDeepLink = (p: ProjectDetail, f: TreeEntry[]) => {
+    const dl = deepLinkRef.current;
+    if (!dl) return;
+    deepLinkRef.current = null;
+    const norm = normalizeDeepLinkPath(dl.file);
+    const match = resolveDeepLinkFile(f, norm);
+    const target = match && 'path' in match ? match.path : null;
+    if (norm && !target) {
+      toast(match && 'ambiguous' in match
+        ? `"${norm}" matches ${match.ambiguous.length} files (${match.ambiguous.join(', ')}) — pick one in the file tree`
+        : `"${norm}" is not in this project`, 'error');
+    }
+    const open = target ?? (dl.line != null ? p.rootFile : null);
+    if (open && f.some((e) => e.type === 'file' && e.path === open)) setActiveFile(open);
+    // A line without a file means the root file; a line for a file that is
+    // not here means nothing (line 12 of a missing chapter is not line 12 of main).
+    const line = target || !norm ? dl.line : null;
+    if (line != null && line > 0) {
+      if (window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
+      // The pane for `open` mounts on the next render; poll briefly for it.
+      const jump = (tries: number) => {
+        const code = codeRef.current;
+        if (code) {
+          code.gotoLine(line, {
+            flash: true,
+            onClamped: (lines) => toast(`"${open}" has only ${lines} line${lines === 1 ? '' : 's'} — the link may be from an older typeset`),
+          });
+        } else if (tries < 40) setTimeout(() => jump(tries + 1), 50);
+      };
+      requestAnimationFrame(() => jump(0));
+    }
+    const next = new URLSearchParams(params);
+    next.delete('file');
+    next.delete('line');
+    setParams(next, { replace: true });
+  };
+
   useEffect(() => {
     (async () => {
       const p = await loadProject();
@@ -164,6 +242,7 @@ export default function Editor() {
       const f = await loadFiles();
       const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
+      applyDeepLink(p, f);
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
       // this server until it's published to GitHub. Only the owner can publish,
@@ -176,7 +255,7 @@ export default function Editor() {
     })();
   }, [id, branch]);
 
-  const doCompile = useCallback(async (attempt = 0) => {
+  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent' }) => {
     if (compilingRef.current) { pendingRef.current = true; return; }
     compilingRef.current = true;
     // A typeset is where freshly typed \label/\cite content becomes relevant —
@@ -187,10 +266,11 @@ export default function Editor() {
     setCompile((c) => ({ ...c, status: 'compiling' }));
     const t0 = Date.now();
     try {
-      const result = await api.compile(id, branch);
+      const result = await api.compile(id, branch, opts?.reason);
       // The user may have switched branch while this ran: the result belongs
       // to the branch it was asked for, not to whatever is on screen now.
       if (branchRef.current !== branch) return;
+      shownRunIdRef.current = result.runId;
       setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
     } catch (err: any) {
       if (branchRef.current !== branch) return;
@@ -198,7 +278,7 @@ export default function Editor() {
       // keep the busy state and retry with backoff instead of showing "Failed".
       if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
         pendingRef.current = false; // the retry below also serves any queued request
-        setTimeout(() => doCompile(attempt + 1), 1500 * (attempt + 1));
+        setTimeout(() => doCompile(attempt + 1, opts), 1500 * (attempt + 1));
         return;
       }
       setCompile({ status: 'error', result: null });
@@ -212,23 +292,183 @@ export default function Editor() {
     }
   }, [id, branch]);
 
-  /** Auto-typeset ~2s after this client's own edits settle — remote edits
+  const clearAgentWatchdog = useCallback(() => {
+    if (agentWatchdog.current) { clearTimeout(agentWatchdog.current); agentWatchdog.current = null; }
+  }, []);
+
+  /** Arm the auto-typeset debounce. An agent write gets a longer delay so a
+   *  typeset Claude issues itself (one model round trip) arrives first, and
+   *  only the branch's elected client actually compiles — every tab arms, one
+   *  runs, the rest adopt its result. */
+  const armAutoTypeset = useCallback((source: TypesetSource) => {
+    const delay = autoTypesetDelay({ source, auto: autoRef.current, hasTex: hasTexRef.current });
+    if (delay == null) return;
+    if (autoTimer.current) clearTimeout(autoTimer.current);
+    clearAgentWatchdog();
+    pendingSource.current = source;
+    autoTimer.current = setTimeout(() => {
+      autoTimer.current = null;
+      const src = pendingSource.current;
+      pendingSource.current = null;
+      // Re-read the election here, not at arm time: a tab that closed since
+      // the edit must not keep the branch's typeset to itself.
+      if (src === 'agent' && signal.current && !signal.current.electedTypesetter()) return;
+      if (src === 'agent') ownAgentRun.current = true;
+      doCompile(0, src === 'agent' ? { reason: 'agent' } : undefined);
+    }, delay);
+  }, [doCompile, clearAgentWatchdog]);
+
+  /** Auto-typeset ~2s after this client's own edits settle. Remote edits
    *  refresh the word count but never trigger a compile (the editing client
    *  compiles; N passive collaborators racing to rebuild the same PDF only
-   *  starve the compile gate). */
+   *  starve the compile gate). An agent's edits are not a remote transaction
+   *  anyone can attribute — they arrive as a branch-wide signal instead, on
+   *  which exactly one client typesets. */
   const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
-    // Nothing to typeset until the project has a .tex file.
-    if (!local || !autoRef.current || !hasTexRef.current) return;
-    if (autoTimer.current) clearTimeout(autoTimer.current);
-    autoTimer.current = setTimeout(() => doCompile(), 2000);
-  }, [doCompile, refreshDocWords]);
+    if (!local) return;
+    armAutoTypeset('local');
+  }, [armAutoTypeset, refreshDocWords]);
 
   useEffect(() => () => {
     if (autoTimer.current) clearTimeout(autoTimer.current);
+    if (agentWatchdog.current) clearTimeout(agentWatchdog.current);
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
   }, []);
+
+  // ---- agent session review (UX.md "Audit and undo") ----
+  const agentPresent = users.some((u) => u.isAgent);
+  const agentPresentRef = useRef(agentPresent);
+  agentPresentRef.current = agentPresent;
+  const agentSessionStart = useRef<number | null>(null);
+  const agentEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [agentReview, setAgentReview] = useState<{
+    files: string[];
+    hashes: string[];
+    commits: Array<{ hash: string; message: string; patch: string }>;
+    total: number;
+    truncated: boolean;
+  } | null>(null);
+
+  /** Records that this person has been shown Claude's work up to `head`.
+   *  Without accounts there is no user to key a server row on, so the mark
+   *  is the browser's. */
+  const recordSeen = useCallback(async (head: string, kind: 'prompted' | 'acknowledged') => {
+    if (!head) return;
+    if (!authEnabled) {
+      if (kind === 'acknowledged') markAcknowledged(id, branch, head); else markPrompted(id, branch, head);
+      return;
+    }
+    // A failed write just means the prompt returns on the next open — the
+    // audit surface fails open, never closed.
+    await api.markAgentActivitySeen(id, branch, head, kind).catch(() => {});
+  }, [id, branch, authEnabled]);
+
+  /** One dialog for both prompts: the live session and the away check. */
+  const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string }>, total: number): Promise<boolean> => {
+    const shown = entries.slice(0, AGENT_REVIEW_MAX_COMMITS); // newest first
+    try {
+      const diffs = await Promise.all(shown.map((c) => api.commitDiff(id, c.hash)));
+      // Read oldest first (the log is newest first): the story of the session.
+      const commits = shown.map((c, i) => ({ hash: c.hash, message: c.message, patch: diffs[i].patch })).reverse();
+      const files = [...new Set(commits.flatMap((c) => filesInPatch(c.patch)))];
+      setAgentReview({ files, hashes: shown.map((c) => c.hash), commits, total, truncated: total > shown.length });
+      return true;
+    } catch (err: any) {
+      toast(`Could not load Claude’s changes: ${err.message}`, 'error');
+      return false;
+    }
+  }, [id, toast]);
+
+  useEffect(() => {
+    if (agentPresent) {
+      if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
+      if (agentSessionStart.current == null) agentSessionStart.current = Date.now();
+      return;
+    }
+    if (agentSessionStart.current == null) return;
+    // Awareness rides the open file's doc, so a file switch or reconnect blips
+    // the agent out momentarily — only a sustained absence ends the session.
+    agentEndTimer.current = setTimeout(async () => {
+      agentEndTimer.current = null;
+      if (agentPresentRef.current || agentSessionStart.current == null) return;
+      const startedAt = agentSessionStart.current;
+      agentSessionStart.current = null;
+      try {
+        const log = await api.log(id, branch);
+        // git dates carry second precision — allow slack around the session start
+        const session = log.filter((c) => c.author === 'Claude' && new Date(c.date).getTime() >= startedAt - 10_000);
+        if (!session.length) return;
+        bumpHistory();
+        const shown = session.slice(0, AGENT_REVIEW_MAX_COMMITS);
+        const diffs = await Promise.all(shown.map((c) => api.commitDiff(id, c.hash)));
+        const files = [...new Set(diffs.flatMap((d) => filesInPatch(d.patch)))];
+        toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
+          label: 'Review',
+          testId: 'agent-session-review',
+          // Arrives a minute after the last edit, when the person has usually
+          // looked away — it must wait for them.
+          sticky: true,
+          onClick: () => { void (async () => { if (await openAgentReview(shown, session.length)) await recordSeen(session[0].hash, 'acknowledged'); })(); },
+          onDismiss: () => { void recordSeen(session[0].hash, 'acknowledged'); },
+        });
+      } catch { /* history unavailable — nothing to review */ }
+    }, 4000);
+  }, [agentPresent, id, branch, toast, bumpHistory, openAgentReview, recordSeen]);
+  useEffect(() => () => { if (agentEndTimer.current) clearTimeout(agentEndTimer.current); }, []);
+
+  // The same prompt for whoever was not watching: Claude commits newer than
+  // this person's last acknowledged visit, asked once per project+branch open.
+  const awayCheckedRef = useRef('');
+  useEffect(() => {
+    const key = `${id}::${branch}`;
+    if (awayCheckedRef.current === key) return; // StrictMode double-mount, and re-entry on re-render
+    awayCheckedRef.current = key;
+    let cancelled = false;
+    (async () => {
+      try {
+        const mark = authEnabled ? null : readSeen(id, branch);
+        const res = await api.agentActivity(id, branch, mark && mark.head ? { head: mark.head, at: mark.at } : null);
+        if (cancelled || !res.commitCount) return;
+        // A session still running is the live prompt's to report when it ends;
+        // nothing is recorded, so the next open asks again.
+        if (agentPresentRef.current) return;
+        const n = res.fileCount;
+        // The dialog opens the newest commits only; a batch larger than that
+        // says so here, and a scan that hit its ceiling reports a floor.
+        const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
+        const when = res.since ? 'while you were away' : 'in this project';
+        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
+          label: 'Review',
+          testId: 'agent-away-review',
+          sticky: true,
+          onClick: () => { void (async () => { if (await openAgentReview(res.commits, res.commitCount)) await recordSeen(res.head, 'acknowledged'); })(); },
+          onDismiss: () => { void recordSeen(res.head, 'acknowledged'); },
+        });
+        // The mark advances to the head the answer was computed against, never
+        // to a fresh HEAD: commits landing while the toast sits on screen stay unseen.
+        void recordSeen(res.head, 'prompted');
+      } catch { /* history unavailable — no prompt */ }
+    })();
+    return () => { cancelled = true; };
+  }, [id, branch, authEnabled, toast, openAgentReview, recordSeen]);
+
+  const revertAgent = useCallback(async () => {
+    if (!agentReview) return;
+    try {
+      // log order is newest-first — exactly what the revert endpoint expects.
+      // The signed-in name is the audit author; the anonymous collab identity
+      // is only right without accounts (the server applies the same rule).
+      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', user?.name || localUser().name);
+      setAgentReview(null);
+      toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
+      bumpHistory();
+      await loadFiles();
+    } catch (err: any) {
+      toast(`Could not revert: ${err.message}`, 'error');
+    }
+  }, [agentReview, id, branch, user, loadFiles, toast, bumpHistory]);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -244,7 +484,12 @@ export default function Editor() {
   useEffect(() => {
     branchRef.current = branch;
     setCompile({ status: 'idle', result: null });
-  }, [id, branch]);
+    shownRunIdRef.current = undefined;
+    setAgentTypesetting(false);
+    clearAgentWatchdog();
+    pendingSource.current = null;
+    ownAgentRun.current = false;
+  }, [id, branch, clearAgentWatchdog]);
 
   const saveName = useCallback(async (name: string) => {
     try {
@@ -326,7 +571,60 @@ export default function Editor() {
   // The file list is a REST snapshot. The server bumps this signal whenever
   // the branch's files change on disk (another tab, a collaborator, the agent
   // API, a pull), and a tab coming back to the foreground refetches anyway.
-  useFilesSignal(id, branch, loadFiles);
+  const onFilesChanged = useCallback(() => { loadFiles(); bumpHistory(); }, [loadFiles, bumpHistory]);
+  // The branch reports the agent's run instead of every tab rebuilding it:
+  // fetched once when the run finishes, never polled.
+  const adoptLatestRun = useCallback(async () => {
+    // Read once per finished run, so the flag never outlives the run it names.
+    const mine = ownAgentRun.current;
+    ownAgentRun.current = false;
+    if (compilingRef.current) return; // our own newer run is coming
+    let st;
+    try { st = await api.compileStatus(id, branch); } catch { return; }
+    if (branchRef.current !== branch) return;
+    // This node remembers no run (a restart between start and finish, or a
+    // sibling node served it) — take it ourselves, unless the run it forgot
+    // is the one we just made.
+    if (!st.result) { if (!mine) armAutoTypeset('agent'); return; }
+    if (!shouldAdoptRun(shownRunIdRef.current, st.result.runId, compilingRef.current)) return;
+    shownRunIdRef.current = st.result.runId;
+    // No wallMs: the status line falls back to the run's own durationMs.
+    setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result });
+  }, [id, branch, armAutoTypeset]);
+  const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
+  const onAgentTypesetStarted = useCallback(() => {
+    // Auto-typeset off means the preview moves only when this person asks:
+    // no status line, no adoption of Claude's run.
+    if (!autoRef.current) return;
+    setAgentTypesetting(true);
+    // The run flushed the branch's docs when it started, so it covers every
+    // edit this client has seen; a second run would only rebuild the same PDF.
+    // A timer this person's own typing armed is left alone — their keystrokes
+    // may still be in flight and their compile is theirs.
+    if (pendingSource.current === 'agent') {
+      if (autoTimer.current) clearTimeout(autoTimer.current);
+      autoTimer.current = null;
+      pendingSource.current = null;
+    }
+    clearAgentWatchdog();
+    agentWatchdog.current = setTimeout(() => {
+      agentWatchdog.current = null;
+      setAgentTypesetting(false); // the run it announced is not coming
+      armAutoTypeset('agent');
+    }, AGENT_RUN_WATCHDOG_MS);
+  }, [armAutoTypeset, clearAgentWatchdog]);
+  const onAgentTypesetFinished = useCallback(() => {
+    setAgentTypesetting(false);
+    clearAgentWatchdog();
+    if (!autoRef.current) return;
+    void adoptLatestRun();
+  }, [adoptLatestRun, clearAgentWatchdog]);
+  const signalHandle = useBranchSignal(
+    id, branch,
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished },
+    auto && hasTex,
+  );
+  signal.current = signalHandle;
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') loadFiles(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -511,6 +809,9 @@ export default function Editor() {
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
+      ...(agentPresenceEnabled
+        ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '0'); location.reload(); } }]
+        : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
@@ -611,11 +912,15 @@ export default function Editor() {
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
         <button className="btn" onClick={startComment} data-testid="add-comment" title="Comment on the selected text">Comment</button>
         <Presence users={users} />
+        <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
+          {sidebarHidden ? 'Files' : 'Hide files'}
+        </button>
         <div className="toolbar__group">
           <button
             className="btn btn--primary"
             onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
+            aria-busy={compile.status === 'compiling' || undefined}
             data-testid="typeset-button"
             title={`Typeset (${shortcut('S')})`}
           >
@@ -626,7 +931,7 @@ export default function Editor() {
       </header>
 
       <div className="workspace">
-        <aside className="pane sidebar">
+        <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
             <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab" data-testid="tab-history">History</button>
@@ -692,7 +997,7 @@ export default function Editor() {
                 onSetRoot={setRootFile}
               />
             )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} />}
+            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} />}
             {tab === 'review' && (
               <ReviewPanel
                 comments={comments}
@@ -845,9 +1150,13 @@ export default function Editor() {
           <div className="pane__header">
             <span className="pane__title">Preview</span>
             <span className="pdf-status" data-testid="pdf-status" style={{ marginLeft: 10 }}>
-              {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
-              {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
-              {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
+              {agentTypesetting && compile.status !== 'compiling' ? (
+                <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
+              ) : (<>
+                {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
+                {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
+                {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
+              </>)}
             </span>
             <span className="toolbar__spacer" />
             <select
@@ -916,6 +1225,37 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+
+      {agentReview && (
+        <Modal onClose={() => setAgentReview(null)} label="Review Claude’s edits" wide testId="agent-review-modal">
+          <div>
+            <h2>Claude’s edits</h2>
+            <p className="modal__sub">
+              {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {branch}
+            </p>
+            {agentReview.truncated && (
+              <p className="modal__sub" data-testid="agent-review-truncated">
+                Showing the newest {agentReview.hashes.length} of {agentReview.total} commits — reverting undoes only these.
+              </p>
+            )}
+            <p className="modal__sub" data-testid="agent-review-caveat">
+              A commit holds Claude’s change plus anything typed into the same file in the seconds before it was saved; reverting undoes both.
+            </p>
+            {agentReview.commits.map((c) => (
+              <div key={c.hash} data-testid="agent-review-commit">
+                <div className="review__divider" title={c.hash}>{c.message}</div>
+                <DiffView patch={c.patch} />
+              </div>
+            ))}
+            <div className="modal__row">
+              <button className="btn" onClick={() => setAgentReview(null)}>Close</button>
+              <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">
+                Revert these changes
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {settingsOpen && (
         <ProjectSettings

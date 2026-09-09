@@ -2,13 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, ProjectMeta, Comment } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+
+/**
+ * OAuth-minted (family set) and revoked before `cutoff` (ms epoch). An
+ * expired-but-unrevoked record is NOT dead: its family's refresh token may
+ * still be live, and that record is the only handle Account settings offers
+ * for revoking the grant.
+ */
+function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
+  return !!t.family && t.revokedAt != null && Date.parse(t.revokedAt) < cutoff;
+}
 
 /**
  * Flat-JSON DataStore — the slim, zero-dependency default for single-node
  * self-hosting. Preserves the historical on-disk layout so existing
  * deployments keep working:
  *   <metaRoot>/users.json  sessions.json  resets.json  usage.json
+ *   <metaRoot>/oauth_clients.json  refresh_tokens.json  visits.json
  *   <metaRoot>/meta/<id>.json          (project metadata)
  *   <metaRoot>/comments/<id>.json      (review comments)
  * Writes are atomic (temp + rename). Node's synchronous fs calls don't
@@ -18,8 +29,12 @@ export class JsonStore implements DataStore {
   private usersPath: string;
   private sessionsPath: string;
   private resetsPath: string;
+  private tokensPath: string;
   private usagePath: string;
   private connectionsPath: string;
+  private oauthClientsPath: string;
+  private refreshPath: string;
+  private visitsPath: string;
   private metaDir: string;
   private commentsDir: string;
   private flat: Set<string>;
@@ -28,11 +43,15 @@ export class JsonStore implements DataStore {
     this.usersPath = path.join(metaRoot, 'users.json');
     this.sessionsPath = path.join(metaRoot, 'sessions.json');
     this.resetsPath = path.join(metaRoot, 'resets.json');
+    this.tokensPath = path.join(metaRoot, 'tokens.json');
     this.usagePath = path.join(metaRoot, 'usage.json');
     this.connectionsPath = path.join(metaRoot, 'connections.json');
+    this.oauthClientsPath = path.join(metaRoot, 'oauth_clients.json');
+    this.refreshPath = path.join(metaRoot, 'refresh_tokens.json');
+    this.visitsPath = path.join(metaRoot, 'visits.json');
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
-    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.usagePath, this.connectionsPath]);
+    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath]);
   }
 
   async init(): Promise<void> {
@@ -132,6 +151,77 @@ export class JsonStore implements DataStore {
   async getReset(token: string) { return this.clone(this.resets()[token] || null); }
   async deleteReset(token: string) { const r = this.resets(); if (r[token]) { delete r[token]; this.write(this.resetsPath, r); } }
 
+  // ---- personal access tokens ----
+  private tokens() { return this.read<Record<string, TokenRecord>>(this.tokensPath, {}); }
+  async createToken(t: TokenRecord) {
+    const m = this.tokens();
+    // Every refresh rotation leaves a revoked record behind; prune the
+    // OAuth-minted ones a week after they were revoked.
+    const cutoff = Date.now() - 7 * 864e5;
+    for (const [k, v] of Object.entries(m)) if (isDeadOAuthToken(v, cutoff)) delete m[k];
+    m[t.id] = this.clone(t);
+    this.write(this.tokensPath, m);
+  }
+  async getToken(id: string) { return this.clone(this.tokens()[id] || null); }
+  async getTokenByHash(hash: string) { return this.clone(Object.values(this.tokens()).find((t) => t.hash === hash) || null); }
+  async listTokensForUser(userId: string) {
+    return this.clone(Object.values(this.tokens()).filter((t) => t.userId === userId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async updateToken(t: TokenRecord) { const m = this.tokens(); m[t.id] = this.clone(t); this.write(this.tokensPath, m); }
+  async touchToken(id: string, lastUsedAt: string) {
+    const m = this.tokens();
+    if (m[id]) { m[id].lastUsedAt = lastUsedAt; this.write(this.tokensPath, m); }
+  }
+  async revokeTokensInFamily(family: string, revokedAt: string) {
+    const m = this.tokens(); let changed = false;
+    for (const t of Object.values(m)) if (t.family === family && !t.revokedAt) { t.revokedAt = revokedAt; changed = true; }
+    if (changed) this.write(this.tokensPath, m);
+  }
+
+  // ---- OAuth clients ----
+  private oauthClients() { return this.read<Record<string, OAuthClient>>(this.oauthClientsPath, {}); }
+  async createOAuthClient(c: OAuthClient) { const m = this.oauthClients(); m[c.id] = this.clone(c); this.write(this.oauthClientsPath, m); }
+  async getOAuthClient(id: string) { return this.clone(this.oauthClients()[id] || null); }
+  async touchOAuthClient(id: string, lastUsedAt: string) {
+    const m = this.oauthClients();
+    if (m[id]) { m[id].lastUsedAt = lastUsedAt; this.write(this.oauthClientsPath, m); }
+  }
+  async countOAuthClients() { return Object.keys(this.oauthClients()).length; }
+  async evictOldestOAuthClients(n: number) {
+    if (n <= 0) return 0;
+    const m = this.oauthClients();
+    const victims = Object.values(m).sort((a, b) => a.lastUsedAt.localeCompare(b.lastUsedAt)).slice(0, n);
+    for (const v of victims) delete m[v.id];
+    if (victims.length) this.write(this.oauthClientsPath, m);
+    return victims.length;
+  }
+
+  // ---- OAuth refresh tokens ----
+  private refreshTokens() { return this.read<Record<string, RefreshTokenRecord>>(this.refreshPath, {}); }
+  async createRefresh(r: RefreshTokenRecord) {
+    const m = this.refreshTokens();
+    // Opportunistic prune, like sessions: a rotated-every-24h connector would
+    // otherwise grow this file by one dead record per day forever.
+    const cutoff = Date.now() - 7 * 864e5;
+    for (const [k, v] of Object.entries(m)) if (Date.parse(v.expiresAt) < cutoff) delete m[k];
+    m[r.id] = this.clone(r);
+    this.write(this.refreshPath, m);
+  }
+  async getRefreshByHash(hash: string) { return this.clone(Object.values(this.refreshTokens()).find((r) => r.hash === hash) || null); }
+  async markRefreshUsed(id: string, usedAt: string) {
+    const m = this.refreshTokens();
+    if (!m[id] || m[id].usedAt || m[id].revokedAt) return false;
+    m[id].usedAt = usedAt;
+    this.write(this.refreshPath, m);
+    return true;
+  }
+  async revokeRefreshFamily(family: string, revokedAt: string) {
+    const m = this.refreshTokens(); let changed = false;
+    for (const r of Object.values(m)) if (r.family === family && !r.revokedAt) { r.revokedAt = revokedAt; changed = true; }
+    if (changed) this.write(this.refreshPath, m);
+  }
+
   // ---- project meta ----
   private metaPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.metaDir, `${id}.json`); }
   async readMeta(id: string) { try { return JSON.parse(fs.readFileSync(this.metaPath(id), 'utf8')) as ProjectMeta; } catch { return null; } }
@@ -154,6 +244,35 @@ export class JsonStore implements DataStore {
   private commentPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.commentsDir, `${id}.json`); }
   async loadComments(projectId: string) { try { return JSON.parse(fs.readFileSync(this.commentPath(projectId), 'utf8')) as Comment[]; } catch { return []; } }
   async saveComments(projectId: string, list: Comment[]) { this.write(this.commentPath(projectId), list); }
+
+  // ---- agent-review marks ----
+  // Keyed `{ [userId]: { "<projectId>::<branch>": row } }`. PROJECT_ID_RE is
+  // [a-z0-9]{4,20}, so the `::` join can never be ambiguous.
+  private visits() { return this.read<Record<string, Record<string, { head: string; at: string; promptedHead: string | null }>>>(this.visitsPath, {}); }
+  private visitKey(projectId: string, branch: string) {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    return `${projectId}::${branch}`;
+  }
+  async getProjectVisit(userId: string, projectId: string, branch: string): Promise<ProjectVisit | null> {
+    // A malformed id reads as absent, like readMeta — never a 500 on a probe.
+    if (!PROJECT_ID_RE.test(projectId)) return null;
+    const row = this.visits()[userId]?.[this.visitKey(projectId, branch)];
+    return row ? this.clone({ userId, projectId, branch, ...row }) : null;
+  }
+  async setProjectVisit(v: ProjectVisit): Promise<void> {
+    const m = this.visits();
+    (m[v.userId] ||= {})[this.visitKey(v.projectId, v.branch)] = { head: v.head, at: v.at, promptedHead: v.promptedHead };
+    this.write(this.visitsPath, m);
+  }
+  async deleteProjectVisits(projectId: string): Promise<void> {
+    const prefix = `${this.visitKey(projectId, '')}`;
+    const m = this.visits();
+    let changed = false;
+    for (const rows of Object.values(m)) {
+      for (const k of Object.keys(rows)) if (k.startsWith(prefix)) { delete rows[k]; changed = true; }
+    }
+    if (changed) this.write(this.visitsPath, m);
+  }
 
   // ---- connections ----
   private connections() { return this.read<Record<string, Record<string, Record<string, unknown>>>>(this.connectionsPath, {}); }

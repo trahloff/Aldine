@@ -13,7 +13,7 @@ async function createBlank(request: import('@playwright/test').APIRequestContext
 }
 
 async function userFiles(request: import('@playwright/test').APIRequestContext, id: string): Promise<string[]> {
-  const list = await (await request.get(`/api/projects/${id}/files`)).json() as { path: string; type: string }[];
+  const { files: list } = await (await request.get(`/api/projects/${id}/files`)).json() as { files: { path: string; type: string }[] };
   return list.filter((f) => f.type === 'file' && f.path !== '.gitignore').map((f) => f.path).sort();
 }
 

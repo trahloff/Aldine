@@ -28,8 +28,11 @@
   color: var(--on-accent);
 }
 .btn--primary:hover { background: var(--accent-fill-hover); }
-/* the hero action stays saturated while working — the spinner carries the state */
-.btn--primary:disabled { opacity: 1; background: var(--accent-fill); cursor: progress; }
+.btn--primary:disabled { background: var(--accent-fill); }
+/* The hero action stays saturated while WORKING (aria-busy) — the spinner
+   carries the state. Disabled for validation it fades like any button, or a
+   click that does nothing looks like a broken one. */
+.btn--primary[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }
 
 .btn--ghost { border-color: transparent; background: transparent; }
 .btn--ghost:hover { background: var(--bg-hover); }
@@ -104,6 +107,8 @@
 .dot--ok { background: var(--ok); }
 .dot--error { background: var(--error); }
 .dot--busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+/* #a78bfa is the reserved agent violet — kept out of the human color palette */
+.dot--agent { background: #a78bfa; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 /* ---------- modal ---------- */
@@ -426,6 +431,7 @@
   color: #fff;
 }
 .presence__avatar:first-child { margin-left: 0; }
+.presence__avatar--agent svg { display: block; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
 
@@ -638,8 +644,9 @@
 .diff__ctx { color: var(--text-2); }
 .diff__file { color: var(--text); font-weight: 600; background: var(--bg-active); }
 .diff__hunk { color: var(--accent); }
-.diff__add { color: var(--ok); background: rgba(40, 167, 69, 0.10); }
-.diff__del { color: var(--error); background: var(--error-soft); }
+/* text-grade colors: the raw --ok/--error fills sit below 4.5:1 on their tints */
+.diff__add { color: var(--ok-text); background: rgba(40, 167, 69, 0.10); }
+.diff__del { color: color-mix(in srgb, var(--error) 80%, var(--text)); background: var(--error-soft); }
 
 /* log viewer */
 .modal--wide { width: 760px; }
@@ -811,8 +818,9 @@
 .palette__hint { font-size: 11px; color: var(--text-2); }
 .palette__empty { padding: 18px; text-align: center; color: var(--text-2); font-size: 13px; }
 
-/* toast */
-.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; }
+/* toast — capped to the viewport; on a phone the action buttons drop under
+   the sentence instead of squeezing it into three words per line */
+.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; width: max-content; max-width: min(560px, calc(100vw - 24px)); }
 .toast {
   background: var(--bg-panel);
   border-radius: var(--radius-l);
@@ -820,16 +828,34 @@
   padding: 9px 16px;
   font-size: 13px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   animation: toast-in 200ms var(--ease);
 }
+.toast__text { flex: 1 1 auto; min-width: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* comment highlights in the editor */
 .cm-comment-range { background: rgba(240, 162, 2, 0.20); border-bottom: 1.5px solid var(--warn); }
 .cm-comment-resolved { background: transparent; border-bottom: 1.5px dotted var(--text-3); }
 :root[data-theme="dark"] .cm-comment-range { background: rgba(255, 214, 10, 0.16); }
+
+/* Agent-edit fade: the decoration is removed after ~4 s, the animation just
+   gets the background there gracefully. Violet is the reserved agent color. */
+.cm-agent-edit { animation: agent-fade 4s ease-out forwards; border-radius: 2px; }
+@keyframes agent-fade {
+  from { background: rgba(167, 139, 250, 0.32); }
+  to { background: rgba(167, 139, 250, 0); }
+}
+
+/* Deep-link flash (?file=&line=): the line decoration is removed after ~1.6 s,
+   the animation fades the accent tint out before that. */
+.cm-deeplink-flash { animation: deeplink-flash 1.6s var(--ease) forwards; }
+@keyframes deeplink-flash {
+  from { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+  to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
+}
 
 /* review panel */
 .review__item { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -854,6 +880,7 @@
 .history__item:hover { background: var(--bg-hover); }
 .history__msg { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history__meta { font-size: 11px; color: var(--text-2); }
+.history__meta .dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
 
 /* segmented control (Source | Visual) */
 .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg-inset); }
@@ -899,12 +926,51 @@
   .toolbar { flex-wrap: wrap; height: auto; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .toolbar__name { max-width: 40vw; }
 }
+.sidebar-toggle { display: none; }
 @media (max-width: 640px) {
   .home__bar { flex-direction: column; align-items: stretch; gap: 12px; }
   .home__bar > div:last-child { flex-wrap: wrap; }
   .split-pdf, .pdf-pane { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
+  /* The overlay hides the editor; a deep link to a line collapses it and the
+     toolbar button brings it back. */
+  .sidebar--hidden { display: none; }
+  .sidebar-toggle { display: inline-flex; }
 }
+
+/* ---------- OAuth consent (/oauth/authorize) ---------- */
+.consent { width: 420px; }
+.consent__title { font-size: 17px; font-weight: 600; line-height: 1.35; margin: 0 0 4px; }
+.consent__client { color: var(--accent); }
+.consent__origin { color: var(--text-2); font-size: 12.5px; margin: 0 0 10px; }
+.consent__origin code { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.consent__warn { color: var(--warn-text); background: var(--warn-soft); border-radius: var(--radius-m); padding: 8px 10px; font-size: 12.5px; margin: 0 0 10px; }
+/* light theme: --warn-text on --warn-soft is 4.35:1 at 12.5px; a darker amber reads */
+:root:not([data-theme="dark"]) .consent__warn { color: #6f5700; }
+.consent__detail { margin: 0 0 14px; font-size: 12px; color: var(--text-3); }
+.consent__detail summary { cursor: pointer; }
+.consent__detail code { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); word-break: break-word; }
+.consent__what { color: var(--text-2); font-size: 13px; line-height: 1.45; margin: 0 0 14px; }
+.consent__scope { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.consent__option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); cursor: pointer; }
+.consent__option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.consent__option input { margin: 3px 0 0; accent-color: var(--accent); }
+.consent__option-title { display: block; font-size: 13.5px; font-weight: 550; }
+.consent__option-sub { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
+/* --text-2 on the selected card's accent tint is 4.3:1; blend toward --text */
+.consent__option:has(input:checked) .consent__option-sub { color: color-mix(in srgb, var(--text) 80%, var(--text-2)); }
+.consent__projects { max-height: 180px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 4px 10px; background: var(--bg-inset); }
+.consent__project { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; cursor: pointer; }
+.consent__project input { accent-color: var(--accent); }
+.consent__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.consent__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.consent__actions .btn { min-width: 84px; justify-content: center; height: 34px; }
+.consent__who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-3); font-size: 12px; margin: 14px 0 0; }
+.consent__who strong { color: var(--text-2); font-weight: 600; }
+.consent__error { color: var(--error); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
+.consent__error .btn { display: inline-flex; vertical-align: baseline; }
+.consent__hint { color: var(--text-2); font-size: 12.5px; line-height: 1.45; margin: 0 0 14px; }
+.consent__back { align-self: flex-start; }
 
 /* The typesetting log opens at its first error; mark it so the eye lands there. */
 .logview__hit {
