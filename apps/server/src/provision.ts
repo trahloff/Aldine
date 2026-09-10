@@ -75,7 +75,16 @@ export async function provisionProject(meta: ProjectMeta, opts: { userId?: strin
   store.setRemoteLink(meta, link);
   meta.autopush = true;
   delete meta.remotePending;
-  await store.writeMeta(meta);
+  try {
+    await store.writeMeta(meta);
+  } catch (err: any) {
+    // The link could not be persisted: remove the repository again so a retry
+    // does not leave an orphan on GitLab, and report as a pending provisioning.
+    store.setRemoteLink(meta, null);
+    delete meta.autopush;
+    await gitlab.deleteProject(conn, repo.fullName).catch(() => {});
+    return fail(`Could not store the GitLab link: ${err?.message || err}`, namespace);
+  }
   try {
     await gitops.pushToRemote(meta.id, 'main', provider.tokenUrl(repo.cloneUrl, conn.token));
   } catch (err: any) {

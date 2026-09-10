@@ -372,8 +372,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // exists locally, `remotePending` marks it, and the error rides along.
   const provisionNew = async (meta: store.ProjectMeta, req: any, namespace?: string): Promise<string | undefined> => {
     if (!provisioningEnabled()) return undefined;
-    const r = await provisionProject(meta, { userId: reqUser(req)?.id || 'local', namespace });
-    return r.ok ? undefined : r.error;
+    try {
+      const r = await provisionProject(meta, { userId: reqUser(req)?.id || 'local', namespace });
+      return r.ok ? undefined : r.error;
+    } catch (err: any) {
+      // provisionProject is written not to throw; if it ever does, the local
+      // project must still be answered, never deleted or 500ed over GitLab.
+      req.log.error({ err }, 'provisioning threw');
+      return `GitLab provisioning failed: ${err?.message || err}`;
+    }
   };
 
   // No `files` and no `template` seeds the default article; `files: {}` or
