@@ -133,14 +133,43 @@ export async function commitDiff(id: string, hash: string): Promise<{ patch: str
   return { patch: patch.replace(/^\n+/, ''), stat: stat.replace(/^\n+/, '') };
 }
 
-// ---------- remote sync (GitHub) ----------
+// ---------- remote sync (GitHub, GitLab) ----------
 // SECURITY: the projects dir is shared with the compiler, so the auth token must
 // never land in .git/config. We pass a tokenized URL inline per network op and
 // keep only a credential-free URL as `origin`.
 
-/** Strip any `user:token@` credentials from an http(s) URL. */
+/** Strip any `user:token@` credentials from an http(s) URL (or from every URL in a message). */
 export function stripCreds(url: string): string {
-  return url.replace(/(https?:\/\/)[^@/]+@/i, '$1');
+  return url.replace(/(https?:\/\/)[^@/\s]+@/gi, '$1');
+}
+
+/**
+ * git echoes the URL it was given, token included, in transport and auth
+ * failures. Every network op below rethrows through this so no caller can
+ * forward a credential in an error message, a toast or a log line.
+ */
+async function scrubbed<T>(op: () => Promise<T>): Promise<T> {
+  try { return await op(); }
+  catch (err: any) {
+    if (err && typeof err.message === 'string') {
+      const clean = stripCreds(err.message);
+      if (clean !== err.message) {
+        const e = new Error(clean); e.name = err.name; throw e;
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Put `user:token@` into an http(s) clone URL for one git network op. The
+ * user name is what the host expects (`x-access-token` on GitHub, `oauth2` on
+ * GitLab). Non-http URLs pass through unchanged: the tests clone `file://`.
+ * The result is used inline and never written to .git/config.
+ */
+export function injectToken(cloneUrl: string, user: string, token: string): string {
+  if (!/^https?:\/\//i.test(cloneUrl)) return cloneUrl;
+  return stripCreds(cloneUrl).replace(/^(https?:\/\/)/i, `$1${encodeURIComponent(user)}:${encodeURIComponent(token)}@`);
 }
 
 /**
@@ -152,7 +181,7 @@ export async function cloneRepo(id: string, tokenUrl: string): Promise<{ remoteB
   const dir = repoDir(id);
   if (fs.existsSync(dir)) throw new Error('project already exists');
   fs.mkdirSync(projectsDir, { recursive: true });
-  await git(projectsDir).clone(tokenUrl, dir, ['--no-single-branch']);
+  await scrubbed(() => git(projectsDir).clone(tokenUrl, dir, ['--no-single-branch']));
   const g = git(dir);
   await g.remote(['set-url', 'origin', stripCreds(tokenUrl)]); // never persist the token
   await g.addConfig('user.name', 'Aldine');
@@ -166,7 +195,7 @@ export async function cloneRepo(id: string, tokenUrl: string): Promise<{ remoteB
 /** Push local `main` to the remote branch. Assumes commits already made. */
 export async function pushToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
-  await git(repoDir(id)).raw(['push', tokenUrl, `refs/heads/main:refs/heads/${remoteBranch}`]);
+  await scrubbed(() => git(repoDir(id)).raw(['push', tokenUrl, `refs/heads/main:refs/heads/${remoteBranch}`]));
 }
 
 /** Current HEAD commit hash of the project's main branch (cheap, local). */
@@ -178,7 +207,7 @@ export async function headCommit(id: string): Promise<string> {
 export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: string): Promise<{ ahead: number; behind: number }> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   const g = git(repoDir(id));
-  await g.raw(['fetch', tokenUrl, remoteBranch]);
+  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
   const ahead = Number((await g.raw(['rev-list', '--count', 'FETCH_HEAD..refs/heads/main'])).trim()) || 0;
   const behind = Number((await g.raw(['rev-list', '--count', 'refs/heads/main..FETCH_HEAD'])).trim()) || 0;
   return { ahead, behind };
@@ -188,7 +217,7 @@ export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: s
 export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   const g = git(repoDir(id));
-  await g.raw(['fetch', tokenUrl, remoteBranch]);
+  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
   await g.raw(['reset', '--hard', 'FETCH_HEAD']);
 }
 
@@ -196,7 +225,7 @@ export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: 
 export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<MergeResult> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   const g = git(repoDir(id));
-  await g.raw(['fetch', tokenUrl, remoteBranch]);
+  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
   // simple-git's raw() does NOT reject on a merge conflict, so check for unmerged
   // paths after the merge rather than relying on the command to throw.
   let mergeErr: unknown = null;

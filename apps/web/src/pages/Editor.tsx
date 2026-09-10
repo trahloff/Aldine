@@ -18,8 +18,9 @@ import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal, useFilesSignal } from '../editor/commentSignal';
-import GithubSync from '../components/GithubSync';
-import GithubPublish from '../components/GithubPublish';
+import RemoteSync from '../components/RemoteSync';
+import RemotePublish from '../components/RemotePublish';
+import { remoteDescriptor } from '../remotes';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
 import FormatToolbar from '../components/FormatToolbar';
@@ -166,12 +167,12 @@ export default function Editor() {
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
-      // this server until it's published to GitHub. Only the owner can publish,
-      // so only the owner is nudged.
+      // this server until it's published to a git host. Only the owner can
+      // publish, so only the owner is nudged.
       const owner = !authEnabled || !!p.isOwner;
-      if (owner && !p.github && !localStorage.getItem(`aldine.ghNudged.${id}`)) {
-        localStorage.setItem(`aldine.ghNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to GitHub to keep a synced copy.');
+      if (owner && !p.remote && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
+        localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
+        toast('This project lives only on this server — publish it to GitHub or GitLab to keep a synced copy.');
       }
     })();
   }, [id, branch]);
@@ -514,6 +515,17 @@ export default function Editor() {
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
+    if (project?.remote) {
+      const d = remoteDescriptor(project.remote.provider);
+      const click = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.click();
+      cmds.push(
+        { id: 'remote-push', group: 'Git', title: `Push to ${d.label}`, run: () => click(`${d.id}-push-btn`) },
+        { id: 'remote-pull', group: 'Git', title: `Pull from ${d.label}`, run: () => click(`${d.id}-pull-btn`) },
+        // The change-request entry lives in the branch menu, so open that first
+        // and let it render before clicking through.
+        { id: 'remote-change-request', group: 'Git', title: `Open ${d.changeRequest}`, run: () => { click(`${d.id}-branch`); setTimeout(() => click(`${d.id}-open-pr`), 0); } },
+      );
+    }
     if (activeFile) {
       cmds.push({
         id: 'rename-file', group: 'File', title: `Rename ${activeFile}…`, run: async () => {
@@ -552,7 +564,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, insertAtCursor, loadFiles, loadProject, toast]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast]);
 
   const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errCount = errors.filter((e) => e.type === 'error').length;
@@ -596,12 +608,12 @@ export default function Editor() {
         <div className="toolbar__spacer" />
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
-        {project.github ? (
-          canSync && <GithubSync projectId={id} fullName={project.github.fullName} onPulled={() => { loadFiles(); loadProject(); }} />
+        {project.remote ? (
+          canSync && <RemoteSync projectId={id} link={project.remote} onPulled={() => { loadFiles(); loadProject(); }} />
         ) : (
           isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="github-publish-open" title="Publish this project to a GitHub repo — backup + sync">
-              Publish to GitHub
+            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to GitHub or GitLab — backup + sync">
+              Publish
             </button>
           )
         )}
@@ -912,7 +924,7 @@ export default function Editor() {
       )}
 
       {publishOpen && project && (
-        <GithubPublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
+        <RemotePublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}

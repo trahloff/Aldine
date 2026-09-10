@@ -9,6 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test:github": "tsx test/github-sync.integration.mjs",
+    "test:gitlab": "tsx test/gitlab-sync.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
     "test:unit": "node test/run-unit.mjs"
   },
