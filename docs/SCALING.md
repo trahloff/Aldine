@@ -44,10 +44,12 @@ unaffected.
    the per-user compile quota).
    **Honest caveat:** several per-process caches survive this migration —
    `lastWritten` (collab write-skip hashes), `tombstoned` (delete guards),
-   `lastPushedHead` (remote push dedup — self-healing, benign), the
-   bib/label index caches, and `compileChain` (serializes latexmk per branch;
-   with two nodes sharing one volume that serialization is gone and aux-file
-   corruption becomes reachable). The datastore is multi-node-ready; these
+   `lastPushedHead` (remote push dedup — self-healing, benign), the autopush
+   debounce/backoff timers (two nodes each push after their own autosave;
+   git tolerates the duplicate push — benign), the bib/label index caches,
+   and `compileChain` (serializes latexmk per branch; with two nodes sharing
+   one volume that serialization is gone and aux-file corruption becomes
+   reachable). The datastore is multi-node-ready; these
    caches are not yet.
 2. **Single-process Hocuspocus** — each Yjs document's CRDT state lives in one
    process's memory. → **Partially built, not yet a supported topology.** What

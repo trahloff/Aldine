@@ -20,6 +20,7 @@ import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras'
 import { useCommentSignal, useFilesSignal } from '../editor/commentSignal';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
+import RemotePendingBanner from '../components/RemotePendingBanner';
 import { remoteDescriptor } from '../remotes';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
@@ -609,7 +610,16 @@ export default function Editor() {
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
         {project.remote ? (
-          canSync && <RemoteSync projectId={id} link={project.remote} onPulled={() => { loadFiles(); loadProject(); }} />
+          canSync && (
+            <RemoteSync
+              projectId={id}
+              link={project.remote}
+              autopush={!!project.autopush}
+              isOwner={isProjectOwner}
+              onPulled={() => { loadFiles(); loadProject(); }}
+              onAutopushChange={() => loadProject()}
+            />
+          )
         ) : (
           isProjectOwner && (
             <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to GitHub or GitLab — backup + sync">
@@ -636,6 +646,12 @@ export default function Editor() {
           </button>
         </div>
       </header>
+
+      {/* Only the owner can retry (the route is owner-only); once a link
+          exists the banner has nothing left to say. */}
+      {isProjectOwner && project.remotePending && !project.remote && (
+        <RemotePendingBanner key={id} projectId={id} namespace={project.remotePending.namespace} onProvisioned={loadProject} />
+      )}
 
       <div className="workspace">
         <aside className="pane sidebar">

@@ -66,6 +66,10 @@ export interface ProjectMeta {
   };
   /** Remote repository this project syncs with (imported from, or published to). */
   remote?: RemoteLink;
+  /** Server-side push after every autosave on main (default on for provisioned projects). */
+  autopush?: boolean;
+  /** Provisioning into a GitLab group was requested but has not happened yet (host down, or the project was deleted and may be restored). */
+  remotePending?: { provider: 'gitlab'; namespace: string };
   /**
    * @deprecated Pre-GitLab shape of `remote` for provider 'github'. Read through
    * `store.remoteLink()`, which prefers `remote`; `store.setRemoteLink()` moves
@@ -83,6 +87,8 @@ export interface RemoteLink {
   remoteBranch: string; // the remote branch that local `main` maps to
   cloneUrl: string;     // credential-free https URL
   connectedBy?: string; // user id whose token created the link (for reference)
+  /** Aldine created the repository (auto-provisioning); only then is it deleted with the project. */
+  createdByAldine?: boolean;
 }
 
 export interface SessionRow { userId: string; exp: number }

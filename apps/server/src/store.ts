@@ -120,12 +120,14 @@ export async function restoreProject(id: string): Promise<ProjectMeta> {
   return meta;
 }
 
-/** Hard-delete trashed projects older than `days`. Returns the ids purged. */
-export async function purgeExpiredTrash(days: number): Promise<string[]> {
+/** Hard-delete trashed projects older than `days`. Returns the ids purged.
+ *  `beforeDelete` runs per project first (remote clean-up); its failure is logged, not fatal. */
+export async function purgeExpiredTrash(days: number, beforeDelete?: (meta: ProjectMeta) => Promise<void>): Promise<string[]> {
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const purged: string[] = [];
   for (const m of await listProjects()) {
     if (m.deletedAt && Date.parse(m.deletedAt) < cutoff) {
+      if (beforeDelete) await beforeDelete(m).catch((err) => console.error(`[aldine] trash purge: remote clean-up of ${m.id} failed`, err?.message || err));
       await deleteProject(m.id);
       purged.push(m.id);
     }

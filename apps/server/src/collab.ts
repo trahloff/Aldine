@@ -63,10 +63,16 @@ function deleteSnapshot(name: string): void {
   try { fs.rmSync(snapPath(name), { force: true }); } catch { /* best effort */ }
 }
 
+/** Listeners told when an autosave commit actually landed (autopush hooks here). */
+const autoCommitListeners: Array<(projectId: string, branch: string) => void> = [];
+export function onAutoCommit(cb: (projectId: string, branch: string) => void): void { autoCommitListeners.push(cb); }
+
 /** Debounced auto-commit per project::branch after edits settle. */
 const scheduleAutoCommit = debouncePerKey(20_000, (key: string) => {
   const [projectId, branch] = key.split('::');
-  commitAll(projectId, branch, 'aldine: autosave').catch((err) => console.error('[collab] autocommit failed', err.message));
+  commitAll(projectId, branch, 'aldine: autosave')
+    .then((r) => { if (r.committed) for (const cb of autoCommitListeners) cb(projectId, branch); })
+    .catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file

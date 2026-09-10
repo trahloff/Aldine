@@ -11,6 +11,7 @@ import { getTheme, toggleTheme } from '../theme';
 import RemoteImport from '../components/RemoteImport';
 import { isRemoteProviderId, RemoteProviderId } from '../remotes';
 import Onboarding from '../components/Onboarding';
+import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
 import { pickTemplate, templateToPost } from '../util/templates';
@@ -39,6 +40,9 @@ export default function Home() {
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [template, setTemplate] = useState('article');
   const [templateQuery, setTemplateQuery] = useState('');
+  // Undefined until the namespace picker loads, i.e. while the server has no
+  // GitLab provisioning: nothing is sent and no GitLab toast is shown.
+  const [namespace, setNamespace] = useState<string | undefined>(undefined);
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
   const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
@@ -100,10 +104,14 @@ export default function Home() {
     const name = newName.trim() || 'Untitled Project';
     setSubmitting(true);
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate));
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate), namespace);
       if (p.venueKit && !p.venueKit.ok) {
         toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
       }
+      // Provisioning never blocks the project: a failure is a warning and the
+      // editor offers a retry.
+      if (p.remoteError) toast(p.remoteError, 'error');
+      else if (p.remote && namespace) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
@@ -117,8 +125,12 @@ export default function Home() {
     if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     toast('Importing…');
     try {
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file);
+      // One-click import: the group is the last one picked in the new-project
+      // dialog (none until the picker has been shown once).
+      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file, rememberedNamespace());
       toast(importSummary(p), 'ok');
+      if (p.remoteError) toast(p.remoteError, 'error');
+      else if (p.remote) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
       navigate(`/p/${p.id}`, { state: { import: p.import } });
     } catch (err: any) {
       // A 413 without the route's own text comes from a proxy or body limit
@@ -347,6 +359,7 @@ export default function Home() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             />
+            <NamespacePicker value={namespace} onChange={setNamespace} />
             {templates === null && <p className="tpl-empty">Loading templates…</p>}
             {templates !== null && templates.length > 0 && (
               <>

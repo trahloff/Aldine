@@ -8,6 +8,9 @@ import * as zotero from './zotero.js';
 import { compileProject, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
+import * as gitlab from './gitlab.js';
+import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
+import { scheduleAutopush, cancelAutopush } from './autopush.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, bumpContentVersion, contentVersion, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { parseBib, bibKeys, BibEntry } from './bib.js';
@@ -364,10 +367,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
   });
 
+  // Auto-provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP): a new project is
+  // also created on GitLab. Failure never fails the request: the project
+  // exists locally, `remotePending` marks it, and the error rides along.
+  const provisionNew = async (meta: store.ProjectMeta, req: any, namespace?: string): Promise<string | undefined> => {
+    if (!provisioningEnabled()) return undefined;
+    const r = await provisionProject(meta, { userId: reqUser(req)?.id || 'local', namespace });
+    return r.ok ? undefined : r.error;
+  };
+
   // No `files` and no `template` seeds the default article; `files: {}` or
   // `template: "blank"` creates a project with no files at all.
-  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
-    const { name = 'Untitled Project', files, template } = req.body || {};
+  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
+    const { name = 'Untitled Project', files, template, namespace } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
     let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {
@@ -393,10 +405,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       req.log.error({ err }, 'createProject failed');
       return reply.code(500).send({ error: 'Could not create the project' });
     }
+    const remoteError = await provisionNew(meta, req, namespace);
     const body = await publicMeta(meta, reqUser(req));
     // A venue kit that could not be downloaded still creates the project (from
     // a skeleton); the client says so rather than the request failing.
-    return resolved?.venueKit ? { ...body, venueKit: resolved.venueKit } : body;
+    return { ...body, ...(resolved?.venueKit ? { venueKit: resolved.venueKit } : {}), ...(remoteError ? { remoteError } : {}) };
   });
 
   // ---------- sharing (owner only) ----------
@@ -487,13 +500,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       for (const part of parseMultipart(body, boundary)) {
         if (part.filename !== undefined || part.name === 'zip') { parsed.zip = part.data; parsed.zipName = part.filename; }
         else if (part.name === 'name') parsed.name = part.data.toString('utf8');
+        else if (part.name === 'namespace') parsed.namespace = part.data.toString('utf8');
       }
       done(null, parsed);
     } catch (err: any) {
       done(Object.assign(err, { statusCode: 400 }), undefined);
     }
   });
-  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string };
+  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string; namespace?: string };
   app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
     const body = req.body || {};
     let buf: Buffer;
@@ -558,7 +572,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (root) meta.rootFile = root;
       meta.engine = detected.engine;
       await store.writeMeta(meta);
-      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded } };
+      const remoteError = await provisionNew(meta, req, body.namespace);
+      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded }, ...(remoteError ? { remoteError } : {}) };
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
       if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
@@ -615,6 +630,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{ Params: { id: string }; Querystring: { permanent?: string } }>('/api/projects/:id', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
+    cancelAutopush(req.params.id);
+    // A repository Aldine created goes with the project; an imported one is
+    // never touched. A failed remote deletion is reported, never blocking.
+    const remote: DeprovisionResult = await deprovisionProject(meta).catch((err) => ({ deleted: false, error: String(err?.message || err) }));
     if (req.query.permanent === '1') await store.deleteProject(req.params.id);
     else await store.softDeleteProject(req.params.id);
     lastPushedHead.delete(req.params.id); // don't leak the push-dedup entry (or reuse a stale hash)
@@ -623,15 +642,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // (here and on peer nodes) so nobody keeps editing a trashed project.
     closeProjectConnections(req.params.id);
     publishProjectEvent({ type: 'access-changed', projectId: req.params.id });
-    return { ok: true };
+    return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
   app.post<{ Params: { id: string } }>('/api/projects/:id/restore', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can restore this project' });
     if (!meta.deletedAt) return reply.code(400).send({ error: 'Project is not in the trash' });
-    await store.restoreProject(req.params.id);
-    return { ok: true };
+    const restored = await store.restoreProject(req.params.id);
+    // A provisioned project that was deleted on GitLab with the trash comes back there too.
+    const remoteError = restored.remotePending && provisioningEnabled()
+      ? await provisionNew(restored, req, restored.remotePending.namespace)
+      : undefined;
+    return { ok: true, ...(remoteError ? { remoteError } : {}) };
   });
 
   // ---------- files ----------
@@ -943,7 +966,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     '/api/projects/:id/commit', async (req) => {
       const { branch = 'main', message = 'aldine: manual commit', author } = req.body || {};
       flushBranchDocs(req.params.id, branch);
-      return gitops.commitAll(req.params.id, branch, message, author);
+      const r = await gitops.commitAll(req.params.id, branch, message, author);
+      if (r.committed && branch === 'main') scheduleAutopush(req.params.id);
+      return r;
     });
 
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/log', async (req) => {
@@ -1332,7 +1357,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!link) { reply.code(400).send({ error: 'This project is not linked to a remote repository' }); return null; }
     const provider = remotes.getProvider(link.provider);
     if (!provider) { reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` }); return null; }
-    const conn = await remotes.getConnection(remoteUserId(req), link.provider);
+    const conn = await remotes.resolveConnection(link, remoteUserId(req), { allowService: true });
     if (!conn) { reply.code(400).send({ error: `Connect ${provider.label} to sync` }); return null; }
     return { meta, link, provider, conn, url: provider.tokenUrl(link.cloneUrl, conn.token), remoteBranch: link.remoteBranch };
   };
@@ -1352,6 +1377,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const meta = await store.readMeta(req.params.id);
     if (auth.AUTH_ENABLED && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can publish this project' });
     if (store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is already linked to a remote repository' });
+    if (!req.body?.provider && !req.url.includes('/github/') && meta.remotePending) {
+      // Retry of a provisioning that failed at create time: same namespace, service token.
+      const r = await provisionProject(meta, { userId: remoteUserId(req), namespace: meta.remotePending.namespace });
+      if (!r.ok) return reply.code(502).send({ error: r.error, remotePending: meta.remotePending });
+      return { ok: true, ...linkBody(r.link) };
+    }
     const providerId = req.body?.provider ?? (req.url.includes('/github/') ? 'github' : undefined);
     const p = remotes.getProvider(providerId);
     if (!p) return reply.code(400).send({ error: 'Choose a remote provider' });
@@ -1497,6 +1528,43 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` });
     }
   }, 'pr');
+
+  // Server-side autopush is the owner's call: it decides what leaves the server and when.
+  projectRoute('post', 'autopush', async (req, reply) => {
+    if (!(await requireOwner(req, reply, 'change autopush'))) return;
+    const meta = await store.readMeta(req.params.id);
+    if (!store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is not linked to a remote repository' });
+    if (typeof req.body?.enabled !== 'boolean') return reply.code(400).send({ error: 'enabled must be true or false' });
+    meta.autopush = req.body.enabled;
+    await store.writeMeta(meta);
+    if (meta.autopush) scheduleAutopush(req.params.id); else cancelAutopush(req.params.id);
+    return { ok: true, autopush: meta.autopush };
+  });
+
+  // ---------- GitLab group provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP) ----------
+  // Namespaces come from the service account and are limited to the root
+  // group's subtree; nothing here lists what a user's own token could see.
+  app.get('/api/remotes/gitlab/namespaces', async (req, reply) => {
+    if (!provisioningEnabled()) return reply.code(404).send({ error: 'GitLab provisioning is not configured' });
+    if (requireSignIn(req, reply)) return;
+    try {
+      const groups = await gitlab.listDescendantGroups(remotes.serviceConnection()!, rootGroup());
+      return { root: rootGroup(), namespaces: groups.map((g) => ({ fullPath: g.fullPath, name: g.name })) };
+    } catch (err: any) { return reply.code(502).send({ error: err.message }); }
+  });
+
+  app.post<{ Body: { parentPath?: string; name?: string } }>('/api/remotes/gitlab/subgroups', async (req, reply) => {
+    if (!provisioningEnabled()) return reply.code(404).send({ error: 'GitLab provisioning is not configured' });
+    if (requireSignIn(req, reply)) return;
+    const parent = String(req.body?.parentPath || rootGroup()).trim().replace(/^\/+|\/+$/g, '');
+    const name = String(req.body?.name || '').trim();
+    if (!name) return reply.code(400).send({ error: 'Group name required' });
+    if (!withinRoot(parent, rootGroup())) return reply.code(400).send({ error: `"${parent}" is outside the configured group "${rootGroup()}"` });
+    try {
+      const g = await gitlab.createSubgroup(remotes.serviceConnection()!, parent, name);
+      return { fullPath: g.fullPath, name: g.name };
+    } catch (err: any) { return reply.code(400).send({ error: `Could not create the group: ${err.message}` }); }
+  });
 
   // ---------- AI error fix ----------
   app.get('/api/ai/status', async () => ({ configured: aiConfigured(), model: aiModel() }));

@@ -1,7 +1,9 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { buildApp, isCollabUpgrade } from './app.js';
-import { hocuspocus, flushAllDocs, closeProjectConnections } from './collab.js';
+import { hocuspocus, flushAllDocs, closeProjectConnections, onAutoCommit } from './collab.js';
+import { scheduleAutopush } from './autopush.js';
+import { checkProvisioning, deprovisionProject } from './provision.js';
 import { initProjectEvents } from './events.js';
 import { commitAll } from './gitops.js';
 import * as store from './store.js';
@@ -41,7 +43,12 @@ console.log(`[aldine] server on :${config.port}${config.basePath} — data=${con
 // Trash purge: hard-delete soft-deleted projects after ALDINE_TRASH_DAYS
 // (default 30). Swept on boot and daily; errors are logged, never fatal.
 const TRASH_DAYS = Number(process.env.ALDINE_TRASH_DAYS || 30);
-const sweepTrash = () => store.purgeExpiredTrash(TRASH_DAYS)
+// Every autosave that landed on main is pushed to the linked remote (when the
+// project has autopush on); provisioned GitLab projects are removed with the
+// purge in case the trash-time deletion failed.
+onAutoCommit((projectId, branch) => { if (branch === 'main') scheduleAutopush(projectId); });
+void checkProvisioning();
+const sweepTrash = () => store.purgeExpiredTrash(TRASH_DAYS, async (meta) => { await deprovisionProject(meta); })
   .then((ids) => { if (ids.length) console.log(`[aldine] trash purge: removed ${ids.length} project(s) older than ${TRASH_DAYS}d`); })
   .catch((err) => console.error('[aldine] trash purge failed', err));
 sweepTrash();

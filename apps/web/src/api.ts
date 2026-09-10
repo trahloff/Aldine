@@ -21,6 +21,11 @@ export interface ProjectSummary {
   share?: { mode: 'private' | 'link'; collaborators: string[] } | null;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
   remote?: RemoteLink | null;
+  /** Server-side push after every autosave commit on main (owner-only toggle). */
+  autopush?: boolean;
+  /** Set when GitLab provisioning was configured but failed at create time:
+   *  the project exists locally only until a retry succeeds. */
+  remotePending?: { provider: 'gitlab'; namespace: string } | null;
 }
 
 export type RemoteProviderId = 'github' | 'gitlab';
@@ -30,7 +35,11 @@ export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolea
 export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
 /** `baseUrl` is set for a self-hosted instance connected with a token. */
 export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean }
-export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; connectedBy?: string }
+/** `createdByAldine` marks a repository Aldine provisioned (deleted with the
+ *  project); an imported one is never deleted by the server. */
+export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; connectedBy?: string; createdByAldine?: boolean }
+/** A group under the configured GitLab root; `fullPath` is what create/import send as `namespace`. */
+export interface GitlabNamespace { fullPath: string; name: string }
 /** Server-wide counts for the admin page. Metadata only: no project content. */
 export interface AdminStats {
   users: { total: number; active7d: number; active30d: number; onlineNow: number };
@@ -137,27 +146,34 @@ export interface VenueKitStatus {
   reason?: string;
 }
 
-/** POST /api/projects: a fetched-venue project also reports its kit. */
+/** POST /api/projects: a fetched-venue project also reports its kit.
+ *  `remoteError` is set when GitLab provisioning was on but failed; the
+ *  project was still created (see `remotePending`). */
 export interface CreatedProject extends ProjectSummary {
   venueKit?: VenueKitStatus;
+  remoteError?: string;
 }
 
 /** What /api/projects/import decided while placing the archive. */
 export interface ImportedProject extends ProjectSummary {
   import: { engine: string; engineReason: string | null; transcoded: string[] };
+  remoteError?: string;
 }
 export interface CompilerInfo { ok: boolean; texlive: { release: string; scheme: string } }
 
 export const api = {
   listProjects: () => req<ProjectSummary[]>('/api/projects'),
-  createProject: (name: string, files?: Record<string, string>, template?: string) =>
-    req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template }) }),
+  /** `namespace` is the GitLab group to provision into; only meaningful when
+   *  the server has provisioning configured (it ignores it otherwise). */
+  createProject: (name: string, files?: Record<string, string>, template?: string, namespace?: string) =>
+    req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template, namespace }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */
-  importZip: (name: string, zip: File) => {
+  importZip: (name: string, zip: File, namespace?: string) => {
     const form = new FormData();
     form.append('name', name);
+    if (namespace) form.append('namespace', namespace);
     form.append('zip', zip, zip.name);
     return req<ImportedProject>('/api/projects/import', { method: 'POST', body: form });
   },
@@ -238,6 +254,16 @@ export const api = {
   remoteSwitchBranch: (id: string, branch: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
   remoteCreateBranch: (id: string, name: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
   remoteChangeRequest: (id: string, title?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/remote/change-request`, { method: 'POST', body: JSON.stringify({ title }) }),
+  remoteAutopush: (id: string, enabled: boolean) => req<{ ok: boolean; autopush: boolean }>(`/api/projects/${id}/remote/autopush`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  /** Re-runs the provisioning that failed at create time (no provider in the
+   *  body: the server takes the namespace from `remotePending`). */
+  remoteRetryProvision: (id: string) => req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({}) }),
+
+  // GitLab group provisioning. 404 means the server has none configured;
+  // callers hide the picker rather than report it.
+  gitlabNamespaces: () => req<{ root: string; namespaces: GitlabNamespace[] }>('/api/remotes/gitlab/namespaces'),
+  gitlabCreateSubgroup: (parentPath: string | undefined, name: string) =>
+    req<GitlabNamespace>('/api/remotes/gitlab/subgroups', { method: 'POST', body: JSON.stringify({ parentPath, name }) }),
   merge: (id: string, from: string, into: string, author?: string) =>
     req<{ ok: boolean; conflicts?: string[]; message?: string }>(`/api/projects/${id}/merge`, { method: 'POST', body: JSON.stringify({ from, into, author }) }),
 

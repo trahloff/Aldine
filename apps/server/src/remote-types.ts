@@ -42,7 +42,8 @@ export interface RemoteProvider {
   listRepos(conn: RemoteConnection): Promise<RemoteRepo[]>;
   getRepo(conn: RemoteConnection, fullName: string): Promise<RemoteRepo>;
   listBranches(conn: RemoteConnection, fullName: string): Promise<string[]>;
-  createRepo(conn: RemoteConnection, name: string, opts: { private: boolean; namespace?: string }): Promise<RemoteRepo>;
+  /** `visibility` refines `private` for hosts with more than two levels (GitLab `internal`). */
+  createRepo(conn: RemoteConnection, name: string, opts: { private: boolean; namespace?: string; visibility?: 'private' | 'internal' | 'public' }): Promise<RemoteRepo>;
   createChangeRequest(conn: RemoteConnection, fullName: string, opts: { title: string; head: string; base: string; body?: string }): Promise<{ url: string; number: number }>;
   tokenUrl(cloneUrl: string, token: string): string;
 }
