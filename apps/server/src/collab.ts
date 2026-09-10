@@ -143,8 +143,21 @@ const authHook = AUTH_ENABLED ? {
     let meta;
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
     if (!canAccess(meta, user)) throw new Error('Access denied');
+    // Becomes connection.context: the only per-socket identity we keep, so
+    // onlineUserIds can count people rather than sockets.
+    return { userId: user.id };
   },
 } : {};
+
+/** Distinct signed-in users with an open collab socket on this node. Empty
+ *  with auth off (sockets carry no identity then). */
+export function onlineUserIds(): Set<string> {
+  const ids = new Set<string>();
+  hocuspocus.documents.forEach((doc: { getConnections?: () => { context?: { userId?: string } }[] }) => {
+    for (const c of doc.getConnections?.() ?? []) if (c.context?.userId) ids.add(c.context.userId);
+  });
+  return ids;
+}
 
 // Multi-node collaboration (scaling wall #2): with REDIS_URL, the Redis extension
 // syncs awareness across nodes and hands a document off cleanly on failover.

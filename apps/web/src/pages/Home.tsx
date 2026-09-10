@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
@@ -50,7 +50,7 @@ export default function Home() {
   const dismissOnboarding = () => { localStorage.setItem('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
   const toast = useToast();
-  const { authEnabled, user, setUser } = useAuth();
+  const { authEnabled, user, admin, setUser } = useAuth();
 
   const load = () => {
     api.listTrash().then(setTrash).catch(() => setTrash([]));
@@ -192,6 +192,9 @@ export default function Home() {
             >
               {themeChoice === 'dark' ? '☀︎' : '☾'}
             </button>
+            {admin && authEnabled && (
+              <Link className="btn" to="/admin" data-testid="admin-link" title="Server-wide accounts and usage">Server admin</Link>
+            )}
             {authEnabled && user && (
               <span className="user-chip">
                 <button className="user-chip__name" data-testid="user-name" onClick={() => setShowAccount(true)} title="Account settings">{user.name}</button>

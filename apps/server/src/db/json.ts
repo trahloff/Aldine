@@ -99,6 +99,13 @@ export class JsonStore implements DataStore {
     this.write(this.usersPath, m);
   }
   async updateUser(u: User) { const m = this.users(); m[u.id] = this.clone(u); this.write(this.usersPath, m); }
+  async listUsers() { return Object.values(this.users()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((u) => this.clone(u)); }
+  async touchUser(id: string, lastSeenAt: string) {
+    const m = this.users();
+    if (!m[id]) return;
+    m[id].lastSeenAt = lastSeenAt;
+    this.write(this.usersPath, m);
+  }
   async getUser(id: string) { return this.clone(this.users()[id] || null); }
   async findUserByEmail(email: string) { return this.clone(Object.values(this.users()).find((u) => u.email === email) || null); }
   async findUserBySubject(subject: string) { return this.clone(Object.values(this.users()).find((u) => u.subject === subject) || null); }
@@ -186,5 +193,10 @@ export class JsonStore implements DataStore {
     u[userId] = this.userMonths(u[userId]);
     u[userId][month] = (u[userId][month] || 0) + seconds;
     this.write(this.usagePath, u);
+  }
+  async totalUsageSeconds(month: string) {
+    let total = 0;
+    for (const rec of Object.values(this.usage())) total += this.userMonths(rec)[month] ?? 0;
+    return total;
   }
 }

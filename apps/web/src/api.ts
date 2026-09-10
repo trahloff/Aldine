@@ -31,6 +31,25 @@ export interface RemoteRepo { fullName: string; name: string; owner: string; pri
 /** `baseUrl` is set for a self-hosted instance connected with a token. */
 export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean }
 export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; connectedBy?: string }
+/** Server-wide counts for the admin page. Metadata only: no project content. */
+export interface AdminStats {
+  users: { total: number; active7d: number; active30d: number; onlineNow: number };
+  projects: { total: number; trashed: number };
+  collab: { documents: number; connections: number };
+  compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
+  admins: string[];
+}
+export interface AdminUserRow {
+  id: string;
+  email: string | null;
+  name: string;
+  provider?: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  admin: boolean;
+  projects: number;
+  compileSecondsThisMonth: number;
+}
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
@@ -246,7 +265,9 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[] }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean }>('/api/auth/me'),
+  adminStats: () => req<AdminStats>('/api/admin/stats'),
+  adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   resetRequest: (email: string) =>

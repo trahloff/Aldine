@@ -84,19 +84,20 @@ export class PgStore implements DataStore {
       ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subject text;
       CREATE UNIQUE INDEX IF NOT EXISTS users_subject_idx ON users(subject);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at text;
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
 
   // ---- users ----
   private rowToUser(r: any): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined };
   }
   async createUser(u: User) {
     try {
       await this.pool.query(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null],
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null],
       );
     } catch (err: any) {
       // Same messages as the JSON backend, so register() surfaces one
@@ -110,9 +111,16 @@ export class PgStore implements DataStore {
   }
   async updateUser(u: User) {
     await this.pool.query(
-      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8 WHERE id=$1`,
-      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null],
+      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8,last_seen_at=$9 WHERE id=$1`,
+      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null],
     );
+  }
+  async listUsers() {
+    const { rows } = await this.pool.query(`SELECT * FROM users ORDER BY created_at, id`);
+    return rows.map((r: any) => this.rowToUser(r));
+  }
+  async touchUser(id: string, lastSeenAt: string) {
+    await this.pool.query(`UPDATE users SET last_seen_at=$2 WHERE id=$1`, [id, lastSeenAt]);
   }
   async getUser(id: string) {
     const { rows } = await this.pool.query(`SELECT * FROM users WHERE id=$1`, [id]);
@@ -201,6 +209,10 @@ export class PgStore implements DataStore {
        ON CONFLICT(user_id,month) DO UPDATE SET seconds = usage.seconds + EXCLUDED.seconds`,
       [userId, month, seconds],
     );
+  }
+  async totalUsageSeconds(month: string) {
+    const { rows } = await this.pool.query(`SELECT COALESCE(SUM(seconds),0) AS total FROM usage WHERE month=$1`, [month]);
+    return Number(rows[0]?.total ?? 0);
   }
 
   // ---- connections ----

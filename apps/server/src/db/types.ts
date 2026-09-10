@@ -17,6 +17,10 @@ export interface User {
   salt: string;
   hash: string;
   createdAt: string;
+  /** Last authenticated request, coarse (touched at most every few minutes).
+   *  The basis for "active users"; absent for accounts that never signed in
+   *  since the field was introduced. */
+  lastSeenAt?: string;
   provider?: string;
   /** Stable provider-scoped identity, `orcid:0000-0002-1825-0097`. Unique. */
   subject?: string;
@@ -99,6 +103,11 @@ export interface DataStore {
   findUserByEmail(emailLower: string): Promise<User | null>;
   findUserBySubject(subject: string): Promise<User | null>;
   updateUser(u: User): Promise<void>;
+  /** Every account, oldest first. Instance administration only. */
+  listUsers(): Promise<User[]>;
+  /** Record activity without a read-modify-write of the whole row, so a
+   *  heartbeat racing a password change can never resurrect the old hash. */
+  touchUser(id: string, lastSeenAt: string): Promise<void>;
 
   // sessions (revocable)
   createSession(sid: string, userId: string, exp: number): Promise<void>;
@@ -124,6 +133,8 @@ export interface DataStore {
   // compile-time usage metering: seconds consumed per (user, month YYYY-MM)
   getUsageSeconds(userId: string, month: string): Promise<number>;
   addUsageSeconds(userId: string, month: string, seconds: number): Promise<void>;
+  /** Instance-wide compile seconds for a month, across every user. */
+  totalUsageSeconds(month: string): Promise<number>;
 
   // per-user external connections (e.g. a GitHub access token). Secrets — kept
   // in the secrets store, never in the compiler-visible projects dir.
