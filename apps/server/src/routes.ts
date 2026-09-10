@@ -1492,7 +1492,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         head: l.remoteBranch,
         base: repo.defaultBranch,
       });
-    } catch (err: any) { return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` }); }
+    } catch (err: any) {
+      if (err instanceof remotes.RemoteApiError) return upstreamError(reply, err, l.provider.label);
+      return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` });
+    }
   }, 'pr');
 
   // ---------- AI error fix ----------

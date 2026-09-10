@@ -156,3 +156,24 @@ check(remotes.isProviderId('bitbucket') === false, 'isProviderId rejects unknown
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('remotes: all assertions passed');
+
+// A git failure must never carry the token out of gitops: the message git
+// prints includes the URL it was given.
+{
+  const gitops = await import('../src/gitops.ts');
+  eq(gitops.stripCreds('fatal: unable to access \'https://oauth2:glpat-abc@gitlab.example.org/g/p.git/\': could not resolve host; also https://x-access-token:tok@github.com/o/r'),
+     'fatal: unable to access \'https://gitlab.example.org/g/p.git/\': could not resolve host; also https://github.com/o/r',
+     'stripCreds scrubs every credential in a message');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-scrub-'));
+  process.env.DATA_DIR = tmp;
+  const { newId } = await import('../src/util.ts');
+  const { execSync } = await import('node:child_process');
+  const id = newId();
+  const dir = path.join(tmp, 'projects', id);
+  fs.mkdirSync(dir, { recursive: true });
+  execSync(`git init -q -b main "${dir}" && git -C "${dir}" -c user.email=a@b -c user.name=t commit -q --allow-empty -m init`);
+  let message = '';
+  try { await gitops.pushToRemote(id, 'main', 'https://oauth2:glpat-secret@127.0.0.1:9/nowhere.git'); } catch (err) { message = err.message; }
+  check(message.length > 0 && !message.includes('glpat-secret'), 'push failure message carries no token: ' + message);
+}
