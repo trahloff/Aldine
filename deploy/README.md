@@ -49,6 +49,13 @@ ORCID_CLIENT_SECRET=...
 # (users can also connect with a Personal Access Token, no app needed).
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
+# GitLab sync — an OAuth application on your instance with scope `api`.
+# Callback: <ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback
+# (Personal Access Token connect needs none of these, on any https instance).
+GITLAB_URL=https://gitlab.com
+GITLAB_CLIENT_ID=...
+GITLAB_CLIENT_SECRET=...
+# REMOTE_PROVIDERS=github,gitlab   # comma list; leave one out to hide it
 
 # AI error-fix (bring your own key; unset = feature off). If several are set,
 # precedence is OPENROUTER > OPENAI > ANTHROPIC. Leave ALDINE_AI_MODEL unset to
@@ -250,7 +257,11 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
-| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login |
+| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback` |
+| `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
+| `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |
+| `REMOTE_PROVIDERS` | Comma list of remote providers offered in the UI (default `github,gitlab`); leave one out to hide it |
+| `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |
 | `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |

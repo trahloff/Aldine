@@ -7,6 +7,18 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- GitLab as a second remote provider, next to GitHub. Import a project from
+  gitlab.com or a self-hosted instance (nested group paths included),
+  publish a local project to GitLab, optionally into a group, push and pull,
+  switch and create branches, and open a merge request from the editor.
+  Connect with a personal access token, which needs no configuration and
+  accepts any https instance, sub-path installs included, or with OAuth once
+  `GITLAB_CLIENT_ID` and `GITLAB_CLIENT_SECRET` name an application with
+  scope `api` on `GITLAB_URL` (default `https://gitlab.com`; callback
+  `/api/remotes/gitlab/oauth/callback`). `REMOTE_PROVIDERS` is a comma list
+  that hides a provider from the UI (default `github,gitlab`);
+  `GITLAB_API_BASE` exists for the tests only. Home, onboarding and the
+  publish dialog list every enabled provider. (#51)
 - Templates from your own git repositories. `TEMPLATE_REPOS` (or a file
   named by `TEMPLATE_REPOS_FILE`) lists repositories laid out like this
   repo's `templates/` folder, one directory with a `template.json` per
@@ -26,6 +38,17 @@ All notable changes to Aldine are documented here. The format follows
   (#50)
 
 ### Changed
+- The remote-sync routes are provider-neutral: account routes live under
+  `/api/remotes/:provider/*` (`status`, `connect`, `disconnect`, `oauth`,
+  `repos`, `import`) and project routes under `/api/projects/:id/remote/*`
+  (`link`, `status`, `push`, `pull`, `branches`, `switch-branch`,
+  `create-branch`, `change-request`, `reset-to-remote`), where the provider
+  comes from the stored link. The old `/api/github/*` and
+  `/api/projects/:id/github/*` paths keep working as aliases and are
+  deprecated, not removed; the GitHub OAuth callback URL operators registered
+  is unchanged. Project summaries carry the link as `remote` and, for GitHub
+  links, still as `github` for one release so an older web bundle keeps
+  working.
 - `GET /api/templates` reports the manifest's upstream `source { url,
   version }` as `origin`; `source` now says where a template is listed from
   (`{ kind: "builtin" | "repo" | "venue" | "kit", label? }`), which is what the
@@ -33,7 +56,6 @@ All notable changes to Aldine are documented here. The format follows
   `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
   shipped folders and venue classes included, not only to repositories.
   `template.json` files are unchanged. (#50)
-
 
 ## [0.8.0] — 2026-09-10
 

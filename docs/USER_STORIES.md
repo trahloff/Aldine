@@ -136,6 +136,22 @@ flag; everything else works in the default single-tenant deploy.
 - **GH-6** — Opt-in auto-sync pushes on a schedule; manual push always pushes.
 - **GH-7** — Auth tokens never land in the compiler-visible project dir.
 
+## GitLab sync (GL)
+
+*Automated at the API level in `apps/server/test/gitlab-sync.integration.mjs`
+and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`.*
+
+- **GL-1** — I connect a GitLab account with a personal access token (any
+  https instance, sub-path installs included) or with OAuth.
+- **GL-2** — I import a project from a nested group path
+  (`group/subgroup/project`).
+- **GL-3** — I publish a local project to GitLab, optionally into a group.
+- **GL-4** — I push, pull and switch branches exactly as with GitHub.
+- **GL-5** — I open a merge request from the editor.
+- **GL-6** — As an operator I hide a provider with `REMOTE_PROVIDERS`;
+  existing GitHub links and the registered OAuth callback URL keep working
+  after the upgrade.
+
 ## References & Zotero (REF)
 
 *Automated in `05-zotero.spec.ts` against `e2e/tests/mock-zotero.mjs`.*

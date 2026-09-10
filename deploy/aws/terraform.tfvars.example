@@ -16,12 +16,15 @@ use_fargate_spot = true
 
 # Secrets → SSM SecureString → injected into the server as these env vars.
 # Leave a line out (or set "") to skip provisioning it. Redirect/callback URLs in
-# the Google/GitHub OAuth apps must point at https://latex.example.com/...
+# the Google/GitHub/GitLab OAuth apps must point at https://latex.example.com/...
 secret_env = {
   GOOGLE_OAUTH_CLIENT_ID     = "REPLACE_ME.apps.googleusercontent.com"
   GOOGLE_OAUTH_CLIENT_SECRET = "REPLACE_ME"
   GITHUB_CLIENT_ID           = "REPLACE_ME" # GitHub *sync* app (repo scope)
   GITHUB_CLIENT_SECRET       = "REPLACE_ME"
+  # GITLAB_CLIENT_ID         = "..."         # optional: GitLab *sync* app (scope api); token connect needs no app
+  # GITLAB_CLIENT_SECRET     = "..."
+  # GITLAB_URL               = "https://gitlab.example.com" # optional: self-hosted instance for OAuth (default gitlab.com)
   # OPENROUTER_API_KEY       = "sk-or-..."   # optional: AI error-fix
   # GITHUB_LOGIN_CLIENT_ID   = "..."         # optional: "Sign in with GitHub"
   # GITHUB_LOGIN_CLIENT_SECRET = "..."

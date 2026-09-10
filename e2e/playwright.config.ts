@@ -5,7 +5,8 @@ import { defineConfig } from '@playwright/test';
  *  - compiler service on :4020 (docker container, or locally:
  *    `DATA_DIR=$(pwd)/.data-e2e PORT=4020 node apps/compiler/server.js` —
  *    the compiler must share the app server's DATA_DIR or every compile 404s)
- *  - it starts the app server (:3100), a mock Zotero API (:4919) and Vite preview itself
+ *  - it starts the app server (:3100), a mock Zotero API (:4919), a mock GitLab
+ *    (:4921, real bare repos under .data-e2e-gitlab) and Vite preview itself
  * Set ALDINE_URL to test an already-running stack (e.g. docker compose on :8080);
  * webServers are skipped via reuseExistingServer when ports are taken.
  */
@@ -13,6 +14,7 @@ import { defineConfig } from '@playwright/test';
 // (reuseExistingServer would otherwise make one run test the other's server).
 const PORT = Number(process.env.E2E_PORT || 3100);
 const MOCK = Number(process.env.E2E_MOCK_PORT || 4919);
+const GITLAB = Number(process.env.E2E_GITLAB_PORT || 4921);
 const BASE = process.env.ALDINE_URL || `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -36,6 +38,14 @@ export default defineConfig({
       timeout: 10_000,
     },
     {
+      command: `E2E_GITLAB_PORT=${GITLAB} node tests/mock-gitlab.mjs`,
+      port: GITLAB,
+      reuseExistingServer: true,
+      timeout: 10_000,
+    },
+    {
+      // META_DIR gets its own e2e dir: connections (remote tokens) written by
+      // the remotes spec must not land in the developer's real .secrets.
       // OPENROUTER_API_KEY/OPENAI_API_KEY are emptied so an ambient key can't
       // override the mock Anthropic endpoint the AI-fix test relies on.
       // VENUES_FILE points at the registry the mock server writes (it names the
@@ -44,7 +54,7 @@ export default defineConfig({
       // and what lets TEMPLATE_REPOS name the file:// bare repository that
       // tests/32-template-repos.spec.ts builds under .data-e2e once the
       // server is up (the boot sync fails until the spec's first refresh).
-      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e ALDINE_TEST_HOOKS=1 VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"file://'"$(pwd)"'/.data-e2e/template-repo.git"}]' TEMPLATE_REPOS_REFRESH_MS=60000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e ALDINE_TEST_HOOKS=1 GITLAB_API_BASE=http://localhost:${GITLAB} VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"file://'"$(pwd)"'/.data-e2e/template-repo.git"}]' TEMPLATE_REPOS_REFRESH_MS=60000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,

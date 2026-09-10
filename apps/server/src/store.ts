@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta } from './db/types.js';
+import type { ProjectMeta, RemoteLink } from './db/types.js';
 
-export type { ProjectMeta } from './db/types.js';
+export type { ProjectMeta, RemoteLink } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -40,6 +40,19 @@ export function writeMeta(meta: ProjectMeta): Promise<void> {
 
 export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
+}
+
+/** The project's remote link, reading the pre-GitLab `github` field as provider 'github'. */
+export function remoteLink(meta: ProjectMeta): RemoteLink | null {
+  if (meta.remote) return meta.remote;
+  if (meta.github) return { provider: 'github', ...meta.github };
+  return null;
+}
+
+/** Set (or clear, with null) the remote link. Drops the legacy `github` field: the next write migrates. */
+export function setRemoteLink(meta: ProjectMeta, link: RemoteLink | null): void {
+  if (link) meta.remote = link; else delete meta.remote;
+  delete meta.github;
 }
 
 /** `files` omitted seeds the default article; `{}` is a blank project (no

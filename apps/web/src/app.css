@@ -266,7 +266,7 @@
 .tree__chevron--open { transform: rotate(90deg); }
 .tree__root-tag { margin-left: 6px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); border: 1px solid var(--hairline); border-radius: 999px; padding: 0 5px; }
 
-/* GitHub sync toolbar control */
+/* Remote (GitHub/GitLab) sync toolbar control */
 .gh-sync { display: flex; align-items: center; gap: 6px; }
 .gh-sync__counts { display: flex; gap: 6px; font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .gh-branch { position: relative; }
@@ -288,7 +288,7 @@
 .btn--danger { background: var(--error); color: #fff; border-color: transparent; }
 .btn--danger:hover { filter: brightness(1.08); }
 
-/* GitHub import repo list */
+/* Remote import repo list */
 .gh-repos { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .gh-repo { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); padding: 9px 10px; border-radius: var(--radius-s); cursor: pointer; }
 .gh-repo:hover:not(:disabled) { background: var(--bg-hover); }

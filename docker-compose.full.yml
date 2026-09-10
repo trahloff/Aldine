@@ -37,6 +37,12 @@ services:
       # GitHub sync (repo import/push/pull) — OAuth app with repo scope.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # GitLab sync — OAuth application with scope `api` on GITLAB_URL; token
+      # connect works without the app. REMOTE_PROVIDERS hides a provider.
+      GITLAB_URL: ${GITLAB_URL:-https://gitlab.com}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      REMOTE_PROVIDERS: ${REMOTE_PROVIDERS:-}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
       # Optional outbound email for password resets: SMTP (any provider) or AWS

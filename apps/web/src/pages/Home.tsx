@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
+import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -8,7 +8,8 @@ import ShareModal from '../components/ShareModal';
 import { IconDoc, IconLink, IconX } from '../components/Icons';
 import AccountSettings from '../components/AccountSettings';
 import { getTheme, toggleTheme } from '../theme';
-import GithubImport from '../components/GithubImport';
+import RemoteImport from '../components/RemoteImport';
+import { isRemoteProviderId, RemoteProviderId } from '../remotes';
 import Onboarding from '../components/Onboarding';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
@@ -92,7 +93,8 @@ export default function Home() {
   const [templateQuery, setTemplateQuery] = useState('');
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
-  const [showGithub, setShowGithub] = useState(false);
+  const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
+  const [importFrom, setImportFrom] = useState<RemoteProviderId | null>(null);
   const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -109,10 +111,14 @@ export default function Home() {
       .catch(() => { setLoadFailed(true); setProjects((cur) => cur ?? []); });
   };
   useEffect(() => { load(); }, []);
-  // returning from GitHub OAuth connect → reopen the import flow (now connected)
+  useEffect(() => { api.remotes().then(setRemotes).catch(() => setRemotes([])); }, []);
+  // returning from a host's OAuth connect → reopen the import flow (now
+  // connected). `?github=connected` is the pre-GitLab callback and stays.
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('github') === 'connected') {
-      setShowGithub(true);
+    const q = new URLSearchParams(location.search);
+    const back = q.get('remote') ?? (q.get('github') === 'connected' ? 'github' : null);
+    if (back) {
+      if (isRemoteProviderId(back)) setImportFrom(back);
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
@@ -276,9 +282,11 @@ export default function Home() {
             <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import ZIP</button>
             <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
               onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-            <button className="btn" onClick={() => setShowGithub(true)} data-testid="new-from-github">
-              From GitHub
-            </button>
+            {remotes.map((r) => (
+              <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)} data-testid={`new-from-${r.id}`}>
+                From {r.label}
+              </button>
+            ))}
             <button className="btn btn--primary" onClick={() => setCreating(true)} data-testid="new-project">
               New project
             </button>
@@ -297,7 +305,9 @@ export default function Home() {
             <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
-              <button className="btn" onClick={() => setShowGithub(true)}>Import from GitHub</button>
+              {remotes.map((r) => (
+                <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)}>Import from {r.label}</button>
+              ))}
               <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP</button>
             </div>
           </div>
@@ -394,11 +404,11 @@ export default function Home() {
       {showAccount && user && (
         <AccountSettings user={user} onClose={() => setShowAccount(false)} />
       )}
-      {showGithub && (
-        <GithubImport onClose={() => setShowGithub(false)} onImported={(id) => navigate(`/p/${id}`)} />
+      {importFrom && (
+        <RemoteImport provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
       {showOnboarding && (
-        <Onboarding onNew={() => setCreating(true)} onGithub={() => setShowGithub(true)} onImportZip={importZip} onClose={dismissOnboarding} />
+        <Onboarding onNew={() => setCreating(true)} onRemote={setImportFrom} remotes={remotes.map((r) => r.id)} onImportZip={importZip} onClose={dismissOnboarding} />
       )}
 
       {creating && (
