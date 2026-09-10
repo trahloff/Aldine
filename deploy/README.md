@@ -56,6 +56,14 @@ GITLAB_URL=https://gitlab.com
 GITLAB_CLIENT_ID=...
 GITLAB_CLIENT_SECRET=...
 # REMOTE_PROVIDERS=github,gitlab   # comma list; leave one out to hide it
+# GitLab provisioning — every new project is also created on GitLab, in this
+# group or a subgroup the user picks, and every autosave is pushed from the
+# server. GITLAB_TOKEN is a service-account PAT with scope `api` and Owner on
+# the group (Maintainer cannot delete projects). Off unless both are set.
+GITLAB_TOKEN=glpat-...
+GITLAB_DEFAULT_GROUP=research/latex
+# GITLAB_DEFAULT_VISIBILITY=private   # or internal | public
+# AUTOPUSH_DEBOUNCE_MS=30000          # quiet period after an autosave before the push
 
 # AI error-fix (bring your own key; unset = feature off). If several are set,
 # precedence is OPENROUTER > OPENAI > ANTHROPIC. Leave ALDINE_AI_MODEL unset to
@@ -261,6 +269,10 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
 | `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |
 | `REMOTE_PROVIDERS` | Comma list of remote providers offered in the UI (default `github,gitlab`); leave one out to hide it |
+| `GITLAB_TOKEN` | Service-account personal access token for GitLab provisioning: scope `api`, Owner on `GITLAB_DEFAULT_GROUP` (Maintainer cannot delete projects). Used only to create projects and subgroups in the group, push provisioned projects, and delete projects Aldine created; never to list or import a user's repositories. Provisioning is off unless both this and `GITLAB_DEFAULT_GROUP` are set |
+| `GITLAB_DEFAULT_GROUP` | Full path of the root group new projects are created in (`research/latex`); users may pick any subgroup of it in the new-project dialog, or create one. Deleting a project deletes the GitLab project only when Aldine created it, an imported repository is never touched; GitLab's delayed deletion is handled (a purge is requested, otherwise the scheduled date is reported), and restoring the project re-creates it in the same namespace |
+| `GITLAB_DEFAULT_VISIBILITY` | Visibility of provisioned GitLab projects: `private` (default), `internal` or `public` |
+| `AUTOPUSH_DEBOUNCE_MS` | Quiet period after an autosave commit on `main` before the server pushes a provisioned project (default `30000`). Failed pushes back off exponentially, capped at 15 minutes, and stop after 8 attempts until the next commit |
 | `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |

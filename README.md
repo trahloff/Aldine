@@ -49,9 +49,11 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   click-to-jump.
 - **GitHub/GitLab sync**: import from GitHub or GitLab as a project *or
   publish a local project to a fresh repo*, push/pull with ahead/behind
-  indicators, branches, conflict resolution, opt-in auto-sync, and open a pull
+  indicators, branches, conflict resolution, server-side autopush, and open a pull
   or merge request, all from the editor. gitlab.com and self-hosted GitLab
-  (a personal access token needs no OAuth app).
+  (a personal access token needs no OAuth app). A team instance can create
+  every new project in a GitLab group automatically and push every autosave
+  from the server.
 - **Native Zotero integration**: link your whole Zotero library *or a single
   collection*, no premium tier required; keep a `.bib` in sync with cheap
   version-aware refresh, insert citations from a search panel or via `\cite{`
@@ -319,6 +321,12 @@ GITLAB_URL=https://gitlab.com
 GITLAB_CLIENT_ID=
 GITLAB_CLIENT_SECRET=
 # REMOTE_PROVIDERS=github,gitlab   # hide a provider by leaving it out
+# Optional: every new project is also created on GitLab in this group (service
+# account PAT with scope api and Owner on the group). Off unless both are set.
+GITLAB_TOKEN=
+GITLAB_DEFAULT_GROUP=
+# GITLAB_DEFAULT_VISIBILITY=private   # or internal | public
+# AUTOPUSH_DEBOUNCE_MS=30000
 # AI error fix, bring your own key
 OPENROUTER_API_KEY=
 # password-reset email: SMTP, or SES_FROM + AWS_REGION instead

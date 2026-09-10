@@ -281,8 +281,22 @@
 .gh-branch__sep { height: 1px; background: var(--hairline); margin: 5px 0; }
 .gh-branch__new { display: flex; gap: 5px; padding: 2px 4px; }
 .gh-branch__new .input { flex: 1; min-width: 0; height: 26px; font-size: 12px; }
-.gh-sync__auto { border: 1px solid var(--hairline); background: transparent; color: var(--text-3); border-radius: var(--radius-s); height: 24px; padding: 0 7px; font-size: 11.5px; cursor: pointer; }
-.gh-sync__auto--on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.gh-sync__autopush { border: 1px solid var(--hairline); background: transparent; color: var(--text-3); border-radius: var(--radius-s); height: 24px; padding: 0 7px; font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.gh-sync__autopush--on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+/* Read-only for members: the state still shows, the control does not invite a click. */
+.gh-sync__autopush:disabled { cursor: default; opacity: 0.75; }
+
+/* GitLab group picker in the new-project dialog */
+.ns-picker { margin-top: 12px; }
+.ns-picker__label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.ns-picker__row { display: flex; gap: 6px; align-items: center; }
+.ns-picker__row + .ns-picker__row { margin-top: 6px; }
+.ns-picker__select, .ns-picker__name { flex: 1; min-width: 0; }
+.ns-picker__hint { font-size: 11px; color: var(--text-3); margin: 6px 0 0; }
+
+/* Provisioning failed at create time: the owner's banner under the toolbar */
+.remote-pending { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: 12.5px; color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); border-bottom: 1px solid var(--hairline); }
+.remote-pending__text { flex: 1; min-width: 0; }
 .conflict__list { margin: 8px 0; padding: 8px 10px; background: var(--bg-inset); border-radius: var(--radius-s); font-family: var(--font-mono); font-size: 12px; max-height: 160px; overflow-y: auto; list-style: none; }
 .conflict__list li { padding: 2px 0; color: var(--error); }
 .btn--danger { background: var(--error); color: #fff; border-color: transparent; }

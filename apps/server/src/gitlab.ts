@@ -69,6 +69,42 @@ export function slugPath(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '').replace(/\.(git|atom)$/, '').slice(0, 100);
 }
 
+export interface GitlabGroup { id: number; fullPath: string; name: string }
+const mapGroup = (g: any): GitlabGroup => ({ id: g.id, fullPath: g.full_path, name: g.name });
+
+export async function getGroup(conn: RemoteConnection, fullPath: string): Promise<GitlabGroup> {
+  return mapGroup(await api(conn, `/groups/${encodePath(fullPath)}`));
+}
+
+/** The group and every subgroup below it, the root first. */
+export async function listDescendantGroups(conn: RemoteConnection, root: string): Promise<GitlabGroup[]> {
+  const top = await getGroup(conn, root);
+  const list = (await api(conn, `/groups/${encodePath(root)}/descendant_groups?per_page=100&order_by=path`)) as any[];
+  return [top, ...(list || []).map(mapGroup)];
+}
+
+export async function createSubgroup(conn: RemoteConnection, parentPath: string, name: string): Promise<GitlabGroup> {
+  const parent = await getGroup(conn, parentPath);
+  const path = slugPath(name);
+  if (!path) throw new Error('group name required');
+  return mapGroup(await api(conn, '/groups', { method: 'POST', body: JSON.stringify({ name: name.trim(), path, parent_id: parent.id, visibility: 'private' }) }));
+}
+
+/** Raw project JSON, or null when GitLab answers 404. */
+export async function getProjectRaw(conn: RemoteConnection, fullName: string): Promise<any | null> {
+  try { return await api(conn, `/projects/${encodePath(fullName)}`); }
+  catch (err) { if (err instanceof RemoteApiError && err.status === 404) return null; throw err; }
+}
+
+/**
+ * Delete a project. Groups with delayed deletion only mark it; the second
+ * call with `permanently` (and the renamed path GitLab reports) purges it.
+ */
+export async function deleteProject(conn: RemoteConnection, fullName: string, opts: { permanently?: boolean; fullPath?: string } = {}): Promise<void> {
+  const q = opts.permanently ? `?permanently_remove=true&full_path=${encodeURIComponent(opts.fullPath || fullName)}` : '';
+  await api(conn, `/projects/${encodePath(fullName)}${q}`, { method: 'DELETE' });
+}
+
 export const gitlab: RemoteProvider = {
   id: 'gitlab',
   label: 'GitLab',
@@ -125,7 +161,7 @@ export const gitlab: RemoteProvider = {
     const body: Record<string, unknown> = {
       name,
       path: slugPath(name) || undefined,
-      visibility: opts.private ? 'private' : 'public',
+      visibility: opts.visibility ?? (opts.private ? 'private' : 'public'),
       initialize_with_readme: false,
     };
     if (opts.namespace) {

@@ -22,8 +22,22 @@ const git = (cmd, cwd = root) => execSync(`git ${cmd}`, { cwd, stdio: ['ignore',
 /** @type {Map<string, { id: number; fullName: string; bare: string; visibility: string; createdAt: string }>} */
 const projects = new Map();
 let nextId = 100;
-const groups = new Map([['grp', { id: 1, full_path: 'grp' }], ['grp/sub', { id: 2, full_path: 'grp/sub' }]]);
+const groups = new Map([
+  ['grp', { id: 1, full_path: 'grp', name: 'grp' }],
+  ['grp/sub', { id: 2, full_path: 'grp/sub', name: 'sub' }],
+  // provisioning root and its subtree (34-provisioning), plus a sibling that
+  // shares the prefix and must never be accepted as "inside" the root
+  ['research', { id: 10, full_path: 'research', name: 'research' }],
+  ['research/latex', { id: 11, full_path: 'research/latex', name: 'latex' }],
+  ['research/latex/team-a', { id: 12, full_path: 'research/latex/team-a', name: 'team-a' }],
+  ['research/latex-archive', { id: 13, full_path: 'research/latex-archive', name: 'latex-archive' }],
+]);
+let nextGroupId = 100;
 const mergeRequests = [];
+/** Test switches: /__fail?on=1 makes POST /projects answer 503; delayed deletion marks first, purges on the second call. */
+let failCreates = false;
+let delayedDeletion = true;
+const deleted = [];
 
 function createProject(fullName, visibility = 'private', seed = null) {
   const bare = path.join(root, `${fullName}.git`);
@@ -41,7 +55,7 @@ function createProject(fullName, visibility = 'private', seed = null) {
     git('push -q origin main', work);
     fs.rmSync(work, { recursive: true, force: true });
   }
-  const p = { id: nextId++, fullName, bare, visibility, createdAt: new Date().toISOString() };
+  const p = { id: nextId++, fullName, bare, visibility, createdAt: new Date().toISOString(), markedForDeletionOn: null };
   projects.set(fullName, p);
   return p;
 }
@@ -55,6 +69,7 @@ function projectJson(p) {
     path_with_namespace: p.fullName,
     namespace: { full_path: parts.slice(0, -1).join('/') },
     visibility: p.visibility,
+    ...(p.markedForDeletionOn ? { marked_for_deletion_on: p.markedForDeletionOn } : {}),
     default_branch: 'main',
     http_url_to_repo: `file://${p.bare}`,
     web_url: `http://localhost:${port}/${p.fullName}`,
@@ -80,6 +95,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(code, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
   };
+  // test-only switches, no auth
+  if (url.pathname === '/__fail') { failCreates = url.searchParams.get('on') === '1'; return send(200, { failCreates }); }
+  if (url.pathname === '/__delayed') { delayedDeletion = url.searchParams.get('on') !== '0'; return send(200, { delayedDeletion }); }
+  if (url.pathname === '/__deleted') return send(200, deleted);
+  if (url.pathname === '/__projects') return send(200, [...projects.values()].map(projectJson));
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token || token === 'bad') return send(401, { message: '401 Unauthorized' });
 
@@ -98,6 +118,7 @@ const server = http.createServer((req, res) => {
       return send(200, [...projects.values()].map(projectJson));
     }
     if (url.pathname === '/projects' && req.method === 'POST') {
+      if (failCreates) return send(503, { message: '503 Service Unavailable (test switch)' });
       const ns = body.namespace_id ? [...groups.values()].find((g) => g.id === body.namespace_id)?.full_path : 'e2e-user';
       const fullName = `${ns}/${body.path || body.name}`;
       if (projects.has(fullName)) return send(400, { message: { name: ['has already been taken'] } });
@@ -107,13 +128,39 @@ const server = http.createServer((req, res) => {
       const g = groups.get(decodeURIComponent(segs[1]));
       return g ? send(200, g) : send(404, { message: '404 Group Not Found' });
     }
+    if (segs[0] === 'groups' && segs.length === 3 && segs[2] === 'descendant_groups' && req.method === 'GET') {
+      const root = decodeURIComponent(segs[1]);
+      if (!groups.has(root)) return send(404, { message: '404 Group Not Found' });
+      return send(200, [...groups.values()].filter((g) => g.full_path.startsWith(`${root}/`)));
+    }
+    if (url.pathname === '/groups' && req.method === 'POST') {
+      const parent = [...groups.values()].find((g) => g.id === body.parent_id);
+      if (!parent) return send(404, { message: '404 Group Not Found' });
+      const full_path = `${parent.full_path}/${body.path}`;
+      if (groups.has(full_path)) return send(400, { message: { path: ['has already been taken'] } });
+      const g = { id: nextGroupId++, full_path, name: body.name || body.path };
+      groups.set(full_path, g);
+      return send(201, g);
+    }
     if (segs[0] === 'projects' && segs.length >= 2) {
       const p = findProject(segs[1]);
       if (!p) return send(404, { message: '404 Project Not Found' });
       if (segs.length === 2 && req.method === 'GET') return send(200, projectJson(p));
       if (segs.length === 2 && req.method === 'DELETE') {
+        const purge = url.searchParams.get('permanently_remove') === 'true';
+        if (delayedDeletion && !p.markedForDeletionOn && !purge) {
+          // GitLab renames the path and keeps the project until the retention period ends
+          projects.delete(p.fullName);
+          p.markedForDeletionOn = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+          p.fullName = `${p.fullName}-deleted-${p.id}`;
+          projects.set(p.fullName, p);
+          return send(202, { message: '202 Accepted' });
+        }
+        if (delayedDeletion && p.markedForDeletionOn && !purge) return send(400, { message: 'Project already marked for deletion' });
+        if (purge && url.searchParams.get('full_path') !== p.fullName) return send(400, { message: '`full_path` is incorrect' });
         fs.rmSync(p.bare, { recursive: true, force: true });
         projects.delete(p.fullName);
+        deleted.push(p.fullName.replace(/-deleted-\d+$/, ''));
         return send(202, { message: '202 Accepted' });
       }
       if (segs[2] === 'repository' && segs[3] === 'branches' && req.method === 'GET') {

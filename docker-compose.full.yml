@@ -43,6 +43,13 @@ services:
       GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
       GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
       REMOTE_PROVIDERS: ${REMOTE_PROVIDERS:-}
+      # GitLab provisioning — new projects are created in GITLAB_DEFAULT_GROUP
+      # with the service-account PAT (scope `api`, Owner on the group) and
+      # pushed from the server after each autosave. Off unless both are set.
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_DEFAULT_GROUP: ${GITLAB_DEFAULT_GROUP:-}
+      GITLAB_DEFAULT_VISIBILITY: ${GITLAB_DEFAULT_VISIBILITY:-}
+      AUTOPUSH_DEBOUNCE_MS: ${AUTOPUSH_DEBOUNCE_MS:-}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
       # Optional outbound email for password resets: SMTP (any provider) or AWS

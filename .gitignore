@@ -3,12 +3,14 @@ dist/
 .data/
 .data-e2e/
 .data-e2e-gitlab/
+.data-e2e-prov/
 .data-auth/
 .data-base-path/
 .data-remote/
 .data-shots/
 .secrets/
 .secrets-e2e/
+.secrets-e2e-prov/
 .secrets-auth/
 .secrets-base-path/
 .secrets-remote/

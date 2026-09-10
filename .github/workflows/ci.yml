@@ -46,6 +46,10 @@ jobs:
         run: npm run test:github -w apps/server
       - name: GitLab-sync integration test
         run: npm run test:gitlab -w apps/server
+      - name: GitLab provisioning integration test
+        run: npm run test:gitlab:provision -w apps/server
+      - name: GitLab deletion integration test
+        run: npm run test:gitlab:delete -w apps/server
       - name: Datastore conformance (JSON + Postgres)
         run: npm run test:db -w apps/server
         env:

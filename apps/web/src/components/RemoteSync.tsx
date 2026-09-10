@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, RemoteLink } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
 
 /** Toolbar control for a project linked to a git host: branch switch/create
  *  + change request, ahead/behind, push (with a commit message), pull (with
- *  conflict handling), and an opt-in auto-sync. The provider comes from the
+ *  conflict handling), and the autopush toggle. Autopush is the server's
+ *  job (it pushes after autosave commits on main) and the owner's setting:
+ *  members see its state but cannot flip it. The provider comes from the
  *  link; the server never takes it from the request for these routes. */
-export default function RemoteSync({ projectId, link, onPulled }: { projectId: string; link: RemoteLink; onPulled(): void }) {
+export default function RemoteSync({ projectId, link, autopush, isOwner, onPulled, onAutopushChange }: {
+  projectId: string;
+  link: RemoteLink;
+  autopush: boolean;
+  isOwner: boolean;
+  onPulled(): void;
+  onAutopushChange(v: boolean): void;
+}) {
   const p = link.provider;
   const d = remoteDescriptor(p);
   const [status, setStatus] = useState<{ ahead: number; behind: number } | null>(null);
@@ -15,7 +24,7 @@ export default function RemoteSync({ projectId, link, onPulled }: { projectId: s
   const [showPush, setShowPush] = useState(false);
   const [message, setMessage] = useState('');
   const [conflicts, setConflicts] = useState<string[] | null>(null);
-  const [auto, setAuto] = useState(() => localStorage.getItem(`aldine.autopush.${projectId}`) === '1');
+  const [autopushBusy, setAutopushBusy] = useState(false);
   // branches
   const [branchInfo, setBranchInfo] = useState<{ branches: string[]; current: string; default: string } | null>(null);
   const [menu, setMenu] = useState(false);
@@ -33,11 +42,21 @@ export default function RemoteSync({ projectId, link, onPulled }: { projectId: s
   }, [projectId]);
   useEffect(() => { refresh(); loadBranches(); }, [refresh, loadBranches]);
 
-  const doPush = async (msg?: string, auto = false) => {
+  const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
-    try { await api.remotePush(projectId, msg, auto); if (msg !== undefined) toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
+    try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
     catch (err: any) { toast(err.message, 'error'); }
     setBusy('');
+  };
+  const toggleAutopush = async () => {
+    if (!isOwner || autopushBusy) return;
+    setAutopushBusy(true);
+    try {
+      const r = await api.remoteAutopush(projectId, !autopush);
+      toast(r.autopush ? `Autopush on: every autosave is pushed to ${d.label}` : 'Autopush off', 'ok');
+      onAutopushChange(r.autopush);
+    } catch (err: any) { toast(err.message, 'error'); }
+    setAutopushBusy(false);
   };
   const pull = async () => {
     setBusy('pull');
@@ -78,16 +97,6 @@ export default function RemoteSync({ projectId, link, onPulled }: { projectId: s
     } catch (err: any) { toast(err.message, 'error'); }
   };
 
-  // auto-sync: while enabled, periodically flush+commit+push local changes
-  const autoRef = useRef(auto); autoRef.current = auto;
-  const busyRef = useRef(busy); busyRef.current = busy;
-  useEffect(() => {
-    localStorage.setItem(`aldine.autopush.${projectId}`, auto ? '1' : '0');
-    if (!auto) return;
-    const t = setInterval(() => { if (autoRef.current && !busyRef.current) doPush(undefined, true); }, 20_000);
-    return () => clearInterval(t);
-  }, [auto, projectId]);
-
   const onDefault = branchInfo && branchInfo.current === branchInfo.default;
 
   return (
@@ -123,7 +132,16 @@ export default function RemoteSync({ projectId, link, onPulled }: { projectId: s
           {status.behind > 0 && <span title={`${status.behind} remote commit(s) to pull`}>↓{status.behind}</span>}
         </span>
       )}
-      <button className={`gh-sync__auto ${auto ? 'gh-sync__auto--on' : ''}`} onClick={() => setAuto((v) => !v)} data-testid={`${p}-auto`} title={`Auto-sync: push local changes to ${d.label} every 20s`}>{auto ? '⟳ Auto' : '⟳'}</button>
+      <button
+        className={`gh-sync__autopush ${autopush ? 'gh-sync__autopush--on' : ''}`}
+        onClick={toggleAutopush}
+        disabled={!isOwner || autopushBusy}
+        aria-pressed={autopush}
+        data-testid={`${p}-autopush`}
+        title={`Push every autosave to ${d.label} from the server`}
+      >
+        {autopush ? 'Autopush on' : 'Autopush off'}
+      </button>
       <button className="btn btn--small" onClick={pull} disabled={!!busy} data-testid={`${p}-pull-btn`} title={`Pull from ${d.label}`}>{busy === 'pull' ? '…' : 'Pull'}</button>
       <button className="btn btn--small" onClick={() => { setMessage('Update from Aldine'); setShowPush(true); }} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Push to ${d.label}`}>{busy === 'push' ? '…' : 'Push'}</button>
 

@@ -36,6 +36,26 @@ All notable changes to Aldine are documented here. The format follows
   and `{{YEAR}}` in text files, LaTeX-escaped in `.tex`/`.sty`/`.cls`.
   Layout, manifest and configuration are documented in `templates/README.md`.
   (#50)
+- GitLab provisioning for team instances: with `GITLAB_TOKEN` (a service
+  account PAT with scope `api` and Owner on the group) and
+  `GITLAB_DEFAULT_GROUP` set, every new project, ZIP imports included, is
+  also created on GitLab in that group or in a subgroup the user picks or
+  creates in the new-project dialog (`GITLAB_DEFAULT_VISIBILITY` = `private`
+  default, `internal` or `public`). The server pushes `main` after each
+  autosave, debounced by `AUTOPUSH_DEBOUNCE_MS` (default 30 s) with
+  exponential backoff, replacing the 20-second browser interval; the owner
+  can switch autopush off per project. Deleting a project deletes the
+  GitLab project only when Aldine created it (`createdByAldine`), an
+  imported repository is never touched; GitLab's delayed deletion is
+  purged where the token may, otherwise the scheduled date is reported, and
+  restoring the project re-creates it in the same namespace. When GitLab is
+  unreachable the project is still created locally and the editor shows a
+  pending banner with a retry. (#51)
+- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
+  in the running server container with `aws ecs execute-command`, for one-off
+  inspection of the datastore on EFS. It grants the task role the SSM
+  messaging permissions ECS Exec needs; who may open a session stays with IAM.
+  Documented in `deploy/aws/README.md`.
 
 ### Changed
 - The remote-sync routes are provider-neutral: account routes live under
@@ -56,6 +76,12 @@ All notable changes to Aldine are documented here. The format follows
   `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
   shipped folders and venue classes included, not only to repositories.
   `template.json` files are unchanged. (#50)
+- Browser-side auto-sync is gone: the 20-second interval in the sync toolbar
+  and its `aldine.autopush.<id>` localStorage flag are replaced by server-side
+  autopush, which runs whether or not a tab is open. Sync of a linked project
+  falls back to the linking user's token when the acting user has none and,
+  for provisioned GitLab projects, to the service account; listing and
+  importing repositories still use the user's own connection only.
 
 ## [0.8.0] — 2026-09-10
 
