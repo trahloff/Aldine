@@ -288,6 +288,42 @@ eq(repos.refreshIntervalMs(), 600_000, 'a non-numeric interval falls back to the
 delete process.env.TEMPLATE_REPOS_REFRESH_MS;
 eq(repos.refreshIntervalMs(), 600_000, 'the default is ten minutes');
 
+// ---- symlinks in a template repository never escape the checkout ----
+{
+  repos.resetTemplateRepos();
+  process.env.TEMPLATE_REPOS = JSON.stringify([{ id: 'lab', label: 'Lab Templates', url: bareUrl }]);
+  delete process.env.TEMPLATE_REPO_MAX_BYTES;
+  // `escape` points above the checkout (another repo's checkout, CACHE_DIR, anything);
+  // `alias` points at a sibling folder and so stays inside.
+  fs.symlinkSync('../../..', path.join(work, 'escape'));
+  fs.symlinkSync('thesis', path.join(work, 'alias'));
+  git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'symlinks'); git(work, 'push', '-q', 'origin', 'main');
+  const [st] = await repos.syncAllTemplateRepos();
+  check(st.ok === true, 'sync with symlinks ok: ' + JSON.stringify(st));
+  const ids = repos.listRepoTemplates().map((t) => t.id);
+  check(!ids.includes('repo:lab/escape'), 'a symlink escaping the checkout is not listed: ' + ids.join(','));
+  check(ids.includes('repo:lab/thesis'), 'real folders are still listed');
+  const tmpl = await import('../src/templates.ts');
+  let threw = '';
+  try { tmpl.templateFiles('repo:lab/escape'); } catch (err) { threw = err.message; }
+  check(/unknown template|bad template id/.test(threw), 'seeding through an escaping symlink is refused: ' + threw);
+  const goodHead = st.head;
+
+  // ---- a revision over the cap leaves the previous checkout in place ----
+  fs.writeFileSync(path.join(work, 'thesis', 'big.bin'), Buffer.alloc(5000, 7));
+  git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'grow'); git(work, 'push', '-q', 'origin', 'main');
+  process.env.TEMPLATE_REPO_MAX_BYTES = '1000';
+  const grown = await repos.syncTemplateRepo(repos.templateRepo('lab'));
+  check(grown.ok === false && grown.available === true, 'oversized refresh is stale, not gone: ' + JSON.stringify(grown));
+  check(/TEMPLATE_REPO_MAX_BYTES/.test(grown.error || ''), 'the error names the cap');
+  eq(grown.head, goodHead, 'the head stays at the last good revision');
+  check(repos.listRepoTemplates().some((t) => t.id === 'repo:lab/thesis'), 'templates from the good revision are still listed');
+  check(!fs.existsSync(path.join(repos.templateRepoDir('lab'), 'thesis', 'big.bin')), 'the oversized file never reached the working tree');
+  delete process.env.TEMPLATE_REPO_MAX_BYTES;
+  const again = await repos.syncTemplateRepo(repos.templateRepo('lab'));
+  check(again.ok === true && again.head !== goodHead, 'the refresh succeeds once the cap allows it');
+}
+
 console.warn = realWarn;
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('template-repos: all checks passed');

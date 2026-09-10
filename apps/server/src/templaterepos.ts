@@ -144,9 +144,37 @@ export function templateRepoDir(id: string): string {
   return path.join(config.cacheDir, 'template-repos', id);
 }
 
-/** The directory the template folders live in: the checkout, or `path` inside it. */
-function templatesRoot(entry: TemplateRepoEntry): string {
-  return entry.path ? path.join(templateRepoDir(entry.id), entry.path) : templateRepoDir(entry.id);
+/**
+ * A directory inside the checkout, resolved through symlinks, or null when it
+ * does not exist or escapes the checkout. Git preserves symlinks in a working
+ * tree, so a repository can ship `thesis -> ../../..`; every path this module
+ * reads is confirmed to still be under the checkout after resolution.
+ */
+function insideCheckout(entry: TemplateRepoEntry, rel: string): string | null {
+  const checkout = templateRepoDir(entry.id);
+  let root: string, target: string;
+  try {
+    root = fs.realpathSync(checkout);
+    target = fs.realpathSync(rel ? path.join(checkout, rel) : checkout);
+  } catch { return null; }
+  if (target !== root && !target.startsWith(root + path.sep)) return null;
+  return target;
+}
+
+/** The directory the template folders live in: the checkout, or `path` inside it. Null when absent or escaping. */
+function templatesRoot(entry: TemplateRepoEntry): string | null {
+  return insideCheckout(entry, entry.path);
+}
+
+/** Bytes of every blob in `rev`, from the object store: known before the working tree is touched. */
+async function treeBytes(dir: string, rev: string): Promise<number> {
+  const out = await simpleGit({ baseDir: dir }).raw(['ls-tree', '-r', '-l', rev]);
+  let total = 0;
+  for (const line of out.split('\n')) {
+    const m = /^\d+ blob \S+\s+(\d+)\t/.exec(line);
+    if (m) total += Number(m[1]);
+  }
+  return total;
 }
 
 function tokenUrl(entry: TemplateRepoEntry): string {
@@ -198,11 +226,16 @@ async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
     } else {
       const g = simpleGit({ baseDir: dir });
       await g.raw(['fetch', '--depth', '1', url, entry.ref]);
+      // Size the incoming tree from the object store first: the previous good
+      // checkout stays in place when the new revision is over the cap.
+      const incoming = await treeBytes(dir, 'FETCH_HEAD');
+      if (incoming > maxCheckoutBytes()) throw new Error(`the new revision exceeds TEMPLATE_REPO_MAX_BYTES (${maxCheckoutBytes()} bytes); keeping the previous checkout`);
       await g.raw(['reset', '--hard', 'FETCH_HEAD']);
       await g.raw(['clean', '-fdq']);
     }
     const limit = maxCheckoutBytes();
     if (checkoutBytes(dir, limit) > limit) {
+      // Only a first clone can get here (a refresh was sized before the reset).
       fs.rmSync(dir, { recursive: true, force: true });
       throw new Error(`checkout exceeds TEMPLATE_REPO_MAX_BYTES (${limit} bytes)`);
     }
@@ -264,8 +297,10 @@ export function listRepoTemplates(): TemplateInfo[] {
   const out: TemplateInfo[] = [];
   for (const entry of loadTemplateRepos()) {
     const root = templatesRoot(entry);
-    if (!fs.existsSync(root)) continue;
-    out.push(...scanTemplateDir(root, { idPrefix: `${REPO_PREFIX}${entry.id}/`, source: { kind: 'repo', label: entry.label } }));
+    if (!root) continue;
+    // A folder that resolves outside the checkout (a symlink in the repository) is not a template.
+    const inside = (name: string) => !!insideCheckout(entry, entry.path ? `${entry.path}/${name}` : name);
+    out.push(...scanTemplateDir(root, { idPrefix: `${REPO_PREFIX}${entry.id}/`, source: { kind: 'repo', label: entry.label }, accept: inside }));
   }
   return out;
 }
@@ -280,5 +315,7 @@ export function repoTemplateFiles(id: string): Record<string, Buffer> {
   if (!folder || folder.includes('/') || folder.includes('..') || folder.startsWith('.') || folder.includes('\\')) throw new Error('bad template id');
   const entry = templateRepo(repoId);
   if (!entry) throw new Error(`unknown template repository: ${repoId}`);
-  return templateFilesIn(path.join(templatesRoot(entry), folder), id);
+  const base = insideCheckout(entry, entry.path ? `${entry.path}/${folder}` : folder);
+  if (!base) throw new Error(`unknown template: ${id}`);
+  return templateFilesIn(base, id);
 }

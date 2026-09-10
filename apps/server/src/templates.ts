@@ -48,12 +48,13 @@ const CATEGORIES: TemplateCategory[] = ['Journals', 'Conferences', 'Theses', 'Sl
  * which half of the gallery the entry belongs to. Hidden folders and broken
  * manifests are skipped; a missing category becomes General.
  */
-export function scanTemplateDir(dir: string, opts: { idPrefix?: string; source: TemplateSource }): TemplateInfo[] {
+export function scanTemplateDir(dir: string, opts: { idPrefix?: string; source: TemplateSource; accept?: (name: string) => boolean }): TemplateInfo[] {
   if (!fs.existsSync(dir)) return [];
   const out: TemplateInfo[] = [];
   const prefix = opts.idPrefix || '';
   for (const name of fs.readdirSync(dir)) {
     if (name.startsWith('.')) continue;
+    if (opts.accept && !opts.accept(name)) continue;
     const metaPath = path.join(dir, name, 'template.json');
     if (!fs.existsSync(metaPath)) continue;
     try {
