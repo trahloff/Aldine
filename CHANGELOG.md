@@ -19,6 +19,23 @@ All notable changes to Aldine are documented here. The format follows
   that hides a provider from the UI (default `github,gitlab`);
   `GITLAB_API_BASE` exists for the tests only. Home, onboarding and the
   publish dialog list every enabled provider. (#51)
+- Templates from your own git repositories. `TEMPLATE_REPOS` (or a file
+  named by `TEMPLATE_REPOS_FILE`) lists repositories laid out like this
+  repo's `templates/` folder, one directory with a `template.json` per
+  template, on any host that serves git over https: GitHub, GitLab, Gitea, a
+  bare repository. Each is cloned shallowly into `CACHE_DIR/template-repos/`
+  and its templates join the new-project gallery under the repository's
+  label, refreshed every `TEMPLATE_REPOS_REFRESH_MS` (default ten minutes)
+  or on demand with "Refresh templates" in the dialog. A private repository
+  takes a read token from the env var its `tokenEnv` entry names
+  (`user: oauth2` for GitLab, `x-access-token` for GitHub); the token is
+  injected per git operation and never written to the checkout. A host that
+  is down leaves the previous checkout listed and marks the repository stale
+  on its heading; a checkout over `TEMPLATE_REPO_MAX_BYTES` (50 MiB) is
+  refused. Templates may use `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}`
+  and `{{YEAR}}` in text files, LaTeX-escaped in `.tex`/`.sty`/`.cls`.
+  Layout, manifest and configuration are documented in `templates/README.md`.
+  (#50)
 
 ### Changed
 - The remote-sync routes are provider-neutral: account routes live under
@@ -32,6 +49,13 @@ All notable changes to Aldine are documented here. The format follows
   is unchanged. Project summaries carry the link as `remote` and, for GitHub
   links, still as `github` for one release so an older web bundle keeps
   working.
+- `GET /api/templates` reports the manifest's upstream `source { url,
+  version }` as `origin`; `source` now says where a template is listed from
+  (`{ kind: "builtin" | "repo" | "venue" | "kit", label? }`), which is what the
+  gallery groups and badges by. The `{{PROJECT_NAME}}`, `{{AUTHOR}}`,
+  `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
+  shipped folders and venue classes included, not only to repositories.
+  `template.json` files are unchanged. (#50)
 
 ## [0.8.0] — 2026-09-10
 

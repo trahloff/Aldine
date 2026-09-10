@@ -206,7 +206,8 @@ export function venueKitTemplates(): TemplateInfo[] {
       // are between the author and the publisher, so link them instead.
       license: 'Publisher terms',
       licenseUrl: e.termsUrl || e.homepage,
-      source: { url: e.homepage },
+      origin: { url: e.homepage },
+      source: { kind: 'kit' as const },
       kit: { host: e.kit.host, url: e.kit.url || e.kit.urls![0], homepage: e.homepage, termsUrl: e.termsUrl },
     }))
     .sort((a, b) => a.name.localeCompare(b.name));

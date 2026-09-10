@@ -50,8 +50,11 @@ export default defineConfig({
       // override the mock Anthropic endpoint the AI-fix test relies on.
       // VENUES_FILE points at the registry the mock server writes (it names the
       // mock's own port), so no venue test ever reaches a real publisher;
-      // ALDINE_TEST_HOOKS is what makes a loopback kit URL fetchable at all.
-      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e ALDINE_TEST_HOOKS=1 GITLAB_API_BASE=http://localhost:${GITLAB} VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      // ALDINE_TEST_HOOKS is what makes a loopback kit URL fetchable at all,
+      // and what lets TEMPLATE_REPOS name the file:// bare repository that
+      // tests/32-template-repos.spec.ts builds under .data-e2e once the
+      // server is up (the boot sync fails until the spec's first refresh).
+      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e ALDINE_TEST_HOOKS=1 GITLAB_API_BASE=http://localhost:${GITLAB} VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"file://'"$(pwd)"'/.data-e2e/template-repo.git"}]' TEMPLATE_REPOS_REFRESH_MS=60000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,
