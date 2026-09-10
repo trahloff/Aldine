@@ -92,6 +92,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
+  `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
+  users (7 / 30 days, editing now), projects, compile time. Metadata only.
 - **Scales when you need it**: flat-file storage by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
