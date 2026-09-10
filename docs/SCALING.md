@@ -44,7 +44,7 @@ unaffected.
    the per-user compile quota).
    **Honest caveat:** several per-process caches survive this migration —
    `lastWritten` (collab write-skip hashes), `tombstoned` (delete guards),
-   `lastPushedHead` (GitHub push dedup — self-healing, benign), the
+   `lastPushedHead` (remote push dedup — self-healing, benign), the
    bib/label index caches, and `compileChain` (serializes latexmk per branch;
    with two nodes sharing one volume that serialization is gone and aux-file
    corruption becomes reachable). The datastore is multi-node-ready; these

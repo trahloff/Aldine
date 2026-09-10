@@ -35,7 +35,7 @@ const ctxB = await mkCtx(false);
 for (const c of [ctxA, ctxB]) await c.addInitScript((pid) => {
   window.localStorage.setItem('aldine.onboarded', '1');
   window.localStorage.setItem('aldine.theme', 'dark');
-  window.localStorage.setItem(`aldine.ghNudged.${pid}`, '1'); // keep the publish nudge out of the recording
+  window.localStorage.setItem(`aldine.remoteNudged.${pid}`, '1'); // keep the publish nudge out of the recording
 }, id);
 
 const a = await ctxA.newPage();

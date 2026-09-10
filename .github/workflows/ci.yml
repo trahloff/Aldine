@@ -44,6 +44,8 @@ jobs:
         run: npm run build -w apps/web
       - name: GitHub-sync integration test
         run: npm run test:github -w apps/server
+      - name: GitLab-sync integration test
+        run: npm run test:gitlab -w apps/server
       - name: Datastore conformance (JSON + Postgres)
         run: npm run test:db -w apps/server
         env:

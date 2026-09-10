@@ -133,7 +133,7 @@ export async function commitDiff(id: string, hash: string): Promise<{ patch: str
   return { patch: patch.replace(/^\n+/, ''), stat: stat.replace(/^\n+/, '') };
 }
 
-// ---------- remote sync (GitHub) ----------
+// ---------- remote sync (GitHub, GitLab) ----------
 // SECURITY: the projects dir is shared with the compiler, so the auth token must
 // never land in .git/config. We pass a tokenized URL inline per network op and
 // keep only a credential-free URL as `origin`.
@@ -141,6 +141,17 @@ export async function commitDiff(id: string, hash: string): Promise<{ patch: str
 /** Strip any `user:token@` credentials from an http(s) URL. */
 export function stripCreds(url: string): string {
   return url.replace(/(https?:\/\/)[^@/]+@/i, '$1');
+}
+
+/**
+ * Put `user:token@` into an http(s) clone URL for one git network op. The
+ * user name is what the host expects (`x-access-token` on GitHub, `oauth2` on
+ * GitLab). Non-http URLs pass through unchanged: the tests clone `file://`.
+ * The result is used inline and never written to .git/config.
+ */
+export function injectToken(cloneUrl: string, user: string, token: string): string {
+  if (!/^https?:\/\//i.test(cloneUrl)) return cloneUrl;
+  return stripCreds(cloneUrl).replace(/^(https?:\/\/)/i, `$1${encodeURIComponent(user)}:${encodeURIComponent(token)}@`);
 }
 
 /**

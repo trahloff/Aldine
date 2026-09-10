@@ -20,11 +20,17 @@ export interface ProjectSummary {
    *  disclose other people's invite list). */
   share?: { mode: 'private' | 'link'; collaborators: string[] } | null;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
-  github?: { fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string } | null;
+  remote?: RemoteLink | null;
 }
 
-export interface GithubRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
-export interface GithubStatus { connected: boolean; login?: string; oauth: boolean }
+export type RemoteProviderId = 'github' | 'gitlab';
+/** A provider the server offers (honours its REMOTE_PROVIDERS allowlist). */
+export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolean; selfHosted: boolean; changeRequestLabel: 'pull request' | 'merge request' }
+/** `fullName` is an opaque host path: `owner/repo` on GitHub, `group/sub/project` on GitLab. */
+export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
+/** `baseUrl` is set for a self-hosted instance connected with a token. */
+export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean }
+export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; connectedBy?: string }
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
@@ -66,6 +72,12 @@ export interface Comment {
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) { super(message); }
+}
+
+/** The host refused the stored token (expired or revoked): the dialogs show
+ *  the connect form again instead of a generic error. */
+export class RemoteTokenError extends ApiError {
+  constructor(message: string, public readonly provider: RemoteProviderId) { super(message, 401); }
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
@@ -175,28 +187,38 @@ export const api = {
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
 
-  // GitHub sync
-  githubStatus: () => req<GithubStatus>('/api/github/status'),
-  githubConnect: (token: string) => req<{ connected: boolean; login: string }>('/api/github/connect', { method: 'POST', body: JSON.stringify({ token }) }),
-  githubDisconnect: () => req<{ ok: boolean }>('/api/github/disconnect', { method: 'POST' }),
-  githubRepos: () => req<GithubRepo[]>('/api/github/repos'),
-  githubImport: (fullName: string) => req<ProjectSummary>('/api/github/import', { method: 'POST', body: JSON.stringify({ fullName }) }),
-  projectGithubStatus: (id: string) => req<{ linked: boolean; ahead: number; behind: number; fullName: string }>(`/api/projects/${id}/github/status`),
-  githubLink: (id: string, name?: string, priv?: boolean) => req<{ ok: boolean; github: { fullName: string } }>(`/api/projects/${id}/github/link`, { method: 'POST', body: JSON.stringify({ name, private: priv }) }),
-  githubPush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean }>(`/api/projects/${id}/github/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
+  // Remote git hosts (GitHub, GitLab). Account routes name the provider; project
+  // routes take it from the stored link, so the web never sends it for sync.
+  remotes: () => req<RemoteInfo[]>('/api/remotes'),
+  remoteStatus: (p: RemoteProviderId) => req<RemoteStatus>(`/api/remotes/${p}/status`),
+  remoteConnect: (p: RemoteProviderId, token: string, baseUrl?: string) =>
+    req<{ connected: boolean; login: string; baseUrl?: string }>(`/api/remotes/${p}/connect`, { method: 'POST', body: JSON.stringify({ token, baseUrl }) }),
+  remoteDisconnect: (p: RemoteProviderId) => req<{ ok: boolean }>(`/api/remotes/${p}/disconnect`, { method: 'POST' }),
+  remoteRepos: async (p: RemoteProviderId): Promise<RemoteRepo[]> => {
+    const res = await fetch(withBase(`/api/remotes/${p}/repos`));
+    if (res.ok) return res.json() as Promise<RemoteRepo[]>;
+    const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
+    if (res.status === 401 && body.reason === 'token-invalid') throw new RemoteTokenError(body.error || 'The stored token was rejected', p);
+    throw new ApiError(body.error || `HTTP ${res.status}`, res.status);
+  },
+  remoteImport: (p: RemoteProviderId, fullName: string) => req<ProjectSummary>(`/api/remotes/${p}/import`, { method: 'POST', body: JSON.stringify({ fullName }) }),
+  projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number }>(`/api/projects/${id}/remote/status`),
+  remoteLink: (id: string, provider: RemoteProviderId, name?: string, priv?: boolean, namespace?: string) =>
+    req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv, namespace }) }),
+  remotePush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean; skipped?: boolean }>(`/api/projects/${id}/remote/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing
-  githubPull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
-    const res = await fetch(withBase(`/api/projects/${id}/github/pull`), { method: 'POST' });
+  remotePull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
+    const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     return { ok: true };
   },
-  githubResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/github/reset-to-remote`, { method: 'POST' }),
-  githubBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/github/branches`),
-  githubSwitchBranch: (id: string, branch: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/github/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
-  githubCreateBranch: (id: string, name: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/github/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
-  githubOpenPR: (id: string, title?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/github/pr`, { method: 'POST', body: JSON.stringify({ title }) }),
+  remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
+  remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),
+  remoteSwitchBranch: (id: string, branch: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  remoteCreateBranch: (id: string, name: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
+  remoteChangeRequest: (id: string, title?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/remote/change-request`, { method: 'POST', body: JSON.stringify({ title }) }),
   merge: (id: string, from: string, into: string, author?: string) =>
     req<{ ok: boolean; conflicts?: string[]; message?: string }>(`/api/projects/${id}/merge`, { method: 'POST', body: JSON.stringify({ from, into, author }) }),
 

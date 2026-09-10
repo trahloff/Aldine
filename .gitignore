@@ -2,11 +2,13 @@ node_modules/
 dist/
 .data/
 .data-e2e/
+.data-e2e-gitlab/
 .data-auth/
 .data-base-path/
 .data-remote/
 .data-shots/
 .secrets/
+.secrets-e2e/
 .secrets-auth/
 .secrets-base-path/
 .secrets-remote/

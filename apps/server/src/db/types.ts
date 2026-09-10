@@ -60,15 +60,25 @@ export interface ProjectMeta {
     bibFile: string;
     lastSyncedAt?: string;
   };
-  /** GitHub remote link (present when the project was imported from / pushed to GitHub). */
-  github?: {
-    fullName: string;   // owner/repo
-    owner: string;
-    repo: string;
-    remoteBranch: string; // the GitHub branch that local `main` maps to
-    cloneUrl: string;     // credential-free https URL
-    connectedBy?: string; // user id whose token created the link (for reference)
-  };
+  /** Remote repository this project syncs with (imported from, or published to). */
+  remote?: RemoteLink;
+  /**
+   * @deprecated Pre-GitLab shape of `remote` for provider 'github'. Read through
+   * `store.remoteLink()`, which prefers `remote`; `store.setRemoteLink()` moves
+   * a project over on its next write. Removed once no stored meta carries it.
+   */
+  github?: Omit<RemoteLink, 'provider'>;
+}
+
+export interface RemoteLink {
+  provider: 'github' | 'gitlab';
+  /** Host path of the repository: `owner/repo`, or `group/sub/project` on GitLab. */
+  fullName: string;
+  owner: string;
+  repo: string;
+  remoteBranch: string; // the remote branch that local `main` maps to
+  cloneUrl: string;     // credential-free https URL
+  connectedBy?: string; // user id whose token created the link (for reference)
 }
 
 export interface SessionRow { userId: string; exp: number }
