@@ -7,11 +7,37 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Templates from your own git repositories. `TEMPLATE_REPOS` (or a file
+  named by `TEMPLATE_REPOS_FILE`) lists repositories laid out like this
+  repo's `templates/` folder, one directory with a `template.json` per
+  template, on any host that serves git over https: GitHub, GitLab, Gitea, a
+  bare repository. Each is cloned shallowly into `CACHE_DIR/template-repos/`
+  and its templates join the new-project gallery under the repository's
+  label, refreshed every `TEMPLATE_REPOS_REFRESH_MS` (default ten minutes)
+  or on demand with "Refresh templates" in the dialog. A private repository
+  takes a read token from the env var its `tokenEnv` entry names
+  (`user: oauth2` for GitLab, `x-access-token` for GitHub); the token is
+  injected per git operation and never written to the checkout. A host that
+  is down leaves the previous checkout listed and marks the repository stale
+  on its heading; a checkout over `TEMPLATE_REPO_MAX_BYTES` (50 MiB) is
+  refused. Templates may use `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}`
+  and `{{YEAR}}` in text files, LaTeX-escaped in `.tex`/`.sty`/`.cls`.
+  Layout, manifest and configuration are documented in `templates/README.md`.
+  (#50)
 - AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
   in the running server container with `aws ecs execute-command`, for one-off
   inspection of the datastore on EFS. It grants the task role the SSM
   messaging permissions ECS Exec needs; who may open a session stays with IAM.
   Documented in `deploy/aws/README.md`.
+
+### Changed
+- `GET /api/templates` reports the manifest's upstream `source { url,
+  version }` as `origin`; `source` now says where a template is listed from
+  (`{ kind: "builtin" | "repo" | "venue" | "kit", label? }`), which is what the
+  gallery groups and badges by. The `{{PROJECT_NAME}}`, `{{AUTHOR}}`,
+  `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
+  shipped folders and venue classes included, not only to repositories.
+  `template.json` files are unchanged. (#50)
 
 ## [0.7.0] — 2026-09-09
 

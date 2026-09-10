@@ -83,7 +83,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   write into the editor. Zotero, references, and AI-fix ship as plugins;
   write your own.
 - **Templates & import**: article, IAC conference paper, beamer,
-  report/thesis; or import an existing project from an Overleaf ZIP.
+  report/thesis, plus your group's own templates from any git repository
+  (`TEMPLATE_REPOS`); or import an existing project from an Overleaf ZIP.
 - **Editor niceties**: auto-typeset on idle, live whole-document word count,
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
@@ -319,6 +320,9 @@ SMTP_FROM=
 # error tracking, and which instance the errors came from
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
+# Templates from your own git repositories (see templates/README.md)
+# TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"https://gitlab.example.org/latex/templates.git","tokenEnv":"TEMPLATE_REPO_LAB_TOKEN"}]'
+# TEMPLATE_REPO_LAB_TOKEN=
 ```
 
 ```bash
@@ -405,6 +409,18 @@ plugins/hello/
 The `aldine` API exposes `ui.registerSidebarPanel`, `editor.insertAtCursor`,
 `project` context, `compile()`, `toast()`, and `fetch()`. See
 `plugins/zotero` for a complete example.
+
+## Templates
+
+A template is a folder with a `template.json` and the files to start from;
+the shipped ones live in `templates/`. A group that keeps its own thesis,
+poster or report templates puts the same layout in any git repository
+(GitHub, GitLab, Gitea, a bare repo over https), lists it in
+`TEMPLATE_REPOS`, and the templates appear in the gallery under the
+repository's name, refreshed on an interval or with "Refresh templates", with
+`{{PROJECT_NAME}}`, `{{AUTHOR}}` and `{{DATE}}` filled in on create. Layout,
+manifest fields, placeholders and private-repository tokens:
+[templates/README.md](templates/README.md).
 
 ## License
 

@@ -144,6 +144,17 @@ export function stripCreds(url: string): string {
 }
 
 /**
+ * Put `user:token@` into an http(s) clone URL for one git network op. The
+ * user name is what the host expects (`x-access-token` on GitHub, `oauth2` on
+ * GitLab). Non-http URLs pass through unchanged: the tests clone `file://`.
+ * The result is used inline and never written to .git/config.
+ */
+export function injectToken(cloneUrl: string, user: string, token: string): string {
+  if (!/^https?:\/\//i.test(cloneUrl)) return cloneUrl;
+  return stripCreds(cloneUrl).replace(/^(https?:\/\/)/i, `$1${encodeURIComponent(user)}:${encodeURIComponent(token)}@`);
+}
+
+/**
  * Clone a remote into a (new) project's repo dir. Aldine is main-centric, so the
  * checked-out default branch is renamed to `main` locally; the original name is
  * returned as `remoteBranch` for push/pull mapping. The token is scrubbed from origin.
