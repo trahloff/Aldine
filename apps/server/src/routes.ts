@@ -17,6 +17,7 @@ import { parseBib, bibKeys, BibEntry } from './bib.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
+import { startTemplateRepoRefresh, syncAllTemplateRepos, templateRepoStates } from './templaterepos.js';
 import { fetchBibEntry, searchWorks } from './references.js';
 import { latexWordCount, documentFiles } from './wordcount.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
@@ -395,7 +396,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       seed = files;
     }    if (template) {
       try {
-        resolved = await resolveTemplateSeed(template);
+        resolved = await resolveTemplateSeed(template, { projectName: name, author: reqUser(req)?.name });
         seed = resolved.files;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
@@ -484,7 +485,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Asked for at boot so the first gallery request is served from the cache
   // instead of waiting on the compiler.
   warmVenueCache();
+  startTemplateRepoRefresh();
   app.get('/api/templates', async () => listAllTemplates());
+  // Template repositories: their sync state, and a forced refresh. With auth
+  // on, refreshing is for signed-in users; one sync per repository runs at a
+  // time, so a burst of clicks costs one fetch.
+  app.get('/api/templates/repos', async () => ({ repos: templateRepoStates() }));
+  app.post('/api/templates/repos/refresh', async (req, reply) => {
+    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
+    return { repos: await syncAllTemplateRepos() };
+  });
 
   // What the connected compiler runs. Not project-scoped, so it is not behind
   // the project auth hook; it discloses nothing beyond a TeX Live release.

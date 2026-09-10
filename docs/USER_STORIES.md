@@ -35,6 +35,28 @@ flag; everything else works in the default single-tenant deploy.
 - **PROJ-7** — My project list shows all my projects with names and opens the
   right one on click.
 
+## Templates (TPL)
+
+*Automated in `28-template-gallery.spec.ts`, `29-venue-kits.spec.ts`,
+`32-template-repos.spec.ts` and `apps/server/test/template-repos.test.mjs`.*
+
+- **TPL-1** — As an operator, I list a git repository laid out like
+  `templates/` in `TEMPLATE_REPOS`; after the boot sync its templates appear
+  in the gallery grouped under the repository's label.
+- **TPL-2** — I create a project from one of them; `{{PROJECT_NAME}}`,
+  `{{AUTHOR}}` and `{{DATE}}` are substituted in the text files (LaTeX-escaped
+  in `.tex`), binaries arrive byte-identical, and neither `template.json` nor
+  `LICENSE` is copied into the project.
+- **TPL-3** — I push a new template folder to the repository; it shows up
+  after "Refresh templates" or the next refresh interval, without restarting
+  Aldine.
+- **TPL-4** — The git host becomes unreachable; the gallery keeps the last
+  good listing and projects can still be created, and the repository's
+  heading is marked stale with the time of its last successful refresh.
+- **TPL-5** — A private repository works with a read token named by
+  `tokenEnv`; the token is used per git operation and never lands in the
+  checkout's `.git/config`, the logs, or an API response.
+
 ## Editing & files (EDIT)
 
 *Automated in `07-features.spec.ts`, `08-stretch.spec.ts`,

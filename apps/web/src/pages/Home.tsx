@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo } from '../api';
+import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -26,8 +26,58 @@ const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
 
 function matchesQuery(t: TemplateInfo, q: string): boolean {
-  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host].join(' ').toLowerCase();
+  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host, t.source?.label].join(' ').toLowerCase();
   return q.split(/\s+/).every((word) => hay.includes(word));
+}
+
+/** Template ids from a repository are `repo:<repoId>/<folder>`. */
+function repoIdOf(t: TemplateInfo): string {
+  return t.id.slice('repo:'.length).split('/')[0];
+}
+
+interface GalleryGroup {
+  key: string;
+  testid: string;
+  heading: string;
+  /** Set on a repository whose last refresh failed while its previous checkout is still listed. */
+  stale?: { repoId: string; text: string };
+  items: TemplateInfo[];
+}
+
+/** Built-in categories in TEMPLATE_CATEGORIES order, with one group per
+ *  repository (in config order) between 'General' and the venue categories.
+ *  Repository templates are never placed in a category group. */
+function galleryGroups(shown: TemplateInfo[], repos: TemplateRepoState[]): GalleryGroup[] {
+  const byRepo = new Map<string, TemplateInfo[]>();
+  for (const t of shown) {
+    if (t.source?.kind !== 'repo') continue;
+    const id = repoIdOf(t);
+    byRepo.set(id, [...(byRepo.get(id) ?? []), t]);
+  }
+  const repoOrder = [...repos.map((r) => r.id), ...byRepo.keys()].filter((id, i, all) => all.indexOf(id) === i);
+  const repoGroups: GalleryGroup[] = [];
+  for (const repoId of repoOrder) {
+    const items = byRepo.get(repoId);
+    if (!items?.length) continue;
+    const state = repos.find((r) => r.id === repoId);
+    const stale = state && !state.ok && state.available
+      ? { repoId, text: state.syncedAt ? `last updated ${friendlyDate(state.syncedAt)}, refresh failed` : 'refresh failed' }
+      : undefined;
+    repoGroups.push({
+      key: `repo:${repoId}`,
+      testid: `template-category-repo-${repoId}`,
+      heading: state?.label ?? items[0].source?.label ?? repoId,
+      stale,
+      items,
+    });
+  }
+  const out: GalleryGroup[] = [];
+  for (const cat of TEMPLATE_CATEGORIES) {
+    const items = shown.filter((t) => t.source?.kind !== 'repo' && (t.category || 'General') === cat);
+    if (items.length) out.push({ key: cat, testid: `template-category-${cat}`, heading: cat, items });
+    if (cat === 'General') out.push(...repoGroups);
+  }
+  return out;
 }
 
 export default function Home() {
@@ -38,6 +88,8 @@ export default function Home() {
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
+  const [repoStates, setRepoStates] = useState<TemplateRepoState[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const [template, setTemplate] = useState('article');
   const [templateQuery, setTemplateQuery] = useState('');
   // Undefined until the namespace picker loads, i.e. while the server has no
@@ -74,12 +126,38 @@ export default function Home() {
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  useEffect(() => {
-    api.templates().then((list) => {
+  const loadTemplates = () => {
+    // The repo list is informational: a server without the route (or without
+    // repos) still gets its gallery.
+    api.templateRepos().then((r) => setRepoStates(r.repos)).catch(() => setRepoStates([]));
+    return api.templates().then((list) => {
       setTemplates(list);
       setTemplate((cur) => pickTemplate(list, cur));
-    }).catch(() => setTemplates([]));
-  }, []);
+    }).catch(() => setTemplates((cur) => cur ?? []));
+  };
+  // Repositories sync in the background after boot, so a dialog opened later
+  // must see what has arrived since the page loaded.
+  useEffect(() => { if (creating || templates === null) loadTemplates(); }, [creating]);
+
+  const refreshTemplates = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const { repos } = await api.refreshTemplateRepos();
+      setRepoStates(repos);
+      const list = await api.templates();
+      setTemplates(list);
+      setTemplate((cur) => pickTemplate(list, cur));
+      const failed = repos.filter((r) => !r.ok);
+      if (failed.length) {
+        toast(`Could not refresh ${failed.map((r) => r.label).join(', ')}: ${failed[0].error ?? 'unknown error'}`, 'error');
+      }
+    } catch (err: any) {
+      toast(`Could not refresh templates: ${err.message}`, 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // A search that hides the chosen tile would leave Create acting on something
   // the user cannot see, so the first result of a narrowing search becomes the
@@ -385,44 +463,64 @@ export default function Home() {
                     </button>
                   )}
                 </div>
+                {repoStates.length > 0 && (
+                  <div className="tpl-toolbar">
+                    <button
+                      className="btn btn--small"
+                      onClick={refreshTemplates}
+                      disabled={refreshing}
+                      data-testid="template-refresh"
+                    >
+                      {refreshing ? 'Refreshing…' : 'Refresh templates'}
+                    </button>
+                  </div>
+                )}
                 <div className="tpl-gallery" data-testid="template-grid">
                   {(() => {
                     const shown = shownTemplates;
                     if (!shown.length) {
                       return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
                     }
-                    return TEMPLATE_CATEGORIES.map((cat) => {
-                      const group = shown.filter((t) => (t.category || 'General') === cat);
-                      if (!group.length) return null;
-                      return (
-                        <div key={cat} className="tpl-group" data-testid={`template-category-${cat}`}>
-                          <div className="tpl-group__label">{cat}</div>
-                          <div className="tpl-grid">
-                            {group.map((t) => (
-                              <button
-                                key={t.id}
-                                className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
-                                data-testid={`template-${t.id}`}
-                                onClick={() => setTemplate(t.id)}
-                                title={t.description}
-                              >
-                                <span className="tpl__icon">{t.icon || '📄'}</span>
-                                <span className="tpl__name">{t.name}</span>
-                                <span className="tpl__desc">{t.description}</span>
-                                {/* The kit is downloaded when the project is created, not now:
-                                    say so before the user picks the tile. */}
-                                {t.kit && (
-                                  <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
-                                    Downloads the official kit from {t.kit.host}
-                                  </span>
-                                )}
-                                {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
-                              </button>
-                            ))}
-                          </div>
+                    return galleryGroups(shown, repoStates).map((g) => (
+                      <div key={g.key} className="tpl-group" data-testid={g.testid}>
+                        <div className="tpl-group__label">
+                          {g.heading}
+                          {g.stale && (
+                            <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>
+                              {g.stale.text}
+                            </span>
+                          )}
                         </div>
-                      );
-                    });
+                        <div className="tpl-grid">
+                          {g.items.map((t) => (
+                            <button
+                              key={t.id}
+                              className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
+                              data-testid={`template-${t.id}`}
+                              onClick={() => setTemplate(t.id)}
+                              title={t.description}
+                            >
+                              <span className="tpl__icon">{t.icon || '📄'}</span>
+                              <span className="tpl__name">{t.name}</span>
+                              <span className="tpl__desc">{t.description}</span>
+                              {/* The kit is downloaded when the project is created, not now:
+                                  say so before the user picks the tile. */}
+                              {t.kit && (
+                                <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
+                                  Downloads the official kit from {t.kit.host}
+                                </span>
+                              )}
+                              {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
+                              {t.source?.kind === 'repo' && (
+                                <span className="tpl__source" data-testid={`template-source-${t.id}`}>
+                                  {t.source.label ?? repoIdOf(t)}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                  ));
                   })()}
                 </div>
                 <p className="tpl-choice" data-testid="template-choice">

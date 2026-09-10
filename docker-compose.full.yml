@@ -71,6 +71,13 @@ services:
       # and typeset but nobody may edit; per-client typeset budget per minute.
       ALDINE_PROTECTED_PROJECTS: ${ALDINE_PROTECTED_PROJECTS:-}
       ALDINE_COMPILE_PER_MIN: ${ALDINE_COMPILE_PER_MIN:-}
+      # Optional template repositories (templates/README.md): a JSON array, or a
+      # path to one. A private repo's read token is the env var its "tokenEnv"
+      # names, so add that variable here as well.
+      TEMPLATE_REPOS: ${TEMPLATE_REPOS:-}
+      TEMPLATE_REPOS_FILE: ${TEMPLATE_REPOS_FILE:-}
+      TEMPLATE_REPOS_REFRESH_MS: ${TEMPLATE_REPOS_REFRESH_MS:-}
+      TEMPLATE_REPO_MAX_BYTES: ${TEMPLATE_REPO_MAX_BYTES:-}
       # Optional: share rate limits across app nodes (see the `redis` profile).
       REDIS_URL: ${REDIS_URL:-}
       # Datastore: blank = flat JSON files (slim single-node default). Set to a

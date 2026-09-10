@@ -96,6 +96,16 @@ ALDINE_COMPILE_QUOTA_MIN=
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
 
+# Templates from your own git repositories (optional): a JSON array, inline or
+# in a file via TEMPLATE_REPOS_FILE. Each entry's templates show in the gallery
+# under its label. A private repository takes a read token from the env var
+# named by "tokenEnv" ("user": oauth2 for GitLab, x-access-token for GitHub).
+# Layout, manifest and placeholders: ../templates/README.md
+#TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"https://gitlab.example.org/latex/templates.git","tokenEnv":"TEMPLATE_REPO_LAB_TOKEN"}]'
+#TEMPLATE_REPO_LAB_TOKEN=
+#TEMPLATE_REPOS_REFRESH_MS=600000  # re-fetch interval; floor 60000
+#TEMPLATE_REPO_MAX_BYTES=52428800  # per-checkout cap, 50 MiB
+
 # Shared rate limits and cross-node access-revocation events (the `redis`
 # profile). This does NOT make multiple app nodes a supported topology: routing
 # each project's /collab socket to a consistent node isn't built, and client
@@ -285,3 +295,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~4.3 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
 | `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (medium TeX Live plus the common collections) or `-full` (all of TeX Live, from 0.4.0). Single extra packages: a derived image with `RUN tlmgr install <pkg>`, see the root README, "Need a package it does not have?" |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |
+| `TEMPLATE_REPOS` / `TEMPLATE_REPOS_FILE` | Git repositories whose template folders join the gallery under their label: a JSON array of `{ id, label?, url, ref?, path?, tokenEnv?, user? }`, inline or in the file `TEMPLATE_REPOS_FILE` names. Read once at boot; a bad entry is logged and skipped. Checkouts live in `CACHE_DIR/template-repos/<id>`. Field reference in `templates/README.md` |
+| *(per repository)* the variable `tokenEnv` names | Read token for a private template repository, e.g. `TEMPLATE_REPO_LAB_TOKEN`. Any name; injected per git operation, never written to the checkout's `.git/config` |
+| `TEMPLATE_REPOS_REFRESH_MS` | How often template repositories are fetched again (default `600000` = 10 min; values below `60000` are raised to it). "Refresh templates" in the new-project dialog fetches on demand |
+| `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |

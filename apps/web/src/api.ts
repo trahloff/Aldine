@@ -131,9 +131,24 @@ export interface TemplateInfo {
   documentClass?: string;
   license?: string;
   licenseUrl?: string;
-  source?: { url: string; version?: string };
+  /** Upstream the template's files were taken from (`source` in template.json). */
+  origin?: { url: string; version?: string };
+  /** Which listing the template comes from; `label` is the repository label for `repo`. */
+  source?: { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string };
   /** Fetched-kit venues: where the official kit is downloaded from at create time. */
   kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+}
+
+/** One configured template repository (TEMPLATE_REPOS). `ok: false` with
+ *  `available: true` is stale: the previous checkout is still listed. */
+export interface TemplateRepoState {
+  id: string;
+  label: string;
+  ok: boolean;
+  available: boolean;
+  head?: string;
+  syncedAt?: string;
+  error?: string;
 }
 
 /** How the venue kit went while the project was being created. */
@@ -168,6 +183,8 @@ export const api = {
   createProject: (name: string, files?: Record<string, string>, template?: string, namespace?: string) =>
     req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template, namespace }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
+  templateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos'),
+  refreshTemplateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos/refresh', { method: 'POST' }),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */
   importZip: (name: string, zip: File, namespace?: string) => {
