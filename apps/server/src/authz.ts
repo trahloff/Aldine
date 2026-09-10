@@ -1,4 +1,4 @@
-import { AUTH_ENABLED, PublicUser, getUser } from './auth.js';
+import { ADMIN_EMAILS, AUTH_ENABLED, PublicUser, getUser } from './auth.js';
 import { ProjectMeta } from './store.js';
 
 /**
@@ -40,6 +40,17 @@ export function isOwner(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (!AUTH_ENABLED) return true;
   if (!meta.ownerId) return false;
   return !!user && meta.ownerId === user.id;
+}
+
+/**
+ * Instance administrator: may read server-wide metadata (accounts, counts,
+ * usage). Deliberately NOT a superset of canAccess — an admin sees that a
+ * project exists and who owns it, never its content. With auth off there is
+ * nobody to distinguish, so the admin surface is open like everything else.
+ */
+export function isAdmin(user: PublicUser | null): boolean {
+  if (!AUTH_ENABLED) return true;
+  return !!user?.email && ADMIN_EMAILS.has(user.email.toLowerCase());
 }
 
 /** Resolve the owner's display name for listings (best-effort). A lookup

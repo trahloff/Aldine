@@ -27,7 +27,8 @@ import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
-import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
+import { canAccess, isAdmin, isListed, isMember, isOwner, ownerName } from './authz.js';
+import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConflict, seedError, newId, BRANCH_RE, invalidRootFile } from './util.js';
 
@@ -171,7 +172,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }
 
   // ---------- auth (env-gated) ----------
-  app.get('/api/auth/me', async (req) => ({ authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders() }));
+  app.get('/api/auth/me', async (req) => {
+    const user = reqUser(req);
+    return { authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user) };
+  });
 
   /** 403 when password sign-in is disabled (SSO-only mode). */
   const passwordDisabled = (reply: any) => reply.code(403).send({ error: 'Password sign-in is disabled — use single sign-on.' });
@@ -304,8 +308,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Resolve the request's user once (awaiting the async datastore) and cache it,
   // so reqUser() is a synchronous read everywhere downstream.
   app.addHook('onRequest', async (req) => {
-    (req as any)._user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
+    const user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
+    (req as any)._user = user;
+    if (user) noteActivity(user.id);
   });
+  await registerAdminRoutes(app, reqUser);
 
   // Global guard: enforce project access when auth is on. Runs after routing,
   // so it uses the DECODED :id param — never a regex over the raw (still

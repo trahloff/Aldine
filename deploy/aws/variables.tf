@@ -61,6 +61,12 @@ variable "sso_only" {
   default     = true
 }
 
+variable "admin_emails" {
+  description = "Comma-separated account emails that may open /admin (ALDINE_ADMIN_EMAILS). Empty = nobody."
+  type        = string
+  default     = ""
+}
+
 variable "ai_model" {
   description = "ALDINE_AI_MODEL (optional; used when an AI key secret is set)."
   type        = string

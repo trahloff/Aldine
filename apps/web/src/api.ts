@@ -23,6 +23,26 @@ export interface ProjectSummary {
   github?: { fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string } | null;
 }
 
+/** Server-wide counts for the admin page. Metadata only: no project content. */
+export interface AdminStats {
+  users: { total: number; active7d: number; active30d: number; onlineNow: number };
+  projects: { total: number; trashed: number };
+  collab: { documents: number; connections: number };
+  compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
+  admins: string[];
+}
+export interface AdminUserRow {
+  id: string;
+  email: string | null;
+  name: string;
+  provider?: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  admin: boolean;
+  projects: number;
+  compileSecondsThisMonth: number;
+}
+
 export interface GithubRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
 export interface GithubStatus { connected: boolean; login?: string; oauth: boolean }
 
@@ -241,7 +261,9 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[] }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean }>('/api/auth/me'),
+  adminStats: () => req<AdminStats>('/api/admin/stats'),
+  adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   resetRequest: (email: string) =>

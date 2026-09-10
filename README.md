@@ -93,6 +93,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
+  `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
+  users (7 / 30 days, editing now), projects, compile time. Metadata only.
 - **Scales when you need it**: flat-file storage by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
@@ -111,7 +113,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.7.0}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.8.0}
     ports:
       - "8080:3000"
     volumes:
@@ -122,7 +124,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.7.0}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.8.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -155,7 +157,7 @@ fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
 - **You are pinned to a version.** The block above says
-  `${ALDINE_VERSION:-0.7.0}`, so a fresh copy installs the current release and
+  `${ALDINE_VERSION:-0.8.0}`, so a fresh copy installs the current release and
   nothing under a running install changes on its own. To upgrade, read the
   [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
 
@@ -195,7 +197,7 @@ what `deploy/backup.sh` looks for.
         image: aldine-compiler-local
         build:
           dockerfile_inline: |
-            FROM ghcr.io/trahloff/aldine-compiler:0.7.0
+            FROM ghcr.io/trahloff/aldine-compiler:0.8.0
             RUN tlmgr install pgfplots tikz-cd
     ```
     Bump the `FROM` tag when you bump `ALDINE_VERSION`. Compose builds the

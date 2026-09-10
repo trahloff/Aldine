@@ -48,6 +48,18 @@ async function runSuite(store, label) {
   await store.updateUser({ ...user, name: 'Ada L.' });
   eq((await store.getUser(user.id)).name, 'Ada L.', `${label}: updateUser`);
 
+  // touchUser writes only lastSeenAt: a concurrent password change must survive.
+  check((await store.getUser(user.id)).lastSeenAt === undefined, `${label}: lastSeenAt absent by default`);
+  await store.updateUser({ ...user, name: 'Ada L.', hash: 'h2' });
+  await store.touchUser(user.id, '2026-09-10T10:00:00.000Z');
+  const touched = await store.getUser(user.id);
+  eq(touched.lastSeenAt, '2026-09-10T10:00:00.000Z', `${label}: touchUser sets lastSeenAt`);
+  eq(touched.hash, 'h2', `${label}: touchUser leaves the rest of the row alone`);
+  await store.touchUser(`missing-${t}`, '2026-09-10T10:00:00.000Z'); // no throw, no row
+  check((await store.getUser(`missing-${t}`)) === null, `${label}: touchUser of a missing user creates nothing`);
+  const listed = (await store.listUsers()).filter((u) => u.id === user.id);
+  eq(listed, [touched], `${label}: listUsers includes lastSeenAt`);
+
   // ---- accounts keyed by provider subject, with no email (ORCID) ----
   const orcidUser = { id: `u3-${t}`, email: null, name: 'Josiah', salt: 's', hash: '', createdAt: new Date().toISOString(), provider: 'orcid', subject: `orcid:${t}` };
   await store.createUser(orcidUser);
@@ -123,6 +135,9 @@ async function runSuite(store, label) {
   await store.addUsageSeconds(user.id, month, 7.5);
   eq(await store.getUsageSeconds(user.id, month), 20, `${label}: usage accumulates`);
   eq(await store.getUsageSeconds(user.id, '2026-09'), 0, `${label}: usage months isolated`);
+  const before = await store.totalUsageSeconds(month);
+  await store.addUsageSeconds(orcidUser.id, month, 5);
+  eq((await store.totalUsageSeconds(month)) - before, 5, `${label}: totalUsageSeconds sums across users`);
 
   // ---- connections ----
   check((await store.getConnection(user.id, 'github')) === null, `${label}: connection default null`);

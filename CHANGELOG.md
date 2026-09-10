@@ -24,11 +24,6 @@ All notable changes to Aldine are documented here. The format follows
   and `{{YEAR}}` in text files, LaTeX-escaped in `.tex`/`.sty`/`.cls`.
   Layout, manifest and configuration are documented in `templates/README.md`.
   (#50)
-- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
-  in the running server container with `aws ecs execute-command`, for one-off
-  inspection of the datastore on EFS. It grants the task role the SSM
-  messaging permissions ECS Exec needs; who may open a session stays with IAM.
-  Documented in `deploy/aws/README.md`.
 
 ### Changed
 - `GET /api/templates` reports the manifest's upstream `source { url,
@@ -38,6 +33,25 @@ All notable changes to Aldine are documented here. The format follows
   `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
   shipped folders and venue classes included, not only to repositories.
   `template.json` files are unchanged. (#50)
+
+
+## [0.8.0] — 2026-09-10
+
+### Added
+- Server admin: `ALDINE_ADMIN_EMAILS` (comma-separated) names the accounts
+  that may open `/admin` and `GET /api/admin/{stats,users}`. The page shows
+  how many accounts exist, how many were active in the last 7 and 30 days,
+  who is editing right now, project and open-document counts, this month's
+  compile time, and an accounts table (sign-in method, joined, last seen,
+  owned projects, compile minutes). Metadata only: an admin never sees a
+  project's files and the project ACL is unchanged. To support "active", the
+  server now records `lastSeenAt` per account, written at most every five
+  minutes (Postgres gains a `users.last_seen_at` column automatically).
+- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
+  in the running server container with `aws ecs execute-command`, for one-off
+  inspection of the datastore on EFS. It grants the task role the SSM
+  messaging permissions ECS Exec needs; who may open a session stays with IAM.
+  Documented in `deploy/aws/README.md`.
 
 ## [0.7.0] — 2026-09-09
 
@@ -836,7 +850,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/trahloff/Aldine/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/trahloff/Aldine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0
