@@ -6,12 +6,15 @@ interface AuthState {
   loading: boolean;
   authEnabled: boolean;
   user: AuthUser | null;
+  /** Instance administrator (server allow-list); gates the /admin link only,
+   *  the server enforces the routes. */
+  admin: boolean;
   providers: OAuthProviderInfo[];
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], setUser: () => {}, refresh: async () => {} });
 
 export function useAuth() { return useContext(Ctx); }
 
@@ -19,6 +22,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [admin, setAdmin] = useState(false);
   const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
   const [passwordAuth, setPasswordAuth] = useState(true);
 
@@ -27,11 +31,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const me = await api.me();
       setAuthEnabled(me.authEnabled);
       setUser(me.user);
+      setAdmin(!!me.admin);
       setProviders(me.providers || []);
       setPasswordAuth(me.passwordAuth !== false);
     } catch {
       setAuthEnabled(false);
       setUser(null);
+      setAdmin(false);
     }
     setLoading(false);
   };
@@ -45,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
   if (authEnabled && (!user || hasResetToken)) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, providers, setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';

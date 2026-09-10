@@ -7,6 +7,15 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Server admin: `ALDINE_ADMIN_EMAILS` (comma-separated) names the accounts
+  that may open `/admin` and `GET /api/admin/{stats,users}`. The page shows
+  how many accounts exist, how many were active in the last 7 and 30 days,
+  who is editing right now, project and open-document counts, this month's
+  compile time, and an accounts table (sign-in method, joined, last seen,
+  owned projects, compile minutes). Metadata only: an admin never sees a
+  project's files and the project ACL is unchanged. To support "active", the
+  server now records `lastSeenAt` per account, written at most every five
+  minutes (Postgres gains a `users.last_seen_at` column automatically).
 - AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
   in the running server container with `aws ecs execute-command`, for one-off
   inspection of the datastore on EFS. It grants the task role the SSM

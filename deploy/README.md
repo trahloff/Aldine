@@ -235,6 +235,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
+| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time). Metadata only; needs `AUTH_ENABLED=1` to mean anything |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
