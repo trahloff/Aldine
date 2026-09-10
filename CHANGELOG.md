@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-10
+
 ### Added
 - GitLab as a second remote provider, next to GitHub. Import a project from
   gitlab.com or a self-hosted instance (nested group paths included),
