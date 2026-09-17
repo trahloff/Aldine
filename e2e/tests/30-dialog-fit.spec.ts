@@ -87,3 +87,40 @@ test.describe('the editor never scrolls sideways', () => {
     } finally { await cleanup(request, id); }
   });
 });
+
+test.describe('every sidebar tab stays reachable', () => {
+  // #59: the tab row used to be a single line with a hidden scrollbar, so on
+  // wider system fonts or at browser zoom the last tabs were simply cut off.
+  // Zoom is emulated with CSS zoom on the body, which shrinks the CSS width
+  // the same way a 125 % browser zoom does.
+  for (const c of [{ w: 1280, zoom: 1 }, { w: 1250, zoom: 1.25 }, { w: 1024, zoom: 1.5 }]) {
+    test(`all tabs fully inside the tab bar at ${c.w}px, zoom ${c.zoom}`, async ({ page, request }) => {
+      const id = await createPaperProject(request, `Tabs ${c.w}-${c.zoom}`);
+      try {
+        await page.setViewportSize({ width: c.w, height: 800 });
+        await openProject(page, id);
+        await page.evaluate((z) => { (document.body.style as any).zoom = String(z); }, c.zoom);
+        const clipped = await page.evaluate(() => {
+          const bar = document.querySelector('.sidebar__tabs') as HTMLElement;
+          const b = bar.getBoundingClientRect();
+          const tabs = Array.from(bar.querySelectorAll<HTMLElement>('[role="tab"]'));
+          const out = tabs.filter((t) => {
+            const r = t.getBoundingClientRect();
+            return r.right > b.right + 1 || r.left < b.left - 1 || r.width < 20;
+          }).map((t) => t.textContent);
+          return { count: tabs.length, out, overflow: bar.scrollWidth - bar.clientWidth };
+        });
+        expect(clipped.count).toBeGreaterThanOrEqual(3);
+        expect(clipped.out).toEqual([]);
+        expect(clipped.overflow).toBeLessThanOrEqual(0);
+        // and each one can actually be clicked where it is drawn
+        for (const t of await page.locator('.sidebar__tabs [role="tab"]').all()) {
+          const box = await t.boundingBox();
+          expect(box).not.toBeNull();
+          const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('[role="tab"]')?.textContent ?? null, [box!.x + box!.width / 2, box!.y + box!.height / 2]);
+          expect(hit).toBe(await t.textContent());
+        }
+      } finally { await cleanup(request, id); }
+    });
+  }
+});
