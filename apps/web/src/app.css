@@ -917,10 +917,9 @@
 /* light-theme line numbers: lift contrast to meet WCAG */
 :root:not([data-theme="dark"]) .code-pane .cm-gutters { color: #6b6b70; }
 
-/* sidebar tabs: single scrollable row instead of an uneven wrap */
-.sidebar__tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-.sidebar__tabs::-webkit-scrollbar { display: none; }
-.sidebar__tab { flex: 0 0 auto; }
+/* sidebar tabs wrap (the base rule): a single row with a hidden scrollbar
+   clipped the last tabs on wider system fonts and at browser zoom, with no
+   hint that more existed (#59). Each tab stretches to fill its row. */
 
 /* responsive: below 900px let the editor stack usably; hide the fixed PDF pane
    split and let panes flow, and allow the sidebar to collapse */
