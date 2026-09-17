@@ -105,7 +105,7 @@ const projectDir = (id) => path.join(process.env.DATA_DIR, 'projects', id);
 // ---------- account level ----------
 let r = await app.inject({url: '/api/remotes'});
 const listed = J(r);
-check(r.statusCode === 200 && listed.map((p) => p.id).sort().join() === 'github,gitlab', 'both providers listed: ' + r.body);
+check(r.statusCode === 200 && listed.map((p) => p.id).sort().join() === 'gitea,github,gitlab', 'all providers listed: ' + r.body);
 check(listed.find((p) => p.id === 'gitlab').changeRequestLabel === 'merge request', 'gitlab noun is merge request');
 check(listed.find((p) => p.id === 'github').changeRequestLabel === 'pull request', 'github noun is pull request');
 check(listed.find((p) => p.id === 'gitlab').selfHosted === true, 'gitlab is self-hostable');
@@ -152,6 +152,7 @@ r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload
 check(r.statusCode === 200, 'import status ' + r.body);
 const pid = J(r).id; check(pid, 'got project id');
 check(J(r).remote?.provider === 'gitlab' && J(r).remote?.fullName === 'grp/sub/paper', 'summary carries the gitlab link: ' + r.body);
+check(J(r).remote?.baseUrl === 'https://gitlab.example.org/gl', 'the link records the self-hosted instance: ' + JSON.stringify(J(r).remote));
 check(J(r).remote?.owner === 'grp/sub' && J(r).remote?.repo === 'paper' && J(r).remote?.remoteBranch === 'main', 'link fields: ' + JSON.stringify(J(r).remote));
 check(!('github' in J(r)) || J(r).github == null, 'no legacy github field for a gitlab link: ' + r.body);
 check(fs.existsSync(path.join(projectDir(pid), 'main.tex')), 'imported main.tex present');
@@ -285,6 +286,11 @@ check(r.statusCode === 400 && /Connect GitLab/.test(J(r).error), 'sync without a
 
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payload: {token: 'later-revoked'}});
 check(r.statusCode === 200 && J(r).baseUrl === undefined, 'connect without baseUrl (gitlab.com) ' + r.body);
+// the project was linked on gitlab.example.org/gl: a gitlab.com connection does not serve it
+r = await app.inject({url: `/api/projects/${pid}/remote/status`});
+check(r.statusCode === 400 && /Connect GitLab on https:\/\/gitlab\.example\.org\/gl to sync/.test(J(r).error), 'a gitlab.com connection does not sync a self-hosted link; the 400 names the instance: ' + r.body);
+r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payload: {token: 'later-revoked', baseUrl: 'https://gitlab.example.org/gl'}});
+check(r.statusCode === 200 && J(r).baseUrl === 'https://gitlab.example.org/gl', 'reconnect on the link\'s instance ' + r.body);
 revoked.add('later-revoked');
 r = await app.inject({url: '/api/remotes/gitlab/repos'});
 check(r.statusCode === 401 && J(r).reason === 'token-invalid', 'revoked token → 401 token-invalid: ' + r.body);

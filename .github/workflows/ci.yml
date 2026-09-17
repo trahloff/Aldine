@@ -46,6 +46,8 @@ jobs:
         run: npm run test:github -w apps/server
       - name: GitLab-sync integration test
         run: npm run test:gitlab -w apps/server
+      - name: Gitea/Forgejo-sync integration test
+        run: npm run test:gitea -w apps/server
       - name: GitLab provisioning integration test
         run: npm run test:gitlab:provision -w apps/server
       - name: GitLab deletion integration test

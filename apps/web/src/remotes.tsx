@@ -17,7 +17,10 @@ export interface RemoteDescriptor {
   tokenHelp: string;
   /** The host can be self-hosted, so connecting may take a base URL. */
   selfHosted: boolean;
+  /** No canonical instance: the connect form always asks for the URL. */
+  baseUrlRequired: boolean;
   defaultBaseUrl: string;
+  baseUrlPlaceholder: string;
 }
 
 const GITHUB_ICON = (
@@ -26,6 +29,11 @@ const GITHUB_ICON = (
 
 const GITLAB_ICON = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }} aria-hidden="true"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 5.45H7.582L4.919 1.263a.455.455 0 0 0-.867 0L1.386 9.452.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.92.92 0 0 0 .33-1.024"/></svg>
+);
+
+/* A tea cup: neither Gitea's nor Forgejo's logo, so neither project's mark is misused for the other. */
+const GITEA_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><path d="M4 9h12v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9Z"/><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3c0 1.5 1 1.5 1 3M12 3c0 1.5 1 1.5 1 3"/></svg>
 );
 
 export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
@@ -37,7 +45,9 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     tokenPlaceholder: 'GitHub token (needs repo scope)',
     tokenHelp: 'Create one at github.com → Settings → Developer settings → Personal access tokens, with repo access.',
     selfHosted: false,
+    baseUrlRequired: false,
     defaultBaseUrl: 'https://github.com',
+    baseUrlPlaceholder: 'https://github.com',
   },
   gitlab: {
     id: 'gitlab',
@@ -47,7 +57,21 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     tokenPlaceholder: 'GitLab token (needs api scope)',
     tokenHelp: 'Create one on your GitLab under Settings → Access tokens, with the api scope.',
     selfHosted: true,
+    baseUrlRequired: false,
     defaultBaseUrl: 'https://gitlab.com',
+    baseUrlPlaceholder: 'https://gitlab.example.org',
+  },
+  gitea: {
+    id: 'gitea',
+    label: 'Gitea / Forgejo',
+    icon: GITEA_ICON,
+    changeRequest: 'pull request',
+    tokenPlaceholder: 'Gitea or Forgejo token (needs read:user and write:repository)',
+    tokenHelp: 'Create one on your instance under Settings → Applications → Manage access tokens, with read:user and write:repository. Codeberg runs Forgejo.',
+    selfHosted: true,
+    baseUrlRequired: true,
+    defaultBaseUrl: 'https://codeberg.org',
+    baseUrlPlaceholder: 'https://codeberg.org',
   },
 };
 

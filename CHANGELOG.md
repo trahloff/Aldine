@@ -6,6 +6,23 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Gitea and Forgejo as a third remote provider, "Gitea / Forgejo", next to
+  GitHub and GitLab; Codeberg runs Forgejo and is the example instance the
+  connect form offers. Both share the Gitea API, so one provider covers any
+  instance, sub-path installs included. Connect with a personal access token
+  (`read:user` and `write:repository`) and the instance URL, which is
+  mandatory since there is no canonical host; there is no OAuth. Import a
+  repository, publish a local project to your account (or, through the API,
+  into an organisation), push and pull, switch and create branches, and open
+  a pull request from the editor; publishing into an organisation
+  additionally needs `write:organization`. The token goes over https as the
+  git password under your own login. A link records the instance it was made
+  on, so a collaborator connected to another instance never syncs it with the
+  wrong host, and the server only clones from or pushes to an https URL on
+  the connected instance itself. `REMOTE_PROVIDERS` now defaults to
+  `github,gitlab,gitea`; `GITEA_API_BASE` exists for the tests only. (#60)
+
 ### Fixed
 - The sidebar tab row (Files, History, Review and the plugin tabs) wraps
   again instead of hiding its overflow: on wider system fonts and at browser

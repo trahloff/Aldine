@@ -12,13 +12,15 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
 }) {
   const d = remoteDescriptor(provider);
   const [token, setToken] = useState('');
-  const [selfHosted, setSelfHosted] = useState(false);
+  // A host without a canonical instance (Gitea / Forgejo) always takes a URL; the others offer it behind a toggle.
+  const [selfHosted, setSelfHosted] = useState(d.baseUrlRequired);
   const [baseUrl, setBaseUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
   const connect = async () => {
     if (!token.trim()) return;
+    if (d.baseUrlRequired && !baseUrl.trim()) { toast(`Enter the ${d.label} instance URL, ${d.baseUrlPlaceholder} for example`, 'error'); return; }
     setBusy(true);
     try {
       await api.remoteConnect(provider, token.trim(), selfHosted && baseUrl.trim() ? baseUrl.trim() : undefined);
@@ -36,7 +38,7 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
           <div className="login__or">or use a token</div>
         </>
       )}
-      {d.selfHosted && (
+      {d.selfHosted && !d.baseUrlRequired && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px', fontSize: 12.5, color: 'var(--text-2)', cursor: 'pointer' }}>
           <input type="checkbox" checked={selfHosted} data-testid={`${provider}-selfhosted-toggle`} onChange={(e) => setSelfHosted(e.target.checked)} />
           Using a self-hosted {d.label}?
@@ -44,7 +46,7 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
       )}
       {d.selfHosted && selfHosted && (
         <input
-          className="input login__input" type="url" placeholder="https://gitlab.example.org"
+          className="input login__input" type="url" placeholder={d.baseUrlPlaceholder} aria-label={`${d.label} instance URL`}
           value={baseUrl} data-testid={`${provider}-baseurl`} onChange={(e) => setBaseUrl(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && connect()}
         />

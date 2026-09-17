@@ -8,6 +8,7 @@ import { jsonRequest, type RemoteConnection, type RemoteProvider, type RemoteRep
  */
 
 const API = () => process.env.GITHUB_API_BASE || 'https://api.github.com';
+const ORIGIN = 'https://github.com';
 
 async function api(conn: RemoteConnection, path: string, init: RequestInit = {}): Promise<any> {
   return jsonRequest(`${API()}${path}`, {
@@ -47,6 +48,10 @@ export const github: RemoteProvider = {
   label: 'GitHub',
   changeRequestLabel: 'pull request',
   selfHosted: false,
+  tokenScopeHint: 'repo scope',
+  pathHint: 'Expected "owner/repo"',
+  instanceOrigin() { return ORIGIN; },
+  apiOverridden() { return !!process.env.GITHUB_API_BASE; },
 
   /** Whether "Connect with GitHub" (OAuth, repo scope) is configured. PAT connect always works. */
   oauthEnabled() {
@@ -55,11 +60,11 @@ export const github: RemoteProvider = {
 
   connectUrl(state, redirectUri) {
     const p = new URLSearchParams({ client_id: process.env.GITHUB_CLIENT_ID!, scope: 'repo', state, redirect_uri: redirectUri });
-    return `https://github.com/login/oauth/authorize?${p}`;
+    return `${ORIGIN}/login/oauth/authorize?${p}`;
   },
 
   async exchangeCode(code, redirectUri) {
-    const res = await fetch('https://github.com/login/oauth/access_token', {
+    const res = await fetch(`${ORIGIN}/login/oauth/access_token`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({

@@ -173,7 +173,7 @@ export default function Editor() {
       const owner = !authEnabled || !!p.isOwner;
       if (owner && !p.remote && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
         localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to GitHub or GitLab to keep a synced copy.');
+        toast('This project lives only on this server — publish it to a git host to keep a synced copy.');
       }
     })();
   }, [id, branch]);
@@ -622,7 +622,7 @@ export default function Editor() {
           )
         ) : (
           isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to GitHub or GitLab — backup + sync">
+            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to a git host — backup + sync">
               Publish
             </button>
           )

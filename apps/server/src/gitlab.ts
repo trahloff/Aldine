@@ -1,5 +1,5 @@
 import { injectToken } from './gitops.js';
-import { jsonRequest, RemoteApiError, type RemoteConnection, type RemoteProvider, type RemoteRepo } from './remote-types.js';
+import { jsonRequest, normalizeInstanceUrl, RemoteApiError, type RemoteConnection, type RemoteProvider, type RemoteRepo } from './remote-types.js';
 
 /**
  * GitLab (gitlab.com or self-hosted) over REST v4. Bearer auth works for
@@ -17,15 +17,8 @@ function instanceUrl(): string {
   return normalizeBaseUrl(process.env.GITLAB_URL) || DEFAULT_URL;
 }
 
-/** Trim, drop trailing slashes, keep the pathname (sub-path installs); https only. */
 export function normalizeBaseUrl(raw: string | undefined): string | undefined {
-  const s = (raw || '').trim();
-  if (!s) return undefined;
-  let u: URL;
-  try { u = new URL(s); } catch { throw new Error('GitLab URL must be a full https:// URL'); }
-  if (u.protocol !== 'https:' && !process.env.GITLAB_API_BASE) throw new Error('GitLab URL must use https://');
-  if (u.search || u.hash) throw new Error('GitLab URL must not contain a query or fragment');
-  return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+  return normalizeInstanceUrl(raw, 'GitLab', !!process.env.GITLAB_API_BASE, '/api/v4');
 }
 
 export function apiBase(conn: RemoteConnection): string {
@@ -110,7 +103,11 @@ export const gitlab: RemoteProvider = {
   label: 'GitLab',
   changeRequestLabel: 'merge request',
   selfHosted: true,
+  tokenScopeHint: 'the api scope',
+  pathHint: 'Expected a project path like "group/project"',
   normalizeBaseUrl,
+  instanceOrigin(conn) { return new URL(conn.baseUrl || instanceUrl()).origin; },
+  apiOverridden() { return !!process.env.GITLAB_API_BASE; },
 
   oauthEnabled() {
     return !!(process.env.GITLAB_CLIENT_ID && process.env.GITLAB_CLIENT_SECRET);
