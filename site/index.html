@@ -612,6 +612,69 @@
                 </p>
             </section>
 
+            <section class="wrap" id="agent">
+                <h3 class="sec-title">Claude as a collaborator</h3>
+                <div class="demo-frame">
+                    <video
+                        src="assets/agent-demo.mp4"
+                        autoplay
+                        muted
+                        loop
+                        playsinline
+                        aria-label="Screen recording: Claude, connected over MCP, edits a paragraph in the open document, adds a section file, typesets the paper, shows the PDF in its viewer, and the History panel and review dialog list its commits"
+                    ></video>
+                </div>
+                <p class="demo-caption">
+                    Claude, connected over MCP, tightens the abstract, adds a
+                    section, typesets, and shows the PDF. Every edit lands as
+                    a commit you can review or revert.
+                </p>
+                <div class="grid visual-grid">
+                    <div class="cell">
+                        <h4>Writes into the live document</h4>
+                        <p>
+                            Edits arrive in the open editor as an attributed
+                            collaborator: a violet presence chip, the changed
+                            range tinted, your cursor left where it was.
+                        </p>
+                    </div>
+                    <div class="cell">
+                        <h4>Typesets and shows the PDF</h4>
+                        <p>
+                            Claude runs the compile, reads the errors back
+                            with file and line, and shows the PDF in the chat
+                            on claude.ai, Claude Desktop and Cowork (a signed
+                            link elsewhere) &mdash; the same run your preview
+                            adopts.
+                        </p>
+                    </div>
+                    <div class="cell">
+                        <h4>Every edit a reviewable commit</h4>
+                        <p>
+                            Each change is a git commit authored
+                            &ldquo;Claude&rdquo;, marked in History; when the
+                            session ends, one prompt opens the diff and can
+                            revert it all.
+                        </p>
+                    </div>
+                </div>
+                <p class="start-note">
+                    Optional, off by default (<code>ALDINE_MCP=1</code>). The
+                    endpoint is plain MCP: claude.ai, Claude Desktop, Cowork,
+                    Claude Code and any other MCP client get the tools; the
+                    PDF renders inline where the host supports MCP Apps.
+                    <a
+                        href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md"
+                        >Setup guide</a
+                    >
+                    &middot;
+                    <a
+                        href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md#try-it-on-the-demo"
+                        >Try it on the demo instance</a
+                    >
+                </p>
+            </section>
+
             <section class="wrap" id="features">
                 <h3 class="sec">Features</h3>
                 <div class="grid">
@@ -689,6 +752,20 @@
                             your disk — readable without Aldine running, and
                             yours to take anywhere. AGPL-3.0, self-hosted,
                             nothing phones home.
+                        </p>
+                    </div>
+                    <!-- a tenth cell: spans the row, or three columns leave two empty slots -->
+                    <div class="cell" style="grid-column: 1 / -1">
+                        <h4>Claude as a collaborator</h4>
+                        <p>
+                            Connect your instance to Claude over MCP: Claude
+                            writes into the live document, typesets, and shows
+                            the PDF in the chat on claude.ai, Claude Desktop and
+                            Cowork (a signed link in Claude Code and other MCP
+                            clients). Every edit is a commit authored
+                            &ldquo;Claude&rdquo;, with a review-and-revert
+                            prompt. Optional, off by default &mdash;
+                            <a href="#agent">see it in action</a>.
                         </p>
                     </div>
                 </div>

@@ -1,11 +1,11 @@
 # Publishes the aldine.dev landing page (site/) via GitHub Pages.
-# Demo video + visual screenshot are pulled from e2e/shots at deploy time so they are never duplicated.
+# Demo videos + visual screenshot are pulled from e2e/shots at deploy time so they are never duplicated.
 name: Landing page
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", "e2e/shots/demo.mp4", "e2e/shots/visual-dark.png", ".github/workflows/pages.yml"]
+    paths: ["site/**", "e2e/shots/demo.mp4", "e2e/shots/agent-demo.mp4", "e2e/shots/visual-dark.png", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,7 @@ jobs:
           mkdir -p _site/assets
           cp -r site/. _site/
           cp e2e/shots/demo.mp4 _site/assets/demo.mp4
+          cp e2e/shots/agent-demo.mp4 _site/assets/agent-demo.mp4
           cp e2e/shots/visual-dark.png _site/assets/visual-dark.png
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

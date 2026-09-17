@@ -3,6 +3,8 @@
 # Design: auth OFF (visitors get the full editor instantly), TLS via Caddy,
 # and a nightly wipe (volumes destroyed + stack recreated at 04:00 UTC) so
 # whatever people leave behind disappears. Nothing on this box matters.
+# The Agent API is on with a published static token (var.mcp_token), so the
+# box doubles as the trial connector for docs/AGENT_API.md.
 #
 #   export HCLOUD_TOKEN=...           # Hetzner Cloud API token (project-scoped)
 #   terraform init && terraform apply \
@@ -60,6 +62,7 @@ resource "hcloud_server" "demo" {
     demo_domain        = var.demo_domain
     repo_url           = var.repo_url
     protected_projects = var.protected_projects
+    mcp_token          = var.mcp_token
   })
 
   # cloud-init runs once, at first boot. A template change must be applied on

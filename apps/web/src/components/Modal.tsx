@@ -35,11 +35,13 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
     openStack.push(id);
     returnFocus.current = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    // focus the first focusable control, else the panel itself
+    // focus the first focusable control, else the panel itself — without
+    // scrolling: a long dialog's first control can sit in the sticky action
+    // row at the bottom, and scrolling it into view opens the dialog at its end
     const focusables = () => Array.from(
       panel?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [],
     );
-    (focusables()[0] ?? panel)?.focus();
+    (focusables()[0] ?? panel)?.focus({ preventScroll: true });
 
     const onKey = (e: KeyboardEvent) => {
       if (openStack[openStack.length - 1] !== id) return;

@@ -60,9 +60,12 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   autocomplete.
 - **Claude as a collaborator** (optional, `ALDINE_MCP=1`): connect your
   instance to claude.ai, Claude Desktop, Cowork or Claude Code over MCP and
-  Claude edits, typesets and shows the PDF in the chat; every change is a git
+  Claude edits, typesets and shows the PDF in the chat (inline on claude.ai,
+  Claude Desktop and Cowork; a signed link elsewhere); every change is a git
   commit authored "Claude" with a review-and-revert toast in the editor.
   Setup, reachability and the security model: [docs/AGENT_API.md](docs/AGENT_API.md).
+
+  ![Claude edits the open document, adds a section, typesets, and History lists its commits with a review prompt](e2e/shots/agent-demo.gif)
 
 <details>
 <summary><strong>Everything else</strong>: visual editor, review mode, AI error fix, SyncTeX, plugins, auth, scaling…</summary>
@@ -214,13 +217,15 @@ what `deploy/backup.sh` looks for.
   - Get everything. Every release from 0.4.0 also ships all of TeX Live as
     `-full` (about 2.8 GB compressed, 9 GB on disk; CJK is only here). Add
     `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again.
-- **Port 8080 taken?** Change the left side of `ports:`.
+- **Port 8080 taken?** Change the left side of `ports:`; with
+  `docker-compose.full.yml`, set `ALDINE_PORT=8081` in `.env` instead.
 - **Everything beyond the minimum**: building from source (latest `main`,
   not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
   lives in [`docker-compose.full.yml`](docker-compose.full.yml), which carries
   the same compiler sandbox and the same volumes, so you can switch without
   losing data: `docker compose -f docker-compose.full.yml up -d --build`.
-  The first build pulls TeX Live; expect 15–40 minutes.
+  The first build installs TeX Live into the compiler image; expect 20–60
+  minutes (the `tlmgr install` step is most of it), then seconds per start.
   `ALDINE_TEXLIVE_SCHEME=full` builds the all-of-TeX-Live variant instead.
 
 ## How Aldine compares
