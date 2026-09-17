@@ -22,7 +22,7 @@ import { adoptRootIfUnset } from '../root.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from '../templates.js';
 import { trashProject, restorableUntil, TRASH_DAYS } from '../trash.js';
 import {
-  McpDenied, projectNotFound, resolveProject, assertWritableProject, assertFileTarget, isDirectoryPath, visiblePath, diskSpelling, type McpIdentity,
+  McpDenied, projectNotFound, resolveProject, assertWritableProject, compileKey, assertFileTarget, isDirectoryPath, visiblePath, diskSpelling, type McpIdentity,
 } from './guards.js';
 
 /**
@@ -817,7 +817,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (user && await usage.overQuota(user.id)) {
         return fail('Monthly typeset limit reached for this account — the plan quota resets next month');
       }
-      key = user ? `u:${user.id}` : 'mcp:operator';
+      key = compileKey(identity);
       if (compileLimiter && !(await compileLimiter.take(key))) {
         return fail('Typeset budget reached for this minute — try again shortly');
       }
@@ -989,7 +989,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       // the upstream is hit, so a typo never costs a lookup.
       await gitops.ensureWorktree(meta.id, branch);
       const target = diskSpelling(meta.id, branch, visible);
-      const key = identity.user ? `u:${identity.user.id}` : 'mcp:operator';
+      const key = compileKey(identity);
       if (!(await refLimiter.take(key))) return fail('Reference lookup budget reached — wait a few seconds before the next lookup');
       let added: Awaited<ReturnType<typeof addReference>>;
       try {

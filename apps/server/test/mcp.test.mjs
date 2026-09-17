@@ -49,6 +49,14 @@ check(res.statusCode === 401, `wrong token → 401 (got ${res.statusCode})`);
 
 res = await app.inject({ method: 'POST', url: '/mcp', remoteAddress: '203.0.113.1', headers: { 'x-aldine-token': 'aldn_wrongwrongwrongwrong' }, payload: rpcPing });
 check(res.statusCode === 401, `wrong X-Aldine-Token → 401 (got ${res.statusCode})`);
+check(/error="invalid_token"/.test(res.headers['www-authenticate'] || ''), 'a wrong X-Aldine-Token is challenged as invalid_token');
+
+// The Claude Code plugin sends `X-Aldine-Token: ${ALDINE_TOKEN:-}` — an empty
+// header when the variable is unset. That must read as "no credential" (a
+// challenge without invalid_token starts the Connect flow), not as a wrong token.
+res = await app.inject({ method: 'POST', url: '/mcp', remoteAddress: '203.0.113.1', headers: { 'x-aldine-token': '' }, payload: rpcPing });
+check(res.statusCode === 401, `empty X-Aldine-Token → 401 (got ${res.statusCode})`);
+check(/^Bearer resource_metadata=/.test(res.headers['www-authenticate'] || ''), `empty X-Aldine-Token challenges without invalid_token (got ${res.headers['www-authenticate']})`);
 
 // claude.ai reserves the Authorization header for its own OAuth bearer, so the
 // token must also be accepted from X-Aldine-Token (raw, no "Bearer" prefix).

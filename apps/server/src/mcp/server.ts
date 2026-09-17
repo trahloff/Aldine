@@ -75,7 +75,7 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
       if (auth.AUTH_ENABLED) reply.header('www-authenticate', wwwAuthenticate(publicBase(req), { invalidToken: !!credential }));
       return reply.code(401).send({ error: 'A valid access token is required' });
     }
-    (req as any)._mcpIdentity = identity;
+    (req as any)._mcpIdentity = { ...identity, ip: req.ip };
   };
 
   app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: guard }, async (req, reply) => {

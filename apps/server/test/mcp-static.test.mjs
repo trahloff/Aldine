@@ -64,6 +64,14 @@ check(body.user === null, 'static-token calls run as the anonymous operator');
 await client.close();
 
 await app2.close();
+
+// The typeset budget and gates key on the account, else the client address:
+// on a shared-token instance one visitor's typesets never spend everyone's
+// budget, and stdio (no address) keeps the single operator bucket.
+const { compileKey } = await import('../src/mcp/guards.ts');
+check(compileKey({ user: { id: 'u1' }, tokenScope: null, ip: '203.0.113.7' }) === 'u:u1', 'an account keys the compile budget');
+check(compileKey({ user: null, tokenScope: null, ip: '203.0.113.7' }) === 'mcp:ip:203.0.113.7', 'no account: the client address keys it');
+check(compileKey({ user: null, tokenScope: null }) === 'mcp:operator', 'no account and no address (stdio): one operator bucket');
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('MCP endpoint (static token): ALL PASSED');
 process.exit(0);

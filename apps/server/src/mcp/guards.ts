@@ -18,6 +18,17 @@ import { importPath, isHiddenPath, optionLikePath } from '../util.js';
 export interface McpIdentity {
   user: auth.PublicUser | null;
   tokenScope: auth.TokenScope | null;
+  /** Client address (behind TRUST_PROXY, the real one). With auth off every
+   *  caller is the operator, so this is what keeps one visitor's typesets
+   *  from spending everyone's budget on a shared-token instance. */
+  ip?: string;
+}
+
+/** Key for the typeset budget and the compile gates: the account, else the
+ *  client address, else one operator bucket (stdio has no address). */
+export function compileKey(identity: McpIdentity): string {
+  if (identity.user) return `u:${identity.user.id}`;
+  return identity.ip ? `mcp:ip:${identity.ip}` : 'mcp:operator';
 }
 
 /** Constant-time string compare via digests — inputs may differ in length,
