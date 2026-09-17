@@ -6,6 +6,8 @@ import { getTheme, setTheme, Theme } from '../theme';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>;
+  /** The branch the download link archives. */
+  branch: string;
   files: TreeEntry[];
   /** The auto-typeset switch lives in localStorage, not in the project. */
   autoTypeset: boolean;
@@ -24,7 +26,7 @@ interface Props {
  * engine picker and the log dialog's stop-on-error box are shortcuts to the
  * same state). Every change saves on its own; there is no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset }: Props) {
+export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset }: Props) {
   const [name, setName] = useState(project.name);
   const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -158,6 +160,17 @@ export default function ProjectSettings({ project, files, autoTypeset, importNot
                 <option value="light">Light</option>
               </select>
               <span className="settings__hint">Applies to this browser</span>
+            </span>
+          </div>
+        </section>
+
+        <section data-testid="export-settings">
+          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Export</div>
+          <div className="settings__row">
+            <span className="settings__label">Source</span>
+            <span className="settings__control settings__control--check">
+              <a className="btn" href={api.archiveUrl(project.id, branch)} download data-testid="settings-download-zip">Download as ZIP</a>
+              <span className="settings__hint">Every file on {branch}; imports back into Aldine, or into Overleaf</span>
             </span>
           </div>
         </section>

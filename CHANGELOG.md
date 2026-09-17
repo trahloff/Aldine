@@ -6,6 +6,13 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Download a project as a ZIP: `GET /api/projects/:id/archive?branch=` returns
+  the branch's tracked files from git, flat like an Overleaf download (never
+  `.git` or build output), after the open documents are flushed and committed so it matches
+  the editor. Reachable from project settings ("Download as ZIP") and the
+  command palette; the archive imports back through the ZIP import. (#58)
+
 ## [0.9.0] — 2026-09-10
 
 ### Added
