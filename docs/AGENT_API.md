@@ -46,6 +46,39 @@ the three variables pass through from `.env`; the minimal
 `docker-compose.yml` has no `environment:` block, so add one (or switch to the
 full file) before enabling.
 
+### The shortest local setup
+
+A fresh clone, Docker, auth off, Claude Code on the same machine. Put a
+`.env` next to the compose files (compose reads it on every call) with three
+lines and nothing else:
+
+```dotenv
+ALDINE_MCP=1
+ALDINE_MCP_TOKEN=<openssl rand -hex 32>
+# the origin you will type into the connector; the PDF links are absolute against it
+ALDINE_PUBLIC_URL=http://localhost:8080
+# ALDINE_PORT=8081   # only if 8080 is taken; then use 8081 in ALDINE_PUBLIC_URL and in every URL below
+```
+
+then `docker compose -f docker-compose.full.yml up -d --build`. The first
+build installs TeX Live into the compiler image and takes 20–60 minutes
+(the `tlmgr install` step is most of it; the app image takes about ten minutes);
+every later start takes seconds. The instance is ready when
+`curl localhost:8080/api/health` answers `{"ok":true,"name":"aldine"}`, and
+`docker compose -f docker-compose.full.yml logs app | grep 'MCP connector'`
+prints the connector URL and which credential it takes:
+
+```
+[aldine] MCP connector at http://localhost:8080/mcp — credentials: static token (ALDINE_MCP_TOKEN); PDF viewer: built
+```
+
+Continue with "Check it" (the two `curl`s, against `http://localhost:8080`)
+and "Connect from Claude Code" below; the whole loop from `claude mcp add`
+to a typeset PDF fits in a minute once the containers are up. Compose
+interpolates `${VAR:-}` from your shell before it reads `.env`, so a variable
+exported in the shell (a developer's `SENTRY_DSN`, say) reaches the
+container even when `.env` does not mention it.
+
 ## Check it
 
 Two requests from any machine tell you the endpoint is up and reachable the
@@ -108,6 +141,76 @@ page: the calls run as the instance operator and reach every project. The
 same header works on an `AUTH_ENABLED` instance with an `aldn_` token, for a
 client without a Connect button.
 
+### Try it on the demo
+
+The public demo at [demo.aldine.dev](https://demo.aldine.dev) runs the Agent
+API with auth off and a token that is public on purpose, so you can watch the
+loop before you set up anything of your own:
+
+| Setting | Value |
+|---|---|
+| Connector URL | `https://demo.aldine.dev/mcp` |
+| Header | `X-Aldine-Token: aldine-demo` |
+
+Publishing the token exposes nothing new: the demo is already writable by
+anyone with a browser and holds nothing. The no-authless rule under
+[Security](#security) is about instances that hold real work, and it still
+applies to the demo box — the token is required, it is merely known.
+
+In claude.ai (Claude Desktop and Cowork alike) follow
+["With a static token"](#with-a-static-token-auth-off) above: add the custom
+connector with that URL, put the header in the additional request headers,
+and save without clicking Connect — the demo has no accounts, so there is
+nothing for Connect to sign you in to. In Claude Code:
+
+```bash
+claude mcp add --transport http aldine-demo https://demo.aldine.dev/mcp \
+  --header "X-Aldine-Token: aldine-demo"
+```
+
+Then ask Claude to list the projects, create one and typeset it. The PDF
+renders inside the chat because the demo's origin is public
+(`ALDINE_PUBLIC_URL=https://demo.aldine.dev`), which is the one thing a
+private instance cannot show you.
+
+What a shared sandbox means:
+
+- **Every project is world-writable, bar the showcase paper.** The token has
+  no scope, so it reaches every project on the box, and so does everyone
+  else's; the one exception is a showcase paper the operator has marked
+  read-only, where Claude is told "That project is read-only". Put nothing
+  there you would mind losing or having read.
+- **It is wiped nightly at 04:00 UTC.** Projects, files, git history and the
+  secret behind the PDF links all go; the token stays. A project that
+  vanished overnight was not deleted by anyone.
+- **Typesets are capped per address.** Every visitor gets 6 typesets per
+  minute (`ALDINE_COMPILE_PER_MIN=6`) and one running agent typeset at a
+  time, keyed by client address whether the call comes from a browser or
+  through the connector, so one busy chat cannot spend everyone's budget.
+  "Typeset budget reached for this minute — try again shortly" and "An agent
+  typeset is already running for this account — wait for it to finish" mean
+  your own budget is used up, not that your setup is wrong. The per-token
+  half of the `/mcp` rate limit (60 burst, 1/s) is shared, since everyone
+  presents the same token; the per-address half is not.
+
+The checks from ["Check it"](#check-it) apply unchanged: the unauthenticated
+`POST https://demo.aldine.dev/mcp` answers `401` with
+`{"error":"A valid access token is required"}` and no `WWW-Authenticate`
+header, and the discovery document is a JSON 404 — both right for auth off.
+With the token, a `ping` proves the whole path from any machine:
+
+```bash
+curl -s -X POST https://demo.aldine.dev/mcp \
+  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+  -H 'X-Aldine-Token: aldine-demo' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ping","arguments":{}}}'
+```
+
+expects a `data:` line whose result text is
+`{"ok":true,"server":"aldine","user":null}` (`user` is null because a static
+token belongs to no account). Without the `accept` header the same request
+is a `406` naming the two media types, not a `401`: the token was accepted.
+
 ## Connect from Claude Code
 
 ```bash
@@ -123,6 +226,39 @@ you started the login yourself. With a static token instead of Connect:
 claude mcp add --transport http aldine https://<host>/mcp \
   --header "X-Aldine-Token: <aldn_… or ALDINE_MCP_TOKEN>"
 ```
+
+`--header "Authorization: Bearer <token>"` works the same for Claude Code;
+`X-Aldine-Token` is the form that also works in claude.ai's connector
+dialog, which reserves `Authorization` for its own OAuth bearer. Either way,
+`claude mcp get aldine` should say **Connected** (it reports "ConnectionRefused"
+while the instance is still starting), and the first thing to ask Claude for
+is `ping` or the project list — the write tools take project *ids*, which
+`list_projects` returns, and on a new instance that list is empty until
+`create_project` makes one.
+
+### Claude Code plugin
+
+The repository is also a plugin marketplace. The plugin configures the same
+connector and adds three skills — `latex-fix-build` (the compile, read,
+edit, recompile loop with a three-attempt limit), `latex-draft-section` (a
+section in its own file, wired in as one commit) and `latex-bibliography`
+(`references_add`, duplicate check, biber vs bibtex):
+
+```bash
+export ALDINE_URL=https://<host>          # no trailing slash; the instance runs ALDINE_MCP=1
+export ALDINE_TOKEN=<credential>          # optional: ALDINE_MCP_TOKEN (auth off) or an aldn_ PAT when you cannot use Connect; unset to sign in via /mcp
+```
+
+```
+/plugin marketplace add trahloff/Aldine
+/plugin install aldine@aldine
+```
+
+With `ALDINE_TOKEN` unset the server sees no credential and answers with the
+OAuth challenge, so `/mcp` → **aldine** runs the Connect flow as above. From
+a checkout, `claude --plugin-dir ./claude-plugin/aldine` loads the plugin for
+one session; `claude-plugin/aldine/README.md` has the per-skill usage and
+troubleshooting.
 
 ### Private instances
 
@@ -196,7 +332,15 @@ bodies `version_conflict`, `stale_anchor` and `ambiguous_anchor` included —
 echoes `branch` and `head` (after a write, the commit that write made), and
 a file tool's result names its `path`; a plain refusal is one sentence of text. The exact argument names live in the
 tool schema, which Claude reads; for a script author the schema is the
-contract and `e2e/tests/15-mcp.spec.ts` shows it in use. Every tool goes
+contract; `e2e/tests/15-mcp.spec.ts` shows the transport (the MCP SDK's
+`StreamableHTTPClientTransport` with the token in `requestInit.headers`)
+and `apps/server/test/mcp.test.mjs` the `listTools()` call that reads the
+schemas. A first session that touches every
+step is `ping` → `list_projects` → `create_project` → `read_file` →
+`edit_file` (a `quote` is at least 8 characters and must match one place;
+pass the read's `contentVersion` as `base_version`) → `compile` →
+`get_pdf_url` → `commit`, which on a clean run reports `committed:false`
+because each write already committed itself. Every tool goes
 through the same access, protected-project, trash and hidden-path checks as
 the REST API; a project-scoped token is refused outside its scope and
 `list_projects` shows only the scope. No tool purges, shares, pushes to a

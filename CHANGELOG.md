@@ -185,6 +185,29 @@ All notable changes to Aldine are documented here. The format follows
   auto-typeset following the agent), `18-pdf-viewer`, the auth suite
   (scoped tokens, OAuth Connect, `create_project`, per-user review marks)
   and the base-path suite.
+- The public demo box serves the Agent API with a published token
+  (`deploy/demo`, variable `mcp_token`, default `aldine-demo`): connector
+  URL `https://demo.aldine.dev/mcp` with `X-Aldine-Token: aldine-demo`,
+  world-writable, wiped nightly at 04:00 UTC — docs/AGENT_API.md "Try it on
+  the demo".
+- With auth off, the connector's typeset budget (`ALDINE_COMPILE_PER_MIN`)
+  and the one-agent-typeset gate are keyed by client address instead of one
+  operator bucket, so on a shared-token instance one chat cannot spend
+  everyone's budget; stdio, which has no address, keeps the operator bucket.
+- A Claude Code plugin (`claude-plugin/aldine`, installable with `/plugin
+  marketplace add trahloff/Aldine` then `/plugin install aldine@aldine`): the
+  Aldine MCP server configured from `ALDINE_URL` (and `ALDINE_TOKEN` for a
+  static token or a personal access token; Connect otherwise) plus three skills —
+  `latex-fix-build` (the compile-read-edit repair loop, three attempts, then
+  report), `latex-draft-section` (a section in its own file, wired in with
+  one `batch_write` commit) and `latex-bibliography` (`references_add`,
+  duplicate check, biber vs bibtex). Setup in `docs/AGENT_API.md`, "Claude
+  Code plugin".
+- Landing page and README: a "Claude as a collaborator" section with a
+  recorded clip of the loop (an edit into the open document, a new section,
+  a typeset, the PDF viewer, the commits in History and the review prompt;
+  `e2e/demo-agent.mjs` records it into `e2e/shots`), a feature cell, and
+  `llms.txt` names the Agent API and its guide.
 
 ### Changed
 - Write conflicts for the Agent API and `PUT /file` are detected per file,
@@ -240,6 +263,9 @@ All notable changes to Aldine are documented here. The format follows
   under a neutral title.
 
 ### Fixed
+- Dialogs open at their title: moving focus to the first control no longer
+  scrolls a long dialog (the agent review, the template gallery) down to its
+  action row.
 - The server's git commands can no longer reach outside `DATA_DIR`
   (`GIT_CEILING_DIRECTORIES`): a project directory that lost its repository
   used to let git discover an enclosing checkout, which committed a developer's
