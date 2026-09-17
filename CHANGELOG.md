@@ -6,6 +6,11 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The sidebar tab row (Files, History, Review and the plugin tabs) wraps
+  again instead of hiding its overflow: on wider system fonts and at browser
+  zoom the last tabs were cut off with no scrollbar to reveal them. (#59)
+
 ## [0.9.0] — 2026-09-10
 
 ### Added
