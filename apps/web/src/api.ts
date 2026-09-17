@@ -102,6 +102,8 @@ export interface AgentActivity {
   commitCount: number;
   fileCount: number;
   truncated: boolean;
+  /** An agent session is live on the branch right now (server-side, so a fresh page knows before awareness syncs). */
+  sessionActive: boolean;
 }
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
 /** Token metadata only — the `aldn_…` value itself is returned once, on create. */
@@ -417,29 +419,41 @@ export const api = {
     req<AccessToken & { token: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ name, projectIds, expiresAt }) }),
   revokeToken: (tokenId: string) => req<{ ok: boolean }>(`/api/tokens/${tokenId}`, { method: 'DELETE' }),
   // OAuth consent (cookie session only — access tokens are refused here)
-  getOAuthClient: (clientId: string, redirectUri: string) =>
-    oauthReq<OAuthClientInfo>(`/api/oauth/client?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`),
+  // The whole authorize request goes along, so a defect the consent POST
+  // would refuse (no PKCE challenge) is refused before the card renders.
+  getOAuthClient: (authorizeParams: Record<string, string>) =>
+    oauthReq<OAuthClientInfo>(`/api/oauth/client?${new URLSearchParams(authorizeParams)}`),
   postOAuthConsent: (body: { [param: string]: string | string[] | null | undefined; decision: 'allow' | 'deny'; projectIds: string[] | null }) =>
     oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
     req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
 };
 
-/** Local identity for presence + commit attribution. */
+// No violet: #a78bfa (and the violet family generally) is reserved for the
+// agent presence identity — a human with agent-violet breaks the semantics.
+const PRESENCE_PALETTE = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#d63384', '#0aa2c0'];
+
+/** Local identity for presence + commit attribution — the fallback without
+ *  accounts; a signed-in person is `accountIdentity(user)`. */
 export function localUser(): { name: string; color: string } {
   let name = localStorage.getItem('aldine.name');
   if (!name) {
     name = `Writer ${Math.floor(100 + Math.random() * 900)}`;
     localStorage.setItem('aldine.name', name);
   }
-  // No violet: #a78bfa (and the violet family generally) is reserved for the
-  // agent presence identity — a human with agent-violet breaks the semantics.
-  const palette = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#d63384', '#0aa2c0'];
   let color = localStorage.getItem('aldine.color');
-  if (!color || !palette.includes(color)) {
+  if (!color || !PRESENCE_PALETTE.includes(color)) {
     // re-roll colors picked before the violet reservation (e.g. legacy #8f3ec9)
-    color = palette[Math.floor(Math.random() * palette.length)];
+    color = PRESENCE_PALETTE[Math.floor(Math.random() * PRESENCE_PALETTE.length)];
     localStorage.setItem('aldine.color', color);
   }
   return { name, color };
+}
+
+/** Presence identity of a signed-in person: the account name, with a colour
+ *  that is the same in every browser they open the project from. */
+export function accountIdentity(user: { id: string; name: string; email?: string | null }): { name: string; color: string } {
+  let h = 0;
+  for (const ch of user.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { name: user.name || user.email || 'Signed in', color: PRESENCE_PALETTE[h % PRESENCE_PALETTE.length] };
 }

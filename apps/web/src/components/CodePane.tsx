@@ -116,6 +116,9 @@ interface Props {
   onJumpToPdf?(): void;
   spellcheck?: boolean;
   mode?: EditorMode;
+  /** Who this client is to collaborators (awareness): the account when
+   *  signed in; without one the browser's anonymous "Writer N". */
+  identity?: { name: string; color: string };
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -177,7 +180,7 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onSave, onDocChanged, onStats, onJumpToPdf, spellcheck = false, mode = 'source' }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onSave, onDocChanged, onStats, onJumpToPdf, spellcheck = false, mode = 'source', identity }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats, onSave, onJumpToPdf });
@@ -283,7 +286,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     // recompiling on every remote keystroke.
     const onYChange = (_e: unknown, tr: { local: boolean }) => cbRef.current.onDocChanged?.(tr.local);
     ytext.observe(onYChange);
-    const user = localUser();
+    const user = identity ?? localUser();
     provider.setAwarenessField('user', { name: user.name, color: user.color, colorLight: user.color + '55' });
 
     const awareness = provider.awareness!;
@@ -292,7 +295,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness };
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
-    // session (same server-side clientID) gets a fresh start time.
+    // session (same server-side clientID) gets a fresh start time. A start
+    // time the server sends wins: it predates this page's load.
     const agentSince = new Map<number, number>();
     const reportUsers = () => {
       // key by Yjs clientID so two collaborators with the same display name stay distinct
@@ -301,7 +305,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         const u = (s as { user?: PresenceUser }).user;
         if (!u?.name) return;
         if (u.isAgent && !agentSince.has(clientId)) agentSince.set(clientId, Date.now());
-        byClient.set(clientId, u.isAgent ? { ...u, startedAt: agentSince.get(clientId) } : u);
+        byClient.set(clientId, u.isAgent ? { ...u, startedAt: u.startedAt ?? agentSince.get(clientId) } : u);
       });
       for (const cid of [...agentSince.keys()]) if (!byClient.has(cid)) agentSince.delete(cid);
       onUsers(Array.from(byClient.values()));

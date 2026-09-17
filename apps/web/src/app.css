@@ -107,8 +107,8 @@
 .dot--ok { background: var(--ok); }
 .dot--error { background: var(--error); }
 .dot--busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
-/* #a78bfa is the reserved agent violet — kept out of the human color palette */
-.dot--agent { background: #a78bfa; }
+/* the reserved agent violet (theme.css --agent) — kept out of the human color palette */
+.dot--agent { background: var(--agent); }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 /* ---------- modal ---------- */
@@ -130,6 +130,9 @@
   max-width: calc(100vw - 48px);
   max-height: 70vh;
   overflow: auto;
+  /* the sticky action row below overlays the last 60px of the scrollport;
+     scrollIntoView and focus have to land above it, with a little room */
+  scroll-padding-bottom: 72px;
   background: var(--bg-panel);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-pop);
@@ -247,6 +250,7 @@
 .login__switch { width: 100%; justify-content: center; margin-top: 8px; color: var(--text-2); }
 .login__error { color: var(--error); font-size: 12.5px; margin: 2px 0 8px; }
 .login__info { color: var(--ok-text); font-size: 12.5px; margin: 2px 0 8px; }
+.login__info--warn { color: var(--warn-text); }
 /* first-run onboarding */
 .onboard { width: 100%; text-align: center; }
 .onboard__tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
@@ -318,6 +322,29 @@
 .gh-repo__meta { font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
 
 .settings__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+
+/* agent access card (account settings) */
+.agent-connector { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.agent-connector code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.agent-connector .btn { flex-shrink: 0; margin-left: auto; }
+.agent-command { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; }
+.agent-command code { flex: 1; min-width: 0; font-size: 12px; overflow-wrap: anywhere; line-height: 24px; }
+.agent-command .btn { flex-shrink: 0; }
+/* the shown-once secret: wraps so all 48 characters are readable, one click selects the whole thing */
+.agent-token { display: block; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 5px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--bg-inset); overflow-wrap: anywhere; user-select: all; cursor: text; }
+.agent-token:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field__error { color: var(--error); font-size: 12px; margin: -4px 0 8px; }
+.input[aria-invalid="true"] { border-color: var(--error); }
+@media (max-width: 480px) {
+  /* the address about to be copied has to be readable: wrap it, button underneath */
+  .agent-connector, .agent-command { flex-wrap: wrap; }
+  .agent-connector code, .agent-command code { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
+/* thumbs: a 24px button is a miss waiting to happen; the glyphs keep their size */
+@media (pointer: coarse) {
+  .btn--small { height: 36px; }
+  .toast__actions .btn--ghost { min-width: 40px; height: 40px; justify-content: center; }
+}
 .settings__label { color: var(--text-2); }
 .settings__control { flex: 0 0 62%; width: auto; }
 .settings__control--check { display: flex; align-items: center; gap: 8px; }
@@ -848,8 +875,9 @@
 .palette__hint { font-size: 11px; color: var(--text-2); }
 .palette__empty { padding: 18px; text-align: center; color: var(--text-2); font-size: 13px; }
 
-/* toast — capped to the viewport; on a phone the action buttons drop under
-   the sentence instead of squeezing it into three words per line */
+/* toast — capped to the viewport; on a phone the action group drops under
+   the sentence as a whole. Dot + text and Review + × are each one flex item,
+   so wrapping can never strand the dot or the × on a line of its own. */
 .toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; width: max-content; max-width: min(560px, calc(100vw - 24px)); }
 .toast {
   background: var(--bg-panel);
@@ -863,7 +891,11 @@
   align-items: center;
   animation: toast-in 200ms var(--ease);
 }
-.toast__text { flex: 1 1 auto; min-width: 0; }
+.toast__body { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 auto; min-width: 0; }
+/* centred on the first line of the sentence, wrapped or not */
+.toast__body .dot { margin-top: calc((1lh - 7px) / 2); }
+.toast__text { min-width: 0; }
+.toast__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* comment highlights in the editor */
@@ -903,6 +935,9 @@
 .review__actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .review__reply-input { flex: 1; min-width: 0; height: 26px; }
 .review__divider { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 0 6px; }
+/* Per-commit headings in the agent review dialog carry Claude's own message
+   (file names, LaTeX tokens) — no case transform, unlike the section label above. */
+.review__commit { font-size: 12.5px; font-weight: 600; color: var(--text); margin: 14px 0 6px; overflow-wrap: anywhere; }
 
 /* sidebar panels (history, plugins) */
 .panel-list { display: flex; flex-direction: column; }
@@ -960,8 +995,14 @@
 @media (max-width: 640px) {
   .home__bar { flex-direction: column; align-items: stretch; gap: 12px; }
   .home__bar > div:last-child { flex-wrap: wrap; }
-  .split-pdf, .pdf-pane { display: none; }
-  .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
+  /* The whole preview pane goes, not just the PDF inside it: the pane keeps an
+     inline width of at least 360px, which on a 390px screen left the editor a
+     30px column. */
+  .pane--preview { display: none; }
+  .sidebar { position: absolute; z-index: 30; height: 100%; width: calc(100vw - 40px); box-shadow: var(--shadow-pop); }
+  /* Touch browsers draw no scrollbar, so a source line longer than the
+     screen has to wrap to be readable at all. */
+  .diff { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* The overlay hides the editor; a deep link to a line collapses it and the
      toolbar button brings it back. */
   .sidebar--hidden { display: none; }
@@ -996,6 +1037,8 @@
 .consent__actions { display: flex; gap: 8px; justify-content: flex-end; }
 .consent__actions .btn { min-width: 84px; justify-content: center; height: 34px; }
 .consent__who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-3); font-size: 12px; margin: 14px 0 0; }
+/* the ghost button's own padding would indent it once it wraps under the name */
+.consent__who .btn--ghost { margin-left: -8px; }
 .consent__who strong { color: var(--text-2); font-weight: 600; }
 .consent__error { color: var(--error); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
 .consent__error .btn { display: inline-flex; vertical-align: baseline; }

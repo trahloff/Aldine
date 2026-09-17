@@ -85,8 +85,9 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
 
 /** `heading`/`registerHeading` keep the caller's context ("connect Claude")
  *  on both the sign-in and the sign-up step; `notice` is an info line shown
- *  on arrival (why the person is back at the form). */
-export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string }) {
+ *  on arrival (why the person is back at the form) — `noticeTone` 'warn' for
+ *  a setback (an ended session), the default green for a completed step. */
+export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice, noticeTone }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string; noticeTone?: 'ok' | 'warn' }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
@@ -176,7 +177,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
             )}
 
             {error && <p className="login__error" data-testid="auth-error">{error}</p>}
-            {info && <p className="login__info" data-testid="auth-info">{info}</p>}
+            {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} data-testid="auth-info">{info}</p>}
 
             <button className="btn btn--primary login__submit" onClick={submit} disabled={busy} aria-busy={busy || undefined} data-testid="auth-submit">
               {busy ? '…' : mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Set password'}

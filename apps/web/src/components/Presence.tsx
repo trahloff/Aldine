@@ -24,7 +24,9 @@ export default function Presence({ users }: { users: PresenceUser[] }) {
         u.isAgent ? (
           // role + tabIndex: aria-label on a bare span is ignored by most screen
           // readers, and the session-start tooltip must be reachable by keyboard.
-          <span key={i} className="presence__avatar presence__avatar--agent" role="img" tabIndex={0} title={agentTitle(u)} aria-label={agentTitle(u)} style={{ background: u.color }} data-testid="presence-agent">
+          // The theme token, not the awareness colour: the server broadcasts one
+          // violet for both themes and the light one needs a deeper grade.
+          <span key={i} className="presence__avatar presence__avatar--agent" role="img" tabIndex={0} title={agentTitle(u)} aria-label={agentTitle(u)} style={{ background: 'var(--agent)' }} data-testid="presence-agent">
             <span aria-hidden="true" style={{ display: 'contents' }}><IconSpark /></span>
           </span>
         ) : (

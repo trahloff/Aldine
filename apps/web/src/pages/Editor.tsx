@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser } from '../api';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser, accountIdentity } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
@@ -105,6 +105,10 @@ export default function Editor() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
+  // Who collaborators and comment threads see: the account when there is one;
+  // the browser's anonymous "Writer N" is only right without accounts (the
+  // server applies the same rule to commits).
+  const identity = useMemo(() => (authEnabled && user ? accountIdentity(user) : localUser()), [authEnabled, user]);
   // Bumped whenever the branch's history may have moved (files signal, a
   // revert, an agent session ending) so an open History panel refetches.
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -383,10 +387,13 @@ export default function Editor() {
     }
   }, [id, toast]);
 
+  // The server's start time, when awareness carries one: after a reload
+  // mid-session the toast must still cover the commits made before it.
+  const agentStartedAt = users.find((u) => u.isAgent)?.startedAt;
   useEffect(() => {
     if (agentPresent) {
       if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
-      if (agentSessionStart.current == null) agentSessionStart.current = Date.now();
+      if (agentSessionStart.current == null) agentSessionStart.current = agentStartedAt ?? Date.now();
       return;
     }
     if (agentSessionStart.current == null) return;
@@ -409,6 +416,7 @@ export default function Editor() {
         toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
+          key: 'agent-review',
           // Arrives a minute after the last edit, when the person has usually
           // looked away — it must wait for them.
           sticky: true,
@@ -417,7 +425,7 @@ export default function Editor() {
         });
       } catch { /* history unavailable — nothing to review */ }
     }, 4000);
-  }, [agentPresent, id, branch, toast, bumpHistory, openAgentReview, recordSeen]);
+  }, [agentPresent, agentStartedAt, id, branch, toast, bumpHistory, openAgentReview, recordSeen]);
   useEffect(() => () => { if (agentEndTimer.current) clearTimeout(agentEndTimer.current); }, []);
 
   // The same prompt for whoever was not watching: Claude commits newer than
@@ -432,10 +440,17 @@ export default function Editor() {
       try {
         const mark = authEnabled ? null : readSeen(id, branch);
         const res = await api.agentActivity(id, branch, mark && mark.head ? { head: mark.head, at: mark.at } : null);
-        if (cancelled || !res.commitCount) return;
+        if (cancelled) return;
+        if (!res.commitCount) {
+          // Nothing to show, but the visit is what the next prompt's wording
+          // ("while you were away") and the scan's lower bound key on.
+          void recordSeen(res.head, 'acknowledged');
+          return;
+        }
         // A session still running is the live prompt's to report when it ends;
-        // nothing is recorded, so the next open asks again.
-        if (agentPresentRef.current) return;
+        // nothing is recorded, so the next open asks again. The server's
+        // answer, not awareness: at mount no awareness has arrived yet.
+        if (res.sessionActive || agentPresentRef.current) return;
         const n = res.fileCount;
         // The dialog opens the newest commits only; a batch larger than that
         // says so here, and a scan that hit its ceiling reports a floor.
@@ -444,6 +459,8 @@ export default function Editor() {
         toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
+          // One review prompt at a time: a session ending replaces this one.
+          key: 'agent-review',
           sticky: true,
           onClick: () => { void (async () => { if (await openAgentReview(res.commits, res.commitCount)) await recordSeen(res.head, 'acknowledged'); })(); },
           onDismiss: () => { void recordSeen(res.head, 'acknowledged'); },
@@ -460,17 +477,23 @@ export default function Editor() {
     if (!agentReview) return;
     try {
       // log order is newest-first — exactly what the revert endpoint expects.
-      // The signed-in name is the audit author; the anonymous collab identity
-      // is only right without accounts (the server applies the same rule).
-      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', user?.name || localUser().name);
+      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', identity.name);
       setAgentReview(null);
       toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
       bumpHistory();
+      // The preview followed Claude's edits (an agent write arms auto-typeset);
+      // the revert reaches the editor as a remote transaction, which arms
+      // nothing, so the PDF on screen would keep showing what was just undone.
+      if (res.ok && compile.result) {
+        if (autoRef.current) doCompile();
+        else setCompile((c) => (c.result ? { ...c, result: { ...c.result, pdfStale: true } } : c));
+      }
       await loadFiles();
     } catch (err: any) {
-      toast(`Could not revert: ${err.message}`, 'error');
+      // The server's conflict message already opens with "Could not revert".
+      toast(/^Could not revert/.test(err.message) ? err.message : `Could not revert: ${err.message}`, 'error');
     }
-  }, [agentReview, id, branch, user, loadFiles, toast, bumpHistory]);
+  }, [agentReview, id, branch, identity, compile.result, doCompile, loadFiles, toast, bumpHistory]);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -666,7 +689,7 @@ export default function Editor() {
   const submitComment = useCallback(async (body: string, suggestion?: string) => {
     if (!composing || !activeFile) return;
     try {
-      await api.addComment(id, { branch, file: activeFile, anchor: composing, body, suggestion, author: localUser().name });
+      await api.addComment(id, { branch, file: activeFile, anchor: composing, body, suggestion, author: identity.name });
       await loadComments();
       bumpComments();
       setTab('review');
@@ -674,7 +697,7 @@ export default function Editor() {
       toast(`Could not add comment: ${err.message}`, 'error');
     }
     setComposing(null);
-  }, [composing, id, branch, activeFile, loadComments, bumpComments, toast]);
+  }, [composing, id, branch, activeFile, identity, loadComments, bumpComments, toast]);
 
   const revealComment = useCallback((c: Comment) => {
     if (c.file !== activeFile) setActiveFile(c.file);
@@ -1033,7 +1056,7 @@ export default function Editor() {
                 onReveal={revealComment}
                 onResolve={async (c, resolved) => { await api.resolveComment(id, c.id, resolved); await loadComments(); bumpComments(); }}
                 onDelete={async (c) => { if (!window.confirm('Delete this comment thread?')) return; await api.deleteComment(id, c.id); await loadComments(); bumpComments(); }}
-                onReply={async (c, body) => { await api.replyComment(id, c.id, body, localUser().name); await loadComments(); bumpComments(); }}
+                onReply={async (c, body) => { await api.replyComment(id, c.id, body, identity.name); await loadComments(); bumpComments(); }}
                 onAccept={acceptSuggestion}
               />
             )}
@@ -1090,6 +1113,7 @@ export default function Editor() {
                 onJumpToPdf={jumpToPdf}
                 spellcheck={spellcheck}
                 mode={mode}
+                identity={identity}
               />
             </>
           ) : filesLoaded && !hasFiles ? (
@@ -1266,12 +1290,9 @@ export default function Editor() {
                 Showing the newest {agentReview.hashes.length} of {agentReview.total} commits — reverting undoes only these.
               </p>
             )}
-            <p className="modal__sub" data-testid="agent-review-caveat">
-              A commit holds Claude’s change plus anything typed into the same file in the seconds before it was saved; reverting undoes both.
-            </p>
             {agentReview.commits.map((c) => (
               <div key={c.hash} data-testid="agent-review-commit">
-                <div className="review__divider" title={c.hash}>{c.message}</div>
+                <div className="review__commit" title={c.hash}>{c.message}</div>
                 <DiffView patch={c.patch} />
               </div>
             ))}

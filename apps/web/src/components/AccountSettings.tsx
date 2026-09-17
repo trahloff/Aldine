@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { api, AccessToken, AuthUser, ProjectSummary } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { api, AccessToken, ApiError, AuthUser, ProjectSummary } from '../api';
 import { withBase } from '../basePath';
 import { useToast } from './Toast';
 import { useAuth } from './Auth';
@@ -32,15 +32,21 @@ function AgentAccess() {
   const [tokens, setTokens] = useState<AccessToken[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
+  const [nameError, setNameError] = useState('');
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [scopeIds, setScopeIds] = useState<string[]>([]);
   const [expiry, setExpiry] = useState('');
   const [busy, setBusy] = useState(false);
   const [minted, setMinted] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<AccessToken | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const mintedRef = useRef<HTMLDivElement>(null);
+  const tokenRef = useRef<HTMLElement>(null);
   const toast = useToast();
   const connectorUrl = `${location.origin}${withBase('/mcp')}`;
   const cloudBlocked = unreachableFromCloud(connectorUrl);
+  const claudeCodeCommand = `claude mcp add --transport http aldine ${connectorUrl}`;
 
   useEffect(() => { api.listTokens().then(setTokens).catch(() => setTokens([])); }, []);
   // Project names are needed for the form's scope picker and for the scope
@@ -50,18 +56,46 @@ function AgentAccess() {
     if (needProjects && projects === null) api.listProjects().then(setProjects).catch(() => setProjects([]));
   }, [needProjects, projects]);
 
-  const copy = async (value: string, what: string) => {
+  // The card sits in a scrolling panel under a sticky action row: an element
+  // that is inside the scrollport but under that row never scrolls on its
+  // own, so the whole form (and later the whole token block) is brought
+  // clear of it before focus lands. Focus on the new token also gives a
+  // keyboard user the secret without a trip back to the top of the dialog.
+  // The project checklist arrives after the form opened and grows it under
+  // the footer again, so the scroll re-runs when the list lands.
+  useEffect(() => {
+    if (showForm) formRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [showForm, projects]);
+  useEffect(() => {
+    if (showForm) nameRef.current?.focus({ preventScroll: true });
+  }, [showForm]);
+  useEffect(() => {
+    if (!minted) return;
+    mintedRef.current?.scrollIntoView({ block: 'nearest' });
+    tokenRef.current?.focus({ preventScroll: true });
+  }, [minted]);
+
+  const selectAll = (el: HTMLElement) => {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
+  const copy = async (value: string, label: string, noun: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast(`${what} copied`, 'ok');
+      toast(`${label} copied`, 'ok');
     } catch {
-      toast(`Could not copy the ${what.toLowerCase()} — select it and copy manually`, 'error');
+      toast(`Could not copy the ${noun} — select it and copy manually`, 'error');
     }
   };
 
   const create = async () => {
     const n = name.trim();
-    if (!n) { toast('Give the token a name first', 'error'); return; }
+    if (!n) { setNameError('Give the token a name first'); nameRef.current?.focus(); toast('Give the token a name first', 'error'); return; }
     setBusy(true);
     try {
       const expiresAt = expiry ? new Date(Date.now() + Number(expiry) * 86400_000).toISOString() : undefined;
@@ -71,6 +105,7 @@ function AgentAccess() {
       setName(''); setScopeIds([]); setExpiry('');
       api.listTokens().then(setTokens).catch(() => {});
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 400 && /name/i.test(err.message)) setNameError(err.message);
       toast(`Could not create the token: ${err.message}`, 'error');
     }
     setBusy(false);
@@ -87,14 +122,42 @@ function AgentAccess() {
     }
   };
 
+  const projectName = (id: string) => projects?.find((p) => p.id === id)?.name ?? id;
+  // One or two projects are named on the row itself; more become a count
+  // with the names in the tooltip (see scopeNames).
   const scopeLabel = (t: AccessToken) => {
     if (!t.projectIds) return 'All projects';
     const n = t.projectIds.length;
+    if (n <= 2 && projects !== null) return t.projectIds.map(projectName).join(', ');
     return `${n} project${n === 1 ? '' : 's'}`;
   };
   const scopeNames = (t: AccessToken) => t.projectIds
-    ? t.projectIds.map((id) => projects?.find((p) => p.id === id)?.name ?? id).join(', ')
+    ? t.projectIds.map(projectName).join(', ')
     : 'Every project you can open, now and later';
+
+  const connections = tokens?.filter((t) => t.clientName !== null) ?? [];
+  const scripted = tokens?.filter((t) => t.clientName === null) ?? [];
+
+  const row = (t: AccessToken) => (
+    <div key={t.id} className="settings__row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }} data-testid={`agent-token-${t.id}`}>
+      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+        {t.clientName !== null && (
+          <span className="gh-repo__badge" title="Created by the Connect button in Claude; revoking ends the connection and Claude asks you to connect again" data-testid="agent-token-via-connect">via Connect</span>
+        )}
+        <button className="btn btn--ghost btn--small" style={{ flexShrink: 0 }} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`} data-testid="agent-token-revoke">Revoke</button>
+      </span>
+      <span style={{ display: 'flex', gap: 10, flexWrap: 'wrap', color: 'var(--text-3)', fontSize: 11.5 }}>
+        <span title={scopeNames(t)} data-testid="agent-token-scope">{scopeLabel(t)}</span>
+        <span>Created {friendlyDate(t.createdAt)}</span>
+        <span>{t.lastUsedAt ? `Used ${friendlyDate(t.lastUsedAt)}` : 'Never used'}</span>
+        {/* A Connect session's access token rotates daily; its expiry is the
+            connection's plumbing, not when Claude loses access. */}
+        {t.expiresAt && t.clientName === null && <span>Expires {friendlyDate(t.expiresAt)}</span>}
+        {t.clientName !== null && <span>Renews itself while in use</span>}
+      </span>
+    </div>
+  );
 
   return (
     <>
@@ -107,13 +170,23 @@ function AgentAccess() {
         <>
           <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>
             {cloudBlocked
-              ? 'In Claude Code: claude mcp add --transport http aldine <connector URL>, then /mcp → login. You pick which projects Claude may touch when it asks.'
+              ? 'Run this once in Claude Code, then type /mcp in a session and pick Aldine. It asks which projects Claude may touch.'
               : 'In Claude: Settings → Connectors → Add custom connector → Connect. You pick which projects Claude may touch when it asks.'}
           </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: cloudBlocked ? 6 : 12 }}>
-            <code data-testid="agent-connector-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{connectorUrl}</code>
-            <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={() => copy(connectorUrl, 'Connector URL')} data-testid="agent-connector-copy">Copy connector URL</button>
-          </div>
+          {/* The address appears once: on its own with a copy button where
+              claude.ai can use it, inside the runnable command where only
+              Claude Code can. Either way it is the agent-connector-url. */}
+          {cloudBlocked ? (
+            <div className="agent-command">
+              <code data-testid="agent-claude-code-command">claude mcp add --transport http aldine <span data-testid="agent-connector-url">{connectorUrl}</span></code>
+              <button className="btn btn--small" onClick={() => copy(claudeCodeCommand, 'Command', 'command')} data-testid="agent-claude-code-copy">Copy command</button>
+            </div>
+          ) : (
+            <div className="agent-connector" style={{ marginBottom: 12 }}>
+              <code data-testid="agent-connector-url">{connectorUrl}</code>
+              <button className="btn btn--small" onClick={() => copy(connectorUrl, 'Connector URL', 'connector URL')} data-testid="agent-connector-copy">Copy connector URL</button>
+            </div>
+          )}
           {cloudBlocked && (
             <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 12px' }} data-testid="agent-connector-unreachable">
               claude.ai, Claude Desktop and Cowork call this address from Anthropic's cloud and cannot reach it — use Claude Code on this machine, or expose the instance over public HTTPS (docs/AGENT_API.md, “Reachability”).
@@ -122,37 +195,61 @@ function AgentAccess() {
         </>
       )}
 
+      {/* Listed before the token funnel so a person looking for "my Claude
+          connection" finds it without scrolling; absent rather than empty
+          so the Create button stays above the fold until there is one. */}
+      {connections.length > 0 && (
+        <>
+          <div className="menu__label" style={{ margin: '14px 0 6px' }} data-testid="agent-connections">Connections</div>
+          {connections.map(row)}
+        </>
+      )}
+
       <div className="menu__label" style={{ margin: '14px 0 6px' }}>Access tokens for scripts</div>
       <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 10px' }}>
-        For scripts and anything without a Connect button: send a token as the Authorization bearer or the X-Aldine-Token header. Connections made through Connect show up here too and can be revoked the same way.
+        For scripts and anything without a Connect button: send a token as the Authorization bearer or the X-Aldine-Token header.
       </p>
 
       {minted && (
-        <div style={{ marginBottom: 12 }}>
+        <div ref={mintedRef} style={{ marginBottom: 12 }} role="status" aria-live="polite">
           <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>You won't see this again — copy the token now.</p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <input className="input" readOnly value={minted} aria-label="New access token" data-testid="agent-token-value" style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 12 }} onFocus={(e) => e.target.select()} />
-            <button className="btn btn--small" style={{ flexShrink: 0 }} onClick={() => copy(minted, 'Token')} data-testid="agent-token-copy">Copy token</button>
+          <code
+            ref={tokenRef}
+            className="agent-token"
+            tabIndex={0}
+            role="textbox"
+            aria-readonly="true"
+            aria-label="New access token"
+            data-testid="agent-token-value"
+            onFocus={(e) => selectAll(e.currentTarget)}
+            onClick={(e) => selectAll(e.currentTarget)}
+          >{minted}</code>
+          <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
+            <button className="btn btn--primary btn--small" onClick={() => copy(minted, 'Token', 'token')} data-testid="agent-token-copy">Copy token</button>
+            <button className="btn btn--small" onClick={() => setMinted(null)} data-testid="agent-token-done">Done</button>
           </div>
-          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 8px' }}>Send it as <code>Authorization: Bearer …</code> or in an <code>X-Aldine-Token</code> header to {connectorUrl}. Claude connectors don’t need a token — use Connect.</p>
-          <button className="btn btn--small" onClick={() => setMinted(null)} data-testid="agent-token-done">Done</button>
+          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: 0 }}>Send it as <code>Authorization: Bearer …</code> or in an <code>X-Aldine-Token</code> header to {connectorUrl}. Claude connectors don’t need a token — use Connect.</p>
         </div>
       )}
 
       {showForm ? (
-        <div style={{ marginBottom: 12 }}>
+        <div ref={formRef} style={{ marginBottom: 12 }}>
           <label htmlFor="agent-token-name" style={{ display: 'block', fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>Token name</label>
           <input
             id="agent-token-name"
-            autoFocus
+            ref={nameRef}
             className="input"
             placeholder="e.g. Claude on my laptop"
             value={name}
+            maxLength={100}
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError ? 'agent-token-name-error' : undefined}
             data-testid="agent-token-name"
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); setNameError(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             style={{ marginBottom: 8 }}
           />
+          {nameError && <p id="agent-token-name-error" className="field__error" data-testid="agent-token-name-error">{nameError}</p>}
           {projects !== null && projects.length > 0 && (
             <>
               <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 4px' }}>Limit to specific projects — none checked means all your projects.</p>
@@ -175,7 +272,7 @@ function AgentAccess() {
             {EXPIRY_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button className="btn btn--small" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn--small" onClick={() => { setShowForm(false); setNameError(''); }}>Cancel</button>
             <button className="btn btn--primary btn--small" onClick={create} disabled={busy} aria-busy={busy || undefined} data-testid="agent-token-submit">{busy ? '…' : 'Create token'}</button>
           </div>
         </div>
@@ -183,29 +280,10 @@ function AgentAccess() {
         <button className="btn btn--small" onClick={() => setShowForm(true)} data-testid="agent-token-create" style={{ marginBottom: 4 }}>Create access token</button>
       )}
 
-      {tokens !== null && tokens.length === 0 && !showForm && !minted && (
-        <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '6px 0 0' }}>No access tokens yet — nothing is connected to your projects.</p>
+      {tokens !== null && scripted.length === 0 && !showForm && !minted && (
+        <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '6px 0 0' }}>No access tokens yet.</p>
       )}
-      {tokens?.map((t) => (
-        <div key={t.id} className="settings__row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }} data-testid={`agent-token-${t.id}`}>
-          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-            {t.clientName !== null && (
-              <span className="gh-repo__badge" title="Created by the Connect button in Claude; revoking also ends its refresh tokens" data-testid="agent-token-via-connect">via Connect</span>
-            )}
-            <button className="btn btn--ghost btn--small" style={{ flexShrink: 0 }} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`} data-testid="agent-token-revoke">Revoke</button>
-          </span>
-          <span style={{ display: 'flex', gap: 10, flexWrap: 'wrap', color: 'var(--text-3)', fontSize: 11.5 }}>
-            <span title={scopeNames(t)} data-testid="agent-token-scope">{scopeLabel(t)}</span>
-            <span>Created {friendlyDate(t.createdAt)}</span>
-            <span>{t.lastUsedAt ? `Used ${friendlyDate(t.lastUsedAt)}` : 'Never used'}</span>
-            {/* A Connect session's access token rotates daily; its expiry is the
-                connection's plumbing, not when Claude loses access. */}
-            {t.expiresAt && t.clientName === null && <span>Expires {friendlyDate(t.expiresAt)}</span>}
-            {t.clientName !== null && <span>Renews itself while in use</span>}
-          </span>
-        </div>
-      ))}
+      {scripted.map(row)}
 
       {revoking && (
         <Modal onClose={() => setRevoking(null)} label="Revoke access token" testId="agent-token-revoke-dialog">

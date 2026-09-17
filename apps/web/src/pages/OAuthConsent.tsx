@@ -30,10 +30,11 @@ export function describeClientError(err: unknown): { message: string; detail?: s
 }
 
 /**
- * /oauth/authorize — the OAuth 2.1 consent page. The client is validated by
- * the server before anything else is shown, and an invalid client or
- * redirect ends here with no redirect at all: the only URLs this page ever
- * navigates to are the `redirectTo` the server hands back after checking them.
+ * /oauth/authorize — the OAuth 2.1 consent page. The whole request is
+ * validated by the server before anything else is shown — an invalid client
+ * or redirect, and a request missing its PKCE challenge, end here with no
+ * redirect at all: the only URLs this page ever navigates to are the
+ * `redirectTo` the server hands back after checking them.
  */
 export default function OAuthConsent() {
   const { authEnabled, user, setUser } = useAuth();
@@ -48,7 +49,7 @@ export default function OAuthConsent() {
       return;
     }
     let cancelled = false;
-    api.getOAuthClient(params.clientId, params.redirectUri)
+    api.getOAuthClient(params.all)
       .then((c) => { if (!cancelled) setClient({ status: 'ok', client: c }); })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -100,6 +101,7 @@ function SignInStep({ client, onAuthed, notice }: { client: OAuthClientInfo; onA
       heading={`Sign in to connect ${client.name}.`}
       registerHeading={`Create an account to connect ${client.name}.`}
       notice={notice}
+      noticeTone="warn"
     />
   );
 }
