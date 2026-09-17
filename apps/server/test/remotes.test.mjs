@@ -28,6 +28,9 @@ const remotes = await import('../src/remotes.ts');
 eq(gitlab.normalizeBaseUrl('  https://gitlab.example.org/  '), 'https://gitlab.example.org', 'trims and strips the trailing slash');
 eq(gitlab.normalizeBaseUrl('https://gitlab.example.org///'), 'https://gitlab.example.org', 'strips repeated trailing slashes');
 eq(gitlab.normalizeBaseUrl('https://gitlab.example.org/gl/'), 'https://gitlab.example.org/gl', 'keeps a sub-path install');
+eq(gitlab.normalizeBaseUrl('https://gitlab.example.org/api/v4'), 'https://gitlab.example.org', 'drops a pasted /api/v4 suffix (the provider appends it)');
+eq(gitlab.normalizeBaseUrl('https://gitlab.example.org/gl/api/v4/'), 'https://gitlab.example.org/gl', 'drops /api/v4 behind a sub-path too');
+eq(gitlab.normalizeBaseUrl('https://gitlab.example.org/api/v1'), 'https://gitlab.example.org/api/v1', 'another host\'s API path is not GitLab\'s and stays');
 eq(gitlab.normalizeBaseUrl('https://gitlab.example.org:8443/gl'), 'https://gitlab.example.org:8443/gl', 'keeps a port');
 eq(gitlab.normalizeBaseUrl('https://gitlab.com'), 'https://gitlab.com', 'bare origin unchanged');
 eq(gitlab.normalizeBaseUrl(undefined), undefined, 'undefined for undefined');
@@ -110,7 +113,70 @@ eq(github.tokenUrl('file:///bare.git', 'ghp_x'), 'file:///bare.git', 'GitHub tok
 // ---------- provider descriptors ----------
 eq([github.id, github.label, github.changeRequestLabel, github.selfHosted], ['github', 'GitHub', 'pull request', false], 'github descriptor');
 eq([gitlab.gitlab.id, gitlab.gitlab.label, gitlab.gitlab.changeRequestLabel, gitlab.gitlab.selfHosted], ['gitlab', 'GitLab', 'merge request', true], 'gitlab descriptor');
-check(typeof gitlab.gitlab.normalizeBaseUrl === 'function' && github.normalizeBaseUrl === undefined, 'only GitLab has a configurable base URL');
+check(typeof gitlab.gitlab.normalizeBaseUrl === 'function' && github.normalizeBaseUrl === undefined, 'GitLab has a configurable base URL, GitHub has none');
+// the copy the generic routes interpolate lives on the provider, never in routes.ts
+eq([github.tokenScopeHint, github.pathHint, github.baseUrlExample], ['repo scope', 'Expected "owner/repo"', undefined], 'github hints');
+eq([gitlab.gitlab.tokenScopeHint, gitlab.gitlab.pathHint, gitlab.gitlab.baseUrlExample], ['the api scope', 'Expected a project path like "group/project"', undefined], 'gitlab hints');
+
+// ---------- instanceOrigin / checkCloneUrl: git only ever talks to the connection's instance ----------
+{
+  delete process.env.GITHUB_API_BASE; delete process.env.GITLAB_API_BASE; delete process.env.GITEA_API_BASE;
+  const { gitea } = await import('../src/gitea.ts');
+  const gh = { token: 't', login: 'u' };
+  const glCom = { token: 't', login: 'u' };
+  const glSelf = { token: 't', login: 'u', baseUrl: 'https://gitlab.example.org:8443/gl' };
+  const gt = { token: 't', login: 'alice', baseUrl: 'https://forge.example.org/git' };
+  eq(github.instanceOrigin(gh), 'https://github.com', 'GitHub has one origin');
+  eq(gitlab.gitlab.instanceOrigin(glCom), 'https://gitlab.com', 'GitLab defaults to gitlab.com');
+  eq(gitlab.gitlab.instanceOrigin(glSelf), 'https://gitlab.example.org:8443', 'a self-hosted GitLab connection names its origin, port included, path dropped');
+  eq(gitea.instanceOrigin(gt), 'https://forge.example.org', 'a Gitea connection names its origin');
+  await throws(() => gitea.instanceOrigin({ token: 't', login: 'u' }), 'no instance URL', 'a Gitea connection without an instance has no origin');
+
+  eq(remotes.checkCloneUrl(gitea, gt, 'https://forge.example.org/git/alice/paper.git'), 'https://forge.example.org/git/alice/paper.git', 'a clone URL on the instance passes');
+  await throws(() => remotes.checkCloneUrl(gitea, gt, 'file:///srv/aldine/projects/other.git'), 'not https (file)', 'file:// is refused');
+  await throws(() => remotes.checkCloneUrl(gitea, gt, '/srv/aldine/projects/other.git'), 'unusable clone URL', 'a bare path is refused');
+  await throws(() => remotes.checkCloneUrl(gitea, gt, 'https://evil.example/alice/paper.git'), 'on https://evil.example, not on https://forge.example.org', 'a cross-host clone URL is refused');
+  await throws(() => remotes.checkCloneUrl(gitea, gt, 'http://forge.example.org/git/alice/paper.git'), 'not https (http)', 'plain http on the right host is refused');
+  await throws(() => remotes.checkCloneUrl(gitea, gt, 'https://forge.example.org:8443/git/alice/paper.git'), 'not on https://forge.example.org', 'another port is another origin');
+  eq(remotes.checkCloneUrl(gitlab.gitlab, glSelf, 'https://gitlab.example.org:8443/gl/grp/paper.git'), 'https://gitlab.example.org:8443/gl/grp/paper.git', 'self-hosted GitLab clone URL on its origin passes');
+  await throws(() => remotes.checkCloneUrl(gitlab.gitlab, glSelf, 'https://gitlab.com/grp/paper.git'), 'not on https://gitlab.example.org:8443', 'gitlab.com is a foreign host for a self-hosted connection');
+  eq(remotes.checkCloneUrl(gitlab.gitlab, glCom, 'https://gitlab.com/grp/paper.git'), 'https://gitlab.com/grp/paper.git', 'gitlab.com for a gitlab.com connection');
+  eq(remotes.checkCloneUrl(github, gh, 'https://github.com/o/r.git'), 'https://github.com/o/r.git', 'github.com for GitHub');
+  await throws(() => remotes.checkCloneUrl(github, gh, 'https://gitlab.com/o/r.git'), 'not on https://github.com', 'GitHub never clones from elsewhere');
+  process.env.GITEA_API_BASE = 'http://localhost:1';
+  eq(remotes.checkCloneUrl(gitea, gt, 'file:///tmp/bare.git'), 'file:///tmp/bare.git', 'the test override lifts the check (mocks answer with file:// bare repos)');
+  delete process.env.GITEA_API_BASE;
+  await throws(() => remotes.checkCloneUrl(gitea, gt, 'file:///tmp/bare.git'), 'not https', 'and it is back once the override is gone');
+
+  const link = { provider: 'gitea', fullName: 'alice/paper', owner: 'alice', repo: 'paper', remoteBranch: 'main', cloneUrl: 'https://forge.example.org/git/alice/paper.git' };
+  eq(remotes.linkInstance({ ...link, baseUrl: 'https://forge.example.org/git' }), 'https://forge.example.org/git', 'linkInstance prefers the recorded instance');
+  eq(remotes.linkInstance(link), 'https://forge.example.org', 'a link from before the field falls back to the clone URL origin');
+  eq(remotes.linkInstance({ ...link, cloneUrl: 'file:///tmp/bare.git' }), null, 'and to null when the clone URL is not http');
+}
+
+// ---------- gitea: token as the basic-auth password under the account login ----------
+{
+  const gitea = await import('../src/gitea.ts');
+  eq(gitea.gitea.tokenUrl('https://codeberg.org/o/r.git', 'tok', 'alice'), 'https://alice:tok@codeberg.org/o/r.git', 'Gitea puts the login before the token');
+  eq(gitea.gitea.tokenUrl('https://codeberg.org/o/r.git', 'tok'), 'https://aldine:tok@codeberg.org/o/r.git', 'and a neutral user when no login is known');
+  eq(gitea.gitea.tokenUrl('file:///bare.git', 'tok', 'alice'), 'file:///bare.git', 'Gitea tokenUrl leaves file:// alone');
+  check(gitea.gitea.baseUrlRequired === true && gitea.gitea.oauthEnabled() === false, 'Gitea needs an instance URL and offers no OAuth');
+  eq([gitea.gitea.tokenScopeHint, gitea.gitea.pathHint, gitea.gitea.baseUrlExample], ['read:user and write:repository', 'Expected "owner/repo"', 'https://codeberg.org'], 'gitea hints');
+  delete process.env.GITEA_API_BASE;
+  eq(gitea.normalizeBaseUrl('https://codeberg.org/'), 'https://codeberg.org', 'Gitea normaliser strips the trailing slash');
+  eq(gitea.normalizeBaseUrl('https://forge.example.org/git/'), 'https://forge.example.org/git', 'keeps a sub-path install');
+  eq(gitea.normalizeBaseUrl('https://codeberg.org/api/v1'), 'https://codeberg.org', 'drops the /api/v1 the swagger page shows');
+  eq(gitea.normalizeBaseUrl('https://forge.example.org/git/api/v1/'), 'https://forge.example.org/git', 'drops /api/v1 behind a sub-path, slash or not');
+  eq(gitea.normalizeBaseUrl('https://forge.example.org/api/v4'), 'https://forge.example.org/api/v4', 'GitLab\'s API path is not Gitea\'s and stays');
+  await throws(() => gitea.normalizeBaseUrl('http://forge.example.org'), 'Gitea / Forgejo URL must use https://', 'rejects http:// when GITEA_API_BASE is unset');
+  await throws(() => gitea.normalizeBaseUrl('forge.example.org'), 'https://', 'rejects a bare host');
+  process.env.GITEA_API_BASE = 'http://localhost:1';
+  eq(gitea.normalizeBaseUrl('http://forge.example.org'), 'http://forge.example.org', 'GITEA_API_BASE (tests) lifts the https rule');
+  await throws(() => gitea.normalizeBaseUrl('ftp://forge.example.org'), 'https://', 'but only for http, other schemes stay refused');
+  delete process.env.GITEA_API_BASE;
+  eq(gitea.mapRepo({ full_name: 'alice/paper', name: 'paper', owner: { login: 'alice' }, private: true, default_branch: 'trunk', clone_url: 'https://codeberg.org/alice/paper.git', updated_at: '2026-01-01T00:00:00Z' }),
+     { fullName: 'alice/paper', name: 'paper', owner: 'alice', private: true, defaultBranch: 'trunk', cloneUrl: 'https://codeberg.org/alice/paper.git', updatedAt: '2026-01-01T00:00:00Z' }, 'mapRepo reads the v1 Repository fields');
+}
 
 // ---------- store.remoteLink / setRemoteLink ----------
 const ghLink = { fullName: 'octocat/hello', owner: 'octocat', repo: 'hello', remoteBranch: 'main', cloneUrl: 'https://github.com/octocat/hello.git', connectedBy: 'u1' };
@@ -138,12 +204,12 @@ store.setRemoteLink(meta, null);
 check(!('github' in meta) && !('remote' in meta), 'null on a legacy-only meta removes github too');
 
 // ---------- remotes.providers / getProvider ----------
-eq(remotes.providers().map((p) => p.id), ['github', 'gitlab'], 'both by default');
+eq(remotes.providers().map((p) => p.id), ['github', 'gitlab', 'gitea'], 'all three by default');
 eq(remotes.getProvider('gitlab')?.id, 'gitlab', 'getProvider finds gitlab');
 eq(remotes.getProvider('nope'), null, 'getProvider is null for an unknown id');
 eq(remotes.getProvider(undefined), null, 'getProvider is null for undefined');
 process.env.REMOTE_PROVIDERS = 'github';
-eq(remotes.providers().map((p) => p.id), ['github'], 'REMOTE_PROVIDERS=github hides gitlab');
+eq(remotes.providers().map((p) => p.id), ['github'], 'REMOTE_PROVIDERS=github hides gitlab and gitea');
 eq(remotes.getProvider('gitlab'), null, 'a hidden provider is unknown to getProvider');
 check(remotes.isProviderId('gitlab') === true, 'isProviderId still knows gitlab (stored links stay readable)');
 process.env.REMOTE_PROVIDERS = ' GitLab , github ';
@@ -151,7 +217,7 @@ eq(remotes.providers().map((p) => p.id), ['github', 'gitlab'], 'allowlist is tri
 process.env.REMOTE_PROVIDERS = 'bitbucket';
 eq(remotes.providers(), [], 'an allowlist naming no known provider yields none');
 delete process.env.REMOTE_PROVIDERS;
-eq(remotes.providers().length, 2, 'back to both once the env var is gone');
+eq(remotes.providers().length, 3, 'back to all three once the env var is gone');
 check(remotes.isProviderId('bitbucket') === false, 'isProviderId rejects unknown ids');
 
 fs.rmSync(tmp, { recursive: true, force: true });

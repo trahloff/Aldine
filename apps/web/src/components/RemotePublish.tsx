@@ -86,7 +86,8 @@ export default function RemotePublish({ projectId, projectName, onClose, onLinke
 
         {provider && status && !status.connected && (
           <div style={{ marginTop: 4 }}>
-            <RemoteConnectForm provider={provider} status={status} onConnected={() => loadStatus(provider)} />
+            {/* keyed so a host switch starts a fresh form: the URL field's presence is decided at mount */}
+            <RemoteConnectForm key={provider} provider={provider} status={status} onConnected={() => loadStatus(provider)} />
           </div>
         )}
 

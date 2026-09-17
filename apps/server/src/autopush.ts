@@ -66,7 +66,7 @@ async function pushOnce(id: string): Promise<'pushed' | 'skipped' | 'off'> {
   const head = await gitops.headCommit(id).catch(() => null);
   const s = stateOf(id);
   if (head && s.lastPushed === head) return 'skipped';
-  await gitops.pushToRemote(id, link.remoteBranch, provider.tokenUrl(link.cloneUrl, conn.token));
+  await gitops.pushToRemote(id, link.remoteBranch, provider.tokenUrl(link.cloneUrl, conn.token, conn.login));
   if (head) s.lastPushed = head;
   return 'pushed';
 }

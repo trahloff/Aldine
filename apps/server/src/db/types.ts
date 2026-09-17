@@ -79,13 +79,15 @@ export interface ProjectMeta {
 }
 
 export interface RemoteLink {
-  provider: 'github' | 'gitlab';
+  provider: 'github' | 'gitlab' | 'gitea';
   /** Host path of the repository: `owner/repo`, or `group/sub/project` on GitLab. */
   fullName: string;
   owner: string;
   repo: string;
   remoteBranch: string; // the remote branch that local `main` maps to
   cloneUrl: string;     // credential-free https URL
+  /** Instance the link was made on (self-hosted GitLab, every Gitea/Forgejo instance); absent on a provider's canonical host and on links from before the field. */
+  baseUrl?: string;
   connectedBy?: string; // user id whose token created the link (for reference)
   /** Aldine created the repository (auto-provisioning); only then is it deleted with the project. */
   createdByAldine?: boolean;

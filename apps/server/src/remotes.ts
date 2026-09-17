@@ -1,14 +1,15 @@
 import { db } from './db/index.js';
 import { github } from './github.js';
 import { gitlab } from './gitlab.js';
+import { gitea } from './gitea.js';
 import type { RemoteConnection, RemoteProvider, RemoteProviderId } from './remote-types.js';
 import type { RemoteLink } from './db/types.js';
 
 export * from './remote-types.js';
 
-const ALL: RemoteProvider[] = [github, gitlab];
+const ALL: RemoteProvider[] = [github, gitlab, gitea];
 
-/** Providers this deployment offers. REMOTE_PROVIDERS="github" hides GitLab entirely (routes 404). */
+/** Providers this deployment offers. REMOTE_PROVIDERS="github" hides GitLab and Gitea entirely (routes 404). */
 export function providers(): RemoteProvider[] {
   const raw = (process.env.REMOTE_PROVIDERS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!raw.length) return ALL;
@@ -30,21 +31,46 @@ export function serviceConnection(): RemoteConnection | null {
 }
 
 /**
+ * The instance a link was made on: its recorded `baseUrl`, else the clone
+ * URL's origin for links from before the field; null when neither tells
+ * (a legacy link whose clone URL is not http).
+ */
+export function linkInstance(link: RemoteLink): string | null {
+  if (link.baseUrl) return link.baseUrl;
+  try {
+    const u = new URL(link.cloneUrl);
+    return /^https?:$/.test(u.protocol) ? u.origin : null;
+  } catch { return null; }
+}
+
+/** A connection serves a link only on the link's instance: every Gitea connection, and every PAT GitLab connection, names its own host. */
+function onLinkInstance(link: RemoteLink, conn: RemoteConnection): boolean {
+  const provider = ALL.find((p) => p.id === link.provider);
+  const at = linkInstance(link);
+  if (!provider || !at) return true;
+  try { return provider.instanceOrigin(conn) === new URL(at).origin; } catch { return false; }
+}
+
+/**
  * The one connection ladder for operations on a linked project: the acting
  * user's own connection, then the connection of whoever linked it, then (only
- * where allowed) the service account. Listing and importing repositories
- * never pass `allowService`: those decide what a user gets to see.
+ * where allowed) the service account; a connection to another instance of
+ * the same provider is skipped, never used. Listing and importing
+ * repositories never pass `allowService`: those decide what a user gets to see.
  */
 export async function resolveConnection(link: RemoteLink, actingUserId: string | undefined, opts: { allowService: boolean }): Promise<RemoteConnection | null> {
   if (actingUserId) {
     const own = await getConnection(actingUserId, link.provider);
-    if (own) return own;
+    if (own && onLinkInstance(link, own)) return own;
   }
   if (link.connectedBy && link.connectedBy !== actingUserId) {
     const linker = await getConnection(link.connectedBy, link.provider);
-    if (linker) return linker;
+    if (linker && onLinkInstance(link, linker)) return linker;
   }
-  if (opts.allowService && link.provider === 'gitlab') return serviceConnection();
+  if (opts.allowService && link.provider === 'gitlab') {
+    const service = serviceConnection();
+    if (service && onLinkInstance(link, service)) return service;
+  }
   return null;
 }
 

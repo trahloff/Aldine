@@ -28,16 +28,17 @@ export interface ProjectSummary {
   remotePending?: { provider: 'gitlab'; namespace: string } | null;
 }
 
-export type RemoteProviderId = 'github' | 'gitlab';
+export type RemoteProviderId = 'github' | 'gitlab' | 'gitea';
 /** A provider the server offers (honours its REMOTE_PROVIDERS allowlist). */
-export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolean; selfHosted: boolean; changeRequestLabel: 'pull request' | 'merge request' }
+export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean; changeRequestLabel: 'pull request' | 'merge request' }
 /** `fullName` is an opaque host path: `owner/repo` on GitHub, `group/sub/project` on GitLab. */
 export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
-/** `baseUrl` is set for a self-hosted instance connected with a token. */
-export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean }
+/** `baseUrl` is set for a self-hosted instance connected with a token; `baseUrlRequired` when the host has no canonical instance. */
+export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
 /** `createdByAldine` marks a repository Aldine provisioned (deleted with the
  *  project); an imported one is never deleted by the server. */
-export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; connectedBy?: string; createdByAldine?: boolean }
+/** `baseUrl` is the instance the link was made on (self-hosted GitLab, every Gitea/Forgejo instance). */
+export interface RemoteLink { provider: RemoteProviderId; fullName: string; owner: string; repo: string; remoteBranch: string; cloneUrl: string; baseUrl?: string; connectedBy?: string; createdByAldine?: boolean }
 /** A group under the configured GitLab root; `fullPath` is what create/import send as `namespace`. */
 export interface GitlabNamespace { fullPath: string; name: string }
 /** Server-wide counts for the admin page. Metadata only: no project content. */
