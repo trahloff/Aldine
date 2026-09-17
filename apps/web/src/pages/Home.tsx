@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, TemplateCategory, TemplateInfo } from '../api';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
@@ -8,8 +8,10 @@ import ShareModal from '../components/ShareModal';
 import { IconDoc, IconLink, IconX } from '../components/Icons';
 import AccountSettings from '../components/AccountSettings';
 import { getTheme, toggleTheme } from '../theme';
-import GithubImport from '../components/GithubImport';
+import RemoteImport from '../components/RemoteImport';
+import { isRemoteProviderId, RemoteProviderId } from '../remotes';
 import Onboarding from '../components/Onboarding';
+import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
@@ -25,8 +27,58 @@ const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
 
 function matchesQuery(t: TemplateInfo, q: string): boolean {
-  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host].join(' ').toLowerCase();
+  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host, t.source?.label].join(' ').toLowerCase();
   return q.split(/\s+/).every((word) => hay.includes(word));
+}
+
+/** Template ids from a repository are `repo:<repoId>/<folder>`. */
+function repoIdOf(t: TemplateInfo): string {
+  return t.id.slice('repo:'.length).split('/')[0];
+}
+
+interface GalleryGroup {
+  key: string;
+  testid: string;
+  heading: string;
+  /** Set on a repository whose last refresh failed while its previous checkout is still listed. */
+  stale?: { repoId: string; text: string };
+  items: TemplateInfo[];
+}
+
+/** Built-in categories in TEMPLATE_CATEGORIES order, with one group per
+ *  repository (in config order) between 'General' and the venue categories.
+ *  Repository templates are never placed in a category group. */
+function galleryGroups(shown: TemplateInfo[], repos: TemplateRepoState[]): GalleryGroup[] {
+  const byRepo = new Map<string, TemplateInfo[]>();
+  for (const t of shown) {
+    if (t.source?.kind !== 'repo') continue;
+    const id = repoIdOf(t);
+    byRepo.set(id, [...(byRepo.get(id) ?? []), t]);
+  }
+  const repoOrder = [...repos.map((r) => r.id), ...byRepo.keys()].filter((id, i, all) => all.indexOf(id) === i);
+  const repoGroups: GalleryGroup[] = [];
+  for (const repoId of repoOrder) {
+    const items = byRepo.get(repoId);
+    if (!items?.length) continue;
+    const state = repos.find((r) => r.id === repoId);
+    const stale = state && !state.ok && state.available
+      ? { repoId, text: state.syncedAt ? `last updated ${friendlyDate(state.syncedAt)}, refresh failed` : 'refresh failed' }
+      : undefined;
+    repoGroups.push({
+      key: `repo:${repoId}`,
+      testid: `template-category-repo-${repoId}`,
+      heading: state?.label ?? items[0].source?.label ?? repoId,
+      stale,
+      items,
+    });
+  }
+  const out: GalleryGroup[] = [];
+  for (const cat of TEMPLATE_CATEGORIES) {
+    const items = shown.filter((t) => t.source?.kind !== 'repo' && (t.category || 'General') === cat);
+    if (items.length) out.push({ key: cat, testid: `template-category-${cat}`, heading: cat, items });
+    if (cat === 'General') out.push(...repoGroups);
+  }
+  return out;
 }
 
 export default function Home() {
@@ -37,11 +89,17 @@ export default function Home() {
   const [themeChoice, setThemeChoice] = useState(getTheme());
   const [newName, setNewName] = useState('');
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
+  const [repoStates, setRepoStates] = useState<TemplateRepoState[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const [template, setTemplate] = useState('article');
   const [templateQuery, setTemplateQuery] = useState('');
+  // Undefined until the namespace picker loads, i.e. while the server has no
+  // GitLab provisioning: nothing is sent and no GitLab toast is shown.
+  const [namespace, setNamespace] = useState<string | undefined>(undefined);
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
-  const [showGithub, setShowGithub] = useState(false);
+  const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
+  const [importFrom, setImportFrom] = useState<RemoteProviderId | null>(null);
   const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -49,7 +107,7 @@ export default function Home() {
   const dismissOnboarding = () => { localStorage.setItem('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
   const toast = useToast();
-  const { authEnabled, user, setUser } = useAuth();
+  const { authEnabled, user, admin, setUser } = useAuth();
 
   const load = () => {
     api.listTrash().then(setTrash).catch(() => setTrash([]));
@@ -66,19 +124,49 @@ export default function Home() {
     try { resume = sessionStorage.getItem(OAUTH_RESUME_KEY); sessionStorage.removeItem(OAUTH_RESUME_KEY); } catch { /* private mode */ }
     if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
   }, []);
-  // returning from GitHub OAuth connect → reopen the import flow (now connected)
+  useEffect(() => { api.remotes().then(setRemotes).catch(() => setRemotes([])); }, []);
+  // returning from a host's OAuth connect → reopen the import flow (now
+  // connected). `?github=connected` is the pre-GitLab callback and stays.
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('github') === 'connected') {
-      setShowGithub(true);
+    const q = new URLSearchParams(location.search);
+    const back = q.get('remote') ?? (q.get('github') === 'connected' ? 'github' : null);
+    if (back) {
+      if (isRemoteProviderId(back)) setImportFrom(back);
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  useEffect(() => {
-    api.templates().then((list) => {
+  const loadTemplates = () => {
+    // The repo list is informational: a server without the route (or without
+    // repos) still gets its gallery.
+    api.templateRepos().then((r) => setRepoStates(r.repos)).catch(() => setRepoStates([]));
+    return api.templates().then((list) => {
       setTemplates(list);
       setTemplate((cur) => pickTemplate(list, cur));
-    }).catch(() => setTemplates([]));
-  }, []);
+    }).catch(() => setTemplates((cur) => cur ?? []));
+  };
+  // Repositories sync in the background after boot, so a dialog opened later
+  // must see what has arrived since the page loaded.
+  useEffect(() => { if (creating || templates === null) loadTemplates(); }, [creating]);
+
+  const refreshTemplates = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const { repos } = await api.refreshTemplateRepos();
+      setRepoStates(repos);
+      const list = await api.templates();
+      setTemplates(list);
+      setTemplate((cur) => pickTemplate(list, cur));
+      const failed = repos.filter((r) => !r.ok);
+      if (failed.length) {
+        toast(`Could not refresh ${failed.map((r) => r.label).join(', ')}: ${failed[0].error ?? 'unknown error'}`, 'error');
+      }
+    } catch (err: any) {
+      toast(`Could not refresh templates: ${err.message}`, 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // A search that hides the chosen tile would leave Create acting on something
   // the user cannot see, so the first result of a narrowing search becomes the
@@ -103,10 +191,14 @@ export default function Home() {
     const name = newName.trim() || 'Untitled Project';
     setSubmitting(true);
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate));
+      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate), namespace);
       if (p.venueKit && !p.venueKit.ok) {
         toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
       }
+      // Provisioning never blocks the project: a failure is a warning and the
+      // editor offers a retry.
+      if (p.remoteError) toast(p.remoteError, 'error');
+      else if (p.remote && namespace) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
       navigate(`/p/${p.id}`);
     } catch (err: any) {
       toast(`Could not create project: ${err.message}`, 'error');
@@ -120,8 +212,12 @@ export default function Home() {
     if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     toast('Importing…');
     try {
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file);
+      // One-click import: the group is the last one picked in the new-project
+      // dialog (none until the picker has been shown once).
+      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file, rememberedNamespace());
       toast(importSummary(p), 'ok');
+      if (p.remoteError) toast(p.remoteError, 'error');
+      else if (p.remote) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
       navigate(`/p/${p.id}`, { state: { import: p.import } });
     } catch (err: any) {
       // A 413 without the route's own text comes from a proxy or body limit
@@ -195,6 +291,9 @@ export default function Home() {
             >
               {themeChoice === 'dark' ? '☀︎' : '☾'}
             </button>
+            {admin && authEnabled && (
+              <Link className="btn" to="/admin" data-testid="admin-link" title="Server-wide accounts and usage">Server admin</Link>
+            )}
             {authEnabled && user && (
               <span className="user-chip">
                 <button className="user-chip__name" data-testid="user-name" onClick={() => setShowAccount(true)} title="Account settings">{user.name}</button>
@@ -204,9 +303,11 @@ export default function Home() {
             <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import ZIP</button>
             <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
               onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-            <button className="btn" onClick={() => setShowGithub(true)} data-testid="new-from-github">
-              From GitHub
-            </button>
+            {remotes.map((r) => (
+              <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)} data-testid={`new-from-${r.id}`}>
+                From {r.label}
+              </button>
+            ))}
             <button className="btn btn--primary" onClick={() => setCreating(true)} data-testid="new-project">
               New project
             </button>
@@ -225,7 +326,9 @@ export default function Home() {
             <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
-              <button className="btn" onClick={() => setShowGithub(true)}>Import from GitHub</button>
+              {remotes.map((r) => (
+                <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)}>Import from {r.label}</button>
+              ))}
               <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP</button>
             </div>
           </div>
@@ -322,11 +425,11 @@ export default function Home() {
       {showAccount && user && (
         <AccountSettings user={user} onClose={() => setShowAccount(false)} />
       )}
-      {showGithub && (
-        <GithubImport onClose={() => setShowGithub(false)} onImported={(id) => navigate(`/p/${id}`)} />
+      {importFrom && (
+        <RemoteImport provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
       {showOnboarding && (
-        <Onboarding onNew={() => setCreating(true)} onGithub={() => setShowGithub(true)} onImportZip={importZip} onClose={dismissOnboarding} />
+        <Onboarding onNew={() => setCreating(true)} onRemote={setImportFrom} remotes={remotes.map((r) => r.id)} onImportZip={importZip} onClose={dismissOnboarding} />
       )}
 
       {creating && (
@@ -343,6 +446,7 @@ export default function Home() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             />
+            {remotes.some((r) => r.provisioning) && <NamespacePicker value={namespace} onChange={setNamespace} />}
             {templates === null && <p className="tpl-empty">Loading templates…</p>}
             {templates !== null && templates.length > 0 && (
               <>
@@ -368,44 +472,64 @@ export default function Home() {
                     </button>
                   )}
                 </div>
+                {repoStates.length > 0 && (
+                  <div className="tpl-toolbar">
+                    <button
+                      className="btn btn--small"
+                      onClick={refreshTemplates}
+                      disabled={refreshing}
+                      data-testid="template-refresh"
+                    >
+                      {refreshing ? 'Refreshing…' : 'Refresh templates'}
+                    </button>
+                  </div>
+                )}
                 <div className="tpl-gallery" data-testid="template-grid">
                   {(() => {
                     const shown = shownTemplates;
                     if (!shown.length) {
                       return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
                     }
-                    return TEMPLATE_CATEGORIES.map((cat) => {
-                      const group = shown.filter((t) => (t.category || 'General') === cat);
-                      if (!group.length) return null;
-                      return (
-                        <div key={cat} className="tpl-group" data-testid={`template-category-${cat}`}>
-                          <div className="tpl-group__label">{cat}</div>
-                          <div className="tpl-grid">
-                            {group.map((t) => (
-                              <button
-                                key={t.id}
-                                className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
-                                data-testid={`template-${t.id}`}
-                                onClick={() => setTemplate(t.id)}
-                                title={t.description}
-                              >
-                                <span className="tpl__icon">{t.icon || '📄'}</span>
-                                <span className="tpl__name">{t.name}</span>
-                                <span className="tpl__desc">{t.description}</span>
-                                {/* The kit is downloaded when the project is created, not now:
-                                    say so before the user picks the tile. */}
-                                {t.kit && (
-                                  <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
-                                    Downloads the official kit from {t.kit.host}
-                                  </span>
-                                )}
-                                {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
-                              </button>
-                            ))}
-                          </div>
+                    return galleryGroups(shown, repoStates).map((g) => (
+                      <div key={g.key} className="tpl-group" data-testid={g.testid}>
+                        <div className="tpl-group__label">
+                          {g.heading}
+                          {g.stale && (
+                            <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>
+                              {g.stale.text}
+                            </span>
+                          )}
                         </div>
-                      );
-                    });
+                        <div className="tpl-grid">
+                          {g.items.map((t) => (
+                            <button
+                              key={t.id}
+                              className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
+                              data-testid={`template-${t.id}`}
+                              onClick={() => setTemplate(t.id)}
+                              title={t.description}
+                            >
+                              <span className="tpl__icon">{t.icon || '📄'}</span>
+                              <span className="tpl__name">{t.name}</span>
+                              <span className="tpl__desc">{t.description}</span>
+                              {/* The kit is downloaded when the project is created, not now:
+                                  say so before the user picks the tile. */}
+                              {t.kit && (
+                                <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
+                                  Downloads the official kit from {t.kit.host}
+                                </span>
+                              )}
+                              {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
+                              {t.source?.kind === 'repo' && (
+                                <span className="tpl__source" data-testid={`template-source-${t.id}`}>
+                                  {t.source.label ?? repoIdOf(t)}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                  ));
                   })()}
                 </div>
                 <p className="tpl-choice" data-testid="template-choice">

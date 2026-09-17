@@ -49,6 +49,21 @@ ORCID_CLIENT_SECRET=...
 # (users can also connect with a Personal Access Token, no app needed).
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
+# GitLab sync — an OAuth application on your instance with scope `api`.
+# Callback: <ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback
+# (Personal Access Token connect needs none of these, on any https instance).
+GITLAB_URL=https://gitlab.com
+GITLAB_CLIENT_ID=...
+GITLAB_CLIENT_SECRET=...
+# REMOTE_PROVIDERS=github,gitlab   # comma list; leave one out to hide it
+# GitLab provisioning — every new project is also created on GitLab, in this
+# group or a subgroup the user picks, and every autosave is pushed from the
+# server. GITLAB_TOKEN is a service-account PAT with scope `api` and Owner on
+# the group (Maintainer cannot delete projects). Off unless both are set.
+GITLAB_TOKEN=glpat-...
+GITLAB_DEFAULT_GROUP=research/latex
+# GITLAB_DEFAULT_VISIBILITY=private   # or internal | public
+# AUTOPUSH_DEBOUNCE_MS=30000          # quiet period after an autosave before the push
 
 # AI error-fix (bring your own key; unset = feature off). If several are set,
 # precedence is OPENROUTER > OPENAI > ANTHROPIC. Leave ALDINE_AI_MODEL unset to
@@ -80,6 +95,16 @@ ALDINE_COMPILE_QUOTA_MIN=
 # your others in the issue list; without it every instance files as production.
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
+
+# Templates from your own git repositories (optional): a JSON array, inline or
+# in a file via TEMPLATE_REPOS_FILE. Each entry's templates show in the gallery
+# under its label. A private repository takes a read token from the env var
+# named by "tokenEnv" ("user": oauth2 for GitLab, x-access-token for GitHub).
+# Layout, manifest and placeholders: ../templates/README.md
+#TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"https://gitlab.example.org/latex/templates.git","tokenEnv":"TEMPLATE_REPO_LAB_TOKEN"}]'
+#TEMPLATE_REPO_LAB_TOKEN=
+#TEMPLATE_REPOS_REFRESH_MS=600000  # re-fetch interval; floor 60000
+#TEMPLATE_REPO_MAX_BYTES=52428800  # per-checkout cap, 50 MiB
 
 # Shared rate limits and cross-node access-revocation events (the `redis`
 # profile). This does NOT make multiple app nodes a supported topology: routing
@@ -290,11 +315,20 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks. The Claude connector URL is `<ALDINE_PUBLIC_URL>/mcp`; OAuth discovery also lives at the origin root with the prefix inserted (`/.well-known/oauth-authorization-server<prefix>`, `/.well-known/oauth-protected-resource<prefix>/mcp`), so the proxy must forward those two paths to Aldine as well as the prefix itself |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
+| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time). Metadata only; needs `AUTH_ENABLED=1` to mean anything |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
-| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login |
+| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback` |
+| `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
+| `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |
+| `REMOTE_PROVIDERS` | Comma list of remote providers offered in the UI (default `github,gitlab`); leave one out to hide it |
+| `GITLAB_TOKEN` | Service-account personal access token for GitLab provisioning: scope `api`, Owner on `GITLAB_DEFAULT_GROUP` (Maintainer cannot delete projects). Used only to create projects and subgroups in the group, push provisioned projects, and delete projects Aldine created; never to list or import a user's repositories. Provisioning is off unless both this and `GITLAB_DEFAULT_GROUP` are set |
+| `GITLAB_DEFAULT_GROUP` | Full path of the root group new projects are created in (`research/latex`); users may pick any subgroup of it in the new-project dialog, or create one. Deleting a project deletes the GitLab project only when Aldine created it, an imported repository is never touched; GitLab's delayed deletion is handled (a purge is requested, otherwise the scheduled date is reported), and restoring the project re-creates it in the same namespace |
+| `GITLAB_DEFAULT_VISIBILITY` | Visibility of provisioned GitLab projects: `private` (default), `internal` or `public` |
+| `AUTOPUSH_DEBOUNCE_MS` | Quiet period after an autosave commit on `main` before the server pushes a provisioned project (default `30000`). Failed pushes back off exponentially, capped at 15 minutes, and stop after 8 attempts until the next commit |
+| `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
 | `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |
 | `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |
@@ -316,3 +350,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~4.3 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
 | `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (medium TeX Live plus the common collections) or `-full` (all of TeX Live, from 0.4.0). Single extra packages: a derived image with `RUN tlmgr install <pkg>`, see the root README, "Need a package it does not have?" |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |
+| `TEMPLATE_REPOS` / `TEMPLATE_REPOS_FILE` | Git repositories whose template folders join the gallery under their label: a JSON array of `{ id, label?, url, ref?, path?, tokenEnv?, user? }`, inline or in the file `TEMPLATE_REPOS_FILE` names. Read once at boot; a bad entry is logged and skipped. Checkouts live in `CACHE_DIR/template-repos/<id>`. Field reference in `templates/README.md` |
+| *(per repository)* the variable `tokenEnv` names | Read token for a private template repository, e.g. `TEMPLATE_REPO_LAB_TOKEN`. Any name; injected per git operation, never written to the checkout's `.git/config` |
+| `TEMPLATE_REPOS_REFRESH_MS` | How often template repositories are fetched again (default `600000` = 10 min; values below `60000` are raised to it). "Refresh templates" in the new-project dialog fetches on demand |
+| `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |

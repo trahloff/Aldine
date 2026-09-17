@@ -73,10 +73,12 @@ check(tiles.every((t) => t.kit && t.kit.host && t.kit.url), 'every fetched tile 
 check(tiles.every((t) => t.id.startsWith('venue:')), 'fetched tiles live in the venue id space');
 
 // A kit unpacked into the repo would ship a publisher file with Aldine. Every
-// path under templates/ is either the registry or part of a folder template.
+// path under templates/ is the registry, the README that documents the layout
+// for template repositories, or part of a folder template.
+const ALLOWED_FILES = new Set(['venues.json', 'README.md']);
 const stray = [];
 for (const name of fs.readdirSync(path.join(repoRoot, 'templates'), { withFileTypes: true })) {
-  if (name.isFile()) { if (name.name !== 'venues.json') stray.push(name.name); continue; }
+  if (name.isFile()) { if (!ALLOWED_FILES.has(name.name)) stray.push(name.name); continue; }
   if (!fs.existsSync(path.join(repoRoot, 'templates', name.name, 'template.json'))) stray.push(`${name.name}/`);
 }
 eq(stray, [], 'nothing but folder templates and the registry lives under templates/');

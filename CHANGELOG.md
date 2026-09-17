@@ -222,6 +222,106 @@ All notable changes to Aldine are documented here. The format follows
   matching dirty file, and `/api/projects/:id/log` is parsed on a delimiter
   a subject cannot contain, so a message can no longer move itself into the
   author field the History panel keys on.
+- The new-project dialog asks the server for GitLab groups only when
+  `/api/remotes` reports provisioning (new field `provisioning`); before, every
+  instance without a service token logged a 404 on each open of the dialog.
+
+## [0.9.0] — 2026-09-10
+
+### Added
+- GitLab as a second remote provider, next to GitHub. Import a project from
+  gitlab.com or a self-hosted instance (nested group paths included),
+  publish a local project to GitLab, optionally into a group, push and pull,
+  switch and create branches, and open a merge request from the editor.
+  Connect with a personal access token, which needs no configuration and
+  accepts any https instance, sub-path installs included, or with OAuth once
+  `GITLAB_CLIENT_ID` and `GITLAB_CLIENT_SECRET` name an application with
+  scope `api` on `GITLAB_URL` (default `https://gitlab.com`; callback
+  `/api/remotes/gitlab/oauth/callback`). `REMOTE_PROVIDERS` is a comma list
+  that hides a provider from the UI (default `github,gitlab`);
+  `GITLAB_API_BASE` exists for the tests only. Home, onboarding and the
+  publish dialog list every enabled provider. (#51)
+- Templates from your own git repositories. `TEMPLATE_REPOS` (or a file
+  named by `TEMPLATE_REPOS_FILE`) lists repositories laid out like this
+  repo's `templates/` folder, one directory with a `template.json` per
+  template, on any host that serves git over https: GitHub, GitLab, Gitea, a
+  bare repository. Each is cloned shallowly into `CACHE_DIR/template-repos/`
+  and its templates join the new-project gallery under the repository's
+  label, refreshed every `TEMPLATE_REPOS_REFRESH_MS` (default ten minutes)
+  or on demand with "Refresh templates" in the dialog. A private repository
+  takes a read token from the env var its `tokenEnv` entry names
+  (`user: oauth2` for GitLab, `x-access-token` for GitHub); the token is
+  injected per git operation and never written to the checkout. A host that
+  is down leaves the previous checkout listed and marks the repository stale
+  on its heading; a checkout over `TEMPLATE_REPO_MAX_BYTES` (50 MiB) is
+  refused. Templates may use `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}`
+  and `{{YEAR}}` in text files, LaTeX-escaped in `.tex`/`.sty`/`.cls`.
+  Layout, manifest and configuration are documented in `templates/README.md`.
+  (#50)
+- GitLab provisioning for team instances: with `GITLAB_TOKEN` (a service
+  account PAT with scope `api` and Owner on the group) and
+  `GITLAB_DEFAULT_GROUP` set, every new project, ZIP imports included, is
+  also created on GitLab in that group or in a subgroup the user picks or
+  creates in the new-project dialog (`GITLAB_DEFAULT_VISIBILITY` = `private`
+  default, `internal` or `public`). The server pushes `main` after each
+  autosave, debounced by `AUTOPUSH_DEBOUNCE_MS` (default 30 s) with
+  exponential backoff, replacing the 20-second browser interval; the owner
+  can switch autopush off per project. Deleting a project deletes the
+  GitLab project only when Aldine created it (`createdByAldine`), an
+  imported repository is never touched; GitLab's delayed deletion is
+  purged where the token may, otherwise the scheduled date is reported, and
+  restoring the project re-creates it in the same namespace. When GitLab is
+  unreachable the project is still created locally and the editor shows a
+  pending banner with a retry. (#51)
+- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
+  in the running server container with `aws ecs execute-command`, for one-off
+  inspection of the datastore on EFS. It grants the task role the SSM
+  messaging permissions ECS Exec needs; who may open a session stays with IAM.
+  Documented in `deploy/aws/README.md`.
+
+### Changed
+- The remote-sync routes are provider-neutral: account routes live under
+  `/api/remotes/:provider/*` (`status`, `connect`, `disconnect`, `oauth`,
+  `repos`, `import`) and project routes under `/api/projects/:id/remote/*`
+  (`link`, `status`, `push`, `pull`, `branches`, `switch-branch`,
+  `create-branch`, `change-request`, `reset-to-remote`), where the provider
+  comes from the stored link. The old `/api/github/*` and
+  `/api/projects/:id/github/*` paths keep working as aliases and are
+  deprecated, not removed; the GitHub OAuth callback URL operators registered
+  is unchanged. Project summaries carry the link as `remote` and, for GitHub
+  links, still as `github` for one release so an older web bundle keeps
+  working.
+- `GET /api/templates` reports the manifest's upstream `source { url,
+  version }` as `origin`; `source` now says where a template is listed from
+  (`{ kind: "builtin" | "repo" | "venue" | "kit", label? }`), which is what the
+  gallery groups and badges by. The `{{PROJECT_NAME}}`, `{{AUTHOR}}`,
+  `{{DATE}}` and `{{YEAR}}` placeholders apply to every template source, the
+  shipped folders and venue classes included, not only to repositories.
+  `template.json` files are unchanged. (#50)
+- Browser-side auto-sync is gone: the 20-second interval in the sync toolbar
+  and its `aldine.autopush.<id>` localStorage flag are replaced by server-side
+  autopush, which runs whether or not a tab is open. Sync of a linked project
+  falls back to the linking user's token when the acting user has none and,
+  for provisioned GitLab projects, to the service account; listing and
+  importing repositories still use the user's own connection only.
+
+## [0.8.0] — 2026-09-10
+
+### Added
+- Server admin: `ALDINE_ADMIN_EMAILS` (comma-separated) names the accounts
+  that may open `/admin` and `GET /api/admin/{stats,users}`. The page shows
+  how many accounts exist, how many were active in the last 7 and 30 days,
+  who is editing right now, project and open-document counts, this month's
+  compile time, and an accounts table (sign-in method, joined, last seen,
+  owned projects, compile minutes). Metadata only: an admin never sees a
+  project's files and the project ACL is unchanged. To support "active", the
+  server now records `lastSeenAt` per account, written at most every five
+  minutes (Postgres gains a `users.last_seen_at` column automatically).
+- AWS stack: `enable_ecs_exec` (off by default) lets an operator open a shell
+  in the running server container with `aws ecs execute-command`, for one-off
+  inspection of the datastore on EFS. It grants the task role the SSM
+  messaging permissions ECS Exec needs; who may open a session stays with IAM.
+  Documented in `deploy/aws/README.md`.
 
 ## [0.7.0] — 2026-09-09
 
@@ -1020,7 +1120,8 @@ First public release. Everything below is new.
   timer, Terraform for a full serverless-ish AWS deployment (deploy/aws).
 - Templates: article, IAC conference paper, beamer, report/thesis.
 
-[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/trahloff/Aldine/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/trahloff/Aldine/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/trahloff/Aldine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/trahloff/Aldine/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trahloff/Aldine/compare/v0.4.1...v0.5.0

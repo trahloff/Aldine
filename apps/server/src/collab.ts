@@ -63,6 +63,10 @@ function deleteSnapshot(name: string): void {
   try { fs.rmSync(snapPath(name), { force: true }); } catch { /* best effort */ }
 }
 
+/** Listeners told when an autosave commit actually landed (autopush hooks here). */
+const autoCommitListeners: Array<(projectId: string, branch: string) => void> = [];
+export function onAutoCommit(cb: (projectId: string, branch: string) => void): void { autoCommitListeners.push(cb); }
+
 /** Overridable so tests can exercise the debounced commit without 20 s waits. */
 const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') || 20_000;
 
@@ -82,7 +86,9 @@ const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   // A project or branch deleted inside the debounce window has nothing left
   // to commit; that is the ordinary end of a test or a trash action, not an error.
   if (!fs.existsSync(branchDir(projectId, branch))) return;
-  void autoCommit(projectId, branch).catch((err) => console.error('[collab] autocommit failed', err.message));
+  autoCommit(projectId, branch)
+    .then((r) => { if (r && r.committed) for (const cb of autoCommitListeners) cb(projectId, branch); })
+    .catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file
@@ -235,8 +241,21 @@ const authHook = AUTH_ENABLED ? {
     let meta;
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
     if (!canAccess(meta, user)) throw new Error('Access denied');
+    // Becomes connection.context: the only per-socket identity we keep, so
+    // onlineUserIds can count people rather than sockets.
+    return { userId: user.id };
   },
 } : {};
+
+/** Distinct signed-in users with an open collab socket on this node. Empty
+ *  with auth off (sockets carry no identity then). */
+export function onlineUserIds(): Set<string> {
+  const ids = new Set<string>();
+  hocuspocus.documents.forEach((doc: { getConnections?: () => { context?: { userId?: string } }[] }) => {
+    for (const c of doc.getConnections?.() ?? []) if (c.context?.userId) ids.add(c.context.userId);
+  });
+  return ids;
+}
 
 // Multi-node collaboration (scaling wall #2): with REDIS_URL, the Redis extension
 // syncs awareness across nodes and hands a document off cleanly on failover.

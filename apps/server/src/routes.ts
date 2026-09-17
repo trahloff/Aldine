@@ -7,12 +7,16 @@ import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
 import * as usage from './usage.js';
-import * as github from './github.js';
+import * as remotes from './remotes.js';
+import * as gitlab from './gitlab.js';
+import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
+import { scheduleAutopush, cancelAutopush } from './autopush.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
+import { startTemplateRepoRefresh, syncAllTemplateRepos, templateRepoStates } from './templaterepos.js';
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
@@ -25,7 +29,8 @@ import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
-import { canAccess, isListed, isMember, isOwner, ownerName } from './authz.js';
+import { canAccess, isAdmin, isListed, isMember, isOwner, ownerName } from './authz.js';
+import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
@@ -90,7 +95,10 @@ async function adoptRootIfUnset(id: string, branch: string, rel: string): Promis
 const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
-  const { zotero: z, ownerId, share, ...rest } = meta;
+  const { zotero: z, ownerId, share, github: _legacy, remote: _remote, ...rest } = meta;
+  // Older web bundles read `github`; emit it alongside `remote` for github links
+  // until the next release, then it goes.
+  const link = store.remoteLink(meta);
   // The collaborator roster is the owner's private list of invitee email
   // addresses — never hand it to the other people who can open the project
   // (link visitors most of all). Everyone else sees the mode only.
@@ -100,6 +108,8 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
     share: share && (owner ? share : { mode: share.mode, collaborators: [] }),
     ownerId,
     ownerName: await ownerName(meta),
+    remote: link,
+    github: link?.provider === 'github' ? link : undefined,
     isOwner: user !== undefined ? isOwner(meta, user) : undefined,
     isMember: user !== undefined ? isMember(meta, user) : undefined,
     zotero: z ? {
@@ -158,10 +168,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // ---------- auth (env-gated) ----------
   // mcpEnabled/publicUrl let the Agent access card say whether the connector
   // URL it shows is served at all, and whether claude.ai could reach it.
-  app.get('/api/auth/me', async (req) => ({
-    authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user: reqUser(req), providers: oauthProviders(),
-    mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null,
-  }));
+  app.get('/api/auth/me', async (req) => {
+    const user = reqUser(req);
+    return {
+      authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
+      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null,
+    };
+  });
 
   /** Author for a human commit (checkpoint, merge, revert): the account name
    *  whenever there is one — the browser's anonymous "Writer N" identity is
@@ -311,10 +324,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const t = await auth.userFromToken(header);
       (req as any)._user = t?.user ?? null;
       (req as any)._tokenScope = t?.tokenScope ?? null;
+      if (t?.user) noteActivity(t.user.id);
       return;
     }
-    (req as any)._user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
+    const user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
+    (req as any)._user = user;
+    if (user) noteActivity(user.id);
   });
+  await registerAdminRoutes(app, reqUser);
 
   // Global guard: enforce project access when auth is on. Runs after routing,
   // so it uses the DECODED :id param — never a regex over the raw (still
@@ -447,10 +464,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
   });
 
+  // Auto-provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP): a new project is
+  // also created on GitLab. Failure never fails the request: the project
+  // exists locally, `remotePending` marks it, and the error rides along.
+  const provisionNew = async (meta: store.ProjectMeta, req: any, namespace?: string): Promise<string | undefined> => {
+    if (!provisioningEnabled()) return undefined;
+    try {
+      const r = await provisionProject(meta, { userId: reqUser(req)?.id || 'local', namespace });
+      return r.ok ? undefined : r.error;
+    } catch (err: any) {
+      // provisionProject is written not to throw; if it ever does, the local
+      // project must still be answered, never deleted or 500ed over GitLab.
+      req.log.error({ err }, 'provisioning threw');
+      return `GitLab provisioning failed: ${err?.message || err}`;
+    }
+  };
+
   // No `files` and no `template` seeds the default article; `files: {}` or
   // `template: "blank"` creates a project with no files at all.
-  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string } }>('/api/projects', async (req, reply) => {
-    const { name = 'Untitled Project', files, template } = req.body || {};
+  app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
+    const { name = 'Untitled Project', files, template, namespace } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
     let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {
@@ -459,7 +492,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       seed = files;
     }    if (template) {
       try {
-        resolved = await resolveTemplateSeed(template);
+        resolved = await resolveTemplateSeed(template, { projectName: name, author: reqUser(req)?.name });
         seed = resolved.files;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
@@ -476,10 +509,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       req.log.error({ err }, 'createProject failed');
       return reply.code(500).send({ error: 'Could not create the project' });
     }
+    const remoteError = await provisionNew(meta, req, namespace);
     const body = await publicMeta(meta, reqUser(req));
     // A venue kit that could not be downloaded still creates the project (from
     // a skeleton); the client says so rather than the request failing.
-    return resolved?.venueKit ? { ...body, venueKit: resolved.venueKit } : body;
+    return { ...body, ...(resolved?.venueKit ? { venueKit: resolved.venueKit } : {}), ...(remoteError ? { remoteError } : {}) };
   });
 
   // ---------- sharing (owner only) ----------
@@ -547,7 +581,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Asked for at boot so the first gallery request is served from the cache
   // instead of waiting on the compiler.
   warmVenueCache();
+  startTemplateRepoRefresh();
   app.get('/api/templates', async () => listAllTemplates());
+  // Template repositories: their sync state, and a forced refresh. With auth
+  // on, refreshing is for signed-in users; one sync per repository runs at a
+  // time, so a burst of clicks costs one fetch.
+  app.get('/api/templates/repos', async () => ({ repos: templateRepoStates() }));
+  app.post('/api/templates/repos/refresh', async (req, reply) => {
+    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
+    return { repos: await syncAllTemplateRepos() };
+  });
 
   // What the connected compiler runs. Not project-scoped, so it is not behind
   // the project auth hook; it discloses nothing beyond a TeX Live release.
@@ -570,13 +613,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       for (const part of parseMultipart(body, boundary)) {
         if (part.filename !== undefined || part.name === 'zip') { parsed.zip = part.data; parsed.zipName = part.filename; }
         else if (part.name === 'name') parsed.name = part.data.toString('utf8');
+        else if (part.name === 'namespace') parsed.namespace = part.data.toString('utf8');
       }
       done(null, parsed);
     } catch (err: any) {
       done(Object.assign(err, { statusCode: 400 }), undefined);
     }
   });
-  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string };
+  type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string; namespace?: string };
   app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
     const body = req.body || {};
     let buf: Buffer;
@@ -641,7 +685,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (root) meta.rootFile = root;
       meta.engine = detected.engine;
       await store.writeMeta(meta);
-      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded } };
+      const remoteError = await provisionNew(meta, req, body.namespace);
+      return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded }, ...(remoteError ? { remoteError } : {}) };
     } catch (err: any) {
       if (created) await store.deleteProject(created.id).catch(() => {});
       if (err instanceof ZipError && err.entryCount !== undefined) entryCount = err.entryCount;
@@ -698,6 +743,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{ Params: { id: string }; Querystring: { permanent?: string } }>('/api/projects/:id', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
+    cancelAutopush(req.params.id);
+    // A repository Aldine created goes with the project; an imported one is
+    // never touched. A failed remote deletion is reported, never blocking.
+    const remote: DeprovisionResult = await deprovisionProject(meta).catch((err) => ({ deleted: false, error: String(err?.message || err) }));
     if (req.query.permanent === '1') await store.deleteProject(req.params.id);
     else await store.softDeleteProject(req.params.id);
     lastPushedHead.delete(req.params.id); // don't leak the push-dedup entry (or reuse a stale hash)
@@ -706,15 +755,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // (here and on peer nodes) so nobody keeps editing a trashed project.
     closeProjectConnections(req.params.id);
     publishProjectEvent({ type: 'access-changed', projectId: req.params.id });
-    return { ok: true };
+    return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
   app.post<{ Params: { id: string } }>('/api/projects/:id/restore', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can restore this project' });
     if (!meta.deletedAt) return reply.code(400).send({ error: 'Project is not in the trash' });
-    await store.restoreProject(req.params.id);
-    return { ok: true };
+    const restored = await store.restoreProject(req.params.id);
+    // A provisioned project that was deleted on GitLab with the trash comes back there too.
+    const remoteError = restored.remotePending && provisioningEnabled()
+      ? await provisionNew(restored, req, restored.remotePending.namespace)
+      : undefined;
+    return { ok: true, ...(remoteError ? { remoteError } : {}) };
   });
 
   // ---------- files ----------
@@ -1048,7 +1101,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       flushBranchDocs(req.params.id, branch);
       // autoCommit, not commitAll: a person's checkpoint inside the agent's
       // debounce window must not sign Claude's pending delta with their name.
-      return gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
+      const r = await gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
+      if (r.committed && branch === 'main') scheduleAutopush(req.params.id);
+      return r;
     });
 
   // Revert a set of commits (newest-first) as one new commit — the session
@@ -1359,94 +1414,138 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // ---------- GitHub integration (per-user connection) ----------
+  // ---------- remote providers (GitHub, GitLab): per-user connection ----------
   // In no-auth (single-tenant) mode there's no user, so connections hang off a
-  // fixed 'local' id. github.enabled reports whether OAuth connect is available.
-  const ghUserId = (req: any) => reqUser(req)?.id || 'local';
-  // When auth is on, GitHub connections are per signed-in user; without this the
+  // fixed 'local' id. The provider comes from the URL for account-level routes
+  // (`/api/remotes/:provider/*`) and from the stored link for project routes
+  // (`/api/projects/:id/remote/*`): a request can never point a project at a
+  // different host than the one it was linked to.
+  //
+  // Compatibility: `/api/github/*` and `/api/projects/:id/github/*` keep
+  // answering as aliases with provider fixed to GitHub. Operators registered
+  // `/api/github/oauth/callback` in their GitHub OAuth app, so that URL stays
+  // the redirect target for GitHub; other providers use the generic path.
+  const remoteUserId = (req: any) => reqUser(req)?.id || 'local';
+  // When auth is on, connections are per signed-in user; without this the
   // anonymous fallback ('local') would let unauthenticated callers share one
-  // connection bucket — one user's PAT readable by the next. Mirrors /oauth + /import.
+  // connection bucket — one user's PAT readable by the next.
   const requireSignIn = (req: any, reply: any): boolean => {
     if (auth.AUTH_ENABLED && !reqUser(req)) { reply.code(401).send({ error: 'Sign in required' }); return true; }
     return false;
   };
+  type Provider = remotes.RemoteProvider;
+  type ProviderReq = FastifyRequest<{ Params: { provider?: string; id?: string }; Body?: any; Querystring?: any }>;
+  /** Resolve `:provider`, or the fixed alias provider; replies 404 (and returns null) for unknown or disabled ids. */
+  const providerOf = (req: ProviderReq, reply: any, fixed?: remotes.RemoteProviderId): Provider | null => {
+    const p = remotes.getProvider(fixed ?? req.params.provider);
+    if (!p) { reply.code(404).send({ error: 'Unknown remote provider' }); return null; }
+    return p;
+  };
+  const oauthCallbackPath = (p: Provider) => p.id === 'github' ? '/api/github/oauth/callback' : `/api/remotes/${p.id}/oauth/callback`;
+  /** Upstream failures: an expired or revoked token gets a reason the UI can act on (reconnect), the rest is a 502. */
+  const upstreamError = (reply: any, err: any, label: string) => {
+    if (err instanceof remotes.RemoteApiError && err.status === 401) {
+      return reply.code(401).send({ error: `${label} rejected the stored token. Reconnect to continue.`, reason: 'token-invalid' });
+    }
+    return reply.code(502).send({ error: err?.message || String(err) });
+  };
+  /** Register `handler` under the generic provider path and, for GitHub, the pre-GitLab alias. */
+  const providerRoute = (method: 'get' | 'post', tail: string, handler: (p: Provider, req: any, reply: any) => Promise<unknown>) => {
+    app[method](`/api/remotes/:provider/${tail}`, async (req: any, reply) => { const p = providerOf(req, reply); if (!p) return; return handler(p, req, reply); });
+    app[method](`/api/github/${tail}`, async (req: any, reply) => { const p = providerOf(req, reply, 'github'); if (!p) return; return handler(p, req, reply); });
+  };
 
-  app.get('/api/github/status', async (req, reply) => {
+  // `provisioning` tells the new-project dialog whether to ask for a group at
+  // all, so an instance without a service token never requests namespaces.
+  app.get('/api/remotes', async () => remotes.providers().map((p) => ({
+    id: p.id, label: p.label, oauth: p.oauthEnabled(), selfHosted: p.selfHosted, changeRequestLabel: p.changeRequestLabel,
+    provisioning: p.id === 'gitlab' && provisioningEnabled(),
+  })));
+
+  providerRoute('get', 'status', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
-    const conn = await github.getConnection(ghUserId(req));
-    return { connected: !!conn, login: conn?.login, oauth: github.oauthEnabled() };
+    const conn = await remotes.getConnection(remoteUserId(req), p.id);
+    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, oauth: p.oauthEnabled(), selfHosted: p.selfHosted };
   });
 
-  app.post<{ Body: { token?: string } }>('/api/github/connect', async (req, reply) => {
+  providerRoute('post', 'connect', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
-    const token = (req.body?.token || '').trim();
-    if (!token) return reply.code(400).send({ error: 'A GitHub token is required' });
+    const token = String(req.body?.token || '').trim();
+    if (!token) return reply.code(400).send({ error: `A ${p.label} token is required` });
+    let baseUrl: string | undefined;
+    if (req.body?.baseUrl !== undefined && req.body?.baseUrl !== '') {
+      if (!p.normalizeBaseUrl) return reply.code(400).send({ error: `${p.label} has no configurable URL` });
+      try { baseUrl = p.normalizeBaseUrl(String(req.body.baseUrl)); }
+      catch (err: any) { return reply.code(400).send({ error: err.message }); }
+    }
     try {
-      const me = await github.whoami(token);
-      await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
-      return { connected: true, login: me.login };
+      const me = await p.whoami({ token, login: '', baseUrl });
+      await remotes.setConnection(remoteUserId(req), p.id, { token, login: me.login, name: me.name, ...(baseUrl ? { baseUrl } : {}) });
+      return { connected: true, login: me.login, baseUrl };
     } catch {
-      return reply.code(400).send({ error: 'That token was rejected by GitHub. Check it has repo scope.' });
+      const scope = p.id === 'github' ? 'repo scope' : 'the api scope';
+      return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${scope}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` });
     }
   });
 
-  app.post('/api/github/disconnect', async (req, reply) => {
+  providerRoute('post', 'disconnect', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
-    await github.disconnect(ghUserId(req));
+    await remotes.disconnect(remoteUserId(req), p.id);
     return { ok: true };
   });
 
-  // OAuth "Connect with GitHub" (repo scope) — links the signed-in user's account.
-  app.get('/api/github/oauth', async (req, reply) => {
-    if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+  // OAuth "Connect with <provider>" — links the signed-in user's account.
+  providerRoute('get', 'oauth', async (p, req, reply) => {
+    if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_gh_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
-    return reply.redirect(github.connectUrl(state, `${publicBase(req)}/api/github/oauth/callback`));
+    reply.header('set-cookie', `aldine_remote_state=${p.id}.${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    return reply.redirect(p.connectUrl(state, `${publicBase(req)}${oauthCallbackPath(p)}`));
   });
 
-  app.get<{ Querystring: { code?: string; state?: string } }>('/api/github/oauth/callback', async (req, reply) => {
-    if (!github.oauthEnabled()) return reply.code(404).send({ error: 'GitHub OAuth is not configured' });
+  providerRoute('get', 'oauth/callback', async (p, req, reply) => {
+    if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     const cookies = auth.parseCookies(req.headers.cookie);
-    if (!req.query.code || !req.query.state || req.query.state !== cookies.aldine_gh_state) {
+    const q = req.query as { code?: string; state?: string };
+    if (!q.code || !q.state || cookies.aldine_remote_state !== `${p.id}.${q.state}`) {
       return reply.code(400).send({ error: 'OAuth state mismatch — please try again' });
     }
     try {
-      const token = await github.exchangeCode(req.query.code, `${publicBase(req)}/api/github/oauth/callback`);
-      const me = await github.whoami(token);
-      await github.setConnection(ghUserId(req), { token, login: me.login, name: me.name });
-      reply.header('set-cookie', `aldine_gh_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
-      return reply.redirect(`${config.basePath}/?github=connected`);
+      const token = await p.exchangeCode(q.code, `${publicBase(req)}${oauthCallbackPath(p)}`);
+      const me = await p.whoami({ token, login: '' });
+      await remotes.setConnection(remoteUserId(req), p.id, { token, login: me.login, name: me.name });
+      reply.header('set-cookie', `aldine_remote_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
+      return reply.redirect(`${config.basePath}/?remote=${p.id}`);
     } catch (err: any) {
-      return reply.code(400).send({ error: `GitHub connect failed: ${err.message}` });
+      return reply.code(400).send({ error: `${p.label} connect failed: ${err.message}` });
     }
   });
 
-  app.get('/api/github/repos', async (req, reply) => {
+  providerRoute('get', 'repos', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'GitHub is not connected' });
-    try { return await github.listRepos(conn.token); }
-    catch (err: any) { return reply.code(502).send({ error: err.message }); }
+    const conn = await remotes.getConnection(remoteUserId(req), p.id);
+    if (!conn) return reply.code(400).send({ error: `${p.label} is not connected` });
+    try { return await p.listRepos(conn); }
+    catch (err: any) { return upstreamError(reply, err, p.label); }
   });
 
-  // Import a GitHub repo as a new project (the primary create-project flow).
-  app.post<{ Body: { fullName?: string } }>('/api/github/import', async (req, reply) => {
+  // Import a repository as a new project (the primary create-project flow).
+  providerRoute('post', 'import', async (p, req, reply) => {
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'Connect GitHub first' });
-    const [owner, repo] = (req.body?.fullName || '').trim().split('/');
-    if (!owner || !repo) return reply.code(400).send({ error: 'Expected "owner/repo"' });
-    let info: github.Repo;
-    try { info = await github.getRepo(conn.token, owner, repo); }
-    catch (err: any) { return reply.code(400).send({ error: `Repo not found or no access: ${err.message}` }); }
+    const conn = await remotes.getConnection(remoteUserId(req), p.id);
+    if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
+    const fullName = String(req.body?.fullName || '').trim().replace(/^\/+|\/+$/g, '');
+    if (!fullName.includes('/') || fullName.includes('..')) return reply.code(400).send({ error: p.id === 'github' ? 'Expected "owner/repo"' : 'Expected a project path like "group/project"' });
+    let info: remotes.RemoteRepo;
+    try { info = await p.getRepo(conn, fullName); }
+    catch (err: any) { return reply.code(400).send({ error: `Repository not found or no access: ${err.message}` }); }
     const id = newId();
     try {
-      const { remoteBranch } = await gitops.cloneRepo(id, github.tokenUrl(info.cloneUrl, conn.token));
+      const { remoteBranch } = await gitops.cloneRepo(id, p.tokenUrl(info.cloneUrl, conn.token));
       const rootFile = detectRoot(id, 'main');
       const meta: store.ProjectMeta = {
         id, name: info.name, rootFile, engine: 'pdf', createdAt: new Date().toISOString(),
-        github: { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) },
+        remote: { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: remoteUserId(req) },
       };
       const ownerId = reqUser(req)?.id;
       if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
@@ -1458,55 +1557,77 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // Sync a linked project with its GitHub remote (uses the acting user's token).
+  // ---------- per-project remote sync (provider from the stored link) ----------
   // Syncing pushes the project into the OWNER's repo and can pull remote state
   // over everyone's work, so every remote operation is members-only: link mode
   // grants editing, not control of where the project is mirrored.
-  const linkedRemote = async (req: any, reply: any, action = 'sync this project') => {
+  type Linked = { meta: store.ProjectMeta; link: store.RemoteLink; provider: Provider; conn: remotes.RemoteConnection; url: string; remoteBranch: string };
+  const linkedRemote = async (req: any, reply: any, action = 'sync this project'): Promise<Linked | null> => {
     const meta = await requireMember(req, reply, action);
     if (!meta) return null;
-    if (!meta.github) { reply.code(400).send({ error: 'This project is not linked to GitHub' }); return null; }
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) { reply.code(400).send({ error: 'Connect GitHub to sync' }); return null; }
-    return { meta, token: conn.token, owner: meta.github.owner, repo: meta.github.repo, url: github.tokenUrl(meta.github.cloneUrl, conn.token), remoteBranch: meta.github.remoteBranch };
+    const link = store.remoteLink(meta);
+    if (!link) { reply.code(400).send({ error: 'This project is not linked to a remote repository' }); return null; }
+    const provider = remotes.getProvider(link.provider);
+    if (!provider) { reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` }); return null; }
+    const conn = await remotes.resolveConnection(link, remoteUserId(req), { allowService: true });
+    if (!conn) { reply.code(400).send({ error: `Connect ${provider.label} to sync` }); return null; }
+    return { meta, link, provider, conn, url: provider.tokenUrl(link.cloneUrl, conn.token), remoteBranch: link.remoteBranch };
   };
+  const projectRoute = (method: 'get' | 'post', tail: string, handler: (req: any, reply: any) => Promise<unknown>, legacyTail = tail) => {
+    app[method](`/api/projects/:id/remote/${tail}`, handler);
+    app[method](`/api/projects/:id/github/${legacyTail}`, handler);
+  };
+  /** Response shape of a link: `remote`, plus `github` for web bundles from before GitLab. */
+  const linkBody = (link: store.RemoteLink) => ({ remote: link, ...(link.provider === 'github' ? { github: link } : {}) });
 
-  // Publish a locally-created project to a fresh GitHub repo. This is the only
+  // Publish a locally-created project to a fresh repository. This is the only
   // way an unlinked project gains an off-server copy, so the editor nudges
-  // toward it. Creates the repo under the connected account, commits the
-  // current state, pushes main, and stores the link (same shape as an import).
-  app.post<{ Params: { id: string }; Body: { name?: string; private?: boolean } }>('/api/projects/:id/github/link', async (req, reply) => {
+  // toward it. Creates the repo under the connected account (or the given
+  // namespace), commits the current state, pushes main, and stores the link
+  // (same shape as an import).
+  projectRoute('post', 'link', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (auth.AUTH_ENABLED && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can publish this project' });
-    if (meta.github) return reply.code(400).send({ error: 'This project is already linked to GitHub' });
-    const conn = await github.getConnection(ghUserId(req));
-    if (!conn) return reply.code(400).send({ error: 'Connect GitHub first' });
-    const name = (req.body?.name || meta.name).trim()
+    if (store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is already linked to a remote repository' });
+    if (!req.body?.provider && !req.url.includes('/github/') && meta.remotePending) {
+      // Retry of a provisioning that failed at create time: same namespace, service token.
+      const r = await provisionProject(meta, { userId: remoteUserId(req), namespace: meta.remotePending.namespace });
+      if (!r.ok) return reply.code(502).send({ error: r.error, remotePending: meta.remotePending });
+      return { ok: true, ...linkBody(r.link) };
+    }
+    const providerId = req.body?.provider ?? (req.url.includes('/github/') ? 'github' : undefined);
+    const p = remotes.getProvider(providerId);
+    if (!p) return reply.code(400).send({ error: 'Choose a remote provider' });
+    const conn = await remotes.getConnection(remoteUserId(req), p.id);
+    if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
+    const name = String(req.body?.name || meta.name).trim()
       .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
     if (!name) return reply.code(400).send({ error: 'Repository name required' });
-    let info: github.Repo;
-    try { info = await github.createRepo(conn.token, name, req.body?.private !== false); }
-    catch (err: any) { return reply.code(400).send({ error: `Could not create repo: ${err.message}` }); }
+    const namespace = typeof req.body?.namespace === 'string' && req.body.namespace.trim() ? req.body.namespace.trim() : undefined;
+    let info: remotes.RemoteRepo;
+    try { info = await p.createRepo(conn, name, { private: req.body?.private !== false, namespace }); }
+    catch (err: any) { return reply.code(400).send({ error: `Could not create the repository: ${err.message}` }); }
     flushBranchDocs(req.params.id, 'main');
-    await gitops.autoCommit(req.params.id, 'main', 'aldine: publish to GitHub', reqUser(req)?.name).catch(() => {});
-    meta.github = { fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: ghUserId(req) };
+    await gitops.autoCommit(req.params.id, 'main', `aldine: publish to ${p.label}`, reqUser(req)?.name).catch(() => {});
+    const link: store.RemoteLink = { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: remoteUserId(req) };
+    store.setRemoteLink(meta, link);
     await store.writeMeta(meta);
-    try { await gitops.pushToRemote(req.params.id, 'main', github.tokenUrl(info.cloneUrl, conn.token)); }
+    try { await gitops.pushToRemote(req.params.id, 'main', p.tokenUrl(info.cloneUrl, conn.token)); }
     catch (err: any) {
       // repo exists and the link is stored — the user can retry the push from the sync UI
-      return reply.code(502).send({ error: `Repo created but the first push failed: ${err.message}. Use Push to retry.`, github: meta.github });
+      return reply.code(502).send({ error: `Repository created but the first push failed: ${err.message}. Use Push to retry.`, ...linkBody(link) });
     }
-    return { ok: true, github: meta.github };
+    return { ok: true, ...linkBody(link) };
   });
 
-  app.get<{ Params: { id: string } }>('/api/projects/:id/github/status', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
-    try { return { linked: true, ...link.meta.github, ...(await gitops.remoteStatus(req.params.id, link.remoteBranch, link.url)) }; }
+  projectRoute('get', 'status', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
+    try { return { linked: true, ...l.link, ...(await gitops.remoteStatus(req.params.id, l.remoteBranch, l.url)) }; }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
   });
 
-  app.post<{ Params: { id: string }; Body: { message?: string; auto?: boolean } }>('/api/projects/:id/github/push', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
+  projectRoute('post', 'push', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing
     const message = cleanCommitMessage(req.body?.message, 'Update from Aldine');
     const commit = await gitops.autoCommit(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
@@ -1521,100 +1642,140 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true, skipped: true };
     }
     try {
-      await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url);
+      await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       if (head) lastPushedHead.set(req.params.id, head);
       return { ok: true };
     } catch (err: any) { return reply.code(400).send({ error: `Push failed: ${err.message}` }); }
   });
 
-  app.post<{ Params: { id: string } }>('/api/projects/:id/github/pull', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
+  projectRoute('post', 'pull', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main');
     await gitops.autoCommit(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
     try {
-      const result = await gitops.pullFromRemote(req.params.id, link.remoteBranch, link.url);
+      const result = await gitops.pullFromRemote(req.params.id, l.remoteBranch, l.url);
       if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts });
       refreshBranchDocsFromDisk(req.params.id, 'main'); // push the merged content into open editors
       return { ok: true };
     } catch (err: any) { return reply.code(400).send({ error: `Pull failed: ${err.message}` }); }
   });
 
-  // Conflict escape hatch: discard local changes and take the GitHub version.
+  // Conflict escape hatch: discard local changes and take the remote version.
   // Destroys everyone's unpushed work, so it is the owner's call alone.
-  app.post<{ Params: { id: string } }>('/api/projects/:id/github/reset-to-remote', async (req, reply) => {
+  projectRoute('post', 'reset-to-remote', async (req, reply) => {
     if (!(await requireOwner(req, reply, 'discard local changes'))) return;
-    const link = await linkedRemote(req, reply); if (!link) return;
+    const l = await linkedRemote(req, reply); if (!l) return;
     try {
-      await gitops.resetToRemote(req.params.id, link.remoteBranch, link.url);
+      await gitops.resetToRemote(req.params.id, l.remoteBranch, l.url);
       refreshBranchDocsFromDisk(req.params.id, 'main');
       return { ok: true };
     } catch (err: any) { return reply.code(400).send({ error: `Reset failed: ${err.message}` }); }
   });
 
-  // ---------- GitHub branches + PRs ----------
-  app.get<{ Params: { id: string } }>('/api/projects/:id/github/branches', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
+  // ---------- remote branches + change requests ----------
+  projectRoute('get', 'branches', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
     try {
       const [branches, repo] = await Promise.all([
-        github.listBranches(link.token, link.owner, link.repo),
-        github.getRepo(link.token, link.owner, link.repo),
+        l.provider.listBranches(l.conn, l.link.fullName),
+        l.provider.getRepo(l.conn, l.link.fullName),
       ]);
-      return { branches, current: link.remoteBranch, default: repo.defaultBranch };
-    } catch (err: any) { return reply.code(502).send({ error: err.message }); }
+      return { branches, current: l.remoteBranch, default: repo.defaultBranch };
+    } catch (err: any) { return upstreamError(reply, err, l.provider.label); }
   });
 
-  // Switch which GitHub branch this project tracks. Saves current work (commit +
+  // Switch which remote branch this project tracks. Saves current work (commit +
   // push) first so nothing is lost, then checks out the target branch.
-  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/github/switch-branch', async (req, reply) => {
-    // Persists meta.github.remoteBranch — repoints the project for everyone.
-    if (!(await requireOwner(req, reply, 'change the tracked GitHub branch'))) return;
-    const link = await linkedRemote(req, reply); if (!link) return;
-    const target = (req.body?.branch || '').trim();
+  projectRoute('post', 'switch-branch', async (req, reply) => {
+    // Persists the link's remoteBranch — repoints the project for everyone.
+    if (!(await requireOwner(req, reply, 'change the tracked remote branch'))) return;
+    const l = await linkedRemote(req, reply); if (!l) return;
+    const target = String(req.body?.branch || '').trim();
     if (!target) return reply.code(400).send({ error: 'branch required' });
-    if (target === link.remoteBranch) return { ok: true };
+    if (target === l.remoteBranch) return { ok: true };
     flushBranchDocs(req.params.id, 'main');
     try {
       await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
-      await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url).catch(() => {}); // best-effort save
-      await gitops.resetToRemote(req.params.id, target, link.url);
-      const meta = link.meta; meta.github!.remoteBranch = target; await store.writeMeta(meta);
+      await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url).catch(() => {}); // best-effort save
+      await gitops.resetToRemote(req.params.id, target, l.url);
+      store.setRemoteLink(l.meta, { ...l.link, remoteBranch: target }); await store.writeMeta(l.meta);
       refreshBranchDocsFromDisk(req.params.id, 'main');
       return { ok: true, branch: target };
     } catch (err: any) { return reply.code(400).send({ error: `Switch failed: ${err.message}` }); }
   });
 
-  // Create a new GitHub branch from the current content and switch to it.
-  app.post<{ Params: { id: string }; Body: { name?: string } }>('/api/projects/:id/github/create-branch', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
-    const name = (req.body?.name || '').trim();
+  // Create a new remote branch from the current content and switch to it.
+  projectRoute('post', 'create-branch', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
+    const name = String(req.body?.name || '').trim();
     // Use the same BRANCH_RE gitops enforces on push/pull, so a name the UI
     // accepts can't later be rejected by git after a stray commit is written.
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
     flushBranchDocs(req.params.id, 'main');
     try {
       await gitops.autoCommit(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
-      await gitops.pushToRemote(req.params.id, name, link.url); // push creates the remote branch
-      const meta = link.meta; meta.github!.remoteBranch = name; await store.writeMeta(meta);
+      await gitops.pushToRemote(req.params.id, name, l.url); // push creates the remote branch
+      store.setRemoteLink(l.meta, { ...l.link, remoteBranch: name }); await store.writeMeta(l.meta);
       return { ok: true, branch: name };
     } catch (err: any) { return reply.code(400).send({ error: `Create branch failed: ${err.message}` }); }
   });
 
-  // Open a pull request from the current branch into the repo's default branch.
-  app.post<{ Params: { id: string }; Body: { title?: string } }>('/api/projects/:id/github/pr', async (req, reply) => {
-    const link = await linkedRemote(req, reply); if (!link) return;
+  // Open a pull/merge request from the current branch into the repo's default branch.
+  projectRoute('post', 'change-request', async (req, reply) => {
+    const l = await linkedRemote(req, reply); if (!l) return;
+    const noun = l.provider.changeRequestLabel;
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.autoCommit(req.params.id, 'main', 'Update before pull request', reqUser(req)?.name).catch(() => {});
-      await gitops.pushToRemote(req.params.id, link.remoteBranch, link.url);
-      const repo = await github.getRepo(link.token, link.owner, link.repo);
-      if (link.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });
-      const pr = await github.createPullRequest(link.token, link.owner, link.repo, {
-        title: (req.body?.title || '').trim() || `Update ${link.remoteBranch}`,
-        head: link.remoteBranch,
+      await gitops.autoCommit(req.params.id, 'main', `Update before ${noun}`, reqUser(req)?.name).catch(() => {});
+      await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
+      const repo = await l.provider.getRepo(l.conn, l.link.fullName);
+      if (l.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });
+      return await l.provider.createChangeRequest(l.conn, l.link.fullName, {
+        title: String(req.body?.title || '').trim() || `Update ${l.remoteBranch}`,
+        head: l.remoteBranch,
         base: repo.defaultBranch,
       });
-      return pr;
-    } catch (err: any) { return reply.code(400).send({ error: `Could not open PR: ${err.message}` }); }
+    } catch (err: any) {
+      if (err instanceof remotes.RemoteApiError) return upstreamError(reply, err, l.provider.label);
+      return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` });
+    }
+  }, 'pr');
+
+  // Server-side autopush is the owner's call: it decides what leaves the server and when.
+  projectRoute('post', 'autopush', async (req, reply) => {
+    if (!(await requireOwner(req, reply, 'change autopush'))) return;
+    const meta = await store.readMeta(req.params.id);
+    if (!store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is not linked to a remote repository' });
+    if (typeof req.body?.enabled !== 'boolean') return reply.code(400).send({ error: 'enabled must be true or false' });
+    meta.autopush = req.body.enabled;
+    await store.writeMeta(meta);
+    if (meta.autopush) scheduleAutopush(req.params.id); else cancelAutopush(req.params.id);
+    return { ok: true, autopush: meta.autopush };
+  });
+
+  // ---------- GitLab group provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP) ----------
+  // Namespaces come from the service account and are limited to the root
+  // group's subtree; nothing here lists what a user's own token could see.
+  app.get('/api/remotes/gitlab/namespaces', async (req, reply) => {
+    if (!provisioningEnabled()) return reply.code(404).send({ error: 'GitLab provisioning is not configured' });
+    if (requireSignIn(req, reply)) return;
+    try {
+      const groups = await gitlab.listDescendantGroups(remotes.serviceConnection()!, rootGroup());
+      return { root: rootGroup(), namespaces: groups.map((g) => ({ fullPath: g.fullPath, name: g.name })) };
+    } catch (err: any) { return reply.code(502).send({ error: err.message }); }
+  });
+
+  app.post<{ Body: { parentPath?: string; name?: string } }>('/api/remotes/gitlab/subgroups', async (req, reply) => {
+    if (!provisioningEnabled()) return reply.code(404).send({ error: 'GitLab provisioning is not configured' });
+    if (requireSignIn(req, reply)) return;
+    const parent = String(req.body?.parentPath || rootGroup()).trim().replace(/^\/+|\/+$/g, '');
+    const name = String(req.body?.name || '').trim();
+    if (!name) return reply.code(400).send({ error: 'Group name required' });
+    if (!withinRoot(parent, rootGroup())) return reply.code(400).send({ error: `"${parent}" is outside the configured group "${rootGroup()}"` });
+    try {
+      const g = await gitlab.createSubgroup(remotes.serviceConnection()!, parent, name);
+      return { fullPath: g.fullPath, name: g.name };
+    } catch (err: any) { return reply.code(400).send({ error: `Could not create the group: ${err.message}` }); }
   });
 
   // ---------- AI error fix ----------

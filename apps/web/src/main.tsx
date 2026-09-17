@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import Home from './pages/Home';
 import Editor from './pages/Editor';
 import OAuthConsent from './pages/OAuthConsent';
+import Admin from './pages/Admin';
 import { BASE_PATH } from './basePath';
 
 function NotFound() {
@@ -29,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<Home />} />
             <Route path="/p/:id" element={<Editor />} />
             <Route path="/oauth/authorize" element={<OAuthConsent />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

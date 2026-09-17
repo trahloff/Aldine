@@ -1,7 +1,7 @@
 {
   "name": "@aldine/server",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.9.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -9,6 +9,9 @@
     "build": "tsc && node viewer/build.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p viewer",
     "test:github": "tsx test/github-sync.integration.mjs",
+    "test:gitlab": "tsx test/gitlab-sync.integration.mjs",
+    "test:gitlab:provision": "tsx test/gitlab-autoprovision.integration.mjs",
+    "test:gitlab:delete": "tsx test/gitlab-delete.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
     "test:unit": "node test/run-unit.mjs",
     "build:viewer": "node viewer/build.mjs"

@@ -37,6 +37,19 @@ services:
       # GitHub sync (repo import/push/pull) — OAuth app with repo scope.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # GitLab sync — OAuth application with scope `api` on GITLAB_URL; token
+      # connect works without the app. REMOTE_PROVIDERS hides a provider.
+      GITLAB_URL: ${GITLAB_URL:-https://gitlab.com}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      REMOTE_PROVIDERS: ${REMOTE_PROVIDERS:-}
+      # GitLab provisioning — new projects are created in GITLAB_DEFAULT_GROUP
+      # with the service-account PAT (scope `api`, Owner on the group) and
+      # pushed from the server after each autosave. Off unless both are set.
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_DEFAULT_GROUP: ${GITLAB_DEFAULT_GROUP:-}
+      GITLAB_DEFAULT_VISIBILITY: ${GITLAB_DEFAULT_VISIBILITY:-}
+      AUTOPUSH_DEBOUNCE_MS: ${AUTOPUSH_DEBOUNCE_MS:-}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
       # MCP endpoint for Claude (docs/AGENT_API.md). ALDINE_MCP=1 serves /mcp;
@@ -64,6 +77,13 @@ services:
       # and typeset but nobody may edit; per-client typeset budget per minute.
       ALDINE_PROTECTED_PROJECTS: ${ALDINE_PROTECTED_PROJECTS:-}
       ALDINE_COMPILE_PER_MIN: ${ALDINE_COMPILE_PER_MIN:-}
+      # Optional template repositories (templates/README.md): a JSON array, or a
+      # path to one. A private repo's read token is the env var its "tokenEnv"
+      # names, so add that variable here as well.
+      TEMPLATE_REPOS: ${TEMPLATE_REPOS:-}
+      TEMPLATE_REPOS_FILE: ${TEMPLATE_REPOS_FILE:-}
+      TEMPLATE_REPOS_REFRESH_MS: ${TEMPLATE_REPOS_REFRESH_MS:-}
+      TEMPLATE_REPO_MAX_BYTES: ${TEMPLATE_REPO_MAX_BYTES:-}
       # Optional: share rate limits across app nodes (see the `redis` profile).
       REDIS_URL: ${REDIS_URL:-}
       # Datastore: blank = flat JSON files (slim single-node default). Set to a

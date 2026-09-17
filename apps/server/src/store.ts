@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta, ProjectVisit } from './db/types.js';
+import type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
 
-export type { ProjectMeta, ProjectVisit } from './db/types.js';
+export type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -49,6 +49,19 @@ export function setProjectVisit(v: ProjectVisit): Promise<void> {
 
 export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
+}
+
+/** The project's remote link, reading the pre-GitLab `github` field as provider 'github'. */
+export function remoteLink(meta: ProjectMeta): RemoteLink | null {
+  if (meta.remote) return meta.remote;
+  if (meta.github) return { provider: 'github', ...meta.github };
+  return null;
+}
+
+/** Set (or clear, with null) the remote link. Drops the legacy `github` field: the next write migrates. */
+export function setRemoteLink(meta: ProjectMeta, link: RemoteLink | null): void {
+  if (link) meta.remote = link; else delete meta.remote;
+  delete meta.github;
 }
 
 /** `files` omitted seeds the default article; `{}` is a blank project (no
@@ -117,12 +130,14 @@ export async function restoreProject(id: string): Promise<ProjectMeta> {
   return meta;
 }
 
-/** Hard-delete trashed projects older than `days`. Returns the ids purged. */
-export async function purgeExpiredTrash(days: number): Promise<string[]> {
+/** Hard-delete trashed projects older than `days`. Returns the ids purged.
+ *  `beforeDelete` runs per project first (remote clean-up); its failure is logged, not fatal. */
+export async function purgeExpiredTrash(days: number, beforeDelete?: (meta: ProjectMeta) => Promise<void>): Promise<string[]> {
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const purged: string[] = [];
   for (const m of await listProjects()) {
     if (m.deletedAt && Date.parse(m.deletedAt) < cutoff) {
+      if (beforeDelete) await beforeDelete(m).catch((err) => console.error(`[aldine] trash purge: remote clean-up of ${m.id} failed`, err?.message || err));
       await deleteProject(m.id);
       purged.push(m.id);
     }

@@ -17,6 +17,10 @@ export interface User {
   salt: string;
   hash: string;
   createdAt: string;
+  /** Last authenticated request, coarse (touched at most every few minutes).
+   *  The basis for "active users"; absent for accounts that never signed in
+   *  since the field was introduced. */
+  lastSeenAt?: string;
   provider?: string;
   /** Stable provider-scoped identity, `orcid:0000-0002-1825-0097`. Unique. */
   subject?: string;
@@ -60,15 +64,31 @@ export interface ProjectMeta {
     bibFile: string;
     lastSyncedAt?: string;
   };
-  /** GitHub remote link (present when the project was imported from / pushed to GitHub). */
-  github?: {
-    fullName: string;   // owner/repo
-    owner: string;
-    repo: string;
-    remoteBranch: string; // the GitHub branch that local `main` maps to
-    cloneUrl: string;     // credential-free https URL
-    connectedBy?: string; // user id whose token created the link (for reference)
-  };
+  /** Remote repository this project syncs with (imported from, or published to). */
+  remote?: RemoteLink;
+  /** Server-side push after every autosave on main (default on for provisioned projects). */
+  autopush?: boolean;
+  /** Provisioning into a GitLab group was requested but has not happened yet (host down, or the project was deleted and may be restored). */
+  remotePending?: { provider: 'gitlab'; namespace: string };
+  /**
+   * @deprecated Pre-GitLab shape of `remote` for provider 'github'. Read through
+   * `store.remoteLink()`, which prefers `remote`; `store.setRemoteLink()` moves
+   * a project over on its next write. Removed once no stored meta carries it.
+   */
+  github?: Omit<RemoteLink, 'provider'>;
+}
+
+export interface RemoteLink {
+  provider: 'github' | 'gitlab';
+  /** Host path of the repository: `owner/repo`, or `group/sub/project` on GitLab. */
+  fullName: string;
+  owner: string;
+  repo: string;
+  remoteBranch: string; // the remote branch that local `main` maps to
+  cloneUrl: string;     // credential-free https URL
+  connectedBy?: string; // user id whose token created the link (for reference)
+  /** Aldine created the repository (auto-provisioning); only then is it deleted with the project. */
+  createdByAldine?: boolean;
 }
 
 export interface SessionRow { userId: string; exp: number }
@@ -159,6 +179,11 @@ export interface DataStore {
   findUserByEmail(emailLower: string): Promise<User | null>;
   findUserBySubject(subject: string): Promise<User | null>;
   updateUser(u: User): Promise<void>;
+  /** Every account, oldest first. Instance administration only. */
+  listUsers(): Promise<User[]>;
+  /** Record activity without a read-modify-write of the whole row, so a
+   *  heartbeat racing a password change can never resurrect the old hash. */
+  touchUser(id: string, lastSeenAt: string): Promise<void>;
 
   // sessions (revocable)
   createSession(sid: string, userId: string, exp: number): Promise<void>;
@@ -223,6 +248,8 @@ export interface DataStore {
   // compile-time usage metering: seconds consumed per (user, month YYYY-MM)
   getUsageSeconds(userId: string, month: string): Promise<number>;
   addUsageSeconds(userId: string, month: string, seconds: number): Promise<void>;
+  /** Instance-wide compile seconds for a month, across every user. */
+  totalUsageSeconds(month: string): Promise<number>;
 
   // per-user external connections (e.g. a GitHub access token). Secrets — kept
   // in the secrets store, never in the compiler-visible projects dir.

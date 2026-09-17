@@ -35,6 +35,28 @@ flag; everything else works in the default single-tenant deploy.
 - **PROJ-7** — My project list shows all my projects with names and opens the
   right one on click.
 
+## Templates (TPL)
+
+*Automated in `28-template-gallery.spec.ts`, `29-venue-kits.spec.ts`,
+`32-template-repos.spec.ts` and `apps/server/test/template-repos.test.mjs`.*
+
+- **TPL-1** — As an operator, I list a git repository laid out like
+  `templates/` in `TEMPLATE_REPOS`; after the boot sync its templates appear
+  in the gallery grouped under the repository's label.
+- **TPL-2** — I create a project from one of them; `{{PROJECT_NAME}}`,
+  `{{AUTHOR}}` and `{{DATE}}` are substituted in the text files (LaTeX-escaped
+  in `.tex`), binaries arrive byte-identical, and neither `template.json` nor
+  `LICENSE` is copied into the project.
+- **TPL-3** — I push a new template folder to the repository; it shows up
+  after "Refresh templates" or the next refresh interval, without restarting
+  Aldine.
+- **TPL-4** — The git host becomes unreachable; the gallery keeps the last
+  good listing and projects can still be created, and the repository's
+  heading is marked stale with the time of its last successful refresh.
+- **TPL-5** — A private repository works with a read token named by
+  `tokenEnv`; the token is used per git operation and never lands in the
+  checkout's `.git/config`, the logs, or an API response.
+
 ## Editing & files (EDIT)
 
 *Automated in `07-features.spec.ts`, `08-stretch.spec.ts`,
@@ -111,8 +133,38 @@ flag; everything else works in the default single-tenant deploy.
 - **GH-3** — I pull remote changes; conflicts are surfaced.
 - **GH-4** — I open a pull request from the editor.
 - **GH-5** — I switch the synced remote branch.
-- **GH-6** — Opt-in auto-sync pushes on a schedule; manual push always pushes.
+- **GH-6** — Owner-controlled autopush pushes each autosave from the server; manual push always pushes.
 - **GH-7** — Auth tokens never land in the compiler-visible project dir.
+
+## GitLab sync (GL)
+
+*Automated at the API level in `apps/server/test/gitlab-sync.integration.mjs`
+and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`.*
+
+- **GL-1** — I connect a GitLab account with a personal access token (any
+  https instance, sub-path installs included) or with OAuth.
+- **GL-2** — I import a project from a nested group path
+  (`group/subgroup/project`).
+- **GL-3** — I publish a local project to GitLab, optionally into a group.
+- **GL-4** — I push, pull and switch branches exactly as with GitHub.
+- **GL-5** — I open a merge request from the editor.
+- **GL-6** — As an operator I hide a provider with `REMOTE_PROVIDERS`;
+  existing GitHub links and the registered OAuth callback URL keep working
+  after the upgrade.
+- **GL-7** — As an operator I set `GITLAB_TOKEN` and `GITLAB_DEFAULT_GROUP`;
+  "New project" lands in the chosen subgroup and the first push is visible on
+  GitLab within the autopush debounce.
+- **GL-8** — I pick a subgroup of the root group, or create one, in the
+  new-project and import dialogs; the picker remembers my last choice.
+- **GL-9** — GitLab is down when I create a project: the project exists
+  locally, the editor shows a banner, and retry provisions it into the
+  pending namespace.
+- **GL-10** — Deleting a project removes the GitLab project Aldine created;
+  restoring it from the trash brings it back. A repository I imported
+  survives deletion of the Aldine project.
+- **GL-11** — Autopush is on by default for provisioned projects and only the
+  owner can switch it off; a member without a GitLab token of their own
+  still syncs a provisioned project through the service account.
 
 ## References & Zotero (REF)
 

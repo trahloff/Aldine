@@ -61,6 +61,12 @@ variable "sso_only" {
   default     = true
 }
 
+variable "admin_emails" {
+  description = "Comma-separated account emails that may open /admin (ALDINE_ADMIN_EMAILS). Empty = nobody."
+  type        = string
+  default     = ""
+}
+
 variable "ai_model" {
   description = "ALDINE_AI_MODEL (optional; used when an AI key secret is set)."
   type        = string
@@ -68,6 +74,12 @@ variable "ai_model" {
 }
 
 # ---- transactional email (SES) ----
+variable "enable_ecs_exec" {
+  description = "Allow `aws ecs execute-command` into the running tasks (a shell in the server container, for one-off inspection of the datastore). Grants the task role the SSM messaging permissions this needs; who may open a session is still governed by IAM (ecs:ExecuteCommand)."
+  type        = bool
+  default     = false
+}
+
 variable "enable_ses" {
   description = "Provision SES (domain identity, DKIM, MAIL FROM) and let the app send reset emails via the task role."
   type        = bool

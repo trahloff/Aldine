@@ -21,8 +21,10 @@ import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras'
 import { useCommentSignal } from '../editor/commentSignal';
 import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, type TypesetSource } from '../editor/autoTypeset';
-import GithubSync from '../components/GithubSync';
-import GithubPublish from '../components/GithubPublish';
+import RemoteSync from '../components/RemoteSync';
+import RemotePublish from '../components/RemotePublish';
+import RemotePendingBanner from '../components/RemotePendingBanner';
+import { remoteDescriptor } from '../remotes';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
@@ -245,12 +247,12 @@ export default function Editor() {
       applyDeepLink(p, f);
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
-      // this server until it's published to GitHub. Only the owner can publish,
-      // so only the owner is nudged.
+      // this server until it's published to a git host. Only the owner can
+      // publish, so only the owner is nudged.
       const owner = !authEnabled || !!p.isOwner;
-      if (owner && !p.github && !localStorage.getItem(`aldine.ghNudged.${id}`)) {
-        localStorage.setItem(`aldine.ghNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to GitHub to keep a synced copy.');
+      if (owner && !p.remote && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
+        localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
+        toast('This project lives only on this server — publish it to GitHub or GitLab to keep a synced copy.');
       }
     })();
   }, [id, branch]);
@@ -815,6 +817,17 @@ export default function Editor() {
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
+    if (project?.remote) {
+      const d = remoteDescriptor(project.remote.provider);
+      const click = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.click();
+      cmds.push(
+        { id: 'remote-push', group: 'Git', title: `Push to ${d.label}`, run: () => click(`${d.id}-push-btn`) },
+        { id: 'remote-pull', group: 'Git', title: `Pull from ${d.label}`, run: () => click(`${d.id}-pull-btn`) },
+        // The change-request entry lives in the branch menu, so open that first
+        // and let it render before clicking through.
+        { id: 'remote-change-request', group: 'Git', title: `Open ${d.changeRequest}`, run: () => { click(`${d.id}-branch`); setTimeout(() => click(`${d.id}-open-pr`), 0); } },
+      );
+    }
     if (activeFile) {
       cmds.push({
         id: 'rename-file', group: 'File', title: `Rename ${activeFile}…`, run: async () => {
@@ -853,7 +866,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, insertAtCursor, loadFiles, loadProject, toast]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast]);
 
   const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errCount = errors.filter((e) => e.type === 'error').length;
@@ -897,12 +910,21 @@ export default function Editor() {
         <div className="toolbar__spacer" />
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
-        {project.github ? (
-          canSync && <GithubSync projectId={id} fullName={project.github.fullName} onPulled={() => { loadFiles(); loadProject(); }} />
+        {project.remote ? (
+          canSync && (
+            <RemoteSync
+              projectId={id}
+              link={project.remote}
+              autopush={!!project.autopush}
+              isOwner={isProjectOwner}
+              onPulled={() => { loadFiles(); loadProject(); }}
+              onAutopushChange={() => loadProject()}
+            />
+          )
         ) : (
           isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="github-publish-open" title="Publish this project to a GitHub repo — backup + sync">
-              Publish to GitHub
+            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to GitHub or GitLab — backup + sync">
+              Publish
             </button>
           )
         )}
@@ -929,6 +951,12 @@ export default function Editor() {
           </button>
         </div>
       </header>
+
+      {/* Only the owner can retry (the route is owner-only); once a link
+          exists the banner has nothing left to say. */}
+      {isProjectOwner && project.remotePending && !project.remote && (
+        <RemotePendingBanner key={id} projectId={id} namespace={project.remotePending.namespace} onProvisioned={loadProject} />
+      )}
 
       <div className="workspace">
         <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
@@ -1221,7 +1249,7 @@ export default function Editor() {
       )}
 
       {publishOpen && project && (
-        <GithubPublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
+        <RemotePublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}

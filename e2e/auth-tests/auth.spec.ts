@@ -152,6 +152,7 @@ test.describe('auth', () => {
     expect((await carol.request.get(`/api/projects/${proj.id}/zotero/search?q=a`)).status()).toBe(403);
     expect((await carol.request.delete(`/api/projects/${proj.id}/zotero`)).status()).toBe(403);
     expect((await carol.request.post(`/api/projects/${proj.id}/github/reset-to-remote`)).status()).toBe(403);
+    expect((await carol.request.post(`/api/projects/${proj.id}/remote/reset-to-remote`)).status()).toBe(403);
     // the name is untouched
     expect((await (await alice.request.get(`/api/projects/${proj.id}`)).json()).name).toBe('Link Limits');
 
@@ -191,7 +192,7 @@ test.describe('auth', () => {
     await carolPage.goto(`/p/${proj.id}`);
     await expect(carolPage.getByTestId('editor-shell')).toBeVisible();
     await expect(carolPage.getByTestId('share-project')).toHaveCount(0);
-    await expect(carolPage.getByTestId('github-publish-open')).toHaveCount(0);
+    await expect(carolPage.getByTestId('remote-publish-open')).toHaveCount(0);
     await carol.close();
   });
 

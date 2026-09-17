@@ -245,6 +245,7 @@ export function venueTemplateInfo(c: CatalogClass): TemplateInfo | null {
   if (!meta) return null;
   const info: TemplateInfo = {
     id: VENUE_PREFIX + c.id,
+    source: { kind: 'venue' },
     name: meta.name,
     description: `${meta.description} Uses the ${c.cls} ${c.kind === 'style' ? 'style' : 'class'} installed in the compiler image.`,
     icon: meta.icon || '📄',
@@ -257,7 +258,7 @@ export function venueTemplateInfo(c: CatalogClass): TemplateInfo | null {
     if (url) info.licenseUrl = url;
   }
   if (c.source || c.version) {
-    info.source = { url: c.source || `https://ctan.org/pkg/${c.pkg || c.id}`, version: c.version || undefined };
+    info.origin = { url: c.source || `https://ctan.org/pkg/${c.pkg || c.id}`, version: c.version || undefined };
   }
   return info;
 }

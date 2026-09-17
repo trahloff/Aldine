@@ -320,6 +320,8 @@ resource "aws_ecs_service" "staging" {
   task_definition = aws_ecs_task_definition.staging[0].arn
   desired_count   = 1
 
+  enable_execute_command = var.enable_ecs_exec
+
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
     weight            = 1

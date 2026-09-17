@@ -41,15 +41,19 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   presence, conflict-free by construction. Unlimited collaborators.
 - **Git-native with branches**: every project is a real git repository.
   Create branches, edit them independently, merge back from the UI. Publish a
-  project to GitHub and a co-author can clone it and keep using VS Code; their
-  commits come back with one Pull.
+  project to GitHub or GitLab and a co-author can clone it and keep using
+  VS Code; their commits come back with one Pull.
 - **Fast, sandboxed compiles**: TeX Live + latexmk with persistent
   incremental builds (~2s warm recompiles) in a no-egress container with
   restricted shell-escape; errors surfaced with line numbers and
   click-to-jump.
-- **GitHub sync**: import a repo as a project *or publish a local project to
-  a fresh repo*, push/pull with ahead/behind indicators, conflict resolution,
-  opt-in auto-sync, and open a pull request, all from the editor.
+- **GitHub/GitLab sync**: import from GitHub or GitLab as a project *or
+  publish a local project to a fresh repo*, push/pull with ahead/behind
+  indicators, branches, conflict resolution, server-side autopush, and open a pull
+  or merge request, all from the editor. gitlab.com and self-hosted GitLab
+  (a personal access token needs no OAuth app). A team instance can create
+  every new project in a GitLab group automatically and push every autosave
+  from the server.
 - **Native Zotero integration**: link your whole Zotero library *or a single
   collection*, no premium tier required; keep a `.bib` in sync with cheap
   version-aware refresh, insert citations from a search panel or via `\cite{`
@@ -88,7 +92,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   write into the editor. Zotero, references, and AI-fix ship as plugins;
   write your own.
 - **Templates & import**: article, IAC conference paper, beamer,
-  report/thesis; or import an existing project from an Overleaf ZIP.
+  report/thesis, plus your group's own templates from any git repository
+  (`TEMPLATE_REPOS`); or import an existing project from an Overleaf ZIP.
 - **Editor niceties**: auto-typeset on idle, live whole-document word count,
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
@@ -97,6 +102,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
+  `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
+  users (7 / 30 days, editing now), projects, compile time. Metadata only.
 - **Scales when you need it**: flat-file storage by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
@@ -115,7 +122,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.7.0}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.9.0}
     ports:
       - "8080:3000"
     volumes:
@@ -126,7 +133,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.7.0}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.9.0}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -159,7 +166,7 @@ fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
 - **You are pinned to a version.** The block above says
-  `${ALDINE_VERSION:-0.7.0}`, so a fresh copy installs the current release and
+  `${ALDINE_VERSION:-0.9.0}`, so a fresh copy installs the current release and
   nothing under a running install changes on its own. To upgrade, read the
   [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
 
@@ -199,7 +206,7 @@ what `deploy/backup.sh` looks for.
         image: aldine-compiler-local
         build:
           dockerfile_inline: |
-            FROM ghcr.io/trahloff/aldine-compiler:0.7.0
+            FROM ghcr.io/trahloff/aldine-compiler:0.9.0
             RUN tlmgr install pgfplots tikz-cd
     ```
     Bump the `FROM` tag when you bump `ALDINE_VERSION`. Compose builds the
@@ -224,7 +231,7 @@ what `deploy/backup.sh` looks for.
 | Real-time collaboration | ✅ CRDT, unlimited collaborators | ✅ | ❌ (async via git) |
 | Review comments / suggested edits | ✅ free | Server Pro (paid) | PR reviews |
 | Git branches from the UI | ✅ projects *are* git repos | ❌ (git bridge is a paid feature) | ✅ (it *is* git) |
-| GitHub sync + PRs from the editor | ✅ | Paid tiers | ✅ natively |
+| GitHub/GitLab sync + PRs/MRs from the editor | ✅ | Paid tiers | ✅ natively |
 | Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
 | Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
 | Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
@@ -268,6 +275,7 @@ docker run -d -p 4020:4020 -v $PWD/.data:/data aldine-compiler
 ```bash
 npm run typecheck -w apps/web && npm run test -w apps/web   # tsc + vitest
 npm run test:github -w apps/server                          # GitHub-sync integration
+npm run test:gitlab -w apps/server                          # GitLab-sync integration
 npm run test:db -w apps/server                              # datastore conformance
 ```
 
@@ -323,6 +331,17 @@ ORCID_CLIENT_SECRET=
 # GitHub repo sync: a separate OAuth app with repo scope
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+# GitLab sync (gitlab.com or self-hosted); PAT connect works without these
+GITLAB_URL=https://gitlab.com
+GITLAB_CLIENT_ID=
+GITLAB_CLIENT_SECRET=
+# REMOTE_PROVIDERS=github,gitlab   # hide a provider by leaving it out
+# Optional: every new project is also created on GitLab in this group (service
+# account PAT with scope api and Owner on the group). Off unless both are set.
+GITLAB_TOKEN=
+GITLAB_DEFAULT_GROUP=
+# GITLAB_DEFAULT_VISIBILITY=private   # or internal | public
+# AUTOPUSH_DEBOUNCE_MS=30000
 # AI error fix, bring your own key
 OPENROUTER_API_KEY=
 # password-reset email: SMTP, or SES_FROM + AWS_REGION instead
@@ -334,6 +353,9 @@ SMTP_FROM=
 # error tracking, and which instance the errors came from
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
+# Templates from your own git repositories (see templates/README.md)
+# TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"https://gitlab.example.org/latex/templates.git","tokenEnv":"TEMPLATE_REPO_LAB_TOKEN"}]'
+# TEMPLATE_REPO_LAB_TOKEN=
 ```
 
 ```bash
@@ -420,6 +442,18 @@ plugins/hello/
 The `aldine` API exposes `ui.registerSidebarPanel`, `editor.insertAtCursor`,
 `project` context, `compile()`, `toast()`, and `fetch()`. See
 `plugins/zotero` for a complete example.
+
+## Templates
+
+A template is a folder with a `template.json` and the files to start from;
+the shipped ones live in `templates/`. A group that keeps its own thesis,
+poster or report templates puts the same layout in any git repository
+(GitHub, GitLab, Gitea, a bare repo over https), lists it in
+`TEMPLATE_REPOS`, and the templates appear in the gallery under the
+repository's name, refreshed on an interval or with "Refresh templates", with
+`{{PROJECT_NAME}}`, `{{AUTHOR}}` and `{{DATE}}` filled in on create. Layout,
+manifest fields, placeholders and private-repository tokens:
+[templates/README.md](templates/README.md).
 
 ## License
 

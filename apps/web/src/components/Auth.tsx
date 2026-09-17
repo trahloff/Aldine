@@ -6,6 +6,9 @@ interface AuthState {
   loading: boolean;
   authEnabled: boolean;
   user: AuthUser | null;
+  /** Instance administrator (server allow-list); gates the /admin link only,
+   *  the server enforces the routes. */
+  admin: boolean;
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
   /** ALDINE_MCP=1 on this server — the Agent access card must not advertise a connector URL that answers 404. */
@@ -16,7 +19,7 @@ interface AuthState {
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, setUser: () => {}, refresh: async () => {} });
 
 /** The OAuth consent page validates the requesting client BEFORE asking for
  *  credentials and renders the sign-in form itself, so the provider's gate
@@ -29,6 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [admin, setAdmin] = useState(false);
   const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
   const [passwordAuth, setPasswordAuth] = useState(true);
   const [mcpEnabled, setMcpEnabled] = useState(false);
@@ -39,6 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const me = await api.me();
       setAuthEnabled(me.authEnabled);
       setUser(me.user);
+      setAdmin(!!me.admin);
       setProviders(me.providers || []);
       setPasswordAuth(me.passwordAuth !== false);
       setMcpEnabled(me.mcpEnabled === true);
@@ -46,6 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       setAuthEnabled(false);
       setUser(null);
+      setAdmin(false);
     }
     setLoading(false);
   };
@@ -60,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const selfGated = typeof window !== 'undefined' && SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p));
   if (authEnabled && (!user || hasResetToken) && !selfGated) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, providers, passwordAuth, mcpEnabled, publicUrl, setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';

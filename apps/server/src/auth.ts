@@ -16,6 +16,15 @@ import type { OAuthProfile } from './oauth.js';
 export const AUTH_ENABLED = process.env.AUTH_ENABLED === '1' || process.env.AUTH_ENABLED === 'true';
 /** SSO-only mode: disable all password endpoints (register/login/reset/change) — sign-in is exclusively via a configured OAuth provider. */
 export const SSO_ONLY = process.env.ALDINE_SSO_ONLY === '1' || process.env.ALDINE_SSO_ONLY === 'true';
+/**
+ * Instance administrators, by email (ALDINE_ADMIN_EMAILS, comma-separated).
+ * Env rather than a role column: the operator who controls the process
+ * controls admin, there is no bootstrap problem on a fresh install, and it
+ * needs no migration on either datastore. Compared case-insensitively.
+ */
+export const ADMIN_EMAILS = new Set(
+  (process.env.ALDINE_ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+);
 export const COOKIE = 'aldine_session';
 // Scoped to the base path so a neighbouring app on the same host never sees it.
 export const COOKIE_PATH = config.basePath || '/';
