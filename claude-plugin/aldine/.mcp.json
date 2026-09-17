@@ -1,0 +1,9 @@
+{
+  "aldine": {
+    "type": "http",
+    "url": "${ALDINE_URL}/mcp",
+    "headers": {
+      "X-Aldine-Token": "${ALDINE_TOKEN:-}"
+    }
+  }
+}
