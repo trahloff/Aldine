@@ -10,9 +10,10 @@ import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
-import { scheduleAutopush, cancelAutopush } from './autopush.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects } from './collab.js';
+import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive } from './collab.js';
 import { publishProjectEvent } from './events.js';
+import { trashProject } from './trash.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
@@ -20,7 +21,7 @@ import { startTemplateRepoRefresh, syncAllTemplateRepos, templateRepoStates } fr
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
-import { guessRoot, detectRoot } from './root.js';
+import { guessRoot, detectRoot, adoptRootIfUnset } from './root.js';
 import { config } from './config.js';
 import { detectEngine, decodeText } from './detect.js';
 import { multipartBoundary, parseMultipart } from './multipart.js';
@@ -65,7 +66,6 @@ function oauthProviders(): Array<{ id: string; label: string }> {
 }
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
  *  network push. In-memory (single-node); cleared on restart → push-when-unsure. */
-const lastPushedHead = new Map<string, string>();
 
 /** Raw ZIP size the import route accepts; the web import dialog states the same figure. */
 export const IMPORT_MAX_ZIP_BYTES = 60 * 1024 * 1024;
@@ -73,24 +73,6 @@ const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
 /** Engines the compiler distinguishes; anything else silently became pdflatex. */
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
-
-/** A project without a typeset root (blank, or its last .tex deleted) adopts
- *  a root once a .tex appears, ranked like an import (the branch may already
- *  hold .tex files that arrived through git). The root comes from the file
- *  listing, never from the request path, so it always matches the tree.
- *  Returns the new root when one was adopted. */
-async function adoptRootIfUnset(id: string, branch: string, rel: string): Promise<string | undefined> {
-  if (!/\.tex$/i.test(rel)) return undefined;
-  try {
-    const meta = await store.readMeta(id);
-    if (meta.rootFile) return undefined;
-    const root = detectRoot(id, branch);
-    if (!root) return undefined;
-    meta.rootFile = root;
-    await store.writeMeta(meta);
-    return root;
-  } catch { return undefined; }
-}
 
 const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
 
@@ -743,18 +725,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{ Params: { id: string }; Querystring: { permanent?: string } }>('/api/projects/:id', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
-    cancelAutopush(req.params.id);
-    // A repository Aldine created goes with the project; an imported one is
-    // never touched. A failed remote deletion is reported, never blocking.
-    const remote: DeprovisionResult = await deprovisionProject(meta).catch((err) => ({ deleted: false, error: String(err?.message || err) }));
+    const { remote } = await trashProject(meta);
     if (req.query.permanent === '1') await store.deleteProject(req.params.id);
-    else await store.softDeleteProject(req.params.id);
-    lastPushedHead.delete(req.params.id); // don't leak the push-dedup entry (or reuse a stale hash)
-    forgetPdfUrls(req.params.id);
-    // Deleting revokes access just like un-sharing: drop live collab sessions
-    // (here and on peer nodes) so nobody keeps editing a trashed project.
-    closeProjectConnections(req.params.id);
-    publishProjectEvent({ type: 'access-changed', projectId: req.params.id });
     return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
@@ -1161,7 +1133,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const a = req.query.sinceAt;
       if (typeof h === 'string' && /^[0-9a-f]{4,40}$/.test(h) && typeof a === 'string' && !Number.isNaN(Date.parse(a))) mark = { head: h, at: a };
     }
-    try { return await gitops.agentActivitySince(req.params.id, branch, mark); }
+    // sessionActive rides along so a page that just (re)loaded can tell a
+    // session still running — the live prompt's to report when it ends — from
+    // one that ended while nobody watched, before any awareness has reached it.
+    try { return { ...(await gitops.agentActivitySince(req.params.id, branch, mark)), sessionActive: agentSessionActive(req.params.id, branch) }; }
     catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 

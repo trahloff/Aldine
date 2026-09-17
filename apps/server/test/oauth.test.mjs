@@ -186,6 +186,7 @@ let clientId;
   r = await register({ redirect_uris: ['https://only.example/cb'] });
   check(r.statusCode === 201 && r.json().client_name === 'only.example', 'omitted client_name defaults to the redirect host');
   check(r.json().token_endpoint_auth_method === 'none', 'omitted auth method is treated as none');
+  eq(r.json().grant_types, ['authorization_code', 'refresh_token'], 'omitted grant_types echoes both grants — the token endpoint honours refresh_token for every client');
 
   const bad = async (payload, code, why) => {
     const res = await register(payload);
@@ -249,7 +250,9 @@ const projA = await store.createProject('A', { 'main.tex': 'aaa' }, user.id);
 const projB = await store.createProject('B', { 'main.tex': 'bbb' }, user.id);
 const pat = await auth.createAccessToken(user.id, 'Hand-made', null, null);
 
-const clientLookup = (q, headers = {}) => app.inject({ method: 'GET', url: `/api/oauth/client?${new URLSearchParams(q)}`, remoteAddress: freshIp(), headers });
+// The lookup carries the whole authorize request (the SPA relays it verbatim); PKCE defaults keep the client checks readable.
+const lookupPkce = { response_type: 'code', code_challenge: pkce().challenge, code_challenge_method: 'S256' };
+const clientLookup = (q, headers = {}) => app.inject({ method: 'GET', url: `/api/oauth/client?${new URLSearchParams({ ...lookupPkce, ...q })}`, remoteAddress: freshIp(), headers });
 {
   let r = await clientLookup({ client_id: clientId, redirect_uri: REDIRECT });
   check(r.statusCode === 200, `client lookup → 200 (got ${r.statusCode} ${r.body})`);
@@ -274,6 +277,13 @@ const clientLookup = (q, headers = {}) => app.inject({ method: 'GET', url: `/api
   check(r.statusCode === 400 && r.json().error === 'invalid_request', 'missing redirect_uri → invalid_request');
   r = await clientLookup({ client_id: clientId, redirect_uri: REDIRECT }, { authorization: `Bearer ${pat.token}` });
   check(r.statusCode === 403, `bearer token on /api/oauth/client → 403 (got ${r.statusCode})`);
+  // A request the consent POST would refuse is refused before the consent card renders.
+  r = await clientLookup({ client_id: clientId, redirect_uri: REDIRECT, code_challenge: '' });
+  check(r.statusCode === 400 && r.json().error === 'invalid_request' && /code_challenge/.test(r.json().error_description), `missing code_challenge → invalid_request at lookup (got ${r.statusCode} ${r.body})`);
+  r = await clientLookup({ client_id: clientId, redirect_uri: REDIRECT, response_type: 'token' });
+  check(r.statusCode === 400 && r.json().error === 'invalid_request', 'response_type=token → invalid_request at lookup');
+  r = await clientLookup({ client_id: clientId, redirect_uri: REDIRECT, scope: 'admin' });
+  check(r.statusCode === 400 && r.json().error === 'invalid_scope', 'unknown scope → invalid_scope at lookup');
 }
 
 const authz = (extra = {}) => {
@@ -841,7 +851,7 @@ const lookupCimd = (id = metaId, redirect = CLAUDE_CB) => clientLookup({ client_
   const ip = freshIp();
   const codes = [];
   for (let i = 0; i < 44; i++) {
-    const r = await app.inject({ method: 'GET', url: `/api/oauth/client?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}`, remoteAddress: ip });
+    const r = await app.inject({ method: 'GET', url: `/api/oauth/client?${new URLSearchParams({ ...lookupPkce, client_id: clientId, redirect_uri: REDIRECT })}`, remoteAddress: ip });
     codes.push(r.statusCode);
   }
   check(codes.slice(0, 40).every((c) => c === 200), `client lookups inside the burst succeed (got ${codes.join(',')})`);

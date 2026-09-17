@@ -12,6 +12,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { check, eq } from './assert.mjs';
 
+/** The numeric body is pinned exactly; `reason` names the I3 rule that fired. */
+function conflictEq(got, want, reasonRe, msg) {
+  const { reason, ...rest } = got ?? {};
+  eq(rest, want, msg);
+  check(typeof reason === 'string' && reasonRe.test(reason), `${msg}: reason ${JSON.stringify(reason)} should match ${reasonRe}`);
+}
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-file-versions-'));
 process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
@@ -44,7 +51,7 @@ check(versionConflict(P, B, 'a.tex', 2) === null, 'a base equal to contentVersio
 check(versionConflict(P, B, 'a.tex', 1) === null, 'a base equal to the path\'s own version is accepted');
 
 // path changed after the base conflicts
-eq(versionConflict(P, B, 'b.tex', 1), { error: 'version_conflict', currentVersion: 2, fileVersion: 2 }, 'a path changed after the base conflicts with {currentVersion, fileVersion}');
+conflictEq(versionConflict(P, B, 'b.tex', 1), { error: 'version_conflict', currentVersion: 2, fileVersion: 2 }, /"b\.tex" changed after version 1/, 'a path changed after the base conflicts with {currentVersion, fileVersion} and a reason naming the file');
 
 // another path's change does not conflict
 check(versionConflict(P, B, 'a.tex', 1) === null, 'a change to another path does not conflict');
@@ -54,8 +61,8 @@ check(versionConflict(P, B, 'untouched.tex', 0) === null, 'an untouched path nev
 const vt = markTreeChanged(P, B);
 check(vt === 3 && contentVersion(P, B) === 3, 'markTreeChanged bumps the branch version');
 check(fileVersion(P, B, 'a.tex') === 3 && fileVersion(P, B, 'never-seen.tex') === 3, 'after a tree change every path, listed or not, reports the watermark');
-eq(versionConflict(P, B, 'a.tex', 2), { error: 'version_conflict', currentVersion: 3, fileVersion: 3 }, 'markTreeChanged: a listed path conflicts with a base below it');
-eq(versionConflict(P, B, 'never-seen.tex', 2), { error: 'version_conflict', currentVersion: 3, fileVersion: 3 }, 'markTreeChanged: an unlisted path conflicts with a base below it');
+conflictEq(versionConflict(P, B, 'a.tex', 2), { error: 'version_conflict', currentVersion: 3, fileVersion: 3 }, /changed after version 2/, 'markTreeChanged: a listed path conflicts with a base below it');
+conflictEq(versionConflict(P, B, 'never-seen.tex', 2), { error: 'version_conflict', currentVersion: 3, fileVersion: 3 }, /changed after version 2/, 'markTreeChanged: an unlisted path conflicts with a base below it');
 check(versionConflict(P, B, 'never-seen.tex', 3) === null, 'a base at the watermark is accepted');
 // the paths map was cleared: a later path mark is the only entry above the watermark
 markPathsChanged(P, B, ['d.tex']); // v4
@@ -63,8 +70,8 @@ check(fileVersion(P, B, 'a.tex') === 3 && fileVersion(P, B, 'd.tex') === 4, 'pat
 check(versionConflict(P, B, 'a.tex', 3) === null && versionConflict(P, B, 'd.tex', 3) !== null, 'after the tree change only the newly marked path conflicts with the watermark base');
 
 // base newer than the branch → conflict (restart / other node)
-eq(versionConflict(P, B, 'a.tex', 5), { error: 'version_conflict', currentVersion: 4, fileVersion: 3 }, 'a base newer than the branch conflicts (restart / other node)');
-eq(versionConflict(P, B, 'brand-new.tex', 999), { error: 'version_conflict', currentVersion: 4, fileVersion: 3 }, 'a base newer than the branch conflicts even for a never-seen path');
+conflictEq(versionConflict(P, B, 'a.tex', 5), { error: 'version_conflict', currentVersion: 4, fileVersion: 3 }, /base_version 5 is newer than the branch's contentVersion 4/, 'a base newer than the branch conflicts (restart / other node) and the reason says so');
+conflictEq(versionConflict(P, B, 'brand-new.tex', 999), { error: 'version_conflict', currentVersion: 4, fileVersion: 3 }, /newer than the branch/, 'a base newer than the branch conflicts even for a never-seen path');
 
 // path normalisation
 markPathsChanged(P, B, ['./main.tex']); // v5

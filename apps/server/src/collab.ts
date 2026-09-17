@@ -6,7 +6,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { autoCommit, ensureWorktree, registerAttributedPaths, pendingAttributionKeys } from './gitops.js';
+import { autoCommit, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
 import { safeJoin, debouncePerKey } from './util.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
@@ -66,6 +66,8 @@ function deleteSnapshot(name: string): void {
 /** Listeners told when an autosave commit actually landed (autopush hooks here). */
 const autoCommitListeners: Array<(projectId: string, branch: string) => void> = [];
 export function onAutoCommit(cb: (projectId: string, branch: string) => void): void { autoCommitListeners.push(cb); }
+/** An agent write committed on its own, outside the debounce: the same listeners must hear it. */
+export function notifyCommitted(projectId: string, branch: string): void { for (const cb of autoCommitListeners) cb(projectId, branch); }
 
 /** Overridable so tests can exercise the debounced commit without 20 s waits. */
 const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') || 20_000;
@@ -103,6 +105,28 @@ const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
 export function scheduleCommit(projectId: string, branch: string, message?: string, author?: string, paths?: string[]): void {
   if (message && author && paths?.length) registerAttributedPaths(projectId, branch, message, author, paths);
   scheduleAutoCommit(`${projectId}::${branch}`);
+}
+
+/**
+ * Land an agent write in history right away, from the snapshots the tool held
+ * while applying it (gitops.commitAgentWriteHeld). `hash` is the commit made;
+ * null with `unchanged` when the write left every file as HEAD has it (nothing
+ * to commit, nothing pending), null without it when git refused: a refused
+ * commit leaves the delta registered for the debounced sweep to retry under
+ * Claude's name, so it can never surface as an anonymous autosave. Callers
+ * hold the repo lock.
+ */
+export async function commitAgentWrite(projectId: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ hash: string | null; unchanged: boolean }> {
+  try {
+    const res = await commitAgentWriteHeld(projectId, branch, files, message);
+    if (!res.committed) return { hash: null, unchanged: true };
+    notifyCommitted(projectId, branch);
+    return { hash: res.hash ?? null, unchanged: false };
+  } catch (err) {
+    console.warn(`[collab] commit of ${files.map((f) => f.path).join(', ')} failed, left for the autosave: ${(err as Error).message}`);
+    scheduleCommit(projectId, branch, message, AGENT_COMMIT_AUTHOR, files.map((f) => f.path));
+    return { hash: null, unchanged: false };
+  }
 }
 
 /** Docs evicted because their file/branch was deleted — never write these back. */
@@ -177,13 +201,19 @@ export function fileVersion(projectId: string, branch: string, filePath: string)
   if (!c) return 0;
   return c.paths.get(pathKey(filePath)) ?? c.tree;
 }
-export interface VersionConflict { error: 'version_conflict'; currentVersion: number; fileVersion: number }
-/** null when a write of `filePath` at `baseVersion` is safe; else the conflict body every caller returns verbatim. */
+export interface VersionConflict { error: 'version_conflict'; currentVersion: number; fileVersion: number; reason: string }
+/** null when a write of `filePath` at `baseVersion` is safe; else the conflict
+ *  body every caller returns verbatim. `reason` names the rule of I3 that
+ *  fired: the two need different recoveries (re-read this file, or drop a
+ *  base that no process on this branch ever issued). */
 export function versionConflict(projectId: string, branch: string, filePath: string, baseVersion: number): VersionConflict | null {
   const currentVersion = contentVersion(projectId, branch);
   const fv = fileVersion(projectId, branch, filePath);
   if (fv <= baseVersion && baseVersion <= currentVersion) return null;
-  return { error: 'version_conflict', currentVersion, fileVersion: fv };
+  const reason = baseVersion > currentVersion
+    ? `base_version ${baseVersion} is newer than the branch's contentVersion ${currentVersion} — it was not issued by this server process (a restart or another node); re-read the file and use the contentVersion that read returns`
+    : `"${filePath}" changed after version ${baseVersion} (its fileVersion is now ${fv}) — re-read it and retry with the contentVersion that read returns`;
+  return { error: 'version_conflict', currentVersion, fileVersion: fv, reason };
 }
 
 /** Ephemeral coordination docs (e.g. the comment-change signal) are never written to disk. */
@@ -337,6 +367,13 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     // skips the .tex rewrite (no latexmk churn).
     lastWritten.set(documentName, sha1(content));
     return document;
+  },
+  // A sole viewer's reload unloads the doc (unloadImmediately) and with it the
+  // awareness the agent's presence rode on; the session itself is still live
+  // in agentPresence, so the reloaded doc gets it back before the client syncs.
+  async afterLoadDocument({ documentName, document }: { documentName: string; document: AwarenessDoc }) {
+    const live = agentPresence.get(documentName);
+    if (live && live.expiresAt > Date.now()) setAgentAwareness(document, live);
   },
   async onStoreDocument({ documentName, document }) {
     writeDocToDisk(documentName, document);
@@ -517,33 +554,57 @@ export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLig
 
 /** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
 const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS || '') || 60_000;
-const agentPresenceTimers = new Map<string, NodeJS.Timeout>();
+
+/** A live agent session per doc: when it began and when it lapses without
+ *  another tool call. Kept apart from the loaded docs on purpose — Hocuspocus
+ *  unloads a doc with its last connection (a sole viewer's reload), and the
+ *  session must outlive that so the reloaded doc shows it again and the away
+ *  check stays quiet while it runs. */
+interface AgentPresence { startedAt: number; expiresAt: number; timer: NodeJS.Timeout }
+const agentPresence = new Map<string, AgentPresence>();
+type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void } };
+
+function setAgentAwareness(doc: AwarenessDoc | undefined, live: AgentPresence): void {
+  // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
+  // local state at doc creation, and y-protocols' setLocalStateField is a
+  // silent no-op on a null state — the agent would never appear.
+  doc?.awareness?.setLocalState({ user: { ...AGENT_AWARENESS_USER, startedAt: live.startedAt } });
+}
 
 /**
  * Show the agent in a doc's presence while a tool session is active. MCP
  * writes run in-process with no Hocuspocus connection, so presence rides the
  * loaded doc's own awareness instance (the server relays its local state to
- * clients); no loaded doc → no-op. Expires ~60 s after the last tool call so
- * an idle agent doesn't permanently haunt the presence chip.
+ * clients). Call it BEFORE the write's first transaction: the client tints
+ * a remote change only if the agent is already in awareness when it arrives.
+ * Expires ~60 s after the last tool call so an idle agent doesn't permanently
+ * haunt the presence chip; the start time survives re-marks so a session's
+ * first commit is still the session's after a reload.
  */
 export function markAgentPresence(projectId: string, branch: string, filePath: string): void {
   const name = docName(projectId, branch, filePath);
-  type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void } };
-  const doc = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
-  if (!doc?.awareness) return;
-  // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
-  // local state at doc creation, and y-protocols' setLocalStateField is a
-  // silent no-op on a null state — the agent would never appear.
-  doc.awareness.setLocalState({ user: AGENT_AWARENESS_USER });
-  const prev = agentPresenceTimers.get(name);
-  if (prev) clearTimeout(prev);
+  const now = Date.now();
+  const prev = agentPresence.get(name);
+  if (prev) clearTimeout(prev.timer);
   const timer = setTimeout(() => {
-    agentPresenceTimers.delete(name);
+    agentPresence.delete(name);
     const d = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
     try { d?.awareness?.setLocalState(null); } catch { /* doc unloaded meanwhile */ }
   }, AGENT_PRESENCE_TTL_MS);
   timer.unref?.();
-  agentPresenceTimers.set(name, timer);
+  const live: AgentPresence = { startedAt: prev?.startedAt ?? now, expiresAt: now + AGENT_PRESENCE_TTL_MS, timer };
+  agentPresence.set(name, live);
+  setAgentAwareness(hocuspocus.documents.get(name) as AwarenessDoc | undefined, live);
+}
+
+/** Whether an agent session is live on any doc of the branch — what the away
+ *  check asks, so a prompt is never raised for work a running session will
+ *  report itself when it ends. */
+export function agentSessionActive(projectId: string, branch: string): boolean {
+  const prefix = `${projectId}::${branch}::`;
+  const now = Date.now();
+  for (const [name, live] of agentPresence) if (name.startsWith(prefix) && live.expiresAt > now) return true;
+  return false;
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */

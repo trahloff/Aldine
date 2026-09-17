@@ -90,14 +90,19 @@ export async function registerOAuth(app: FastifyInstance): Promise<void> {
     return user;
   };
 
-  app.get<{ Querystring: { client_id?: string; redirect_uri?: string } }>('/api/oauth/client', async (req, reply) => {
+  // The SPA relays the whole authorize request here before it renders the
+  // consent card: a request the consent POST would refuse anyway (no PKCE
+  // challenge, wrong response_type) ends on the error card instead of
+  // asking the person to choose projects first.
+  app.get<{ Querystring: Params }>('/api/oauth/client', async (req, reply) => {
     if (!enabled(reply)) return;
     if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot authorize connectors — sign in to do this' });
     if (!(await oauthClientLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many requests — wait a moment and try again' });
     try {
-      const c = await resolveClient(req.query.client_id ?? '', req.query.redirect_uri ?? '');
+      const c = await resolveClient(param(req.query, 'client_id') ?? '', param(req.query, 'redirect_uri') ?? '');
+      authorizeParams(publicBase(req), req.query);
       let redirectHost = '';
-      try { redirectHost = new URL(req.query.redirect_uri!).host; } catch { /* validated above */ }
+      try { redirectHost = new URL(param(req.query, 'redirect_uri')!).host; } catch { /* validated above */ }
       return noStore(reply).send({ name: c.name, host: c.host, redirectHost, loopbackOnly: c.loopbackOnly, kind: c.kind });
     } catch (err) { return sendError(reply, err); }
   });

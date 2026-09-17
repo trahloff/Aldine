@@ -4,6 +4,7 @@ import { buildApp, isCollabUpgrade } from './app.js';
 import { hocuspocus, shutdownFlushSet, closeProjectConnections, onAutoCommit } from './collab.js';
 import { scheduleAutopush } from './autopush.js';
 import { checkProvisioning, deprovisionProject } from './provision.js';
+import { TRASH_DAYS } from './trash.js';
 import { initProjectEvents } from './events.js';
 import { autoCommit } from './gitops.js';
 import * as store from './store.js';
@@ -45,7 +46,6 @@ console.log(`[aldine] server on :${config.port}${config.basePath} — data=${con
 
 // Trash purge: hard-delete soft-deleted projects after ALDINE_TRASH_DAYS
 // (default 30). Swept on boot and daily; errors are logged, never fatal.
-const TRASH_DAYS = Number(process.env.ALDINE_TRASH_DAYS || 30);
 // Every autosave that landed on main is pushed to the linked remote (when the
 // project has autopush on); provisioned GitLab projects are removed with the
 // purge in case the trash-time deletion failed.

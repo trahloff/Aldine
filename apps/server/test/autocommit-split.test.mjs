@@ -13,7 +13,10 @@
  * The same-file cases use the tools' write shape — checkpoint, write and
  * register inside ONE repo-lock span; outside it a fire already in flight
  * can stage the agent's file between the write and the registration and
- * sweep it into the autosave.
+ * sweep it into the autosave. The write tools themselves no longer wait for
+ * the fire: they commit from the snapshots they held while applying
+ * (commitAgentWriteHeld, pinned at the end), and the ledger is what a
+ * refused commit falls back to.
  *
  * Env must be set before any src import; ALDINE_AUTOCOMMIT_MS shrinks the
  * 20 s debounce so the fire can be awaited.
@@ -301,6 +304,51 @@ check(shutdownFlushSet().some((d) => d.projectId === p13.id), 'the attribution i
 await gitops.autoCommit(p13.id, 'main');
 log = await gitops.log(p13.id, 'main');
 check(log[0].author === 'Claude' && log[0].message === 'aldine: agent edit', `the next fire lands the agent delta under the retry title (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+
+// ---- the write tools' own commit: built from the snapshots the tool held,
+// so what reaches the working tree while git runs (a store of a person's
+// keystrokes, a REST write) cannot enter it — `git commit -- path` reads the
+// working tree, and that window was where typing between two agent edits
+// landed under Claude's name ----
+const p14 = await store.createProject('Snapshot commit', {});
+store.writeFile(p14.id, 'main', 'main.tex', 'line one\n');
+fs.mkdirSync(path.join(store.branchDir(p14.id, 'main'), 'sections'), { recursive: true });
+await gitops.commitAll(p14.id, 'main', 'seed');
+const base14 = (await gitops.log(p14.id, 'main')).length;
+// the typing that landed after the working-tree checkpoint, then the agent's result
+const before14 = 'line one\nhuman line typed late\n';
+const after14 = 'line one\nhuman line typed late\nagent line\n';
+// the tools write to disk first; the working tree then drifts while the commit is being built
+store.writeFile(p14.id, 'main', 'sections/new.tex', 'a new section\n');
+store.writeFile(p14.id, 'main', 'main.tex', after14 + 'typed during the commit\n');
+const snap = await gitops.withRepoLock(p14.id, () => gitops.commitAgentWriteHeld(p14.id, 'main', [
+  { path: 'main.tex', before: before14, after: after14 },
+  { path: 'sections/new.tex', before: null, after: 'a new section\n' },
+], 'Add the agent line'));
+check(snap.committed === true && JSON.stringify(snap.files) === '["main.tex","sections/new.tex"]', `the agent commit lands with both paths (got ${JSON.stringify(snap)})`);
+log = await gitops.log(p14.id, 'main');
+check(log.length === base14 + 2 && log[0].author === 'Claude' && log[0].message === 'Add the agent line', `two commits: the late typing, then the agent's (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
+check(log[0].hash === snap.hash, 'the returned hash is the new head');
+const patch14 = (await gitops.commitDiff(p14.id, log[0].hash)).patch;
+check(patch14.includes('+agent line') && patch14.includes('+a new section') && !patch14.includes('+human line') && !patch14.includes('typed during the commit'), "the Claude commit is exactly the agent's delta — the late typing and the mid-commit drift are not in it");
+check(log[1].message === 'aldine: autosave' && log[1].author !== 'Claude' && (await gitops.commitDiff(p14.id, log[1].hash)).patch.includes('+human line typed late'), 'the late typing is the anonymous checkpoint just before it');
+check(store.readFile(p14.id, 'main', 'main.tex').toString('utf8') === after14 + 'typed during the commit\n', 'the working tree is left alone');
+const status14 = (await store.git(store.branchDir(p14.id, 'main')).status()).files.map((f) => `${f.index}${f.working_dir} ${f.path}`);
+check(JSON.stringify(status14) === '[" M main.tex"]', `after the commit the index follows HEAD: the drift is an unstaged change and nothing else is dirty (got ${JSON.stringify(status14)})`);
+await gitops.autoCommit(p14.id, 'main');
+log = await gitops.log(p14.id, 'main');
+check(log[0].message === 'aldine: autosave' && (await gitops.commitDiff(p14.id, log[0].hash)).patch.includes('+typed during the commit'), 'the next sweep commits the drift anonymously');
+// unchanged content makes no commit; a snapshot matching HEAD is not a change
+const len14 = log.length;
+const noop = await gitops.withRepoLock(p14.id, () => gitops.commitAgentWriteHeld(p14.id, 'main', [{ path: 'sections/new.tex', before: 'a new section\n', after: 'a new section\n' }], 'Nothing'));
+check(noop.committed === false && (await gitops.log(p14.id, 'main')).length === len14, 'a snapshot equal to HEAD commits nothing');
+// the executable bit survives: the mode comes from HEAD, not from a constant
+fs.chmodSync(path.join(store.branchDir(p14.id, 'main'), 'sections', 'new.tex'), 0o755);
+await gitops.commitAll(p14.id, 'main', 'make executable');
+await gitops.withRepoLock(p14.id, () => gitops.commitAgentWriteHeld(p14.id, 'main', [{ path: 'sections/new.tex', before: 'a new section\n', after: 'a new section, edited\n' }], 'Edit the section'));
+const mode14 = (await store.git(store.branchDir(p14.id, 'main')).raw(['ls-tree', 'HEAD', 'sections/new.tex'])).trim().split(' ')[0];
+check(mode14 === '100755', `the committed mode is HEAD's (got ${mode14})`);
+check((await store.git(store.branchDir(p14.id, 'main')).raw(['symbolic-ref', 'HEAD'])).trim() === 'refs/heads/main', 'HEAD is still the branch ref, not detached');
 
 zoteroMock.close();
 fs.rmSync(tmp, { recursive: true, force: true });

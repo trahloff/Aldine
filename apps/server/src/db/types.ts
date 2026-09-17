@@ -52,6 +52,8 @@ export interface ProjectMeta {
   createdAt: string;
   /** Soft-delete marker: set when the project is moved to trash; purged after ~30 days. */
   deletedAt?: string;
+  /** Created through the Agent API. The only projects its `trash_project` tool may trash: a person's own project is never within a tool's reach. */
+  createdVia?: 'agent';
   ownerId?: string;
   share?: { mode: 'private' | 'link'; collaborators: string[] };
   zotero?: {

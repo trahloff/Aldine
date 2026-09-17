@@ -55,6 +55,12 @@ export async function authenticateMcp(
  *  the message as user-fixable prose (UX.md failure etiquette). */
 export class McpDenied extends Error {}
 
+/** One wording for an unknown, trashed or mistyped id: trash behaves as gone,
+ *  so the message must not tell the two apart. */
+export function projectNotFound(id: string): string {
+  return `No project "${id}" is reachable with this token — call list_projects for the ids you can use`;
+}
+
 /**
  * Resolve + authorize the `project` argument of a tool call using the SAME
  * predicates as REST (SECURITY.md: shared functions, never copies): trash
@@ -74,8 +80,8 @@ export async function resolveProject(identity: McpIdentity, project: string | un
     throw new McpDenied('This token does not have access to that project');
   }
   let meta: ProjectMeta;
-  try { meta = await readMeta(id); } catch { throw new McpDenied('Project not found'); }
-  if (meta.deletedAt) throw new McpDenied('Project not found');
+  try { meta = await readMeta(id); } catch { throw new McpDenied(projectNotFound(id)); }
+  if (meta.deletedAt) throw new McpDenied(projectNotFound(id));
   if (!canAccess(meta, identity.user)) throw new McpDenied('You do not have access to this project');
   return meta;
 }
@@ -98,10 +104,40 @@ export function assertWritableProject(projectId: string): void {
  * path becomes a git pathspec, and the compiler an argv word.
  */
 export function visiblePath(rel: string): string {
+  // importPath drops empty segments, so "dir/" would silently become a file
+  // named "dir" — and the next write into dir/ then fails on it.
+  if (/[\\/]\s*$/.test(rel)) throw new McpDenied(`Path must name a file, not a folder ("${rel}") — folders are created by writing a file inside them`);
+  if (/^[\\/]|^[A-Za-z]:/.test(rel)) throw new McpDenied(`Path must be relative to the project root — drop the leading "/" from "${rel}"`);
+  if (rel.split(/[\\/]/).includes('..')) throw new McpDenied(`Path cannot contain ".." ("${rel}") — name the file from the project root, e.g. "sections/intro.tex"`);
   const norm = rel ? importPath(rel) : null;
-  if (norm === null || isHiddenPath(norm)) throw new McpDenied('Invalid file path');
+  if (norm === null) throw new McpDenied(`Path "${rel}" is empty or has characters a file name cannot carry`);
+  if (isHiddenPath(norm)) throw new McpDenied(`"${norm}" is git internals or compile output, which the tools neither read nor write — a compile result's logTail carries the log`);
   if (optionLikePath(norm)) throw new McpDenied('File name cannot start with "-"');
   return norm;
+}
+
+/**
+ * The target of a whole-file write must be creatable as a file: not an
+ * existing directory, and under no parent segment that is a file. Without
+ * this the write dies in fs (EISDIR / ENOTDIR) and the only answer left is a
+ * server fault the model cannot act on. Requires the worktree to exist.
+ */
+export function assertFileTarget(projectId: string, branch: string, rel: string): void {
+  const base = branchDir(projectId, branch);
+  const kind = (p: string): 'dir' | 'file' | null => {
+    try { return fs.statSync(path.join(base, p)).isDirectory() ? 'dir' : 'file'; } catch { return null; }
+  };
+  if (kind(rel) === 'dir') throw new McpDenied(`"${rel}" is a folder — write to a file inside it (e.g. "${rel}/main.tex")`);
+  const segs = rel.split('/');
+  for (let i = 1; i < segs.length; i++) {
+    const parent = segs.slice(0, i).join('/');
+    if (kind(parent) === 'file') throw new McpDenied(`"${parent}" is a file, so "${rel}" cannot be created under it`);
+  }
+}
+
+/** A directory named where a file was expected — read_file/edit_file name it as such. */
+export function isDirectoryPath(projectId: string, branch: string, rel: string): boolean {
+  try { return fs.statSync(path.join(branchDir(projectId, branch), rel)).isDirectory(); } catch { return false; }
 }
 
 /**

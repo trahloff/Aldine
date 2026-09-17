@@ -69,7 +69,8 @@ export function setRemoteLink(meta: ProjectMeta, link: RemoteLink | null): void 
  *  ZIP entries and may not reach `.git` or `.aldine*`: the initial commit runs
  *  git on the fresh repo, so a seeded `.git/config` would execute on the
  *  server. A rejected key or a failed write leaves no repo dir behind. */
-export async function createProject(name: string, files?: Record<string, string | Buffer>, ownerId?: string): Promise<ProjectMeta> {  const id = newId();
+export async function createProject(name: string, files?: Record<string, string | Buffer>, ownerId?: string, opts: { createdVia?: 'agent' } = {}): Promise<ProjectMeta> {
+  const id = newId();
   const dir = repoDir(id);
   fs.mkdirSync(dir, { recursive: true });
   const seed = files ?? {
@@ -104,6 +105,7 @@ export async function createProject(name: string, files?: Record<string, string 
   const rootFile = written.includes('main.tex') ? 'main.tex' : written.find((f) => f.endsWith('.tex')) || '';
   const meta: ProjectMeta = { id, name, rootFile, engine: 'pdf', createdAt: new Date().toISOString() };
   if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+  if (opts.createdVia) meta.createdVia = opts.createdVia;
   await writeMeta(meta);
   return meta;
 }

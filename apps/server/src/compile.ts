@@ -6,7 +6,10 @@ import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
 import { flushBranchDocs, signalAgentTypeset } from './collab.js';
 
-export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string; file?: string }
+/** `context`: the source line TeX was reading when it failed (the compiler's
+ *  parser reconstructs it from the log's "l.<n>" line). `source`: the tool
+ *  that raised the row — set by the Agent API from the message's prefix. */
+export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string; file?: string; context?: string; source?: string }
 
 export interface CompileResult {
   ok: boolean;
@@ -287,7 +290,10 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
   const compileId = nextCompileId();
   const runId = compileId;
   // Older compilers report only `ok`; treat their successful output as fresh.
-  const pdfFresh = raw.pdfFresh ?? body.ok;
+  // The engine's own "no output PDF file produced" / "No pages of output"
+  // overrides the compiler's mtime check: on a shared volume the previous
+  // run's file can pass as this run's.
+  const pdfFresh = (raw.pdfFresh ?? body.ok) && !(!body.ok && /no output PDF file produced|No pages of output/i.test(body.log));
   const synctexFresh = raw.synctexFresh ?? body.ok;
   if (synctexFresh && body.synctex) lastSynctexId.set(key, compileId);
   // A run that wrote a PDF is shown even when it logged errors: TeX ran to the

@@ -15,17 +15,19 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { check } from './assert.mjs';
 
 // Mock DOI / arXiv / OpenAlex upstream: one known DOI resolves, everything
 // else is a 404 — references.ts reads the base URLs at import time.
-const MOCK_BIB = '@article{doe2020,\n  title = {A Mock Paper &amp; More},\n  author = {Doe, Jane},\n  year = {2020},\n  journal = {Mock Journal},\n}';
+const MOCK_BIB = '@article{doe2020,\n  title = {A Mock Paper &amp; More},\n  author = {Doe, Jane},\n  year = {2020},\n  journal = {Mock Journal},\n  doi = {10.1145/mock.12345},\n}';
 const upstream = http.createServer((req, res) => {
   if (req.url === `/${encodeURIComponent('10.1145/mock.12345')}`) {
     res.writeHead(200, { 'content-type': 'application/x-bibtex' });
     res.end(MOCK_BIB);
     return;
   }
+  if (req.url === `/${encodeURIComponent('10.1145/outage.1')}`) { res.writeHead(503).end('down'); return; }
   res.writeHead(404).end('not found');
 });
 await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
@@ -54,7 +56,8 @@ const mockCompiler = http.createServer((req, res) => {
     if (reply.pdf) {
       const outDir = path.join(process.env.DATA_DIR, body.projectDir, path.dirname(reply.pdf));
       fs.mkdirSync(outDir, { recursive: true });
-      fs.writeFileSync(path.join(outDir, path.basename(reply.pdf)), reply.pdfBytes ?? '%PDF-1.7\n% mock compiler\n%%EOF\n');
+      // keepPdf: the engine wrote nothing; the file on disk is the previous run's
+      if (!reply.keepPdf) fs.writeFileSync(path.join(outDir, path.basename(reply.pdf)), reply.pdfBytes ?? '%PDF-1.7\n% mock compiler\n%%EOF\n');
       fs.writeFileSync(path.join(outDir, path.basename(reply.pdf).replace(/\.pdf$/, '.log')), reply.log ?? '');
     }
     // What pdfTeX does under -halt-on-error: the PDF is removed, the log stays.
@@ -105,19 +108,21 @@ check(r.ok === true, 'unique quote resolves');
 check(doc.slice(r.ranges[0].from, r.ranges[0].to) === 'Unique anchor sentence', 'resolved range covers the quote exactly');
 
 r = resolveEdits(doc, [{ quote: 'the quick brown fox', replacement: 'X' }]);
-check(r.ok === false && r.error === 'stale_anchor', 'ambiguous quote → stale_anchor');
+check(r.ok === false && r.error === 'ambiguous_anchor', 'ambiguous quote → ambiguous_anchor (not stale_anchor: no re-read is needed)');
 check(r.candidates.length >= 1 && r.candidates.length <= 3, `ambiguity candidates are ≤3 nearest lines (got ${r.candidates.length})`);
 check(r.candidates.every((c) => Number.isInteger(c.line) && typeof c.text === 'string'), 'candidates carry {line, text}');
+check(r.candidates.map((c) => c.occurrence).join() === '1,2' && r.candidates[0].line === 2 && r.candidates[1].line === 3, `ambiguity candidates carry the occurrence that picks each (got ${JSON.stringify(r.candidates)})`);
+check(/quote appears 2 times/.test(r.reason) && /occurrence/.test(r.reason), 'the reason says how many hits and what to resend');
 
 r = resolveEdits(doc, [{ quote: 'the quick brown fox', replacement: 'X', occurrence: 2 }]);
 check(r.ok === true, 'occurrence disambiguates');
 check(r.ranges[0].from === doc.indexOf('the quick brown fox', doc.indexOf('the quick brown fox') + 1), 'occurrence 2 picks the second hit');
 
 r = resolveEdits(doc, [{ quote: 'the quick brown fox', replacement: 'X', occurrence: 3 }]);
-check(r.ok === false && r.error === 'stale_anchor', 'occurrence beyond the hit count → stale_anchor');
+check(r.ok === false && r.error === 'ambiguous_anchor' && /out of range/.test(r.reason), 'occurrence beyond the hit count → ambiguous_anchor naming the range');
 
 r = resolveEdits(doc, [{ quote: 'short', replacement: 'X' }]);
-check(r.ok === false && r.error === 'invalid_quote', `quote under ${MIN_QUOTE_LEN} chars is rejected as invalid_quote`);
+check(r.ok === false && r.error === 'invalid_quote' && r.reason === `the quote must be at least ${MIN_QUOTE_LEN} characters (got 5) — quote more of the surrounding text`, `quote under ${MIN_QUOTE_LEN} chars is rejected as invalid_quote with the length it got (got ${JSON.stringify(r.reason)})`);
 
 r = resolveEdits(doc, [{ quote: 'nowhere to be found in this document', replacement: 'X' }]);
 check(r.ok === false && r.error === 'stale_anchor', 'missing quote → stale_anchor');
@@ -145,6 +150,18 @@ check(!spliced.includes('\\section{Introduction}'), 'spliceEdits replaced the or
 const cands = nearestCandidates(doc, 'Unique anchor sentense for testing.');
 check(cands.length >= 1 && cands.length <= 3, `nearestCandidates returns ≤3 (got ${cands.length})`);
 check(cands[0].line === 5 && cands[0].text.includes('Unique anchor sentence'), 'the near-miss line ranks first');
+{
+  // paragraph-per-line source: the quote sits past column 300, and a one-letter
+  // misquote must still surface that line with the region around the match
+  const filler = Array.from({ length: 40 }, (_, i) => `Filler clause number ${i} about unrelated matters,`).join(' ');
+  const longDoc = ['\\documentclass{article}', '\\begin{document}', `${filler} the two halves of the argument meet here and the paragraph goes on for a while afterwards ${filler}`, 'A short line.', '\\end{document}'].join('\n');
+  const far = nearestCandidates(longDoc, 'the two halfs of the argument meet here');
+  check(far.length >= 1 && far[0].line === 3, `a misquote deep inside a long line ranks that line first (got ${JSON.stringify(far)})`);
+  check(far[0].text.includes('the two halves of the argument meet here') && far[0].text.length <= 202, `the candidate text is the region around the match, not the line start (got ${JSON.stringify(far[0].text)})`);
+  check(far[0].text.startsWith('…') && far[0].text.endsWith('…'), 'cuts on both sides are marked');
+  const amb = resolveEdits(longDoc + '\n' + longDoc.split('\n')[2], [{ quote: 'the two halves of the argument', replacement: 'X' }]);
+  check(amb.ok === false && amb.error === 'ambiguous_anchor' && amb.candidates.every((c) => c.text.includes('the two halves of the argument')), `ambiguity candidates on long lines show the region around each hit (got ${JSON.stringify(amb.candidates)})`);
+}
 
 // ---- log-tail truncation ----
 const bigLog = 'HEAD-MARKER\n' + 'x'.repeat(10_000) + '\nTAIL-MARKER';
@@ -153,6 +170,14 @@ check(Buffer.byteLength(tail, 'utf8') <= LOG_TAIL_BYTES, `log tail is ≤${LOG_T
 check(tail.endsWith('TAIL-MARKER'), 'log tail keeps the end of the log');
 check(!tail.includes('HEAD-MARKER'), 'log tail drops the head of the log');
 check(logTail('tiny log') === 'tiny log', 'short logs pass through untruncated');
+// The first error and its l.<n> line must survive a long run of warnings
+// after it (sixty undefined \ref warnings pushed them out of a literal tail).
+const noisy = 'This is pdfTeX\n' + 'font loading noise\n'.repeat(60) + './main.tex:15: Undefined control sequence.\nl.15 We \\emphasise\n' + 'LaTeX Warning: Reference `undef\' on page 1 undefined on input line 20.\n'.repeat(120) + 'TAIL-MARKER';
+const around = logTail(noisy);
+check(Buffer.byteLength(around, 'utf8') <= LOG_TAIL_BYTES, 'the error window is byte-capped too');
+check(/^(?:font loading noise\n){1,30}\.\/main\.tex:15: Undefined control sequence\.\nl\.15 We \\emphasise\n/.test(around), `the window opens a few whole lines before the first error and carries its l.<n> line (got ${JSON.stringify(around.slice(0, 200))})`);
+check(!around.includes('TAIL-MARKER'), 'the literal tail is dropped when the error is earlier');
+check(logTail('x\n'.repeat(3000) + './main.tex:3: Emergency stop.\nl.3 \\bad\n').endsWith('l.3 \\bad\n'), 'an error already inside the last 4 KB keeps the plain tail');
 
 // ---- full round-trip over the SDK client ----
 const { initDb } = await import('../src/db/index.ts');
@@ -199,15 +224,15 @@ const captureLog = async (fn) => {
   return lines;
 };
 
-// tools/list: the 8 Phase 1 tools + the 5 Phase 2 wrappers + ping;
+// tools/list: the 8 Phase 1 tools + the 5 Phase 2 wrappers + trash_project + ping;
 // readOnlyHint on reads, never on writes
 const listed = (await client.listTools()).tools;
 const names = listed.map((t) => t.name).sort();
 const expected = [
   'batch_write', 'commit', 'compile', 'create_project', 'edit_file', 'get_pdf_url', 'list_citations', 'list_labels',
-  'list_projects', 'ping', 'project_structure', 'read_file', 'references_add', 'wordcount', 'write_file',
+  'list_projects', 'ping', 'project_structure', 'read_file', 'references_add', 'trash_project', 'wordcount', 'write_file',
 ];
-check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly the 13 spec tools + get_pdf_url + ping (got ${names.join(',')})`);
+check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly the 13 spec tools + get_pdf_url + trash_project + ping (got ${names.join(',')})`);
 for (const t of listed) {
   const ro = ['list_projects', 'project_structure', 'read_file', 'ping', 'list_citations', 'list_labels', 'wordcount', 'get_pdf_url'].includes(t.name);
   check((t.annotations?.readOnlyHint === true) === ro, `${t.name} readOnlyHint ${ro ? 'present' : 'absent'}`);
@@ -273,7 +298,7 @@ check(listedP1.branches.includes('main') && listedP1.rootFile === 'main.tex' && 
 
 // project_structure
 ({ body } = await call('project_structure', { project: p1.id }));
-check(body.files.some((f) => f.path === 'main.tex' && f.type === 'file'), 'project_structure lists main.tex');
+check(body.files.some((f) => f.path === 'main.tex' && f.type === 'file' && f.binary === false), 'project_structure lists main.tex with binary:false');
 check(typeof body.contentVersion === 'number', 'project_structure returns contentVersion');
 check(body.branch === 'main' && typeof body.head === 'string' && body.head.length >= 4, 'result echoes {branch, head}');
 
@@ -284,8 +309,44 @@ check(body.totalLines > 5, 'read_file reports totalLines');
 const whole = body.content;
 ({ body } = await call('read_file', { project: p1.id, path: 'main.tex', from_line: 1, to_line: 3 }));
 check(body.content === whole.split('\n').slice(0, 3).join('\n'), 'from_line/to_line windows the read (1-based, inclusive)');
-let res = await call('read_file', { project: p1.id, path: '.git/config' });
-check(res.isError, 'hidden paths are refused');
+check(body.from_line === 1 && body.to_line === 3 && body.path === 'main.tex', `a windowed read echoes the window it served (got ${JSON.stringify({ from_line: body.from_line, to_line: body.to_line })})`);
+const lineCount = body.totalLines;
+({ body } = await call('read_file', { project: p1.id, path: 'main.tex', from_line: lineCount - 1, to_line: 400 }));
+check(body.to_line === lineCount && body.from_line === lineCount - 1, 'to_line past the end is clamped and the echo says so');
+let res = await call('read_file', { project: p1.id, path: 'main.tex', from_line: 500, to_line: 510 });
+check(res.isError === true && /from_line 500 is past the end/.test(res.body) && new RegExp(`has ${lineCount} lines`).test(res.body), `a window past the end is refused, naming the line count (got ${JSON.stringify(res.body)})`);
+res = await call('read_file', { project: p1.id, path: 'main.tex', from_line: 10, to_line: 5 });
+check(res.isError === true && /from_line 10 is after to_line 5/.test(res.body), `an inverted window is refused (got ${JSON.stringify(res.body)})`);
+res = await call('read_file', { project: p1.id, path: '.git/config' });
+check(res.isError && /git internals or compile output/.test(res.body) && /logTail/.test(res.body), `hidden paths are refused with the cause and the alternative (got ${JSON.stringify(res.body)})`);
+res = await call('read_file', { project: p1.id, path: '/main.tex' });
+check(res.isError && /drop the leading "\/"/.test(res.body), `an absolute path is refused with the fix (got ${JSON.stringify(res.body)})`);
+res = await call('read_file', { project: p1.id, path: 'main.tex', branch: 'nope' });
+check(res.isError && /No branch "nope" in this project — branches: main/.test(res.body), `a missing branch names what was asked and what exists (got ${JSON.stringify(res.body)})`);
+res = await call('read_file', { project: 'zzzzzzzzzz', path: 'main.tex' });
+check(res.isError && /No project "zzzzzzzzzz"/.test(res.body) && /list_projects/.test(res.body), `a missing project names the id and points at list_projects (got ${JSON.stringify(res.body)})`);
+// text is decided by content: a .dat of numbers reads, a NUL-bearing file does not
+await call('write_file', { project: p1.id, path: 'plot.dat', content: '1 2\n3 4\n' });
+({ body } = await call('read_file', { project: p1.id, path: 'plot.dat' }));
+check(body.content === '1 2\n3 4\n', `read_file serves a .dat that is text (got ${JSON.stringify(body)})`);
+store.writeFile(p1.id, 'main', 'blob.tex', Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0x01, 0xff, 0xfe]));
+res = await call('read_file', { project: p1.id, path: 'blob.tex' });
+check(res.isError && /is a binary file/.test(res.body) && /text only/.test(res.body), `a .tex holding binary bytes is refused as binary (got ${JSON.stringify(res.body)})`);
+({ body } = await call('project_structure', { project: p1.id }));
+check(body.files.find((f) => f.path === 'plot.dat')?.binary === false, 'project_structure marks a .dat as text');
+store.deleteFile(p1.id, 'main', 'blob.tex');
+store.deleteFile(p1.id, 'main', 'plot.dat');
+// the text check reads the first 8000 bytes: a multi-byte character the cut
+// splits is not an encoding error, an invalid byte inside the head still is
+for (const [at, tail] of [[7996, 'é'], [7999, 'é'], [7998, '€'], [7997, '😀']]) {
+  store.writeFile(p1.id, 'main', 'long.tex', Buffer.from('a'.repeat(at) + tail + 'b'.repeat(2000)));
+  ({ body } = await call('read_file', { project: p1.id, path: 'long.tex' }));
+  check(typeof body.content === 'string' && body.content.includes(tail), `a UTF-8 file over 8 KB with ${tail} at byte ${at} reads as text (got ${JSON.stringify(body).slice(0, 120)})`);
+}
+store.writeFile(p1.id, 'main', 'long.tex', Buffer.concat([Buffer.from('a'.repeat(7996)), Buffer.from([0xff]), Buffer.from('b'.repeat(2000))]));
+res = await call('read_file', { project: p1.id, path: 'long.tex' });
+check(res.isError && /is a binary file/.test(res.body), `an invalid byte in the head of a file over 8 KB is still binary (got ${JSON.stringify(res.body)})`);
+store.deleteFile(p1.id, 'main', 'long.tex');
 
 // edit_file (closed doc): applied + snippet, and the change reaches disk
 ({ body } = await call('edit_file', {
@@ -311,6 +372,7 @@ check(typeof body.contentVersion === 'number', 'stale_anchor carries contentVers
 const v = body.contentVersion;
 ({ body } = await call('write_file', { project: p1.id, path: 'notes.tex', content: 'A modest note.\n', base_version: v + 999 }));
 check(body.error === 'version_conflict' && body.currentVersion === v, 'stale base_version → version_conflict with currentVersion');
+check(/newer than the branch's contentVersion/.test(body.reason) && body.path === 'notes.tex' && body.branch === 'main' && typeof body.head === 'string', `the conflict names the rule that fired and echoes path/branch/head (got ${JSON.stringify(body)})`);
 check(!store.fileExists(p1.id, 'main', 'notes.tex'), 'version_conflict writes nothing');
 ({ body } = await call('write_file', { project: p1.id, path: 'notes.tex', content: 'A modest note.\n', base_version: v }));
 check(body.ok === true && body.contentVersion > v, 'matching base_version writes and bumps contentVersion');
@@ -321,7 +383,7 @@ check(store.readFile(p1.id, 'main', 'notes.tex').toString('utf8') === 'A modest 
 // pending in a file the batch touches — must not be signed Claude (the
 // session toast would offer to revert it).
 ({ body } = await call('commit', { project: p1.id, message: 'Land the edits so far' }));
-check(body.committed === true, 'setup: pending agent edits land before the batch');
+check(body.committed === false, 'setup: the earlier writes landed on their own — nothing is pending before the batch');
 store.writeFile(p1.id, 'main', 'human.tex', 'typed by a human, not yet autosaved\n');
 store.writeFile(p1.id, 'main', 'notes.tex', 'A modest note.\nA human line in the same file.\n');
 const logBefore = await gitops.log(p1.id, 'main');
@@ -357,7 +419,7 @@ check(store.readFile(p1.id, 'main', 'notes.tex').toString('utf8').includes('A sh
   ],
   message: 'Should not land',
 }));
-check(body.error === 'stale_anchor' && body.file === 'notes.tex', 'batch_write reports the stale file');
+check(body.error === 'stale_anchor' && body.path === 'notes.tex' && body.branch === 'main' && typeof body.head === 'string', `batch_write names the stale entry as path and echoes branch/head (got ${JSON.stringify(body)})`);
 check(store.readFile(p1.id, 'main', 'abstract.tex').toString('utf8') === 'The abstract.\n', 'a stale anchor writes NOTHING (earlier files untouched)');
 
 // batch_write: a duplicate path is refused up front — both entries would
@@ -386,31 +448,78 @@ check(agentCompileGate.tryAcquire(gateKey) === false, "the refusal did NOT relea
 agentCompileGate.release(gateKey);
 check(agentCompileGate.tryAcquire(gateKey) === true && (agentCompileGate.release(gateKey), true), 'the slot frees normally once released by its holder');
 
-// edit_file / write_file take an optional intent; the default titles name the file
-// (the anonymous sweep of other dirty files may land newest, so look the commit up by title)
+// edit_file / write_file take an optional intent; the default titles name the
+// file. Each call is its own commit, made before the tool answers: the result
+// names it and History shows it at once (no debounce to wait out).
 const titled = async (message) => {
   const c = (await gitops.log(p1.id, 'main')).find((x) => x.message === message);
   return c && c.author === 'Claude' ? (await gitops.commitDiff(p1.id, c.hash)).stat : '';
 };
-await call('write_file', { project: p1.id, path: 'intent.tex', content: 'Intent test.\n', message: 'Add the intent file' });
-await gitops.autoCommit(p1.id, 'main');
+({ body } = await call('write_file', { project: p1.id, path: 'intent.tex', content: 'Intent test.\n', message: 'Add the intent file' }));
+check(typeof body.commit === 'string' && body.commit === body.head, `write_file answers with the commit it made (got ${JSON.stringify(body)})`);
+check(body.unchanged === undefined, 'a write that changed the file does not say unchanged');
+// a write that leaves the file as HEAD has it makes no commit — and says so,
+// as opposed to a refused commit (commit:null alone), which leaves work pending
+{
+  const headBefore = body.head;
+  ({ body } = await call('write_file', { project: p1.id, path: 'intent.tex', content: 'Intent test.\n' }));
+  check(body.ok === true && body.commit === null && body.unchanged === true && body.head === headBefore, `a same-content write_file answers commit:null with unchanged:true (got ${JSON.stringify(body)})`);
+  ({ body } = await call('edit_file', { project: p1.id, path: 'intent.tex', edits: [{ quote: 'Intent test.', replacement: 'Intent test.' }] }));
+  check(body.applied === 1 && body.commit === null && body.unchanged === true && body.head === headBefore, `an edit_file that changes nothing answers commit:null with unchanged:true (got ${JSON.stringify(body)})`);
+  ({ body } = await call('batch_write', { project: p1.id, files: [{ path: 'intent.tex', content: 'Intent test.\n' }], message: 'Nothing to change' }));
+  check(body.ok === true && body.commit === null && body.unchanged === true && body.head === headBefore, `a batch_write that leaves every file as it was answers commit:null with unchanged:true (got ${JSON.stringify(body)})`);
+  ({ body } = await call('commit', { project: p1.id, message: 'Nothing pending' }));
+  check(body.committed === false, 'nothing was left pending by the no-op writes');
+}
+// the pre-write snapshot keeps the bytes of a file that is not UTF-8 (a
+// Latin-1 .tex, an image): the Claude commit's parent must hold the original,
+// or reverting the commit restores a U+FFFD-riddled copy
+{
+  const latin1 = Buffer.from('caf\xe9 au lait \xff\xfe\n', 'latin1');
+  const dir = await gitops.ensureWorktree(p1.id, 'main');
+  const seeded = async (file) => {
+    store.writeFile(p1.id, 'main', file, latin1);
+    await gitops.commitPaths(p1.id, 'main', [file], `seed ${file}`);
+    return (await gitops.log(p1.id, 'main'))[0].hash;
+  };
+  const seed = await seeded('latin.tex');
+  ({ body } = await call('write_file', { project: p1.id, path: 'latin.tex', content: 'now utf-8\n', message: 'Replace the Latin-1 file' }));
+  let parent = execFileSync('git', ['rev-parse', `${body.commit}^`], { cwd: dir }).toString().trim();
+  check(parent === seed, `write_file over a non-UTF-8 file makes no pre-snapshot commit (parent ${parent.slice(0, 7)}, seed ${seed.slice(0, 7)})`);
+  check(execFileSync('git', ['show', `${body.commit}^:latin.tex`], { cwd: dir }).equals(latin1), 'the commit before the write holds the original bytes');
+  const seed2 = await seeded('latin2.tex');
+  ({ body } = await call('edit_file', { project: p1.id, path: 'latin2.tex', edits: [{ quote: 'caf\ufffd au lait', replacement: 'cafe au lait' }] }));
+  parent = execFileSync('git', ['rev-parse', `${body.commit}^`], { cwd: dir }).toString().trim();
+  check(parent === seed2 && execFileSync('git', ['show', `${body.commit}^:latin2.tex`], { cwd: dir }).equals(latin1), `edit_file on a non-UTF-8 file keeps the original bytes in the commit before it (parent ${parent.slice(0, 7)}, seed ${seed2.slice(0, 7)})`);
+  const seed3 = await seeded('latin3.tex');
+  ({ body } = await call('batch_write', { project: p1.id, files: [{ path: 'latin3.tex', content: 'batch utf-8\n' }], message: 'Replace the third Latin-1 file' }));
+  parent = execFileSync('git', ['rev-parse', `${body.commit}^`], { cwd: dir }).toString().trim();
+  check(parent === seed3 && execFileSync('git', ['show', `${body.commit}^:latin3.tex`], { cwd: dir }).equals(latin1), `batch_write over a non-UTF-8 file keeps the original bytes in the commit before it (parent ${parent.slice(0, 7)}, seed ${seed3.slice(0, 7)})`);
+  for (const f of ['latin.tex', 'latin2.tex', 'latin3.tex']) store.deleteFile(p1.id, 'main', f);
+  await gitops.commitAll(p1.id, 'main', 'remove the Latin-1 files');
+}
 check((await titled('Add the intent file')).includes('intent.tex'), 'write_file commits under the stated message');
 ({ body } = await call('edit_file', { project: p1.id, path: 'intent.tex', edits: [{ quote: 'Intent test.', replacement: 'Intent test, edited.' }], message: 'Sharpen the intent line' }));
 check(body.applied === 1, 'edit_file with a message applies');
-await gitops.autoCommit(p1.id, 'main');
+check(typeof body.commit === 'string' && body.commit === body.head, `edit_file answers with the commit it made (got ${JSON.stringify(body)})`);
 check((await titled('Sharpen the intent line')).includes('intent.tex'), 'edit_file commits under the stated message');
 ({ body } = await call('edit_file', { project: p1.id, path: 'intent.tex', edits: [{ quote: 'Intent test, edited.', replacement: 'Intent test, edited twice.' }] }));
-await gitops.autoCommit(p1.id, 'main');
 check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a message the commit is titled by the file');
+check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gitops.log(p1.id, 'main'))[0].message.startsWith('Edit intent'), 'the debounce finds nothing of the agent\'s left to sweep');
 
-// commit tool: only what Claude wrote lands, under the caller's message.
-// A whole-tree commit here would sign a collaborator's flushed typing as
-// Claude (History's violet dot and the session revert key on the author).
+// commit tool: only what Claude wrote and has not committed lands, under the
+// caller's message. A whole-tree commit here would sign a collaborator's
+// flushed typing as Claude (History's violet dot and the session revert key
+// on the author). Writes commit on their own now, so the pending work is
+// registered the way a refused commit leaves it (collab.commitAgentWrite).
 {
   const collab = await import('../src/collab.ts');
   const pc = await store.createProject('Commit scope', undefined, user.id);
   store.writeFile(pc.id, 'main', 'human.tex', 'typed by a person, not yet autosaved\n');
-  await call('write_file', { project: pc.id, path: 'agent.tex', content: 'Written by the agent.\n', message: 'Add the agent file' });
+  ({ body } = await call('write_file', { project: pc.id, path: 'agent.tex', content: 'Written by the agent.\n', message: 'Add the agent file' }));
+  check(typeof body.commit === 'string', 'setup: the write committed on its own');
+  store.writeFile(pc.id, 'main', 'agent.tex', 'Written by the agent.\nRetried line.\n');
+  gitops.registerAttributedPaths(pc.id, 'main', 'Retry the agent file', 'Claude', ['agent.tex']);
   ({ body } = await call('commit', { project: pc.id, message: 'Land the agent work' }));
   check(body.committed === true && typeof body.hash === 'string' && body.hash === body.head, `commit reports the new head (got ${JSON.stringify(body)})`);
   check(JSON.stringify(body.files) === '["agent.tex"]', `commit names exactly the paths that landed (got ${JSON.stringify(body.files)})`);
@@ -419,7 +528,7 @@ check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a messa
   check(clog[0].author === 'Claude' && clog[0].message === 'Land the agent work', `the checkpoint is one Claude commit under the caller's message (got ${JSON.stringify(`${clog[0].author}: ${clog[0].message}`)})`);
   const cstat = (await gitops.commitDiff(pc.id, clog[0].hash)).stat;
   check(cstat.includes('agent.tex') && !cstat.includes('human.tex'), `the commit holds only the agent's path (got ${JSON.stringify(cstat)})`);
-  check(!clog.some((c) => c.message === 'Add the agent file'), "the caller's message replaced the write's per-path intent");
+  check(!clog.some((c) => c.message === 'Retry the agent file'), "the caller's message replaced the pending per-path intent");
   const holdsHuman = async (log) => {
     for (const c of log) if ((await gitops.commitDiff(pc.id, c.hash)).stat.includes('human.tex')) return true;
     return false;
@@ -432,7 +541,7 @@ check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a messa
   ({ body } = await call('commit', { project: pc.id, message: 'Nothing new' }));
   check(body.committed === false && body.hash === null && JSON.stringify(body.files) === '[]', `nothing pending reports committed:false with no files (got ${JSON.stringify(body)})`);
   check(typeof body.note === 'string' && body.note.includes(body.head), `the note names the current head (got ${JSON.stringify(body.note)})`);
-  check(Array.isArray(body.recentClaudeCommits) && body.recentClaudeCommits.length > 0 && body.recentClaudeCommits.every((c) => /^[0-9a-f]{40}$/.test(c.hash) && typeof c.message === 'string'),
+  check(Array.isArray(body.recentClaudeCommits) && body.recentClaudeCommits.length > 0 && body.recentClaudeCommits.every((c) => c.hash.length === body.head.length && /^[0-9a-f]+$/.test(c.hash) && typeof c.message === 'string'),
     `and lists Claude's latest commits so the model can name where its edits went (got ${JSON.stringify(body.recentClaudeCommits)})`);
   clog = await gitops.log(pc.id, 'main');
   check(clog.length === before.length && clog[0].hash === before[0].hash, 'nothing pending creates no commit');
@@ -445,27 +554,51 @@ check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a messa
   store.writeFile(pd.id, 'main', 'main.tex', 'human paragraph one\n');
   await gitops.commitAll(pd.id, 'main', 'seed');
   store.writeFile(pd.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
-  await call('write_file', { project: pd.id, path: 'main.tex', content: 'human paragraph one\nhuman paragraph two\nagent sentence\n', message: 'Add the agent sentence' });
-  ({ body } = await call('commit', { project: pd.id, message: 'Checkpoint the agent work' }));
-  check(body.committed === true, 'commit lands the agent delta on a file the person had also edited');
+  check(collab.agentSessionActive(pd.id, 'main') === false, 'no agent session on a branch nobody wrote to');
+  ({ body } = await call('write_file', { project: pd.id, path: 'main.tex', content: 'human paragraph one\nhuman paragraph two\nagent sentence\n', message: 'Add the agent sentence' }));
+  check(typeof body.commit === 'string', 'write_file lands the agent delta on a file the person had also edited');
+  check(collab.agentSessionActive(pd.id, 'main') === true && collab.agentSessionActive(pd.id, 'other') === false, 'the write opens an agent session on that branch only (no doc is loaded)');
   let dlog = await gitops.log(pd.id, 'main');
-  check(dlog[0].author === 'Claude' && dlog[0].message === 'Checkpoint the agent work', `the newest commit is the named Claude checkpoint (got ${JSON.stringify(`${dlog[0].author}: ${dlog[0].message}`)})`);
+  check(dlog[0].author === 'Claude' && dlog[0].message === 'Add the agent sentence', `the newest commit is the Claude write under its intent (got ${JSON.stringify(`${dlog[0].author}: ${dlog[0].message}`)})`);
   const dpatch = (await gitops.commitDiff(pd.id, dlog[0].hash)).patch;
   check(dpatch.includes('+agent sentence') && !dpatch.includes('+human paragraph two'), "the Claude commit's diff is exactly the agent's delta");
   check(dlog[1].message === 'aldine: autosave' && dlog[1].author !== 'Claude', `the person's pending paragraph was checkpointed anonymously first (got ${JSON.stringify(`${dlog[1].author}: ${dlog[1].message}`)})`);
   check((await gitops.commitDiff(pd.id, dlog[1].hash)).patch.includes('+human paragraph two'), 'that anonymous checkpoint holds the person\'s paragraph');
+  ({ body } = await call('commit', { project: pd.id, message: 'Checkpoint the agent work' }));
+  check(body.committed === false && body.recentClaudeCommits[0]?.message === 'Add the agent sentence', `nothing is left for the commit tool; it names the commit that holds the write (got ${JSON.stringify(body)})`);
 
-  // an edit that lives only in an open document is flushed INSIDE the commit's
-  // lock span: without the flush there commit would report committed:false on
-  // real work, and outside the lock an autosave could sweep it anonymously
+  // an edit through an open document commits from the document's own text,
+  // inside the tool's lock span — and the agent's presence is a server-side
+  // session, so a doc loaded after the mark (a reload) shows the agent too
   const conn = await collab.hocuspocus.openDirectConnection(collab.docName(pd.id, 'main', 'main.tex'), {});
   check(collab.openDocContent(pd.id, 'main', 'main.tex') !== null, 'setup: main.tex is open in an editor');
+  const agentState = [...conn.document.awareness.getStates().values()].find((st) => st.user?.isAgent);
+  check(agentState !== undefined && typeof agentState.user.startedAt === 'number', `a doc loaded during a live session carries the agent in awareness with the session start (got ${JSON.stringify([...conn.document.awareness.getStates().values()])})`);
+  // #1: an edits entry for an open document lands as per-span CRDT edits,
+  // never a whole-document swap (a delete-all/insert-all delta would move
+  // every collaborator's cursor to the top)
+  const deltas = [];
+  const ytext = conn.document.getText('content');
+  const observer = (ev) => deltas.push(ev.delta);
+  ytext.observe(observer);
   ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence', replacement: 'agent sentence, revised' }] }));
-  check(body.applied === 1, 'setup: the edit applied through the open document');
-  ({ body } = await call('commit', { project: pd.id, message: 'Land the open-document edit' }));
-  check(body.committed === true && JSON.stringify(body.files) === '["main.tex"]', `commit flushes open documents first (got ${JSON.stringify(body)})`);
+  check(body.applied === 1 && typeof body.commit === 'string', `the edit applied through the open document and committed (got ${JSON.stringify(body)})`);
   dlog = await gitops.log(pd.id, 'main');
-  check(dlog[0].message === 'Land the open-document edit' && (await gitops.commitDiff(pd.id, dlog[0].hash)).patch.includes('+agent sentence, revised'), 'the commit carries the edit that lived only in the document');
+  check(dlog[0].message === 'Edit main.tex' && (await gitops.commitDiff(pd.id, dlog[0].hash)).patch.includes('+agent sentence, revised'), 'the commit carries the edit that lived only in the document');
+  ({ body } = await call('batch_write', {
+    project: pd.id,
+    files: [
+      { path: 'main.tex', edits: [{ quote: 'human paragraph one', replacement: 'human paragraph one, batched' }] },
+      { path: 'sections/new.tex', content: 'A new section.\n' },
+    ],
+    message: 'Batch into an open document',
+  }));
+  check(body.ok === true && typeof body.commit === 'string', `batch_write with an open document lands (got ${JSON.stringify(body)})`);
+  check(ytext.toString().startsWith('human paragraph one, batched\n'), 'the open document carries the batched edit');
+  check(deltas.length === 2 && !deltas.some((d) => d.some((op) => op.delete !== undefined && op.delete > 40)), `both tools edited the open document in place, neither replaced it: ${JSON.stringify(deltas)}`);
+  const bstat = (await gitops.commitDiff(pd.id, (await gitops.log(pd.id, 'main'))[0].hash)).stat;
+  check(bstat.includes('main.tex') && bstat.includes('sections/new.tex'), `the batch commit holds both paths (got ${JSON.stringify(bstat)})`);
+  ytext.unobserve(observer);
   await conn.disconnect();
 }
 
@@ -475,7 +608,8 @@ check((await titled('Edit intent.tex')).includes('intent.tex'), 'without a messa
 // file, attributed to Claude; the entry is compile-safe (&amp; decoded and
 // escaped); a second add of the same key reports duplicate and writes nothing
 ({ body } = await call('references_add', { project: p1.id, query: '10.1145/mock.12345' }));
-check(body.key === 'doe2020' && body.bibFile === 'references.bib' && body.duplicate === false, `references_add returns {key, bibFile} (got ${JSON.stringify(body)})`);
+check(body.key === 'doe2020' && body.bibFile === 'references.bib' && body.duplicate === false && body.created === false, `references_add returns {key, bibFile, duplicate, created} (got ${JSON.stringify(body)})`);
+check(body.note === undefined, 'no note when the root loads the .bib (\\addbibresource{references.bib})');
 check(body.branch === 'main' && typeof body.head === 'string', 'references_add echoes {branch, head}');
 check(typeof body.fileVersion === 'number' && body.fileVersion === body.contentVersion, 'references_add carries the bib file\'s fileVersion');
 let bibText = store.readFile(p1.id, 'main', 'references.bib').toString('utf8');
@@ -489,24 +623,55 @@ check(res.isError === true && /No reference found/.test(res.body), 'a title (not
 res = await call('references_add', { project: p1.id, query: '10.1145/mock.12345' });
 check(res.isError === true && /lookup budget/.test(res.body), `the refLimiter refuses the 4th lookup with relay-able prose (got ${JSON.stringify(res.body)})`);
 res = await call('references_add', { project: p1.id, query: '10.1145/mock.12345', bibFile: '.git/refs.bib' });
-check(res.isError === true && /Invalid file path/.test(res.body), 'hidden bib paths are refused before any lookup');
+check(res.isError === true && /git internals or compile output/.test(res.body), `hidden bib paths are refused before any lookup (got ${JSON.stringify(res.body)})`);
 // with the budget exhausted, these refusals prove the guards run before the
 // limiter takes a token (a limiter-first order would answer "lookup budget")
 res = await call('references_add', { project: p1.id, query: '10.1145/mock.12345', bibFile: 'main.tex' });
 check(res.isError === true && /must be a \.bib file/.test(res.body), `a non-.bib target is refused (got ${JSON.stringify(res.body)})`);
 res = await call('references_add', { project: p1.id, query: '10.1145/mock.12345', branch: 'no-such-branch' });
-check(res.isError === true && /Branch not found/.test(res.body), `an unknown branch is reported as such, not as an upstream outage (got ${JSON.stringify(res.body)})`);
+check(res.isError === true && /No branch "no-such-branch" in this project — branches: main/.test(res.body), `an unknown branch is reported as such, not as an upstream outage (got ${JSON.stringify(res.body)})`);
 await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill (0.5/s)
 res = await call('references_add', { project: p1.id, query: '10.1145/missing.1' });
-check(res.isError === true && /Reference lookup failed.*404/.test(res.body), `an upstream failure is relayed with its status (got ${JSON.stringify(res.body)})`);
+check(res.isError === true && /No reference found for "10.1145\/missing.1"/.test(res.body) && /not registered upstream/.test(res.body) && !/lookup failed/.test(res.body), `an unregistered DOI (404) is not found, not an outage (got ${JSON.stringify(res.body)})`);
+await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill
+res = await call('references_add', { project: p1.id, query: '10.1145/outage.1' });
+check(res.isError === true && /Reference lookup failed.*503/.test(res.body), `an upstream 5xx is relayed with its status (got ${JSON.stringify(res.body)})`);
+await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill
+({ body } = await call('references_add', { project: p1.id, query: '10.1145/mock.12345', bibFile: 'nope/missing.bib' }));
+check(body.key === 'doe2020' && body.bibFile === 'nope/missing.bib' && body.created === true, `an explicit bibFile in a missing folder is created and says so (got ${JSON.stringify(body)})`);
+check(typeof body.note === 'string' && /No \.tex file on main loads nope\/missing\.bib/.test(body.note) && /addbibresource\{nope\/missing\.bib\}/.test(body.note), `a .bib no source loads carries a note with the fix (got ${JSON.stringify(body.note)})`);
+check(store.fileExists(p1.id, 'main', 'nope/missing.bib'), 'the folder and file exist');
 ({ body } = await call('commit', { project: p1.id, message: 'Land reference' }));
 const refCommits = (await gitops.log(p1.id, 'main')).filter((c) => c.message === 'Add reference doe2020');
-check(refCommits.length === 1 && refCommits[0].author === 'Claude', 'the reference landed as an attributed Claude commit');
+check(refCommits.length === 2 && refCommits.every((c) => c.author === 'Claude'), `each reference landed as an attributed Claude commit (got ${refCommits.length})`);
+
+// an entry added under an older key style (doi.org's `Doe_2020`) is the same
+// paper: the DOI says so, and the existing key is what the caller should cite;
+// Claude appears in the .bib only when it writes to it — a duplicate or a
+// lookup that finds nothing leaves no presence (and no muted away prompt)
+{
+  const collab = await import('../src/collab.ts');
+  const pr = await store.createProject('Reference dedup', undefined, user.id);
+  const legacy = '@article{Doe_2020,\n  title = {A Mock Paper},\n  author = {Doe, Jane},\n  year = {2020},\n  DOI = {10.1145/MOCK.12345},\n}\n';
+  store.writeFile(pr.id, 'main', 'legacy.bib', legacy);
+  await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill
+  ({ body } = await call('references_add', { project: pr.id, query: '10.1145/mock.12345', bibFile: 'legacy.bib' }));
+  check(body.duplicate === true && body.key === 'Doe_2020', `the same DOI under an upstream key is a duplicate, reported with the existing key (got ${JSON.stringify(body)})`);
+  check(store.readFile(pr.id, 'main', 'legacy.bib').toString('utf8') === legacy, 'the duplicate add writes nothing');
+  check(collab.agentSessionActive(pr.id, 'main') === false, 'a duplicate add leaves no agent presence');
+  await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill
+  res = await call('references_add', { project: pr.id, query: '10.1145/missing.1' });
+  check(res.isError === true && collab.agentSessionActive(pr.id, 'main') === false, 'a lookup that finds nothing leaves no agent presence');
+  await new Promise((r) => setTimeout(r, 2100)); // refLimiter refill
+  ({ body } = await call('references_add', { project: pr.id, query: '10.1145/mock.12345' }));
+  check(body.duplicate === false && body.key === 'doe2020' && collab.agentSessionActive(pr.id, 'main') === true, `an add that writes marks the agent present (got ${JSON.stringify(body)})`);
+}
 
 // list_citations: the index the model must consult before writing \cite
 ({ body } = await call('list_citations', { project: p1.id }));
 check(Array.isArray(body.citations), 'list_citations returns a citations array');
-const doe = body.citations.find((c) => c.key === 'doe2020');
+const doe = body.citations.find((c) => c.key === 'doe2020' && c.file === 'references.bib');
+check(body.citations.some((c) => c.key === 'doe2020' && c.file === 'nope/missing.bib'), 'the entry in the unloaded .bib is indexed too');
 check(doe && doe.file === 'references.bib' && doe.year === '2020' && /Doe/.test(doe.author) && /Mock Paper/.test(doe.title), `list_citations carries {key,title,author,year,file} (got ${JSON.stringify(doe)})`);
 check(body.citations.some((c) => c.key === 'knuth1984'), 'list_citations includes the seed entry');
 check(body.citations.every((c) => Object.keys(c).sort().join() === 'author,file,key,title,year'), 'list_citations rows carry exactly the spec fields');
@@ -541,7 +706,47 @@ check(body.rootFile === 'main.tex' && typeof body.files['main.tex'] === 'number'
 ({ body } = await call('create_project', { name: 'Fresh paper' }));
 check(typeof body.id === 'string' && body.name === 'Fresh paper' && body.rootFile === 'main.tex' && body.engine === 'pdf', `create_project returns the new project (got ${JSON.stringify(body)})`);
 check(body.branch === 'main' && typeof body.head === 'string' && body.head.length >= 4, 'create_project echoes {branch, head} of the initial commit');
-const fresh = body.id;
+check(body.contentVersion === 0 && JSON.stringify(body.files) === JSON.stringify(['main.tex', 'references.bib']), `create_project returns contentVersion and the seeded files (got ${JSON.stringify({ contentVersion: body.contentVersion, files: body.files })})`);
+// trash_project: only what the agent made is within its reach, and only as
+// a trash the owner can undo from the workspace — never a hard delete.
+const agentMade = body.id;
+({ body } = await call('list_projects'));
+check(body.find((p) => p.id === agentMade)?.agentCreated === true && body.find((p) => p.id === p1.id)?.agentCreated === false, `list_projects marks the agent-created project and only that one (got ${JSON.stringify(body.map((p) => [p.id, p.agentCreated]))})`);
+res = await call('trash_project', { project: p2.id });
+check(res.isError === true && /created through the Agent API/.test(res.body) && /delete this one/.test(res.body), `a person's project is refused with the next step (got ${JSON.stringify(res.body)})`);
+check(!(await store.readMeta(p2.id)).deletedAt, 'the refusal trashed nothing');
+res = await call('trash_project', { project: 'zzzzzzzzzz' });
+check(res.isError === true && /No project "zzzzzzzzzz"/.test(res.body), 'an unknown id is reported like every other tool');
+({ body } = await call('trash_project', { project: agentMade }));
+check(body.trashed === true && body.id === agentMade && !Number.isNaN(Date.parse(body.restorableUntil)) && /Restorable/.test(body.note), `an agent-created project is trashed with its restore window (got ${JSON.stringify(body)})`);
+check(typeof (await store.readMeta(agentMade)).deletedAt === 'string' && store.readFile(agentMade, 'main', 'main.tex').length > 0, 'trash is a soft delete: the data stays on disk');
+({ body } = await call('list_projects'));
+check(!body.some((p) => p.id === agentMade), 'a trashed project leaves list_projects');
+res = await call('project_structure', { project: agentMade });
+check(res.isError === true && /No project/.test(res.body), 'a trashed project reads as gone to the tools');
+res = await call('trash_project', { project: agentMade });
+check(res.isError === true && /No project/.test(res.body), 'trashing twice is "not found", not a second delete');
+let tres = await app.inject({ method: 'GET', url: '/api/projects/trash', headers: { authorization: `Bearer ${token}` } });
+check(tres.statusCode === 200 && tres.json().some((p) => p.id === agentMade), `the owner sees it in the workspace trash (got ${tres.statusCode} ${tres.body.slice(0, 120)})`);
+tres = await app.inject({ method: 'POST', url: `/api/projects/${agentMade}/restore`, headers: { authorization: `Bearer ${token}` } });
+check(tres.statusCode === 200, `the owner restores it over REST (got ${tres.statusCode} ${tres.body.slice(0, 120)})`);
+({ body } = await call('list_projects'));
+check(body.some((p) => p.id === agentMade), 'a restored project is back for the tools');
+// A collaborator can reach the project but is not its owner: trash is refused
+// for them exactly as the REST delete is.
+const collab = await auth.register('bob@example.com', 'password123', 'Bob');
+const { token: collabTok } = await auth.createAccessToken(collab.id, 'Bob agent', null, null);
+{
+  const m = await store.readMeta(agentMade);
+  m.share = { mode: 'private', collaborators: ['bob@example.com'] };
+  await store.writeMeta(m);
+}
+const bobClient = await connect(collabTok);
+let bres = await bobClient.callTool({ name: 'trash_project', arguments: { project: agentMade } });
+check(bres.isError === true && /Only the owner/.test(bres.content[0].text), `a collaborator's token cannot trash the owner's agent-made project (got ${JSON.stringify(bres.content[0].text)})`);
+await bobClient.close();
+check(!(await store.readMeta(agentMade)).deletedAt, 'the refused trash left the restored project alone');
+const fresh = agentMade;
 ({ body } = await call('list_projects'));
 check(body.some((p) => p.id === fresh), 'the created project shows up in list_projects');
 check((await store.readMeta(fresh)).ownerId === user.id, 'the created project is owned by the token user');
@@ -549,6 +754,27 @@ check((await store.readMeta(fresh)).ownerId === user.id, 'the created project is
 check(typeof body.id === 'string', 'create_project accepts a template');
 ({ body } = await call('project_structure', { project: body.id }));
 check(body.files.some((f) => f.path.endsWith('.tex')), 'the template seeded .tex files');
+// A blank project has no main document: compile and wordcount say so
+// instead of blaming the compiler or reporting 0 words; the first .tex
+// written through the tools becomes the main document, as it does over REST.
+({ body } = await call('create_project', { name: 'Rootless', template: 'blank' }));
+check(body.rootFile === '' && JSON.stringify(body.files) === '[]', `a blank project has no root and no files (got ${JSON.stringify(body)})`);
+const rootless = body.id;
+res = await call('compile', { project: rootless });
+check(res.isError === true && /no \.tex file to typeset on main/.test(res.body) && /write_file/.test(res.body) && !/compiler/.test(res.body), `compile on a rootless project says so, never that the compiler is down (got ${JSON.stringify(res.body)})`);
+res = await call('wordcount', { project: rootless });
+check(res.isError === true && /no main document yet/.test(res.body), `wordcount on a rootless project is an error, not 0 words (got ${JSON.stringify(res.body)})`);
+({ body } = await call('write_file', { project: rootless, path: 'notes.txt', content: 'not a tex file\n' }));
+check(body.ok === true && body.newRoot === undefined, 'a non-.tex write adopts no root');
+({ body } = await call('write_file', { project: rootless, path: 'paper.tex', content: '\\documentclass{article}\n\\begin{document}\nFourteen words are written here in this small document for the count check ok.\n\\end{document}\n' }));
+check(body.ok === true && body.newRoot === 'paper.tex', `the first .tex written becomes the main document and the result says so (got ${JSON.stringify(body)})`);
+({ body } = await call('project_structure', { project: rootless }));
+check(body.rootFile === 'paper.tex', 'project_structure shows the adopted root');
+({ body } = await call('wordcount', { project: rootless }));
+check(body.rootFile === 'paper.tex' && body.total > 0, `wordcount counts the adopted root (got ${JSON.stringify(body)})`);
+({ body } = await call('create_project', { name: 'Rootless batch', template: 'blank' }));
+({ body } = await call('batch_write', { project: body.id, files: [{ path: 'a.txt', content: 'x\n' }, { path: 'sub/main.tex', content: '\\documentclass{article}\\begin{document}Hi\\end{document}\n' }], message: 'Seed' }));
+check(body.ok === true && body.newRoot === 'sub/main.tex', `batch_write adopts the root too (got ${JSON.stringify(body)})`);
 res = await call('create_project', { name: 'Nope', template: 'no-such-template' });
 check(res.isError === true && /Unknown template/.test(res.body) && /article/.test(res.body), `an unknown template is refused and the available ids are named (got ${JSON.stringify(res.body)})`);
 
@@ -592,7 +818,7 @@ check(!cRes.isError, `compile succeeds over the mock compiler (got ${cRes.conten
 check(compileLog.some((l) => l === `[metric] agent_compile user=${user.id} project=${p1.id} ok=true ms=5`), `an agent compile logs its success-metric line (got ${JSON.stringify(compileLog)})`);
 let cBody = JSON.parse(cRes.content[0].text);
 check(JSON.stringify(cRes.structuredContent) === JSON.stringify(cBody), 'compile: structuredContent mirrors the text result');
-check(cBody.ok === true && cBody.errors.length === 0 && cBody.errorsTotal === 0 && cBody.timedOut === false && typeof cBody.durationMs === 'number', `compile echoes ok/errors/errorsTotal/timedOut/durationMs (got ${JSON.stringify(cBody)})`);
+check(cBody.ok === true && cBody.errors.length === 0 && cBody.errorsTotal === 0 && cBody.warningsTotal === 0 && cBody.timedOut === false && typeof cBody.durationMs === 'number', `compile echoes ok/errors/errorsTotal/warningsTotal/timedOut/durationMs (got ${JSON.stringify(cBody)})`);
 check(typeof cBody.pdfUrl === 'string' && cBody.pdfUrl.startsWith(`http://127.0.0.1:${port}/api/projects/${p1.id}/output?`), `compile pdfUrl is absolute and targets /output (got ${cBody.pdfUrl})`);
 const cq = Object.fromEntries(new URL(cBody.pdfUrl).searchParams);
 check(cq.branch === 'main' && cq.path === '.aldine-out/main.pdf' && /^\d+$/.test(cq.exp) && /^[A-Za-z0-9_-]{43}$/.test(cq.sig) && /^\d+$/.test(cq.t), `compile pdfUrl is signed (branch, path, exp, sig, cache-buster) (got ${JSON.stringify(cq)})`);
@@ -621,7 +847,7 @@ cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } })
 check(!cRes.isError, 'a failed typeset is a normal result, not a tool error');
 cBody = JSON.parse(cRes.content[0].text);
 check(cBody.ok === false && cBody.pdfStale === true && typeof cBody.pdfUrl === 'string' && /[?&]sig=/.test(cBody.pdfUrl), `failed run keeps the previous PDF link and flags pdfStale (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pdfUrl: cBody.pdfUrl })})`);
-check(cBody.errors.length === 50 && cBody.errorsTotal === 60, `errors are capped at 50 with errorsTotal 60 (got ${cBody.errors.length}/${cBody.errorsTotal})`);
+check(cBody.errors.length === 50 && cBody.errorsTotal === 60 && cBody.warningsTotal === 0, `errors are capped at 50 with errorsTotal 60 (got ${cBody.errors.length}/${cBody.errorsTotal}/${cBody.warningsTotal})`);
 check(cBody.errors[0].file === './main.tex' && cBody.errors[0].line === 1 && cBody.errors[0].type === 'error', 'each error carries {type,file,line,message} for the viewer deep links');
 check(/No pages of output/.test(cBody.logTail), 'the log tail reaches the model');
 check(JSON.stringify(cRes.structuredContent) === JSON.stringify(cBody), 'failed run: structuredContent still mirrors the text');
@@ -652,8 +878,36 @@ cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } })
 cBody = JSON.parse(cRes.content[0].text);
 check(cBody.errors.every((e) => e.file === 'main.tex'), `every error row names a file, the root file when the parser had none (got ${JSON.stringify(cBody.errors.map((e) => e.file))})`);
 check(/biblatex/.test(cBody.hint) && /relay/.test(cBody.hint), `a missing package surfaces as a relay hint (got ${JSON.stringify(cBody.hint)})`);
-const { withRootFile, missingPackages, compilerSetupError } = await import('../src/mcp/tools.ts');
+const { withRootFile, withSource, unicodeHint, missingPackages, compilerSetupError } = await import('../src/mcp/tools.ts');
 check(withRootFile([{ type: 'error', line: 1, message: 'x' }, { type: 'error', file: 'ch1.tex', line: 2, message: 'y' }], 'main.tex').map((e) => e.file).join() === 'main.tex,ch1.tex', 'withRootFile fills only empty files');
+check(withRootFile([{ type: 'warning', line: null, message: "Biber: I didn't find a database entry for 'x'" }, { type: 'warning', file: 'refs.bib', line: 16, message: 'Biber: BibTeX subsystem: refs.bib_1.utf8, line 16, warning: undefined macro "June"' }], 'main.tex').map((e) => e.file ?? '-').join() === '-,refs.bib', 'withRootFile never stamps the root file on a bibliography row');
+const sourced = withSource([
+  { type: 'warning', line: 12, message: "LaTeX Warning: Citation `x' on page 1 undefined on input line 12." },
+  { type: 'warning', line: null, message: 'Package hyperref Warning: Token not allowed in a PDF string.' },
+  { type: 'warning', line: null, message: 'Class article Warning: Unused global option.' },
+  { type: 'warning', file: 'refs.bib', line: 16, message: 'Biber: BibTeX subsystem: refs.bib_1.utf8, line 16, warning: undefined macro "June"' },
+  { type: 'error', line: 5, message: "LaTeX Error: File `x.sty' not found." },
+]);
+check(sourced.map((e) => e.source ?? '-').join() === 'latex,hyperref,article,biber,-', `withSource names the tool behind each warning (got ${sourced.map((e) => e.source).join()})`);
+check(sourced[0].message === "Citation `x' on page 1 undefined on input line 12." && sourced[1].message === 'Token not allowed in a PDF string.' && sourced[3].message.startsWith('BibTeX subsystem:'), 'the prefix leaves the message');
+check(sourced[4].message.startsWith('LaTeX Error:'), 'error messages keep the engine\'s phrasing');
+check(/U\+1F99C/.test(unicodeHint([{ type: 'error', file: 'main.tex', line: 20, message: 'LaTeX Error: Unicode character 🦜 (U+1F99C)' }])) && /\.bib/.test(unicodeHint([{ type: 'error', line: 20, message: 'Unicode character 🦜 (U+1F99C)' }])), 'an untypesettable character gets a hint that points at the .bib');
+check(unicodeHint([{ type: 'error', line: 1, message: 'Undefined control sequence.' }]) === null, 'no unicode error, no hint');
+// End to end through the tool: a biber row keeps its .bib, a warning gets a
+// source and loses its prefix, an error keeps its context line.
+compilerQueue.push({ ok: false, exitCode: 12, pdf: null, pdfFresh: false, log: '! Undefined control sequence.\nl.15 We \\emphasise\n', errors: [
+  { type: 'error', file: 'main.tex', line: 15, message: 'Undefined control sequence. — \\emphasise', context: 'We \\emphasise{keeps} it' },
+  { type: 'warning', line: 12, message: "LaTeX Warning: Citation `x' on page 1 undefined on input line 12." },
+  { type: 'warning', file: 'references.bib', line: 16, message: 'Biber: BibTeX subsystem: /tmp/biber_tmp_a/references.bib_1.utf8, line 16, warning: undefined macro "June"' },
+  { type: 'error', file: 'main.tex', line: 20, message: 'LaTeX Error: Unicode character 🦜 (U+1F99C)' },
+], durationMs: 4 });
+cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+cBody = JSON.parse(cRes.content[0].text);
+check(cBody.errors[0].context === 'We \\emphasise{keeps} it' && /\\emphasise/.test(cBody.errors[0].message), `the error row carries the source line and the token (got ${JSON.stringify(cBody.errors[0])})`);
+check(cBody.errors.find((e) => e.line === 12).source === 'latex' && cBody.errors.find((e) => e.line === 12).message.startsWith('Citation'), 'a LaTeX warning carries source:latex without the prefix');
+const biberRow = cBody.errors.find((e) => e.source === 'biber');
+check(biberRow && biberRow.file === 'references.bib' && biberRow.line === 16, `a biber warning is attributed to the .bib and its line (got ${JSON.stringify(biberRow)})`);
+check(/U\+1F99C/.test(cBody.hint) && /\.bib/.test(cBody.hint), `the unicode hint reaches the result (got ${JSON.stringify(cBody.hint)})`);
 check(missingPackages([{ type: 'error', line: 1, message: "LaTeX Error: File `natbib.sty' not found." }, { type: 'error', line: 2, message: 'Undefined control sequence' }]).join() === 'natbib', 'missingPackages names the .sty');
 check(compilerSetupError('root file not found: main.tex') && compilerSetupError('ENOENT: no such file') && !compilerSetupError(undefined) && !compilerSetupError('latexmk exited 12'), 'compilerSetupError matches compiler-side refusals only');
 
@@ -665,7 +919,7 @@ const twoWarnings = [{ type: 'warning', line: 2, message: 'LaTeX Warning: Citati
 compilerQueue.push({ ok: false, exitCode: 12, pdf: null, pdfFresh: false, log: '! Undefined control sequence.\nl.70 \\thisisnotacommand\nNo pages of output.\n', errors: [twoWarnings[0], ...boxes, oneError, twoWarnings[1]], durationMs: 4 });
 cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
 cBody = JSON.parse(cRes.content[0].text);
-check(cBody.errors.length === 3 && cBody.errorsTotal === 3, `Overfull/Underfull rows are dropped from errors and errorsTotal (got ${cBody.errors.length}/${cBody.errorsTotal})`);
+check(cBody.errors.length === 3 && cBody.errorsTotal === 1 && cBody.warningsTotal === 2, `Overfull/Underfull rows are dropped; errorsTotal counts errors only, warningsTotal the warnings (got ${cBody.errors.length}/${cBody.errorsTotal}/${cBody.warningsTotal})`);
 check(cBody.errors[0].type === 'error' && cBody.errors[0].line === 70, `the real error is ranked first, ahead of earlier warnings (got ${JSON.stringify(cBody.errors.map((e) => e.type))})`);
 check(cBody.errors[1].line === 2 && cBody.errors[2].line === null, 'warnings keep their log order after the errors');
 
@@ -682,6 +936,21 @@ compilerQueue.push({ ok: true, pdf: '.aldine-out/main.pdf', pdfFresh: true, sync
 cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
 cBody = JSON.parse(cRes.content[0].text);
 check(cBody.ok === true && cBody.pdfStale === false && typeof cBody.pdfUrl === 'string', 'a later success hands out a link again');
+{
+  // On a shared volume the previous run's PDF can pass the compiler's mtime
+  // freshness check; the log is the arbiter — "no output PDF file produced"
+  // means this run wrote nothing and the link is the previous run's.
+  const okT = new URL(cBody.pdfUrl).searchParams.get('t');
+  const okTypesetAt = cBody.typesetAt;
+  compilerQueue.push({ ok: false, exitCode: 12, pdf: '.aldine-out/main.pdf', pdfFresh: true, keepPdf: true, log: '! LaTeX Error: File `nonexistentpkgxyz.sty\' not found.\n==> Fatal error occurred, no output PDF file produced!\n', errors: [{ type: 'error', file: 'main.tex', line: 3, message: "LaTeX Error: File `nonexistentpkgxyz.sty' not found." }], durationMs: 4 });
+  cRes = await client.callTool({ name: 'compile', arguments: { project: p1.id } });
+  cBody = JSON.parse(cRes.content[0].text);
+  check(cBody.ok === false && cBody.pdfStale === true && cBody.pages === null, `a fatal run that produced no PDF is pdfStale even when the compiler called the file fresh (got ${JSON.stringify({ ok: cBody.ok, pdfStale: cBody.pdfStale, pages: cBody.pages })})`);
+  check(typeof cBody.pdfUrl === 'string' && new URL(cBody.pdfUrl).searchParams.get('t') === okT && cBody.typesetAt === okTypesetAt, `the link and typesetAt are the previous run's, not freshly minted (got t=${new URL(cBody.pdfUrl ?? 'http://x').searchParams.get('t')} vs ${okT})`);
+}
+// A branch that does not exist is named as such, not blamed on the compiler.
+res = await call('compile', { project: p1.id, branch: 'nope' });
+check(res.isError === true && /No branch "nope" in this project/.test(res.body) && !/compiler/.test(res.body), `compile on a missing branch names the branch (got ${JSON.stringify(res.body)})`);
 
 // stop-on-first-error: the failed run overwrote the PDF with a truncated one,
 // so the "previous PDF" no longer exists on disk — no link, still flagged.
@@ -722,6 +991,10 @@ sres = await scoped.callTool({ name: 'create_project', arguments: { name: 'Escap
 check(sres.isError === true && /scoped/.test(sres.content[0].text), `a project-scoped token cannot create projects (got ${JSON.stringify(sres.content[0].text)})`);
 const countAfter = (await store.listProjects()).filter((m) => m.name === 'Escape attempt').length;
 check(countAfter === 0, 'the refused create_project created nothing');
+sres = await scoped.callTool({ name: 'trash_project', arguments: { project: p2.id } });
+check(sres.isError === true && /does not have access/.test(sres.content[0].text) && !(await store.readMeta(p2.id)).deletedAt, 'a scoped token cannot trash outside its scope');
+sres = await scoped.callTool({ name: 'trash_project', arguments: {} });
+check(sres.isError === true, 'trash_project never falls back to the scoped project');
 sres = await scoped.callTool({ name: 'list_citations', arguments: {} });
 check(sres.isError !== true && JSON.parse(sres.content[0].text).citations.some((c) => c.key === 'doe2020'), 'read wrappers honor the single-project scope default');
 await scoped.close();
@@ -752,6 +1025,7 @@ const afterEdit = body.contentVersion;
   base_version: mainBase,
 }));
 check(body.error === 'version_conflict' && body.currentVersion > mainBase && body.fileVersion > mainBase, 'edit A after A changed → version_conflict with currentVersion and fileVersion above the base');
+check(/"main\.tex" changed after version/.test(body.reason) && /re-read/.test(body.reason), `the reason names the file and the recovery (got ${JSON.stringify(body.reason)})`);
 {
   const disk = store.readFile(p3.id, 'main', 'main.tex').toString('utf8');
   check(disk.includes('First agent edit.') && !disk.includes('Second agent edit.'), 'the conflicting edit left disk unchanged');
@@ -772,7 +1046,7 @@ check(body.ok === true, 'setup: other.tex changed after its read');
   ],
   message: 'Stale batch',
 }));
-check(body.error === 'version_conflict' && body.file === 'other.tex' && typeof body.currentVersion === 'number' && typeof body.fileVersion === 'number', 'batch_write: a stale entry refuses the whole batch naming the file');
+check(body.error === 'version_conflict' && body.path === 'other.tex' && typeof body.currentVersion === 'number' && typeof body.fileVersion === 'number', 'batch_write: a stale entry refuses the whole batch naming the file as path');
 check(!store.fileExists(p3.id, 'main', 'new.tex'), 'the refused batch created nothing');
 ({ body } = await call('read_file', { project: p3.id, path: 'other.tex' }));
 const otherNow = body.contentVersion;
@@ -830,6 +1104,45 @@ check(body.error === 'version_conflict' && body.fileVersion > featureBase, `a pr
 ({ body } = await call('write_file', { project: p3.id, path: 'main.tex', branch: 'feature', content: 'Based on a fresh read.\n', base_version: body.contentVersion }));
 check(body.ok === true, 'a fresh read of the recreated branch writes');
 
+// A write onto a folder or under a file is refused with the cause; before,
+// fs threw EISDIR/ENOTDIR and the model saw a server fault it could only retry.
+{
+  const p6 = await store.createProject('Targets', undefined, user.id);
+  ({ body } = await call('write_file', { project: p6.id, path: 'sub/inner.tex', content: 'inner\n' }));
+  ({ body } = await call('write_file', { project: p6.id, path: 'dir', content: 'a file named dir\n' }));
+  check(body.ok === true, 'setup: a folder sub/ and a file dir exist');
+  res = await call('write_file', { project: p6.id, path: 'sub', content: 'x\n' });
+  check(res.isError === true && /"sub" is a folder/.test(res.body) && /inside it/.test(res.body), `write_file onto a folder is refused with the cause (got ${JSON.stringify(res.body)})`);
+  res = await call('write_file', { project: p6.id, path: 'dir/inside.tex', content: 'x\n' });
+  check(res.isError === true && /"dir" is a file, so "dir\/inside\.tex" cannot be created/.test(res.body), `write_file under a file is refused with the cause (got ${JSON.stringify(res.body)})`);
+  res = await call('batch_write', { project: p6.id, files: [{ path: 'ok.tex', content: 'fine\n' }, { path: 'sub', content: 'x\n' }], message: 'Mixed' });
+  check(res.isError === true && /"sub" is a folder/.test(res.body), `batch_write with a folder entry is refused naming it (got ${JSON.stringify(res.body)})`);
+  check(!store.fileExists(p6.id, 'main', 'ok.tex'), 'and writes nothing');
+  res = await call('write_file', { project: p6.id, path: 'newdir/', content: 'x\n' });
+  check(res.isError === true && /must name a file, not a folder \("newdir\/"\)/.test(res.body), `a trailing slash is refused instead of creating a file named like the folder (got ${JSON.stringify(res.body)})`);
+  check(!store.fileExists(p6.id, 'main', 'newdir'), 'no file "newdir" was created');
+  res = await call('read_file', { project: p6.id, path: 'sub' });
+  check(res.isError === true && /"sub" is a folder on main/.test(res.body) && /project_structure/.test(res.body), `read_file on a folder says folder (got ${JSON.stringify(res.body)})`);
+  res = await call('edit_file', { project: p6.id, path: 'sub', edits: [{ quote: 'irrelevant quote', replacement: '' }] });
+  check(res.isError === true && /"sub" is a folder on main/.test(res.body), `edit_file on a folder says folder (got ${JSON.stringify(res.body)})`);
+  res = await call('edit_file', { project: p6.id, path: 'sub/inner.tex', edits: [{ quote: 'inner', replacement: 'x' }] });
+  check(res.isError === true && res.body === 'Edit 1: the quote must be at least 8 characters (got 5) — quote more of the surrounding text', `a short quote is refused in sentence case with the length (got ${JSON.stringify(res.body)})`);
+  res = await call('batch_write', { project: p6.id, files: [{ path: 'sub/inner.tex', edits: [{ quote: 'inner', replacement: 'x' }] }], message: 'Short' });
+  check(res.isError === true && /^"sub\/inner\.tex", edit 1: the quote must be at least 8 characters/.test(res.body), `batch_write names the entry and the edit (got ${JSON.stringify(res.body)})`);
+  // The SDK reports a schema rejection as a protocol error or as an isError
+  // result depending on its version; the wording is what is pinned.
+  let schemaText = '';
+  try { const r = await client.callTool({ name: 'edit_file', arguments: { project: p6.id, path: 'sub/inner.tex', edits: [{ quote: 'inner text', replacement: 'x' }], message: 'x'.repeat(215) } }); schemaText = r.isError ? r.content[0].text : `unexpected success ${JSON.stringify(r)}`; } catch (err) { schemaText = err.message; }
+  check(/Message is at most 200 characters/.test(schemaText) && !/Too big/.test(schemaText), `an over-long message is refused in product wording that states the limit (got ${JSON.stringify(schemaText)})`);
+  const listedEdit = (await client.listTools()).tools.find((t) => t.name === 'edit_file');
+  check(/at most 200 characters/.test(listedEdit.inputSchema.properties.message.description), 'the message parameter states its limit');
+  check(/hidden folders/.test(listedEdit.inputSchema.properties.path.description) && /no "\.\."/.test(listedEdit.inputSchema.properties.path.description), 'the path parameter states the path rules');
+  // commit on a project with no Claude commits: the note must not claim edits landed
+  const p7 = await store.createProject('Untouched', undefined, user.id);
+  ({ body } = await call('commit', { project: p7.id, message: 'Nothing here' }));
+  check(body.committed === false && body.recentClaudeCommits.length === 0 && /no commits by Claude yet/.test(body.note) && !/your edits already landed/.test(body.note), `with no Claude commits the note says so (got ${JSON.stringify(body.note)})`);
+}
+
 // Path spelling: "./main.tex" is main.tex. The open-doc lookup, the
 // attribution ledger, the git pathspec and the version log all key on the
 // spelling the tool hands them, so a raw "./" would splice the disk copy
@@ -843,7 +1156,7 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
   ({ body } = await call('read_file', { project: p4.id, path: './main.tex' }));
   check(body.content === 'Hello world line one.\n' && body.fileVersion === (await call('read_file', { project: p4.id, path: 'main.tex' })).body.fileVersion, 'read_file accepts ./main.tex as main.tex');
   res = await call('read_file', { project: p4.id, path: '../main.tex' });
-  check(res.isError === true && /Invalid file path/.test(res.body), 'a path with .. is still refused');
+  check(res.isError === true && /cannot contain "\.\."/.test(res.body), `a path with .. is still refused, naming the cause (got ${JSON.stringify(res.body)})`);
   // a person has main.tex open in the editor
   const conn = await collab.hocuspocus.openDirectConnection(collab.docName(p4.id, 'main', 'main.tex'), {});
   check(collab.openDocContent(p4.id, 'main', 'main.tex') === 'Hello world line one.\n', 'setup: the doc is open under the canonical name');

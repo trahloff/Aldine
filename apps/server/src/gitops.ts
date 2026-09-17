@@ -1,5 +1,8 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { projectsDir } from './config.js';
 import { repoDir, branchDir, git } from './store.js';
 import { BRANCH_RE } from './util.js';
@@ -168,9 +171,11 @@ function byIntent(paths: Map<string, string>): Array<{ message: string; paths: s
  * prefixes still match. Argv, not GIT_LITERAL_PATHSPECS in the child env:
  * simple-git refuses a supplied env that carries the operator's GIT_EDITOR.
  */
+const authorEmail = (author: string) => `${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local`;
+
 async function commitArgv(g: ReturnType<typeof git>, message: string, author: string | undefined, paths?: string[]): Promise<string> {
   const args = ['--literal-pathspecs', 'commit', '-m', message];
-  if (author) args.push(`--author=${author} <${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local>`);
+  if (author) args.push(`--author=${author} <${authorEmail(author)}>`);
   if (paths?.length) args.push('--', ...paths);
   await g.raw(args);
   return (await g.revparse(['HEAD'])).trim();
@@ -234,6 +239,91 @@ export async function commitPathsHeld(id: string, branch: string, paths: string[
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
 export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
+}
+
+/** One git invocation with stdin and extra env — the plumbing below needs
+ *  both, which simple-git's raw() does not offer. */
+function gitPlumb(dir: string, args: string[], opts: { input?: string | Buffer; env?: Record<string, string> } = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile('git', args, { cwd: dir, env: { ...process.env, ...opts.env }, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`git ${args[0]} failed: ${String(stderr || err.message).trim()}`));
+      else resolve(stdout);
+    });
+    child.stdin?.end(opts.input ?? '');
+  });
+}
+
+/** `content` as a Buffer keeps bytes that are not UTF-8 (a Latin-1 .tex, an image) exact. */
+export interface FileSnapshot { path: string; content: string | Buffer }
+
+/**
+ * Commit exactly `content` for each path — the bytes the caller holds, not
+ * whatever the working tree holds by the time git reads it. Built with
+ * plumbing (hash-object, a private index, write-tree, commit-tree) so a
+ * store of a collaborator's keystrokes, a REST write or a flush landing
+ * during the commit can never enter it: `git commit -- path` always reads
+ * the working tree, and that window is where a person's typing used to end
+ * up under Claude's name. Paths whose blob equals HEAD's are dropped; with
+ * none left nothing is committed. The working tree is not touched — later
+ * typing simply shows as the uncommitted change it is — and the real index
+ * is pointed at the committed blobs so status does not read them as staged
+ * reversals. An unborn branch (no HEAD) falls back to a working-tree commit.
+ */
+export async function commitSnapshotHeld(id: string, branch: string, files: FileSnapshot[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  if (!files.length) return { committed: false, files: [] };
+  const dir = await ensureWorktree(id, branch);
+  const head = await gitPlumb(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']).then((h) => h.trim(), () => '');
+  if (!head) {
+    for (const f of files) { const abs = path.join(dir, f.path); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, f.content); }
+    return commitPathsHeld(id, branch, files.map((f) => f.path), message, author);
+  }
+  // Mode and blob per path as HEAD has them: the mode is kept (a 100755 must
+  // not silently become 100644), the blob decides whether anything changed.
+  const inHead = new Map<string, { mode: string; blob: string }>();
+  const listed = await gitPlumb(dir, ['--literal-pathspecs', 'ls-tree', '-z', head, '--', ...files.map((f) => f.path)]);
+  for (const rec of listed.split('\0')) {
+    const m = /^(\d{6}) blob ([0-9a-f]{40})\t(.*)$/s.exec(rec);
+    if (m) inHead.set(m[3], { mode: m[1], blob: m[2] });
+  }
+  const staged: Array<{ path: string; mode: string; blob: string }> = [];
+  for (const f of files) {
+    const blob = (await gitPlumb(dir, ['hash-object', '-w', '--stdin', '--path', f.path], { input: f.content })).trim();
+    const prev = inHead.get(f.path);
+    if (prev?.blob === blob) continue;
+    staged.push({ path: f.path, mode: prev?.mode ?? '100644', blob });
+  }
+  if (!staged.length) return { committed: false, files: [] };
+  const index = path.join(os.tmpdir(), `aldine-index-${crypto.randomBytes(8).toString('hex')}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    await gitPlumb(dir, ['read-tree', head], { env });
+    for (const s of staged) await gitPlumb(dir, ['update-index', '--add', '--cacheinfo', `${s.mode},${s.blob},${s.path}`], { env });
+    const tree = (await gitPlumb(dir, ['write-tree'], { env })).trim();
+    const ident: Record<string, string> = author ? { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: authorEmail(author) } : {};
+    const hash = (await gitPlumb(dir, ['commit-tree', tree, '-p', head, '-m', message], { env: ident })).trim();
+    // The worktree's HEAD is the branch ref; the old value guards against a
+    // ref that moved underneath (impossible under the repo lock, fatal if not).
+    await gitPlumb(dir, ['update-ref', 'HEAD', hash, head]);
+    for (const s of staged) await gitPlumb(dir, ['update-index', '--add', '--cacheinfo', `${s.mode},${s.blob},${s.path}`]);
+    return { committed: true, hash, files: staged.map((s) => s.path) };
+  } finally {
+    fs.rmSync(index, { force: true });
+  }
+}
+
+/**
+ * The commit pair every agent write makes, from the snapshots the tool held
+ * while it applied the edit: first whatever a person had in those files that
+ * HEAD does not (typing that landed after the working-tree checkpoint, an
+ * out-of-band write), as an anonymous autosave; then the agent's result under
+ * Claude and the intent. By construction the Claude commit's diff is the
+ * agent's delta and nothing else, whatever lands on disk meanwhile. `before`
+ * null = the file did not exist. Callers hold the repo lock.
+ */
+export async function commitAgentWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  const typed = files.filter((f) => f.before !== null).map((f) => ({ path: f.path, content: f.before as string | Buffer }));
+  if (typed.length) await commitSnapshotHeld(id, branch, typed, 'aldine: autosave');
+  return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, AGENT_COMMIT_AUTHOR);
 }
 
 /**
@@ -489,8 +579,14 @@ export async function revertCommits(id: string, branch: string, hashes: string[]
     try {
       await g.raw(['revert', '--no-commit', ...hashes]);
     } catch {
+      // REVERT_HEAD is the commit the sequencer stopped on: the one a later
+      // edit overlaps. Read it before the abort clears it.
+      const at = await g.raw(['rev-parse', '-q', '--verify', 'REVERT_HEAD']).then((s) => s.trim(), () => '');
+      const title = at ? await g.raw(['show', '-s', '--format=%s', at]).then((s) => s.trim(), () => '') : '';
       await g.raw(['revert', '--abort']).catch(() => {});
-      throw new Error('Could not revert cleanly — later edits overlap these changes');
+      throw new Error(at
+        ? `Could not revert "${title}" (${at.slice(0, 7)}) — later edits overlap it. Undo them by hand (History shows both diffs), then revert again`
+        : 'Could not revert cleanly — later edits overlap these changes. Undo them by hand (History shows both diffs), then revert again');
     }
     const status = await g.status();
     if (status.staged.length === 0 && status.files.length === 0) return { ok: false };

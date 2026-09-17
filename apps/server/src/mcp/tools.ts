@@ -11,16 +11,18 @@ import { compileProject, outputOnDisk, type CompileError } from '../compile.js';
 import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
-  scheduleCommit, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
+  commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
-import { isTextFile, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
-import { isListed } from '../authz.js';
+import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
+import { isListed, isOwner } from '../authz.js';
 import { addReference } from '../references.js';
 import { bibIndex, labelIndex, wordCount } from '../indexes.js';
+import { adoptRootIfUnset } from '../root.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from '../templates.js';
+import { trashProject, restorableUntil, TRASH_DAYS } from '../trash.js';
 import {
-  McpDenied, resolveProject, assertWritableProject, visiblePath, diskSpelling, type McpIdentity,
+  McpDenied, projectNotFound, resolveProject, assertWritableProject, assertFileTarget, isDirectoryPath, visiblePath, diskSpelling, type McpIdentity,
 } from './guards.js';
 
 /**
@@ -32,9 +34,10 @@ import {
  *
  * Surface is the 8 tools of spec 1.3 (names are API), the 5 wrappers of
  * spec 2.1 (references_add, list_citations, list_labels, wordcount,
- * create_project), get_pdf_url, plus the ping reachability
- * check. Deliberately absent
- * (threat model rank #1 — the tools must not exist server-side): delete/purge,
+ * create_project), get_pdf_url, trash_project (the one exception to the
+ * no-destructive-tools rule: a soft trash of projects the agent itself
+ * created, owner only), plus the ping reachability check. Deliberately absent
+ * (threat model rank #1 — the tools must not exist server-side): purge,
  * share management, GitHub push, token management, branch create/merge.
  *
  * Descriptions are the model's only API docs and cost context on every call:
@@ -47,10 +50,14 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface EditSpec { quote: string; replacement: string; occurrence?: number }
-export interface AnchorCandidate { line: number; text: string }
+/** `occurrence` is set on the candidates of an ambiguous quote: the value that picks that line. */
+export interface AnchorCandidate { line: number; text: string; occurrence?: number }
+/** stale_anchor: the quote is not in the file (re-read); ambiguous_anchor: it
+ *  is, more than once, or `occurrence` is out of range (resend with the right
+ *  occurrence — no re-read needed). */
 export type ResolveEditsResult =
   | { ok: true; ranges: Array<{ from: number; to: number }> }
-  | { ok: false; error: 'invalid_quote' | 'stale_anchor'; editIndex: number; reason: string; candidates: AnchorCandidate[] };
+  | { ok: false; error: 'invalid_quote' | 'stale_anchor' | 'ambiguous_anchor'; editIndex: number; reason: string; candidates: AnchorCandidate[] };
 
 /** Shorter quotes ("}", "\\item") match all over a LaTeX file — too dangerous to anchor on. */
 export const MIN_QUOTE_LEN = 8;
@@ -71,9 +78,32 @@ function bigrams(s: string): Set<string> {
   return out;
 }
 
-/** ≤`max` lines most similar to the missing quote (bigram Dice score against
- *  the quote's first non-empty line) — the model re-anchors from these
- *  instead of re-reading the whole file blind. */
+function dice(a: Set<string>, b: Set<string>): number {
+  let inter = 0;
+  for (const g of a) if (b.has(g)) inter++;
+  return (2 * inter) / (a.size + b.size);
+}
+
+/** Candidate texts are capped at this many characters, centred on the match. */
+const CANDIDATE_CHARS = 200;
+
+/** Up to CANDIDATE_CHARS of `line` around [at, at+len): a paragraph-per-line
+ *  source puts the quote past column 200, where a line-start slice never
+ *  reaches it. Cuts are marked so the model does not anchor on a torso. */
+function excerpt(line: string, at: number, len: number): string {
+  if (line.length <= CANDIDATE_CHARS) return line.trim();
+  const pad = Math.max(0, Math.floor((CANDIDATE_CHARS - len) / 2));
+  let start = Math.max(0, at - pad);
+  const end = Math.min(line.length, start + CANDIDATE_CHARS);
+  start = Math.max(0, end - CANDIDATE_CHARS);
+  return (start > 0 ? '…' : '') + line.slice(start, end).trim() + (end < line.length ? '…' : '');
+}
+
+/** ≤`max` lines most similar to the missing quote — the model re-anchors from
+ *  these instead of re-reading the whole file blind. Scored by bigram Dice of
+ *  the quote's first non-empty line against the best quote-sized window of
+ *  each line (a whole-line score buries a near-match inside a long paragraph
+ *  under the paragraph's other bigrams), and the text is that window. */
 export function nearestCandidates(content: string, quote: string, max = 3): AnchorCandidate[] {
   const probe = (quote.split('\n').find((l) => l.trim()) || quote).trim();
   const probeGrams = bigrams(probe);
@@ -81,28 +111,36 @@ export function nearestCandidates(content: string, quote: string, max = 3): Anch
   const scored: Array<AnchorCandidate & { score: number }> = [];
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    const text = lines[i].trim();
-    if (!text) continue;
-    const g = bigrams(text);
-    let inter = 0;
-    for (const b of g) if (probeGrams.has(b)) inter++;
-    const score = (2 * inter) / (g.size + probeGrams.size);
-    if (score > 0.2) scored.push({ line: i + 1, text: text.slice(0, 200), score });
+    const line = lines[i];
+    if (!line.trim()) continue;
+    let best = { score: dice(bigrams(line.trim()), probeGrams), at: 0 };
+    if (line.length > probe.length) {
+      const step = Math.max(1, Math.floor(probe.length / 4));
+      for (let at = 0; at <= line.length - probe.length; at += step) {
+        const s = dice(bigrams(line.slice(at, at + probe.length)), probeGrams);
+        if (s > best.score) best = { score: s, at };
+      }
+    }
+    if (best.score > 0.2) scored.push({ line: i + 1, text: excerpt(line, best.at, probe.length), score: best.score });
   }
   scored.sort((a, b) => b.score - a.score || a.line - b.line);
   return scored.slice(0, max).map(({ line, text }) => ({ line, text }));
 }
 
-function candidatesAt(content: string, offsets: number[], max = 3): AnchorCandidate[] {
-  const lines = content.split('\n');
+/** The lines of the first `max` hits, each excerpt centred on its hit and
+ *  carrying the `occurrence` that selects it. */
+function candidatesAt(content: string, hits: number[], quoteLen: number, max = 3): AnchorCandidate[] {
   const out: AnchorCandidate[] = [];
   const seen = new Set<number>();
-  for (const off of offsets) {
+  for (let n = 0; n < hits.length && out.length < max; n++) {
+    const off = hits[n];
     const line = lineOfOffset(content, off);
     if (seen.has(line)) continue;
     seen.add(line);
-    out.push({ line, text: (lines[line - 1] || '').trim().slice(0, 200) });
-    if (out.length >= max) break;
+    const lineStart = content.lastIndexOf('\n', off - 1) + 1;
+    const lineEnd = content.indexOf('\n', off);
+    const text = content.slice(lineStart, lineEnd === -1 ? content.length : lineEnd);
+    out.push({ line, text: excerpt(text, off - lineStart, quoteLen), occurrence: n + 1 });
   }
   return out;
 }
@@ -119,7 +157,7 @@ export function resolveEdits(content: string, edits: EditSpec[]): ResolveEditsRe
   for (let i = 0; i < edits.length; i++) {
     const { quote, occurrence } = edits[i];
     if (typeof quote !== 'string' || quote.length < MIN_QUOTE_LEN) {
-      return { ok: false, error: 'invalid_quote', editIndex: i, reason: `quote must be at least ${MIN_QUOTE_LEN} characters`, candidates: [] };
+      return { ok: false, error: 'invalid_quote', editIndex: i, reason: `the quote must be at least ${MIN_QUOTE_LEN} characters (got ${typeof quote === 'string' ? quote.length : 0}) — quote more of the surrounding text`, candidates: [] };
     }
     const hits: number[] = [];
     let idx = content.indexOf(quote);
@@ -128,16 +166,16 @@ export function resolveEdits(content: string, edits: EditSpec[]): ResolveEditsRe
       idx = content.indexOf(quote, idx + 1);
     }
     if (hits.length === 0) {
-      return { ok: false, error: 'stale_anchor', editIndex: i, reason: 'quote not found', candidates: nearestCandidates(content, quote) };
+      return { ok: false, error: 'stale_anchor', editIndex: i, reason: 'the quote is not in the file — re-read it and anchor on the current text (candidates are the nearest lines)', candidates: nearestCandidates(content, quote) };
     }
     let from: number;
     if (occurrence !== undefined) {
       if (!Number.isInteger(occurrence) || occurrence < 1 || occurrence > hits.length) {
-        return { ok: false, error: 'stale_anchor', editIndex: i, reason: `occurrence ${occurrence} is out of range — the quote appears ${hits.length} time(s)`, candidates: candidatesAt(content, hits) };
+        return { ok: false, error: 'ambiguous_anchor', editIndex: i, reason: `occurrence ${occurrence} is out of range — the quote appears ${hits.length} time(s); pick one of the candidates' occurrence values`, candidates: candidatesAt(content, hits, quote.length) };
       }
       from = hits[occurrence - 1];
     } else if (hits.length > 1) {
-      return { ok: false, error: 'stale_anchor', editIndex: i, reason: `quote is ambiguous — ${hits.length} occurrences; pick one with occurrence`, candidates: candidatesAt(content, hits) };
+      return { ok: false, error: 'ambiguous_anchor', editIndex: i, reason: `the quote appears ${hits.length} times — resend with the occurrence of the candidate you mean (no re-read needed)`, candidates: candidatesAt(content, hits, quote.length) };
     } else {
       from = hits[0];
     }
@@ -146,7 +184,7 @@ export function resolveEdits(content: string, edits: EditSpec[]): ResolveEditsRe
   const order = ranges.map((r, i) => ({ ...r, i })).sort((a, b) => a.from - b.from);
   for (let k = 1; k < order.length; k++) {
     if (order[k].from < order[k - 1].to) {
-      return { ok: false, error: 'stale_anchor', editIndex: order[k].i, reason: `edit overlaps edit ${order[k - 1].i}`, candidates: [] };
+      return { ok: false, error: 'stale_anchor', editIndex: order[k].i, reason: `edit ${order[k].i + 1} overlaps edit ${order[k - 1].i + 1} — merge them into one edit`, candidates: [] };
     }
   }
   return { ok: true, ranges };
@@ -160,18 +198,43 @@ export function spliceEdits(content: string, edits: EditSpec[], ranges: Array<{ 
   return out;
 }
 
-/** ≤4 KB tail of the latexmk log — the full log is a ~200 KB context bomb the
- *  spec forbids returning. Byte-capped (not chars) and stripped of a leading
- *  broken multi-byte sequence from the cut. */
+/** ≤4 KB of the latexmk log — the full log is a ~200 KB context bomb the
+ *  spec forbids returning. The window starts a few lines before the first
+ *  error (the "l.<n>" line and the token it names sit right after it) and
+ *  falls back to the literal tail when there is no error or it is already
+ *  in the tail; a long run of warnings after the error must not push it
+ *  out. Byte-capped (not chars) and stripped of a broken multi-byte
+ *  sequence at either cut. */
 export const LOG_TAIL_BYTES = 4096;
+const LOG_TAIL_LEAD_BYTES = 512;
 export function logTail(log: string): string {
   const buf = Buffer.from(log, 'utf8');
   if (buf.length <= LOG_TAIL_BYTES) return log;
-  return buf.subarray(buf.length - LOG_TAIL_BYTES).toString('utf8').replace(/^�+/, '');
+  const first = log.search(/^(?:(?:\.\/)?[^:\n\s][^:\n]*\.\w+:\d+: |! )/m);
+  const firstAt = first >= 0 ? Buffer.byteLength(log.slice(0, first), 'utf8') : -1;
+  let start = buf.length - LOG_TAIL_BYTES;
+  if (firstAt >= 0 && firstAt < start) {
+    // back up to a line start so the window opens on a whole line
+    start = Math.max(0, buf.lastIndexOf(0x0a, Math.max(0, firstAt - LOG_TAIL_LEAD_BYTES)) + 1);
+  }
+  return buf.subarray(start, start + LOG_TAIL_BYTES).toString('utf8').replace(/^�+|�+$/g, '');
 }
 
 /** ~100 KB read cap; larger files are read via from_line/to_line windows. */
 const MAX_READ_BYTES = 100_000;
+
+/** The file's bytes on disk, or null when it does not exist (a write creating it).
+ *  Bytes, not text: a UTF-8 decode of a Latin-1 or binary file would put a
+ *  U+FFFD-riddled copy into the pre-write snapshot, and reverting the Claude
+ *  commit would restore that instead of the original. */
+function diskContent(projectId: string, branch: string, rel: string): Buffer | null {
+  try { return store.readFile(projectId, branch, rel); } catch { return null; }
+}
+
+/** The write tools' commit fields: `unchanged` says the write left the file as HEAD had it, as opposed to a refused commit. */
+function commitFields(commit: { hash: string | null; unchanged: boolean }, head: string): { commit: string | null; unchanged?: true } {
+  return { commit: commit.hash ? head : null, ...(commit.unchanged ? { unchanged: true as const } : {}) };
+}
 
 function snippetAround(content: string, offset: number): string {
   const lines = content.split('\n');
@@ -222,16 +285,46 @@ export function reportableErrors(errors: CompileError[]): CompileError[] {
   return errors.filter((e) => e.type !== 'typesetting').sort((a, b) => rank(a) - rank(b));
 }
 function capErrors(errors: CompileError[]): CompileError[] {
-  return errors.slice(0, MAX_RESULT_ERRORS).map((e) =>
-    e.message.length > MAX_ERROR_MESSAGE ? { ...e, message: e.message.slice(0, MAX_ERROR_MESSAGE) + '…' } : e);
+  const cap = (s: string) => (s.length > MAX_ERROR_MESSAGE ? s.slice(0, MAX_ERROR_MESSAGE) + '…' : s);
+  return errors.slice(0, MAX_RESULT_ERRORS).map((e) => ({ ...e, message: cap(e.message), ...(e.context ? { context: cap(e.context) } : {}) }));
 }
 
-/** Every row names a file: the log parser leaves it empty when the engine
- *  failed before opening any input (a missing package at line 5 of the root
- *  file), and the "quote the failing file:line" etiquette and the viewer's
- *  deep links both need one. The engine was in the root file then. */
+/** Rows from the bibliography tool, which the log parser prefixes; they are
+ *  located in a .bib (or nowhere), never in the file the engine was reading. */
+const BIB_ROW = /^(Biber|BibTeX): /;
+
+/** Every engine row names a file: the log parser leaves it empty when the
+ *  engine failed before opening any input (a missing package at line 5 of
+ *  the root file), and the "quote the failing file:line" etiquette and the
+ *  viewer's deep links both need one. The engine was in the root file then.
+ *  A bibliography row keeps the .bib and line biber reported, or no file at
+ *  all — stamping the root file on it sent the model to main.tex for a
+ *  problem in references.bib. */
 export function withRootFile(errors: CompileError[], rootFile: string): CompileError[] {
-  return errors.map((e) => (e.file ? e : { ...e, file: rootFile }));
+  return errors.map((e) => (e.file || BIB_ROW.test(e.message) ? e : { ...e, file: rootFile }));
+}
+
+/** The tool that raised a row, taken off the front of the message: "LaTeX
+ *  Warning: …" → latex, "Package hyperref Warning: …" → hyperref, "Class
+ *  article Warning: …" → article, "Biber: …" → biber. Errors keep their
+ *  message as the engine phrased it (the hints and the editor match on it). */
+export function withSource(errors: CompileError[]): CompileError[] {
+  return errors.map((e) => {
+    const bib = e.message.match(BIB_ROW);
+    if (bib) return { ...e, source: bib[1].toLowerCase(), message: e.message.slice(bib[0].length) };
+    if (e.type !== 'warning') return e;
+    const m = e.message.match(/^(?:(LaTeX)|(?:Package|Class) (\S+)) Warning:\s*/);
+    return m ? { ...e, source: (m[1] || m[2]).toLowerCase(), message: e.message.slice(m[0].length) } : e;
+  });
+}
+
+/** pdflatex cannot typeset a character inputenc has no macro for, and the
+ *  row points at the .tex line where the text was expanded — for a .bib
+ *  entry that is \printbibliography or \end{document}, not the entry. */
+export function unicodeHint(errors: CompileError[]): string | null {
+  const m = errors.map((e) => /Unicode character (\S+) \((U\+[0-9A-F]+)\)/.exec(e.message)).find(Boolean);
+  if (!m) return null;
+  return `The character ${m[1]} (${m[2]}) cannot be typeset with pdflatex. If it is in a .bib entry the error names the .tex line that prints the bibliography, not the entry — search the .bib files for it and remove or replace it there; otherwise replace it in the .tex, or ask the user to switch the project to xelatex or lualatex.`;
 }
 
 /** A `.sty` the engine could not find is a compiler install gap, not a
@@ -290,20 +383,17 @@ async function echo(projectId: string, branch: string): Promise<{ branch: string
   return { branch, head: await gitops.branchShortHead(projectId, branch) };
 }
 
-/** Guard failures become user-fixable prose (UX.md); anything else stays generic
- *  so internals (paths, stack frames) never reach the model. */
-function toolError(err: unknown): ToolResult {
-  if (err instanceof McpDenied) return fail(err.message);
-  const msg = err instanceof Error ? err.message : String(err);
-  if (/bad branch name|not a valid ref|invalid reference|worktree/i.test(msg)) return fail('Branch not found');
-  if (/project not found/i.test(msg)) return fail('Project not found');
-  return fail('The request failed on the Aldine server');
-}
+/** A git error text that means the branch does not exist (worktree add on a missing ref). */
+const BRANCH_MISSING_RE = /bad branch name|not a valid ref|invalid reference|worktree/i;
 
 const projectParam = z.string().optional().describe('Project id. Optional when the access token is scoped to exactly one project.');
-const branchParam = z.string().optional().describe("Branch name (defaults to 'main'). Every result echoes {branch, head} — pass the branch explicitly whenever you are not on main.");
-const INTENT_HELP = 'Commit message stating the intent of this change, imperative ("Tighten the abstract"). It titles the commit in the History panel; several edits with the same message land as one commit.';
-const BASE_VERSION_HELP = 'contentVersion (or fileVersion) from your read of this file, or contentVersion from project_structure for a file you are creating. Refused with version_conflict only when this file changed after that read; changes to other files on the branch do not count.';
+const branchParam = z.string().optional().describe("Branch name (defaults to 'main'). Every result, error results included, echoes {branch, head} — head is the branch's current commit (after a write, the commit that write made). Pass the branch explicitly whenever you are not on main.");
+const PATH_HELP = 'File path relative to the project root, e.g. "main.tex" or "sections/intro.tex" — no leading "/", no "..", and hidden folders (.git, .aldine-out) are off limits.';
+const INTENT_HELP = `Commit message stating the intent of this change, imperative ("Tighten the abstract"), at most ${COMMIT_MESSAGE_MAX} characters. It titles the commit in the History panel; every call is one commit.`;
+const messageParam = (what: string) => z.string()
+  .min(1, `Message cannot be empty — state ${what} in one line`)
+  .max(COMMIT_MESSAGE_MAX, `Message is at most ${COMMIT_MESSAGE_MAX} characters — state ${what} in one line`);
+const BASE_VERSION_HELP = `contentVersion (or fileVersion) from your read of this file, or contentVersion from project_structure for a file you are creating. Refused with {error:"version_conflict", reason, currentVersion, fileVersion} when this file changed after that read (changes to other files on the branch do not count), or when base_version is newer than the branch's contentVersion (a server restart or another node issued it) — either way re-read the file and use the contentVersion that read returns.`;
 const editShape = {
   quote: z.string().describe('Exact text to replace, copied verbatim from the file. At least 8 characters; must match exactly one place, or use occurrence.'),
   replacement: z.string().describe('Replacement text (empty string deletes the quote).'),
@@ -337,6 +427,23 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     return { contents: [{ uri: uri.href, mimeType: MCP_APP_MIME, text: html, ...(resourceMeta ? { _meta: resourceMeta } : {}) }] };
   });
   const uiMeta = loadViewerHtml() !== null && csp ? { _meta: { ui: { resourceUri: PDF_VIEWER_URI } } } : {};
+
+  /** Guard failures become user-fixable prose (UX.md); a missing branch or
+   *  project names what was asked and what exists; anything else stays
+   *  generic so internals (paths, stack frames) never reach the model. */
+  const toolError = async (err: unknown, ctx: { project?: string; branch?: string } = {}): Promise<ToolResult> => {
+    if (err instanceof McpDenied) return fail(err.message);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (BRANCH_MISSING_RE.test(msg)) {
+      const id = ctx.project ?? (identity.tokenScope?.projectIds?.length === 1 ? identity.tokenScope.projectIds[0] : undefined);
+      let branches: string[] = [];
+      if (id) { try { branches = (await gitops.listBranches(id)).map((b) => b.name); } catch { /* the message still names the branch */ } }
+      return fail(`No branch "${ctx.branch ?? ''}" in this project${branches.length ? ` — branches: ${branches.join(', ')}` : ''}`);
+    }
+    if (/project not found/i.test(msg)) return fail(projectNotFound(ctx.project ?? ''));
+    console.warn(`[aldine] mcp tool failed: ${msg}`);
+    return fail('The request failed on the Aldine server');
+  };
 
   /** Result keys the viewer hydrates from — shared by compile and get_pdf_url. */
   const pdfResult = async (meta: store.ProjectMeta, branch: string, pdfRel: string | null, opts: { pdfStale: boolean; pages: number | null; t?: number; writtenAt?: number; truncated?: boolean }) => {
@@ -373,18 +480,18 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async () => ok({ ok: true, server: 'aldine', user: identity.user?.email ?? null }));
 
   server.registerTool('list_projects', {
-    description: 'List the LaTeX projects this token can reach: id, name, branches, rootFile, engine. Call it when you do not know the project id. A token scoped to one project makes the project argument optional everywhere.',
+    description: 'List the LaTeX projects this token can reach: id, name, branches, rootFile, engine, agentCreated (true for projects made with create_project — the only ones trash_project accepts). Call it when you do not know the project id. A token scoped to one project makes the project argument optional everywhere.',
     annotations: { readOnlyHint: true },
   }, async () => {
     try {
       const scoped = identity.tokenScope?.projectIds;
       const metas = (await store.listProjects()).filter((m) =>
         !m.deletedAt && (!scoped || scoped.includes(m.id)) && isListed(m, identity.user));
-      const out = [] as Array<{ id: string; name: string; branches: string[]; rootFile: string; engine: string }>;
+      const out = [] as Array<{ id: string; name: string; branches: string[]; rootFile: string; engine: string; agentCreated: boolean }>;
       for (const m of metas) {
         let branches = ['main'];
         try { branches = (await gitops.listBranches(m.id)).map((b) => b.name); } catch { /* fresh repo — main only */ }
-        out.push({ id: m.id, name: m.name, branches, rootFile: m.rootFile, engine: m.engine });
+        out.push({ id: m.id, name: m.name, branches, rootFile: m.rootFile, engine: m.engine, agentCreated: m.createdVia === 'agent' });
       }
       return ok(out);
     } catch (err) { return toolError(err); }
@@ -399,18 +506,18 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       const meta = await resolveProject(identity, project);
       await gitops.ensureWorktree(meta.id, branch);
       flushBranchDocs(meta.id, branch);
-      const files = store.listFiles(meta.id, branch).map((f) => ({ path: f.path, type: f.type, size: f.size }));
+      const files = store.listFiles(meta.id, branch).map((f) => ({ path: f.path, type: f.type, size: f.size, ...(f.type === 'file' ? { binary: !!f.binary } : {}) }));
       return ok({ files, rootFile: meta.rootFile, engine: meta.engine, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('read_file', {
-    description: 'Read a text file as the editor shows it right now (open documents are flushed first). Reads cap at ~100 KB — window larger files with from_line/to_line (1-based, inclusive). Read before you edit: edit_file quotes must match this content verbatim. The result carries contentVersion (the branch version — pass it as base_version when you write this file) and fileVersion (the version at which this file itself last changed).',
+    description: 'Read a text file as the editor shows it right now (open documents are flushed first). Reads cap at ~100 KB — window larger files with from_line/to_line (1-based, inclusive; the result echoes the window it served, to_line clamped to the last line). Read before you edit: edit_file quotes must match this content verbatim. The result carries contentVersion (the branch version — pass it as base_version when you write this file) and fileVersion (the version at which this file itself last changed). Text is decided by content, not extension: a file with binary bytes is refused.',
     annotations: { readOnlyHint: true },
     inputSchema: {
       project: projectParam,
       branch: branchParam,
-      path: z.string().describe('File path relative to the project root, e.g. "main.tex".'),
+      path: z.string().describe(PATH_HELP),
       from_line: z.number().int().min(1).optional(),
       to_line: z.number().int().min(1).optional(),
     },
@@ -420,32 +527,39 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath));
       flushBranchDocs(meta.id, branch);
+      if (isDirectoryPath(meta.id, branch, rel)) return fail(`"${rel}" is a folder on ${branch} — read_file serves files; project_structure lists what is inside it`);
       let buf: Buffer;
       try { buf = store.readFile(meta.id, branch, rel); } catch { return fail(`No file named "${rel}" on ${branch}`); }
-      if (!isTextFile(rel)) return fail(`"${rel}" is a binary file — read_file only serves text`);
+      if (looksBinary(buf)) return fail(`"${rel}" is a binary file (not UTF-8 text) — read_file serves text only`);
       const text = buf.toString('utf8');
       const lines = text.split('\n');
       const totalLines = lines.length;
       let content = text;
+      let window: { from_line: number; to_line: number } | undefined;
       if (from_line !== undefined || to_line !== undefined) {
-        content = lines.slice(Math.max(1, from_line ?? 1) - 1, Math.min(totalLines, to_line ?? totalLines)).join('\n');
+        const from = from_line ?? 1;
+        const to = Math.min(totalLines, to_line ?? totalLines);
+        if (from > totalLines) return fail(`from_line ${from} is past the end — "${rel}" has ${totalLines} lines`);
+        if (from > to) return fail(`from_line ${from} is after to_line ${to} — the window must run forwards`);
+        content = lines.slice(from - 1, to).join('\n');
+        window = { from_line: from, to_line: to };
       }
       if (Buffer.byteLength(content, 'utf8') > MAX_READ_BYTES) {
         return fail(`That read is ${Buffer.byteLength(content, 'utf8')} bytes — cap is ~100 KB. The file has ${totalLines} lines; read it in windows with from_line/to_line.`);
       }
-      return ok({ content, totalLines, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+      return ok({ content, totalLines, ...window, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), ...(await echo(meta.id, branch)) });
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('edit_file', {
-    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). On {error:"stale_anchor"} nothing was applied: re-read the file, re-anchor from the candidates, retry — at most 2 retries, then tell the user what you tried and ask. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>".',
+    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
-      path: z.string().describe('File path relative to the project root.'),
+      path: z.string().describe(PATH_HELP),
       edits: z.array(z.object(editShape)).min(1).max(50),
       base_version: z.number().int().optional().describe(BASE_VERSION_HELP),
-      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).optional().describe(INTENT_HELP),
+      message: messageParam('the intent of the change').optional().describe(INTENT_HELP),
     },
   }, async ({ project, branch = 'main', path: rawPath, edits, base_version, message }) => {
     try {
@@ -453,9 +567,10 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       assertWritableProject(meta.id);
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath));
-      // One lock span from the checkpoint to the attribution: an autosave that
+      if (isDirectoryPath(meta.id, branch, rel)) return fail(`"${rel}" is a folder on ${branch} — edit_file changes a file; name one inside it`);
+      // One lock span from the checkpoint to the commit: an autosave that
       // fires meanwhile queues behind it and finds the write already
-      // attributed; one that was in flight before it has finished before the
+      // committed; one that was in flight before it has finished before the
       // checkpoint runs. Outside the lock, its `git add -A` could stage the
       // agent's delta as `aldine: autosave` (no Claude commit, no review).
       return await gitops.withRepoLock(meta.id, async () => {
@@ -466,22 +581,28 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         await gitops.checkpointPathsHeld(meta.id, branch, [rel]);
         flushBranchDocs(meta.id, branch); // keystrokes that landed during the checkpoint
         // --- synchronous to the end of the apply: resolution and application see
-        // one content snapshot, atomic against human keystrokes (no await), and
-        // the lock is held until scheduleCommit registers the attribution.
+        // one content snapshot, atomic against human keystrokes (no await); the
+        // same snapshots are what the commit below is built from.
+        // Error bodies carry the same {path, branch, head} echo as successes.
+        const failed = async (body: object) => ok({ ...body, path: rel, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
         if (base_version !== undefined) {
           const conflict = versionConflict(meta.id, branch, rel, base_version);
-          if (conflict) return ok(conflict);
+          if (conflict) return failed(conflict);
         }
         const live = openDocContent(meta.id, branch, rel);
         let applied = 0;
+        let before: string | Buffer;
         let newContent: string;
         let firstFrom: number;
         if (live !== null) {
           const res = resolveEdits(live, edits);
           if (!res.ok) {
-            if (res.error === 'invalid_quote') return fail(`edits[${res.editIndex}]: ${res.reason}`);
-            return ok({ error: 'stale_anchor', edit_index: res.editIndex, reason: res.reason, candidates: res.candidates, contentVersion: contentVersion(meta.id, branch) });
+            if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
+            return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
+          // Presence first: the tint keys on the agent being in awareness when
+          // the change arrives, so the first edit must not outrun it.
+          markAgentPresence(meta.id, branch, rel);
           // Back-to-front, same tick: earlier offsets stay valid, and no human
           // keystroke can interleave. 'stale' from the CRDT apply is impossible
           // here by construction but handled defensively anyway.
@@ -489,24 +610,27 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           for (const e of order) {
             const st = applySuggestionToDoc(meta.id, branch, rel, { from: e.from, to: e.to, quote: e.edit.quote }, e.edit.replacement, AGENT_ORIGIN);
             if (st !== 'applied') {
-              return ok({ error: 'stale_anchor', edit_index: res.ranges.findIndex((r) => r.from === e.from), reason: 'the document changed while applying', applied, candidates: [], contentVersion: contentVersion(meta.id, branch) });
+              return failed({ error: 'stale_anchor', edit_index: res.ranges.findIndex((r) => r.from === e.from), reason: 'the document changed while applying — re-read it and retry', applied, candidates: [] });
             }
             applied++;
           }
-          markAgentPresence(meta.id, branch, rel);
           signalAgentWrite(meta.id, branch);
+          before = live;
           newContent = openDocContent(meta.id, branch, rel) ?? '';
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         } else {
           flushBranchDocs(meta.id, branch); // other files' docs may be open
-          let current: string;
-          try { current = store.readFile(meta.id, branch, rel).toString('utf8'); } catch { return fail(`No file named "${rel}" on ${branch}`); }
+          let raw: Buffer;
+          try { raw = store.readFile(meta.id, branch, rel); } catch { return fail(`No file named "${rel}" on ${branch}`); }
+          const current = raw.toString('utf8');
           const res = resolveEdits(current, edits);
           if (!res.ok) {
-            if (res.error === 'invalid_quote') return fail(`edits[${res.editIndex}]: ${res.reason}`);
-            return ok({ error: 'stale_anchor', edit_index: res.editIndex, reason: res.reason, candidates: res.candidates, contentVersion: contentVersion(meta.id, branch) });
+            if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
+            return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
+          before = raw;
           newContent = spliceEdits(current, edits, res.ranges);
+          markAgentPresence(meta.id, branch, rel);
           store.writeFile(meta.id, branch, rel, newContent);
           // Reseed rather than mark: a doc of this file that the registry
           // holds under another name would otherwise write the old text back
@@ -516,21 +640,22 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           applied = edits.length;
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         }
-        scheduleCommit(meta.id, branch, cleanCommitMessage(message, `Edit ${rel}`), 'Claude', [rel]);
-        return ok({ applied, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...(await echo(meta.id, branch)) });
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after: newContent }], cleanCommitMessage(message, `Edit ${rel}`));
+        const e = await echo(meta.id, branch);
+        return ok({ applied, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...commitFields(commit, e.head), ...e });
       });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('write_file', {
-    description: 'Create a new file, or replace a whole file. For an existing file prefer edit_file — a whole-file write on an open document teleports collaborators\' viewports and can drop their in-flight typing. Pass base_version (contentVersion from a prior read of this file) to get {error:"version_conflict"} instead of overwriting newer content — only a change to this file conflicts, never one to another file; on conflict re-read and re-write once, then ask. Committed as author Claude under message (the intent, imperative); without one the commit is titled "Update <path>".',
+    description: 'Create a new file, or replace a whole file. For an existing file prefer edit_file — a whole-file write on an open document teleports collaborators\' viewports and can drop their in-flight typing. Pass base_version (contentVersion from a prior read of this file) to get {error:"version_conflict"} instead of overwriting newer content — only a change to this file conflicts, never one to another file; on conflict re-read and re-write once, then ask. Folders come into being with the first file written inside them. The first .tex written into a project with no main document becomes the main document (newRoot in the result). Committed as author Claude before the tool answers, under message (the intent, imperative); without one the commit is titled "Update <path>". The result\'s commit and head are that commit; content identical to the file makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
-      path: z.string().describe('File path relative to the project root.'),
+      path: z.string().describe(PATH_HELP),
       content: z.string(),
       base_version: z.number().int().optional().describe(BASE_VERSION_HELP),
-      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).optional().describe(INTENT_HELP),
+      message: messageParam('the intent of the change').optional().describe(INTENT_HELP),
     },
   }, async ({ project, branch = 'main', path: rawPath, content, base_version, message }) => {
     try {
@@ -538,7 +663,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       assertWritableProject(meta.id);
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath), { wholeFile: true });
-      // See edit_file: one lock span from the checkpoint to the attribution,
+      assertFileTarget(meta.id, branch, rel);
+      // See edit_file: one lock span from the checkpoint to the commit,
       // and the attributed commit must carry only the agent's delta.
       return await gitops.withRepoLock(meta.id, async () => {
         flushBranchDocs(meta.id, branch);
@@ -546,30 +672,36 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         flushBranchDocs(meta.id, branch); // keystrokes that landed during the checkpoint
         if (base_version !== undefined) {
           const conflict = versionConflict(meta.id, branch, rel, base_version);
-          if (conflict) return ok(conflict);
+          if (conflict) return ok({ ...conflict, path: rel, contentVersion: conflict.currentVersion, ...(await echo(meta.id, branch)) });
         }
+        const before = openDocContent(meta.id, branch, rel) ?? diskContent(meta.id, branch, rel);
+        markAgentPresence(meta.id, branch, rel);
         store.writeFile(meta.id, branch, rel, content);
         refreshBranchDocsFromDisk(meta.id, branch, [rel]);
-        markAgentPresence(meta.id, branch, rel);
         signalAgentWrite(meta.id, branch);
-        scheduleCommit(meta.id, branch, cleanCommitMessage(message, `Update ${rel}`), 'Claude', [rel]);
-        return ok({ ok: true, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), ...(await echo(meta.id, branch)) });
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after: content }], cleanCommitMessage(message, `Update ${rel}`));
+        // Like PUT /file: a rootless project adopts its first .tex here, not
+        // only at compile time — wordcount and project_structure answer for a
+        // real root right after the write.
+        const newRoot = await adoptRootIfUnset(meta.id, branch, rel);
+        const e = await echo(meta.id, branch);
+        return ok({ ok: true, path: rel, ...(newRoot ? { newRoot } : {}), contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), ...commitFields(commit, e.head), ...e });
       });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('batch_write', {
-    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor writes nothing; fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section").',
+    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor or ambiguous_anchor writes nothing (the error names the entry as path); fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
       files: z.array(z.object({
-        path: z.string(),
+        path: z.string().describe(PATH_HELP),
         content: z.string().optional().describe('Full new file content (mutually exclusive with edits).'),
         edits: z.array(z.object(editShape)).min(1).max(50).optional().describe('Quote-anchored edits (mutually exclusive with content).'),
         base_version: z.number().int().optional().describe(`${BASE_VERSION_HELP} A conflict on any entry refuses the whole batch and writes nothing.`),
       })).min(1).max(50),
-      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).describe('Commit message stating the intent of the change.'),
+      message: messageParam('the intent of the change').describe(`Commit message stating the intent of the change, at most ${COMMIT_MESSAGE_MAX} characters.`),
     },
   }, async ({ project, branch = 'main', files: rawFiles, message }) => {
     try {
@@ -589,6 +721,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           return fail(`files entry "${raw.path}" must carry exactly one of content or edits`);
         }
         const f = { ...raw, path: foldOntoEarlier(diskSpelling(meta.id, branch, visiblePath(raw.path), { wholeFile: raw.content !== undefined }), files.map((e) => e.path)) };
+        if (raw.content !== undefined) assertFileTarget(meta.id, branch, f.path);
         const prev = seenPaths.get(f.path.toLowerCase());
         if (prev !== undefined) {
           return fail(prev === f.path
@@ -605,44 +738,67 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         // See edit_file: the named commit must carry only the agent's delta.
         await gitops.checkpointPathsHeld(meta.id, branch, files.map((f) => f.path));
         flushBranchDocs(meta.id, branch); // keystrokes that landed during the checkpoint
-        // Resolve every edit against the flushed disk state BEFORE writing
-        // anything, so a stale anchor in file N can't leave files 1..N-1 changed.
-        const writes: Array<{ path: string; next: string }> = [];
+        // --- synchronous from here to the end of the apply loop (see edit_file).
+        // Resolve every edit BEFORE writing anything, so a stale anchor in
+        // file N can't leave files 1..N-1 changed. An edits entry for a file
+        // someone has open resolves against the live document and lands as
+        // per-span CRDT edits, exactly as edit_file does — a reseed from disk
+        // would replace the whole document under the person's cursor. Full
+        // content, and files with no open doc, go to disk and reseed.
+        const writes: Array<{ path: string; before: string | Buffer | null; next: string; live: Array<{ from: number; to: number; edit: EditSpec }> | null }> = [];
+        // Error bodies name the entry as `path` and carry the {branch, head} echo like successes.
+        const failed = async (entry: string, body: object) => ok({ ...body, path: entry, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
         for (const f of files) {
           if (f.base_version !== undefined) {
             const conflict = versionConflict(meta.id, branch, f.path, f.base_version);
-            if (conflict) return ok({ ...conflict, file: f.path });
+            if (conflict) return failed(f.path, conflict);
           }
+          const open = openDocContent(meta.id, branch, f.path);
           if (f.content !== undefined) {
-            writes.push({ path: f.path, next: f.content });
+            writes.push({ path: f.path, before: open ?? diskContent(meta.id, branch, f.path), next: f.content, live: null });
             continue;
           }
-          let current: string;
-          try { current = store.readFile(meta.id, branch, f.path).toString('utf8'); } catch { return fail(`No file named "${f.path}" on ${branch}`); }
+          if (isDirectoryPath(meta.id, branch, f.path)) return fail(`"${f.path}" is a folder on ${branch} — an edits entry changes a file; name one inside it`);
+          let raw: Buffer | null = null;
+          if (open === null) { try { raw = store.readFile(meta.id, branch, f.path); } catch { return fail(`No file named "${f.path}" on ${branch}`); } }
+          const current = open ?? raw!.toString('utf8');
           const res = resolveEdits(current, f.edits!);
           if (!res.ok) {
-            if (res.error === 'invalid_quote') return fail(`${f.path} edits[${res.editIndex}]: ${res.reason}`);
-            return ok({ error: 'stale_anchor', file: f.path, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates, contentVersion: contentVersion(meta.id, branch) });
+            if (res.error === 'invalid_quote') return fail(`"${f.path}", edit ${res.editIndex + 1}: ${res.reason}`);
+            return failed(f.path, { error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          writes.push({ path: f.path, next: spliceEdits(current, f.edits!, res.ranges) });
+          const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: f.edits![i] })).sort((a, b) => b.from - a.from) : null;
+          writes.push({ path: f.path, before: raw ?? current, next: spliceEdits(current, f.edits!, res.ranges), live });
         }
-        for (const w of writes) store.writeFile(meta.id, branch, w.path, w.next);
-        refreshBranchDocsFromDisk(meta.id, branch, writes.map((w) => w.path));
         for (const w of writes) markAgentPresence(meta.id, branch, w.path);
+        const reseed: string[] = [];
+        for (const w of writes) {
+          if (!w.live) { store.writeFile(meta.id, branch, w.path, w.next); reseed.push(w.path); continue; }
+          for (const e of w.live) {
+            const st = applySuggestionToDoc(meta.id, branch, w.path, { from: e.from, to: e.to, quote: e.edit.quote }, e.edit.replacement, AGENT_ORIGIN);
+            if (st !== 'applied') return failed(w.path, { error: 'stale_anchor', edit_index: w.live.findIndex((x) => x.from === e.from), reason: 'the document changed while applying — re-read it and resend the batch', candidates: [] });
+          }
+          w.next = openDocContent(meta.id, branch, w.path) ?? w.next;
+        }
+        if (reseed.length) refreshBranchDocsFromDisk(meta.id, branch, reseed);
         signalAgentWrite(meta.id, branch);
-        // Only the batch's own paths: the flush above put collaborators' live
-        // edits in OTHER files on disk too, and a whole-tree commit would sign
-        // them as Claude (and expose them to the session toast's revert). They
-        // reach history through the normal autosave debounce instead.
-        const commit = await gitops.commitPathsHeld(meta.id, branch, writes.map((w) => w.path), cleanCommitMessage(message, 'Update files'), 'Claude');
+        // Only the batch's own paths, from the snapshots above: the flush put
+        // collaborators' live edits in OTHER files on disk too, and a
+        // whole-tree commit would sign them as Claude (and expose them to the
+        // session toast's revert). They reach history through the normal
+        // autosave debounce instead.
+        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.next })), cleanCommitMessage(message, 'Update files'));
+        // See write_file: the first .tex of a rootless project becomes the root.
+        const firstTex = writes.find((w) => /\.tex$/i.test(w.path))?.path;
+        const newRoot = firstTex ? await adoptRootIfUnset(meta.id, branch, firstTex) : undefined;
         const e = await echo(meta.id, branch);
-        return ok({ ok: true, paths: writes.map((w) => w.path), contentVersion: contentVersion(meta.id, branch), commit: commit.committed ? e.head : null, ...e });
+        return ok({ ok: true, paths: writes.map((w) => w.path), ...(newRoot ? { newRoot } : {}), contentVersion: contentVersion(meta.id, branch), ...commitFields(commit, e.head), ...e });
       });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('compile', {
-    description: `Typeset the project with latexmk: parsed errors [{type,file,line,message}] (errors before warnings, first ${MAX_RESULT_ERRORS}; errorsTotal has the count; box warnings are omitted), a ≤4 KB log tail on failure, pages, and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. pdfUrl is a signed link to this run's PDF that anyone can open for ${OUTPUT_URL_TTL_S / 60} minutes — hand it to the user as the way to see the result, and call get_pdf_url for a fresh link later instead of recompiling. pdfStale:true means this run wrote no PDF: pdfUrl shows the previous one, or is null when that no longer exists. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A compiler-not-responding, compiler-cannot-see-the-project, missing-package (hint), quota, or typeset-already-running error is for the user to act on — relay it, do not retry.`,
+    description: `Typeset the project with latexmk: parsed errors [{type,file,line,message,context?,source?}] (type "error" rows before "warning" rows, first ${MAX_RESULT_ERRORS}; errorsTotal counts the errors and warningsTotal the warnings, whether or not the list was capped; box warnings are omitted; context is the source line the engine was reading, source the tool that raised a warning — latex, a package name, biber — and a biber row names the .bib and its line), on failure ≤4 KB of the log around the first error, pages, and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. pdfUrl is a signed link to this run's PDF that anyone can open for ${OUTPUT_URL_TTL_S / 60} minutes — hand it to the user as the way to see the result, and call get_pdf_url for a fresh link later instead of recompiling. pdfStale:true means this run wrote no PDF: pdfUrl shows the previous one, or is null when that no longer exists. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A project with no .tex file cannot be typeset: write the main document first. A compiler-not-responding, compiler-cannot-see-the-project, missing-package (hint), quota, or typeset-already-running error is for the user to act on — relay it, do not retry.`,
     inputSchema: { project: projectParam, branch: branchParam },
     ...uiMeta,
   }, async ({ project, branch = 'main' }, extra) => {
@@ -710,13 +866,18 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       // result.pdfUrl is the cookie-auth path; the tool hands out the signed
       // form of the same artifact instead (the viewer has no cookie).
       const pdfRel = result.pdfUrl ? new URL(result.pdfUrl, 'http://x').searchParams.get('path') : null;
-      const errors = withRootFile(reportableErrors(result.errors), rootFile);
+      const errors = withSource(withRootFile(reportableErrors(result.errors), rootFile));
       const missing = missingPackages(errors);
+      const hints = [
+        ...(missing.length ? [`Package${missing.length === 1 ? '' : 's'} ${missing.join(', ')} not installed on this compiler — relay to the user (a fuller TeX Live fixes it); do not remove the \\usepackage.`] : []),
+        ...(unicodeHint(errors) ? [unicodeHint(errors)!] : []),
+      ];
       return okApp({
         ok: result.ok,
         errors: capErrors(errors),
-        errorsTotal: errors.length,
-        ...(missing.length ? { hint: `Package${missing.length === 1 ? '' : 's'} ${missing.join(', ')} not installed on this compiler — relay to the user (a fuller TeX Live fixes it); do not remove the \\usepackage.` } : {}),
+        errorsTotal: errors.filter((e) => e.type === 'error').length,
+        warningsTotal: errors.filter((e) => e.type === 'warning').length,
+        ...(hints.length ? { hint: hints.join(' ') } : {}),
         // A clean run's tail is font-loading noise; only a failed run needs it.
         logTail: result.ok ? '' : logTail(result.log),
         durationMs: result.durationMs,
@@ -725,8 +886,19 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         ...(await pdfResult(compiled, branch, pdfRel, { pdfStale: !!result.pdfStale, pages: result.pages ?? null, t: result.compileId, writtenAt: result.pdfWrittenAt, truncated: !!result.pdfTruncated })),
       });
     } catch (err) {
-      if (err instanceof McpDenied) return fail(err.message);
-      return fail('Typesetting failed to start — your Aldine compiler may not be responding');
+      const msg = err instanceof Error ? err.message : String(err);
+      // compile.ts refuses a rootless branch before it reaches the compiler:
+      // a document problem the model can fix, never a compiler outage.
+      if (/No \.tex file to typeset/.test(msg)) {
+        return fail(`This project has no .tex file to typeset on ${branch} — create the main document with write_file (the first .tex becomes the main document), then compile.`);
+      }
+      // Only a failed round trip to the compiler is "the compiler may be
+      // down"; a missing branch or project keeps its own answer.
+      if (err instanceof TypeError || /fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|abort|timed? ?out|Unexpected token|not valid JSON/i.test(msg)) {
+        console.warn(`[aldine] agent compile could not reach the compiler: ${msg}`);
+        return fail('Typesetting failed to start — your Aldine compiler may not be responding');
+      }
+      return toolError(err, { project, branch });
     } finally {
       if (timer) clearInterval(timer);
       if (key) {
@@ -737,7 +909,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('get_pdf_url', {
-    description: `A fresh signed link to the branch's most recent typeset PDF, without recompiling — use it when a compile result's pdfUrl has expired (${OUTPUT_URL_TTL_S / 60} minutes) or the user asks to see the PDF again. Returns {pdfUrl, pdfFile, pages, typesetAt, deepLink}; the PDF is whatever the last typeset wrote, by anyone, so compare typesetAt with your edits and call compile when it is older than they are. No output yet → compile first.`,
+    description: `A fresh signed link to the PDF on disk for the branch, without recompiling — use it when a compile result's pdfUrl has expired (${OUTPUT_URL_TTL_S / 60} minutes) or the user asks to see the PDF again. Returns {pdfUrl, pdfFile, pages, typesetAt, deepLink}; pdfStale is always false here because the link is to that file, whichever typeset wrote it (by you or by a person). It does not contain edits made since that typeset: if you have written on this branch since your last compile result, call compile instead. No output yet → compile first.`,
     annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
     ...uiMeta,
@@ -751,15 +923,15 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       // is no previous PDF to fall back to (the run overwrote it).
       if (meta.stopOnFirstError && disk.partial) return fail(`The last typeset on ${branch} stopped on an error, so the PDF on disk is incomplete — fix the error and call compile`);
       return okApp({ ok: true, ...(await pdfResult(meta, branch, disk.pdf, { pdfStale: false, pages: disk.pages })) });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('commit', {
-    description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — your writes already commit on their own within about 20 seconds, so {committed:false} is not a failure: it means they landed already, and the result names the current head and your latest commits on the branch. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
+    description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — every write already commits on its own as it lands, so {committed:false} is the normal answer, not a failure: it means they landed already, and the result names the current head and your latest commits on the branch. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
-      message: z.string().min(1).max(COMMIT_MESSAGE_MAX).describe('Commit message stating the intent of the checkpoint.'),
+      message: messageParam('the intent of the checkpoint').describe(`Commit message stating the intent of the checkpoint, at most ${COMMIT_MESSAGE_MAX} characters.`),
     },
   }, async ({ project, branch = 'main', message }) => {
     try {
@@ -775,31 +947,35 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         const e = await echo(meta.id, branch);
         // Where the edits went when nothing was waiting: the model can name
         // the commit that holds them instead of guessing.
+        // Short hashes, the length head and commit use everywhere else.
         const recent = res.committed ? [] : (await gitops.log(meta.id, branch, 30))
           .filter((c) => c.author === gitops.AGENT_COMMIT_AUTHOR).slice(0, 5)
-          .map((c) => ({ hash: c.hash, date: c.date, message: c.message }));
+          .map((c) => ({ hash: c.hash.slice(0, e.head.length || 7), date: c.date, message: c.message }));
+        // "Nothing was waiting", not "everything is committed": after a
+        // restart inside the debounce window the ledger is empty while the
+        // delta is still on disk, waiting for the anonymous sweep.
+        const note = recent.length
+          ? `Nothing was waiting to commit — your edits already landed on their own; head is ${e.head}.`
+          : `Nothing was waiting to commit, and this branch has no commits by Claude yet; head is ${e.head}.`;
         return ok({
           committed: res.committed,
           hash: res.committed ? e.head : null,
           files: res.files,
-          // "Nothing was waiting", not "everything is committed": after a
-          // restart inside the debounce window the ledger is empty while the
-          // delta is still on disk, waiting for the anonymous sweep.
-          ...(res.committed ? {} : { note: `Nothing was waiting to commit — your edits already landed on their own; head is ${e.head}.`, recentClaudeCommits: recent }),
+          ...(res.committed ? {} : { note, recentClaudeCommits: recent }),
           contentVersion: contentVersion(meta.id, branch),
           ...e,
         });
       });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('references_add', {
-    description: 'Resolve a DOI, doi.org URL, arXiv id, or OpenAlex id to a BibTeX entry and append it to a .bib file on the branch (default: references.bib next to the root file, created if missing). Returns {key, bibFile, duplicate} — use \\cite{key} right away. Titles are not lookups: for a paper you only know by name, ask the user for its DOI or arXiv id. If the lookup budget is reached or the upstream service fails, tell the user — do not retry in a loop.',
+    description: 'Resolve a DOI, doi.org URL, arXiv id, or OpenAlex id to a BibTeX entry and append it to a .bib file on the branch (default: references.bib next to the root file). A bibFile that does not exist is created, folders included (created:true in the result). Returns {key, bibFile, duplicate, created} — use \\cite{key} right away; a note says when no .tex on the branch loads that .bib (\\addbibresource or \\bibliography), in which case the citation stays undefined until one does. Titles are not lookups: for a paper you only know by name, ask the user for its DOI or arXiv id. If the lookup budget is reached or the upstream service fails, tell the user — do not retry in a loop.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
       query: z.string().min(1).describe('A DOI (10.xxxx/…), doi.org URL, arXiv id (2301.12345 or arXiv:2301.12345), or OpenAlex id (W…).'),
-      bibFile: z.string().optional().describe('Target .bib path relative to the project root. Defaults to references.bib beside the root file.'),
+      bibFile: z.string().optional().describe('Target .bib path relative to the project root. Defaults to references.bib beside the root file; a missing file (and its folders) is created.'),
     },
   }, async ({ project, branch = 'main', query, bibFile }) => {
     try {
@@ -817,7 +993,10 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (!(await refLimiter.take(key))) return fail('Reference lookup budget reached — wait a few seconds before the next lookup');
       let added: Awaited<ReturnType<typeof addReference>>;
       try {
-        added = await addReference(meta.id, branch, query, target, 'Claude');
+        // Right before the write, like every write tool: the tint on the
+        // appended entry needs the agent in awareness first, and a lookup
+        // that finds nothing or a duplicate must not show Claude in the .bib.
+        added = await addReference(meta.id, branch, query, target, 'Claude', () => markAgentPresence(meta.id, branch, target));
       } catch (err) {
         // references.ts messages name the upstream and its HTTP status — the
         // user can act on them; a bare network failure (undici's TypeError,
@@ -828,10 +1007,15 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         if (err instanceof TypeError || /fetch failed|abort|timed? ?out|ECONN|ENOTFOUND|EAI_AGAIN/i.test(msg)) return fail('The reference service (doi.org / arXiv / OpenAlex) could not be reached from your Aldine server');
         return toolError(err);
       }
-      if (!added) return fail(`No reference found for "${query}" — pass a DOI, arXiv id, or OpenAlex id`);
-      if (!added.duplicate) { markAgentPresence(meta.id, branch, added.bibFile); signalAgentWrite(meta.id, branch); }
-      return ok({ ...added, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, added.bibFile), ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+      if (!added) return fail(`No reference found for "${query}" — pass a DOI (10.…), arXiv id or OpenAlex id; an id in the right shape that is still not found is not registered upstream, so check it with the user rather than retrying`);
+      if (!added.duplicate) signalAgentWrite(meta.id, branch);
+      const loaded = bibLoadedBySource(meta.id, branch, meta.rootFile, added.bibFile);
+      return ok({
+        ...added,
+        ...(loaded ? {} : { note: `No .tex file on ${branch} loads ${added.bibFile} — \\cite{${added.key}} stays undefined until the main document has \\addbibresource{${path.posix.relative(path.posix.dirname(meta.rootFile || 'main.tex'), added.bibFile)}} (biblatex) or lists it in \\bibliography{} (bibtex).` }),
+        contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, added.bibFile), ...(await echo(meta.id, branch)),
+      });
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('list_citations', {
@@ -844,7 +1028,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       await gitops.ensureWorktree(meta.id, branch);
       const citations = bibIndex(meta.id, branch).map((e) => ({ key: e.key, title: e.title, author: e.author, year: e.year, file: e.file }));
       return ok({ citations, ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('list_labels', {
@@ -856,26 +1040,29 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       const meta = await resolveProject(identity, project);
       await gitops.ensureWorktree(meta.id, branch);
       return ok({ labels: labelIndex(meta.id, branch), ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('wordcount', {
-    description: 'Word count of the document as it compiles — the root file plus its \\input/\\include graph, commands and comments excluded: {rootFile, total, files}. Use it for length questions instead of estimating from source.',
+    description: 'Word count of the document as it compiles — the root file plus its \\input/\\include graph, commands and comments excluded: {rootFile, total, files}. Use it for length questions instead of estimating from source. A project with no main document yet is an error, not a count of 0.',
     annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
       const meta = await resolveProject(identity, project);
       await gitops.ensureWorktree(meta.id, branch);
+      // indexes.ts answers {total:0, files:{}} for an empty root, which reads
+      // as "your draft has 0 words" when relayed.
+      if (!meta.rootFile) return fail('This project has no main document yet, so there is nothing to count — write a .tex file first (the first one written becomes the main document)');
       return ok({ ...(await wordCount(meta.id, branch)), ...(await echo(meta.id, branch)) });
-    } catch (err) { return toolError(err); }
+    } catch (err) { return toolError(err, { project, branch }); }
   });
 
   server.registerTool('create_project', {
-    description: 'Create a new project, blank or from a template, and return its id for the write tools. Needs a token with access to all projects — a project-scoped token cannot create; if refused, relay that to the user (they can mint an unscoped token in Settings → Agent access).',
+    description: 'Create a new project, blank or from a template, and return its id for the write tools, with contentVersion (pass it as base_version to the first write) and the files the template seeded. Needs a token with access to all projects — a project-scoped token cannot create; if refused, relay that to the user (they can mint an unscoped token in Settings → Agent access).',
     inputSchema: {
       name: z.string().min(1).max(200).describe('Project name shown in the workspace.'),
-      template: z.string().optional().describe('Template id from the workspace gallery: a folder template ("article", "beamer", "report") or a venue ("venue:neurips", "venue:elsarticle"; a venue kit is downloaded from the publisher when it is not installed). "blank" creates a project with no files. Omit for a starter main.tex + references.bib.'),
+      template: z.string().optional().describe('Template id from the workspace gallery: a folder template ("article", "beamer", "report", "iac-paper") or a venue kit ("venue:neurips", "venue:elsarticle", …; the publisher\'s class files are downloaded when they are not installed). An unknown id is refused with the full list. "blank" creates a project with no files and no main document — the first .tex written becomes it. Omit for a starter main.tex + references.bib.'),
     },
   }, async ({ name, template }) => {
     try {
@@ -901,14 +1088,68 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           return fail(`Template "${template}" could not be prepared: ${err?.message || err}`);
         }
       }
-      const meta = await store.createProject(name, seed, identity.user?.id);
+      // The mark trash_project keys on: only what the agent made is within its reach.
+      const meta = await store.createProject(name, seed, identity.user?.id, { createdVia: 'agent' });
       // A venue kit that could not be downloaded still creates the project
       // from a skeleton; the model should say so rather than the call failing.
       return ok({
         id: meta.id, name: meta.name, rootFile: meta.rootFile, engine: meta.engine, deepLink: `${base}/p/${meta.id}`,
+        // The seed, not the tree: the .gitignore is Aldine's, not the template's.
+        files: store.listFiles(meta.id, 'main').filter((f) => f.type === 'file' && f.path !== '.gitignore').map((f) => f.path),
+        contentVersion: contentVersion(meta.id, 'main'),
         ...(resolved?.venueKit ? { venueKit: resolved.venueKit } : {}),
         ...(await echo(meta.id, 'main')),
       });
     } catch (err) { return toolError(err); }
   });
+
+  server.registerTool('trash_project', {
+    description: `Move a project that was created with create_project to the trash, where its owner can restore it from the workspace for ${TRASH_DAYS} days; nothing is deleted for good by this tool. Refused for any project a person created (agentCreated:false in list_projects) — ask them to delete it in Aldine themselves — and for projects the token's owner does not own. Use it for scratch projects the user asked you to throw away; never on your own initiative.`,
+    annotations: { destructiveHint: true, idempotentHint: false },
+    inputSchema: { project: z.string().min(1).describe('Project id (from list_projects or create_project). Required: this tool never falls back to a scoped token\'s project.') },
+  }, async ({ project }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertWritableProject(meta.id);
+      if (meta.createdVia !== 'agent') return fail('Only projects created through the Agent API can be trashed by it — ask the user to delete this one from their workspace');
+      if (!isOwner(meta, identity.user)) return fail('Only the owner of the project can move it to the trash');
+      const { remote } = await trashProject(meta);
+      console.log(`[metric] agent_trash user=${identity.user?.id ?? 'operator'} project=${meta.id}`);
+      return ok({
+        trashed: true, id: meta.id, name: meta.name, restorableUntil: restorableUntil(),
+        note: `Restorable from the workspace trash for ${TRASH_DAYS} days`,
+        ...(remote.error ? { remoteError: remote.error } : {}),
+      });
+    } catch (err) { return toolError(err); }
+  });
+}
+
+/** Whether any .tex on the branch loads `bibFile` — \addbibresource{x.bib}
+ *  (biblatex) or \bibliography{a,b} (bibtex), both resolved from the root
+ *  file's directory, both with or without the extension. Scans every .tex,
+ *  not only the root: a preamble \input may hold the line. */
+export function bibLoadedBySource(projectId: string, branch: string, rootFile: string, bibFile: string): boolean {
+  const rootDir = path.posix.dirname(rootFile || 'main.tex');
+  const wanted = new Set<string>();
+  for (const spelled of [bibFile, bibFile.replace(/\.bib$/i, '')]) {
+    wanted.add(path.posix.normalize(spelled));
+    wanted.add(path.posix.relative(rootDir, spelled));
+  }
+  const re = /\\(?:addbibresource|addglobalbib|bibliography)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+  for (const f of store.listFiles(projectId, branch)) {
+    if (f.type !== 'file' || !/\.tex$/i.test(f.path)) continue;
+    let text: string;
+    try { text = store.readFile(projectId, branch, f.path).toString('utf8'); } catch { continue; }
+    const dir = path.posix.dirname(f.path);
+    for (const m of text.matchAll(re)) {
+      for (const raw of m[1].split(',')) {
+        const name = raw.trim();
+        if (!name) continue;
+        // Resolved against the root's directory (how TeX reads it) and against
+        // the naming file's own directory; either spelling counts.
+        if (wanted.has(name) || wanted.has(path.posix.normalize(path.posix.join(dir, name))) || wanted.has(path.posix.normalize(path.posix.join(rootDir, name)))) return true;
+      }
+    }
+  }
+  return false;
 }

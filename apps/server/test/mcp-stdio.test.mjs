@@ -1,14 +1,13 @@
 /**
- * The stdio transport's shutdown flush. Claude Code ends a session by closing
- * the child's stdin, then SIGTERM two seconds later, then SIGKILL. The
- * attribution ledger and the autosave debounce are process-local, so agent
- * work still pending at that moment must commit under Claude before the
- * process exits — otherwise the next autosave (the server's, or the next
- * stdio session's) sweeps the edit as an anonymous autosave. Both the stdin
- * close and a bare SIGTERM are pinned.
+ * The stdio transport's session end. Claude Code ends a session by closing
+ * the child's stdin, then SIGTERM two seconds later, then SIGKILL. Every
+ * write commits under Claude as it lands, so the process must exit with the
+ * tree clean and nothing committed twice on the way out — on the stdin close
+ * and on a bare SIGTERM alike. (The shutdown flush that lands work a refused
+ * commit left in the ledger is pinned in autocommit-split.test.mjs.)
  *
  * ALDINE_AUTOCOMMIT_MS is set far beyond the test's lifetime so only the
- * flush can have made the commit.
+ * tools themselves can have made the commits.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -60,41 +59,35 @@ const gitLog = (id) => execSync('git log --format=%an%x1f%s', { cwd: repo(id) })
 });
 const gitDirty = (id) => execSync('git status --porcelain', { cwd: repo(id) }).toString().trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// the child flushes on its way out; poll the repo instead of trusting a timing budget
-const until = async (pred, maxMs = 8000) => {
+const exited = async (transport, maxMs = 8000) => {
   const started = Date.now();
-  while (!pred() && Date.now() - started < maxMs) await sleep(100);
+  while (transport.pid !== null && Date.now() - started < maxMs) await sleep(100);
+  return transport.pid === null;
 };
-const untilLog = async (id, pred) => { await until(() => pred(gitLog(id))); return gitLog(id); };
-// the flush line reaches the parent's pipe after the commit it reports
-const flushed = (s, reason) => s.stderr().includes(`aldine-mcp: ${reason} — flushed 1 project/branch(es)`);
 
 // ---- stdin close (Client.close(), what Claude Code does at session end) ----
 const s1 = await session();
 const project = await call(s1.client, 'create_project', { name: 'Stdio paper' });
 check(typeof project.id === 'string', 'create_project over stdio returns the project');
 const w1 = await call(s1.client, 'write_file', { project: project.id, path: 'main.tex', content: 'A line from Claude.\n', message: 'Add a line' });
-check(w1.ok === true, `write_file over stdio lands (got ${JSON.stringify(w1)})`);
-check(gitDirty(project.id).includes('main.tex'), 'setup: the write is on disk and uncommitted (inside the debounce window)');
-await s1.client.close();
-let log = await untilLog(project.id, (l) => l[0]?.author === 'Claude');
-await until(() => flushed(s1, 'stdin closed'));
-check(flushed(s1, 'stdin closed'), `the flush runs on the stdin close, not on the SIGTERM the client sends 2 s later (stderr: ${JSON.stringify(s1.stderr())})`);
-check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a line', `closing the client commits the pending work under Claude with its intent (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+check(w1.ok === true && typeof w1.commit === 'string', `write_file over stdio lands and names its commit (got ${JSON.stringify(w1)})`);
+let log = gitLog(project.id);
+check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a line', `the write is committed under Claude with its intent before the tool answers (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
 check(gitDirty(project.id) === '', 'nothing is left for a later anonymous autosave');
-check(log.filter((c) => c.author === 'Claude').length === 1, 'the stdin close and the SIGTERM that may follow it commit once, not twice');
+await s1.client.close();
+check(await exited(s1.transport), `the process exits on the stdin close (stderr: ${JSON.stringify(s1.stderr())})`);
+log = gitLog(project.id);
+check(log.filter((c) => c.author === 'Claude').length === 1 && gitDirty(project.id) === '', 'the stdin close and the SIGTERM that may follow it commit nothing more');
 
 // ---- bare SIGTERM (a wrapper or the OS stopping the process) ----
 const s2 = await session();
 const w2 = await call(s2.client, 'write_file', { project: project.id, path: 'main.tex', content: 'A line from Claude.\nA second line.\n', message: 'Add a second line' });
-check(w2.ok === true, 'a second session writes');
-check(gitDirty(project.id).includes('main.tex'), 'setup: the second write is pending');
+check(w2.ok === true && typeof w2.commit === 'string', 'a second session writes and commits');
+log = gitLog(project.id);
+check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a second line', `the second write is committed at once (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
 process.kill(s2.transport.pid, 'SIGTERM');
-log = await untilLog(project.id, (l) => l[0]?.message === 'Add a second line');
-check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a second line', `SIGTERM commits the pending work under Claude (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))}; stderr: ${JSON.stringify(s2.stderr())})`);
-await until(() => flushed(s2, 'SIGTERM'));
-check(flushed(s2, 'SIGTERM'), `the SIGTERM handler is the one that flushed (stderr: ${JSON.stringify(s2.stderr())})`);
-check(gitDirty(project.id) === '', 'the tree is clean after the SIGTERM flush');
+check(await exited(s2.transport), `the process exits on SIGTERM (stderr: ${JSON.stringify(s2.stderr())})`);
+check(gitDirty(project.id) === '' && gitLog(project.id).length === log.length, 'the tree is clean and SIGTERM committed nothing more');
 await s2.client.close().catch(() => {});
 
 fs.rmSync(tmp, { recursive: true, force: true });

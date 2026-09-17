@@ -50,7 +50,9 @@ export async function registerClient(body: unknown): Promise<RegistrationRespons
   if (b.token_endpoint_auth_method !== undefined && b.token_endpoint_auth_method !== 'none') {
     throw new OAuthError('invalid_client_metadata', 'token_endpoint_auth_method must be "none"');
   }
-  const grantTypes = stringList(b.grant_types, GRANT_TYPES, 'grant_types') ?? ['authorization_code'];
+  // The registered set is not enforced at /oauth/token — every client gets a
+  // refresh token — so the echo says what the server does.
+  const grantTypes = stringList(b.grant_types, GRANT_TYPES, 'grant_types') ?? GRANT_TYPES;
   const responseTypes = stringList(b.response_types, RESPONSE_TYPES, 'response_types') ?? ['code'];
   if (b.client_name !== undefined && typeof b.client_name !== 'string') throw new OAuthError('invalid_client_metadata', 'client_name must be a string');
   const name = ((b.client_name as string | undefined) || '').trim().slice(0, 100) || new URL(redirectUris[0]).host;

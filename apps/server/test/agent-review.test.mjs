@@ -160,7 +160,15 @@ res = await seen({ branch: 'no-such-branch', head: a.head, kind: 'prompted' });
 eq(res.statusCode, 404, 'a branch the project does not have is refused');
 eq(await store.getProjectVisit(ada.id, id, 'no-such-branch'), null, 'and no row was written');
 
-// ---- (14) control characters in a subject cannot shift the fields ----
+// ---- (14) a live agent session is reported, so a page that just loaded
+// leaves the prompt to the session's own toast instead of raising it ----
+check(a.sessionActive === false, 'no session is live before any agent write');
+const collab = await import('../src/collab.ts');
+collab.markAgentPresence(id, 'main', 'main.tex'); // no doc is loaded: the session is server-side
+eq((await activity()).sessionActive, true, 'a running session is reported on the branch');
+eq((await activity({ cookie }, 'branch=other')).sessionActive ?? false, false, 'and not on another branch');
+
+// ---- (15) control characters in a subject cannot shift the fields ----
 const odd = 'Odd\x1fsubject\x1ewith markers';
 const hOdd = await commitAs('Claude', 'main.tex', 'Odd subject.\n', odd);
 const logged = (await gitops.log(id, 'main')).find((c) => c.hash === hOdd);
@@ -168,6 +176,17 @@ eq(logged.author, 'Claude', 'the author field survives a subject full of separat
 eq(logged.message, odd, 'and the subject is intact');
 a = await activity();
 check(a.commits[0].hash === hOdd && a.commits[0].message === logged.message && a.commits[0].files.length === 1, 'the activity answer parses it the same way');
+
+// ---- (16) a revert that overlaps a later edit names the commit it stopped on ----
+const hSharp = await commitAs('Claude', 'main.tex', 'Claude sharpened this line.\n', 'Sharpen the abstract');
+await commitAs('Ada', 'main.tex', 'Ada then rewrote the same line.\n', 'Ada checkpoint right after Claude');
+res = await app.inject({ method: 'POST', url: `/api/projects/${id}/revert`, headers: { cookie }, payload: { branch: 'main', hashes: [hSharp] } });
+eq(res.statusCode, 409, 'an overlapping revert is refused');
+const conflict = res.json().error;
+check(conflict.startsWith(`Could not revert "Sharpen the abstract" (${hSharp.slice(0, 7)})`), `the message names the commit: ${conflict}`);
+check(/then revert again$/.test(conflict), 'and says what to do next');
+eq(fs.readFileSync(path.join(store.branchDir(id, 'main'), 'main.tex'), 'utf8'), 'Ada then rewrote the same line.\n', 'the abort left the branch as it was');
+eq((await gitops.log(id, 'main'))[0].message, 'Ada checkpoint right after Claude', 'and nothing was committed');
 
 await app.close();
 fs.rmSync(tmp, { recursive: true, force: true });

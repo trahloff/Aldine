@@ -189,7 +189,17 @@ export function seedError(files: unknown): string | null {
 }
 
 export function isTextFile(p: string): boolean {
-  return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|json|yml|yaml|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
+  return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|tsv|dat|log|json|yml|yaml|xml|svg|lua|py|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
+}
+
+/** Bytes that cannot be served as text: a NUL in the head, or a head that is
+ *  not UTF-8. Checked on content, not the extension — a `.dat` of numbers is
+ *  text, a `.tex` with a NUL is not. */
+export function looksBinary(data: Buffer): boolean {
+  const head = data.subarray(0, 8000);
+  if (head.includes(0)) return true;
+  // Streaming mode buffers a sequence the cut split instead of throwing; invalid bytes still throw.
+  try { new TextDecoder('utf-8', { fatal: true }).decode(head, { stream: data.length > head.length }); return false; } catch { return true; }
 }
 
 export function debouncePerKey<A extends unknown[]>(ms: number, fn: (key: string, ...args: A) => void) {
