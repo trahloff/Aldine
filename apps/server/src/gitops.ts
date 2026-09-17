@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { projectsDir } from './config.js';
 import { repoDir, branchDir, git } from './store.js';
+import { spawn } from 'node:child_process';
 import { BRANCH_RE } from './util.js';
 
 export interface BranchInfo { name: string; current?: boolean; head: string; message: string; date: string }
@@ -237,4 +238,24 @@ export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl:
   }
   if (mergeErr) throw mergeErr; // a non-conflict failure
   return { ok: true };
+}
+
+/**
+ * The branch's committed tree as a ZIP, straight from git: only tracked
+ * files travel, never .git, build output or an editor's unflushed state —
+ * callers flush and commit first so the archive matches what people see.
+ * Flat, without a top folder: that is the shape Overleaf downloads have and
+ * the shape the ZIP import expects back.
+ */
+export function archiveZip(id: string, branch: string): Promise<Buffer> {
+  if (!BRANCH_RE.test(branch)) return Promise.reject(new Error('bad branch name'));
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['archive', '--format=zip', branch], { cwd: repoDir(id) });
+    const chunks: Buffer[] = [];
+    let err = '';
+    child.stdout.on('data', (c: Buffer) => chunks.push(c));
+    child.stderr.on('data', (c: Buffer) => { err += c.toString(); });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(err.trim() || `git archive exited ${code}`))));
+  });
 }

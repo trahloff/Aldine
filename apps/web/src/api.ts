@@ -187,6 +187,8 @@ export const api = {
   refreshTemplateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos/refresh', { method: 'POST' }),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */
+  /** Direct link (not a fetch): the browser saves the branch's source as a ZIP. */
+  archiveUrl: (id: string, branch: string) => withBase(`/api/projects/${id}/archive?branch=${encodeURIComponent(branch)}`),
   importZip: (name: string, zip: File, namespace?: string) => {
     const form = new FormData();
     form.append('name', name);

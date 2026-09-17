@@ -37,6 +37,14 @@ import { safeJoin, isTextFile, importPath, isHiddenPath, overlongPath, pathConfl
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
+/** ASCII file name for a project archive, the fallback beside the UTF-8 one
+ *  in the header: anything outside letters, digits, dot, dash and underscore
+ *  becomes a dash. */
+function archiveFolderName(name: string): string {
+  const ascii = name.normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80);
+  return ascii || 'project';
+}
+
 /**
  * Current user for a request. Resolved once per request by an onRequest hook
  * (which awaits the async datastore) and cached on the request, so the many
@@ -706,6 +714,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(404).send({ error: 'file not found' });
     }
+  });
+
+  // The project's source as a ZIP a person can keep, send to a journal or
+  // import again: the branch's tracked tree from git archive, after the live
+  // documents are flushed and committed so it matches the editor.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/archive', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch)) return reply.code(400).send({ error: 'invalid branch name' });
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); await gitops.ensureWorktree(req.params.id, branch); }
+    catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
+    flushBranchDocs(req.params.id, branch);
+    await gitops.commitAll(req.params.id, branch, 'aldine: autosave', reqUser(req)?.name).catch(() => {});
+    const folder = archiveFolderName(meta.name);
+    const zip = await gitops.archiveZip(req.params.id, branch);
+    return reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="${folder}.zip"; filename*=UTF-8''${encodeURIComponent(`${meta.name.trim() || 'project'}.zip`)}`)
+      .header('cache-control', 'no-store')
+      .send(zip);
   });
 
   app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean } }>(

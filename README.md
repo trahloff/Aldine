@@ -34,7 +34,7 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
 
 ## Features
 
-- **Bring your Overleaf projects**: download any Overleaf project as a ZIP,
+- **Bring your Overleaf projects, and take them with you**: download any Overleaf project as a ZIP,
   drop it on the home screen, keep writing — root file detected, first typeset
   automatic.
 - **Real-time collaboration**: CRDT-based (Yjs), multi-cursor with live
