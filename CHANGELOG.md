@@ -29,34 +29,45 @@ All notable changes to Aldine are documented here. The format follows
   so a leaked token cannot mint tokens, set a password or reach a stored
   GitHub credential. On the collab websocket an invalid or revoked bearer
   refuses the connection instead of falling back to the browser session.
-  The "Agent access" card in account settings creates tokens, shows the
-  connector URL, lists name, scope, created and last used, and revokes
-  through a dialog that names the token; it says when the connector is off
-  and when claude.ai cannot reach the address (with the Claude Code command
-  instead). `/api/auth/me` returns `mcpEnabled` and `publicUrl`.
+  The "Agent access" card in account settings creates tokens (the form and
+  the shown-once secret scroll clear of the dialog's footer and take focus;
+  an empty or over-long name is marked on the field; a scoped row names its
+  projects), shows the connector URL, lists name, scope, created and last
+  used, and revokes through a dialog that names the token; it says when the
+  connector is off and when claude.ai cannot reach the address (with the
+  runnable Claude Code command and a copy button instead). `/api/auth/me`
+  returns `mcpEnabled` and `publicUrl`.
 - OAuth 2.1 for the connector (auth deployments): claude.ai and Claude Code
   connect with a Connect button. Aldine serves the RFC 9728 / RFC 8414
   discovery documents, a consent page at `/oauth/authorize` where the
   signed-in user picks the projects the client may touch, `/oauth/token`
   (authorization code + PKCE S256, refresh-token rotation with reuse
   detection; concurrent rotations and code replays burn the family),
-  `/oauth/register` (public clients only, capped at 500 with LRU eviction)
-  and `/oauth/revoke`. Clients identify by a registered `aldc_` id or an
+  `/oauth/register` (public clients only, capped at 500 with LRU eviction;
+  the echo lists both grants, which is what the token endpoint honours) and
+  `/oauth/revoke`. Clients identify by a registered `aldc_` id or an
   https client-metadata URL fetched with SSRF checks (public addresses only,
   no redirects, 5 s and 64 KB under one deadline, 256 documents cached).
-  Access tokens are ordinary 24 h `aldn_` tokens carrying a "via Connect"
-  badge on the Agent access card; revoking one cancels its refresh tokens,
+  Access tokens are ordinary 24 h `aldn_` tokens listed under Connections
+  on the Agent access card with a "via Connect" badge; revoking one cancels
+  its refresh tokens,
   and rotated-out tokens are pruned a week after revocation. `/mcp` 401s
   carry a `WWW-Authenticate` challenge pointing at the discovery document;
-  everything is 404 while `AUTH_ENABLED` is off. The consent page explains
+  everything is 404 while `AUTH_ENABLED` is off. The consent page refuses a
+  request without its PKCE challenge before asking for consent, explains
   protocol errors in plain sentences, says when the project list could not
   be loaded instead of claiming there are no projects, keeps the context
   across sign-up, SSO and an expired session, and enables Allow only once a
   project is picked.
-- Fourteen tools: `list_projects`, `project_structure`, `read_file`,
+- Fifteen tools: `list_projects`, `project_structure`, `read_file`,
   `edit_file`, `write_file`, `batch_write`, `compile`, `get_pdf_url`,
   `commit`, `references_add`, `list_citations`, `list_labels`, `wordcount`,
-  `create_project`, plus `ping`. They pass the same access, protected-project,
+  `create_project`, `trash_project`, plus `ping`. `trash_project` moves a
+  project to the workspace trash (restorable by its owner for
+  `ALDINE_TRASH_DAYS`, never purged by the tool) and accepts only projects
+  made with `create_project` (`agentCreated` in `list_projects`); a person's
+  own project is refused with the next step, like a scoped or non-owner
+  credential. They pass the same access, protected-project,
   trash, hidden-path and token-scope guards as the REST API, and every
   result echoes `{branch, head}`. Paths resolve to the spelling the file tree
   lists (`./main.tex`, and `Main.tex` when only `main.tex` exists); a
@@ -84,20 +95,26 @@ All notable changes to Aldine are documented here. The format follows
   tools. Tool descriptions are written as the model's API docs: stale-anchor
   retry etiquette, when to compile, the 3-attempt fix-loop cap, and which
   errors to relay to the user rather than retry.
-- Every agent write is a reviewable commit under the author "Claude", titled
-  with the intent the tool was called with (`batch_write` and `commit` under
-  their message, `edit_file` and `write_file` under an optional `message`,
-  else "Edit <path>"); intents are kept per file, one commit per intent.
-  Before an agent writes a file its uncommitted state is checkpointed, so a
-  Claude commit's diff is exactly the agent's delta even when a person was
-  typing in the same file; agent-touched files commit separately from the
-  anonymous autosave; an explicit commit consumes pending attribution, so
-  what a person types afterwards is never signed Claude. `commit` lands only
-  the paths Claude wrote on the branch, as one commit; with nothing waiting
-  it is `committed:false` with the current head and `recentClaudeCommits`,
-  not an error. Every git write goes through a per-repository lock, and the
-  shutdown flush (server and stdio transport) commits pending agent work
-  under Claude's name first, on every branch, open in a browser or not.
+- Every agent write is a reviewable commit under the author "Claude", made
+  before the tool answers and titled with the intent the tool was called
+  with (`batch_write` under its message, `edit_file` and `write_file` under
+  an optional `message`, else "Edit <path>" / "Update <path>";
+  `references_add` under "Add reference <key>"); the result names the
+  commit and History shows it at once. Before an agent
+  writes a file its uncommitted state is checkpointed, and the commit is
+  built from the snapshots the tool held while applying the edit (git
+  plumbing, not the working tree), so a Claude commit's diff is exactly the
+  agent's delta — a person's typing before, between or during agent edits
+  lands as their own autosave, never under Claude's name, and "Revert these
+  changes" never removes it. `batch_write` edits a document someone has open
+  the way `edit_file` does: per span, in place, cursor and viewport
+  untouched; only full-content entries replace a file. `commit` lands
+  whatever agent work a refused commit left waiting, as one commit; with
+  nothing waiting — the normal case — it is `committed:false` with the
+  current head and `recentClaudeCommits`, not an error. Every git write goes
+  through a per-repository lock, and the shutdown flush (server and stdio
+  transport) commits pending agent work under Claude's name first, on every
+  branch, open in a browser or not.
 - Signed PDF links: `compile` returns a `pdfUrl` that opens without a session
   for 15 minutes (HMAC-signed, one artifact on one branch, `no-store`; a bad
   or expired signature is refused even on a signed-in browser), plus `pages`,
@@ -128,10 +145,16 @@ All notable changes to Aldine are documented here. The format follows
   past the end says so; on a phone the file tree collapses.
 - Agent presence and review in the editor: an agent session shows in the
   presence strip as a violet spark glyph with its start time (violet is now
-  reserved for agents), History marks Claude's commits with a violet dot and
+  reserved for agents, and a deeper grade on the light theme so chip, glyph
+  and dot read at 5:1 there too), History marks Claude's commits with a violet dot and
   refreshes while open, and behind `aldine.experimental.agentPresence`
-  incoming agent edits get a violet tint that fades. When a session that
-  produced commits goes quiet, a sticky toast ("Claude edited N files",
+  incoming agent edits — the first one included — get a violet tint that
+  fades. The session lives on the server, keyed by document with its expiry:
+  a reload mid-session (which unloads the collab document) shows the chip
+  again with the original start time, and `GET …/agent-activity` reports
+  `sessionActive` so the away check stays quiet and leaves the prompt to the
+  session toast, which then covers the commits made before the reload too.
+  When a session that produced commits goes quiet, a sticky toast ("Claude edited N files",
   Review) opens the session's commits oldest first with their diffs and a
   "Revert these changes" button backed by `POST /api/projects/:id/revert`,
   which undoes the given commits as one new commit; history is never
@@ -189,6 +212,27 @@ All notable changes to Aldine are documented here. The format follows
   whole-tree commit inside Claude's autosave window (a checkpoint, a revert,
   a merge, a GitHub push or pull, a Zotero sync) commits Claude's pending
   edits under Claude's name first, so a human never signs an agent's delta.
+- Agent API results after the staging dogfood: an ambiguous quote is
+  `ambiguous_anchor` (candidates carry the `occurrence` that picks each, no
+  re-read needed) and `stale_anchor` means the quote is gone; candidates show
+  the region around the match, not the start of the line. `version_conflict`
+  carries a `reason` naming the rule that fired, and every error result
+  echoes `path`, `branch` and `head` like a success (`batch_write` names the
+  entry as `path`). `compile` reports `errorsTotal` for errors only and a
+  new `warningsTotal`. `write_file` and `batch_write` adopt the first `.tex`
+  of a rootless project as its main document (`newRoot`), as `PUT /file`
+  does; `wordcount` on a project without one is an error, not 0 words.
+  `references_add` returns `created` and a `note` when no `.tex` loads the
+  target `.bib`; `create_project` returns `contentVersion` and the seeded
+  `files`; `project_structure` flags `binary` files; a windowed `read_file`
+  echoes `from_line`/`to_line`. Missing branches ("No branch \"nope\" in
+  this project — branches: main"), missing projects, paths with a leading
+  `/`, `..`, a trailing `/` or a hidden folder, and over-long messages are
+  each refused with the cause and the fix. `docs/AGENT_API.md` explains
+  `base_version`, `contentVersion` and `fileVersion` once ("Versions and
+  conflicts"), gains Troubleshooting rows for the three access denials, a
+  JSON 404 on a wrong `/mcp` path and a `version_conflict` after a restart,
+  and names the PDF card in the chat apart from the Agent access card.
 - Commit messages from the tools, `POST /commit`, `/revert` and the GitHub
   push are capped at 200 characters and stripped of control characters
   before they reach git (a NUL failed the spawn and, re-queued, blocked the
@@ -222,9 +266,74 @@ All notable changes to Aldine are documented here. The format follows
   matching dirty file, and `/api/projects/:id/log` is parsed on a delimiter
   a subject cannot contain, so a message can no longer move itself into the
   author field the History panel keys on.
+- `compile` over the Agent API on a project with no `.tex` file said the
+  compiler was not responding; it now says the project has nothing to
+  typeset. A fatal run that produced no PDF ("no output PDF file produced")
+  is `pdfStale:true` with the previous run's link even when a shared volume
+  makes the old file look fresh. `write_file` onto a folder, under a file, or
+  with a trailing slash, and `read_file` on a folder, name the cause instead
+  of a server error (a trailing slash used to create a file named like the
+  folder). `read_file` decides text by content, not extension (`.dat`,
+  `.tsv`, `.log`, `.xml`, `.svg`, `.lua`, `.py` count as text in the file
+  tree too), refuses a window past the end or running backwards instead of
+  returning "", and the `commit` note no longer claims edits landed on a
+  branch with no Claude commits.
+- References and compile diagnostics after the staging dogfood.
+  `references_add` makes every entry typesettable under pdflatex and biber:
+  emoji and other characters outside the BMP are dropped (a 🦜 in a Crossref
+  title broke the build with an error pointing at main.tex), Greek letters
+  and relation symbols become their macros, and doi.org's `month = June`
+  becomes the `jun` macro biber defines (it was an undefined-macro warning on
+  every build and no month in the bibliography). DOI, arXiv and OpenAlex
+  entries share one key rule (`bender2021`) and one layout, Crossref's extra
+  fields kept. An id doi.org, arXiv or OpenAlex does not know is "No
+  reference found for …", not a lookup failure; only a 5xx is. `compile`
+  rows carry `context` (the source line TeX was reading, so "Undefined
+  control sequence" also names its token) and warnings a `source` (`latex`,
+  the package name, `biber`) in place of the "LaTeX Warning:" / "Package X
+  Warning:" prefix; a biber warning is attributed to the `.bib` and its line
+  instead of the root file, a run that died in the preamble no longer
+  repeats the previous run's bibliography warnings, the log tail is the
+  4 KB around the first error rather than the end of the log, and a
+  character pdflatex cannot typeset gets a `hint` that says to look in the
+  `.bib`. The compiler reports the same `context`, file and line to the
+  editor.
+- Agent API after the second review pass. Synthesized arXiv and OpenAlex
+  entries no longer escape the `$` of the macros a Greek letter or relation
+  symbol becomes, nor the paired `$…$` math an arXiv title is typed with
+  (`\$\alpha\$` was a "Missing $ inserted" at the bibliography); an
+  unpaired `$` is still escaped. `references_add` reports an entry already present under an
+  older key style (`LeCun_2015` for a DOI re-added as `lecun2015`) as the
+  duplicate it is, naming the existing key, and shows Claude in the `.bib`
+  only when it writes to it, not after a lookup that found nothing. The
+  pre-write snapshot an agent write commits keeps a Latin-1 or binary file's
+  bytes exact instead of a UTF-8 re-decode, so reverting the Claude commit
+  restores the original. `read_file` no longer reports a UTF-8 file over
+  8 KB as binary when a multi-byte character sits at the head's cut. A write
+  that changes nothing answers `commit: null` with `unchanged: true`, which
+  the docs now distinguish from a refused commit.
 - The new-project dialog asks the server for GitLab groups only when
   `/api/remotes` reports provisioning (new field `provisioning`); before, every
   instance without a service token logged a 404 on each open of the dialog.
+- Editor and review flow, after the browser QA of the Agent API. On a phone
+  (≤640 px) the preview pane is hidden as a whole, so the editor gets the
+  width (it was a 30 px column beside a 360 px preview nobody could see), the
+  History overlay uses the screen width, the review dialog wraps long source
+  lines instead of clipping them, and a toast's dot, sentence, Review and ×
+  wrap as two groups rather than one item per line. "Revert these changes"
+  re-typesets the preview when auto-typeset is on (the PDF kept showing
+  Claude's version under "Typeset in 1.0s") and marks it stale when it is
+  off. A revert that overlaps a later edit names the commit it stopped on and
+  says what to do next, without the doubled "Could not revert: Could not
+  revert" prefix. A session ending replaces an away prompt still on screen
+  instead of stacking a second "Claude edited N files" toast. Signed-in people
+  appear to collaborators — and sign their comments — under their account name
+  with a colour that is the same in every browser, not the anonymous
+  "Writer N" (commits already used the account). A quiet visit is recorded,
+  so someone who opened the project before Claude worked is told "while you
+  were away" rather than "in this project", and the scan covers only what is
+  new. Claude's commit titles in the review dialog keep their case, and a
+  History row's tooltip shows the whole message.
 
 ## [0.9.0] — 2026-09-10
 

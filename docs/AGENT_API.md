@@ -25,13 +25,14 @@ per deployment mode, and neither can be left empty:
   button (OAuth 2.1: Aldine is its own authorization server). No token is
   copied anywhere; the signed-in user picks which projects Claude may touch on
   a consent page. For scripts and clients without a Connect button, each user
-  can mint a personal access token under **your name → Account → Agent
-  access → Access tokens for scripts** (name, optional project scope,
+  can mint a personal access token under **your name (opens Account) →
+  Agent access → Access tokens for scripts** (name, optional project scope,
   optional expiry; shown once). Tokens start with `aldn_` and go in
   `Authorization: Bearer …` or in an `X-Aldine-Token` header. The card also
   says when the connector is off on this server, and when its address is one
   claude.ai cannot reach (plain http, localhost, a private network) — Claude
-  Code still can.
+  Code still can, and the card then shows the `claude mcp add` command with
+  a copy button.
 - **Auth off (single-tenant).** Set `ALDINE_MCP_TOKEN` to a long random
   string and send it the same way (`Authorization: Bearer <token>` or
   `X-Aldine-Token: <token>`). Calls run as the instance operator and reach
@@ -84,8 +85,9 @@ skip the Connect button and use the static-token path below.
    checklist. **Allow** finishes the connection; **Deny** leaves nothing
    behind.
 
-That is the whole setup. The connection appears on the Agent access card with
-the client's name, its project scope and a "via Connect" badge; **Revoke**
+That is the whole setup. The connection appears under **Connections** on the
+Agent access card with the client's name, its project scope and a "via
+Connect" badge; **Revoke**
 there ends it (and its refresh token) at the next call. Under the hood the
 access token rotates daily and the connection renews itself for up to 30
 days while in use — the card shows the connection's creation and last use,
@@ -172,67 +174,123 @@ configuration file, using the command from the previous section.
 |---|---|---|
 | `ping` | Confirms the connector is reachable and who the token belongs to. | yes |
 | `list_projects` | Projects the credential can reach, with branches, root file and engine. | yes |
-| `project_structure` | File tree of a branch plus the content version used for conflict-safe writes (checked per file). | yes |
-| `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line. | yes |
-| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines. | no |
-| `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). | no |
-| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. | no |
-| `compile` | Typesets with latexmk: errors before warnings (file, line, message — every row names a file), a short log tail on failure, page count, a signed PDF link, a deep link into the editor; a missing package is reported as a `hint` to relay. | no |
-| `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling. | yes |
-| `commit` | Commits the files Claude wrote on the branch and has not committed yet, as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Nothing pending is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | no |
-| `references_add` | Resolves a DOI, arXiv or OpenAlex id (`query`) to BibTeX and appends it to the project's `.bib` (`bibFile?`). | no |
+| `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `contentVersion` for conflict-safe writes (Versions and conflicts, below). | yes |
+| `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line (`from_line`/`to_line`, echoed back; a window past the end or running backwards is an error). Text is decided by content, not extension. Returns `contentVersion` and `fileVersion`. | yes |
+| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`). | no |
+| `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). Folders come into being with the first file written inside them; the first `.tex` written into a project with no main document becomes it (`newRoot`). | no |
+| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. An `edits` entry on a document someone has open lands per span like `edit_file`; only a `content` entry replaces the file. | no |
+| `compile` | Typesets with latexmk: errors before warnings (file, line, message, the source line as `context`, the tool behind a warning as `source`; every engine row names a file, a biber row names the `.bib` and its line; `errorsTotal` and `warningsTotal` count them), on failure 4 KB of the log around the first error, page count, a signed PDF link, a deep link into the editor; a missing package or a character pdflatex cannot typeset is reported as a `hint`. A project with no `.tex` file is told so. | no |
+| `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling, whoever typeset it; it does not contain edits made since, so Claude is told to `compile` when it has written since its last run. | yes |
+| `commit` | Commits any agent work still waiting on the branch (a write whose own commit git refused), as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Every write commits on its own as it lands, so the normal answer is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | no |
+| `references_add` | Resolves a DOI, arXiv or OpenAlex id (`query`) to BibTeX — one key rule (`surname2021`) and layout whatever the upstream, made typesettable under pdflatex and biber — and appends it to the project's `.bib` (`bibFile?`, created with its folders when missing — `created:true`); a `note` says when no `.tex` on the branch loads that file. An id the upstream does not know is "No reference found"; only a 5xx is a lookup failure. | no |
 | `list_citations` | Citation keys in the project's `.bib` files, with title, author, year. | yes |
 | `list_labels` | `\label` targets across the project's `.tex` files. | yes |
-| `wordcount` | Words in the root file and its `\input`/`\include` graph. | yes |
-| `create_project` | A new project, blank or from a template; refused for a project-scoped credential. | no |
+| `wordcount` | Words in the root file and its `\input`/`\include` graph; an error, not 0, while the project has no main document. | yes |
+| `trash_project` | Moves a project to the workspace trash, where its owner restores it for `ALDINE_TRASH_DAYS` (30 by default); the tool never purges. Accepts only projects made with `create_project` (`agentCreated:true` in `list_projects`) and only for their owner — a person's project is refused and Claude is told to ask them to delete it in Aldine. Its description tells Claude to use it only when asked. | no |
+| `create_project` | A new project, blank or from a template — a folder template (`article`, `beamer`, `report`, `iac-paper`) or a venue kit (`venue:<id>`, the publisher's class files downloaded on first use; an unknown id is refused with the full list). Returns the id, the seeded `files` and `contentVersion` for the first write. Refused for a project-scoped credential. | no |
 
-Every tool takes `project` (optional for a single-project token) and
-`branch` (default `main`); the exact argument names live in the tool schema,
-which Claude reads — `e2e/tests/15-mcp.spec.ts` is the reference for a script
-author. Every tool goes through the same access, protected-project, trash
-and hidden-path checks as the REST API; a project-scoped token is refused
-outside its scope, `list_projects` included. No tool deletes, shares, pushes
-to GitHub or manages tokens.
+Every tool that works inside a project takes `project` (optional for a
+single-project token) and `branch` (default `main`) — `ping`, `list_projects`
+and `create_project` take neither. Every structured result — the error
+bodies `version_conflict`, `stale_anchor` and `ambiguous_anchor` included —
+echoes `branch` and `head` (after a write, the commit that write made), and
+a file tool's result names its `path`; a plain refusal is one sentence of text. The exact argument names live in the
+tool schema, which Claude reads; for a script author the schema is the
+contract and `e2e/tests/15-mcp.spec.ts` shows it in use. Every tool goes
+through the same access, protected-project, trash and hidden-path checks as
+the REST API; a project-scoped token is refused outside its scope and
+`list_projects` shows only the scope. No tool purges, shares, pushes to a
+git remote or manages tokens; the one trash tool reaches only what the
+agent created, and only as far as the workspace trash.
+
+### Versions and conflicts
+
+Writes are guarded by three numbers, all per branch and all issued by the
+server process that answers:
+
+- `contentVersion` — the branch's change counter. It goes up whenever any
+  file on the branch changes on disk (a keystroke that lands, a write tool,
+  a git rewrite). `project_structure`, `read_file`, `create_project` and
+  every write return it.
+- `fileVersion` — the `contentVersion` at which *this* file last changed.
+  `read_file` and the write results return it for the file they touched.
+- `base_version` — what a write passes back: optional on `edit_file` and
+  `write_file`, per entry on `batch_write`. Send the `contentVersion` (or
+  `fileVersion`) from the read of that file, or `contentVersion` from
+  `project_structure` or `create_project` for a file that does not exist
+  yet. Omitted, the write is not checked and lands over whatever is there.
+
+A write is accepted when `fileVersion ≤ base_version ≤ contentVersion`: the
+file has not changed since the version the caller saw, and that version came
+from this server. It is refused, with nothing written, as
+`{error:"version_conflict", reason, currentVersion, fileVersion}` when
+
+- the file changed after `base_version` (a change to another file on the
+  branch does not count, so two tools editing two files in parallel never
+  conflict), or
+- `base_version` is newer than the branch's `contentVersion` — it was issued
+  by another server process (a restart, or another node behind the load
+  balancer), so the server cannot tell what it saw.
+
+`reason` says which. The fix is the same for both: re-read the file and use
+the `contentVersion` that read returns. A git-level rewrite of the branch
+(revert, merge, pull, reset) counts as a change to every file. In
+`batch_write` a conflict on any entry refuses the whole batch.
+
+Quote-anchored edits have two errors of their own, also with nothing applied:
+`stale_anchor` (the quote is not in the file; `candidates` show the region
+around the nearest match — re-read, re-anchor, retry) and `ambiguous_anchor`
+(the quote matches several places; each candidate carries the `occurrence`
+that picks it — resend with it, no re-read needed). Error results carry the
+same `path`, `branch`, `head` and `contentVersion` as a success.
 
 ## How attribution and review work
 
-- **Commits.** Each write tool commits as author "Claude". `batch_write`
-  and `commit` carry the stated intent as the message; `edit_file` and
-  `write_file` take an optional `message` and are otherwise titled by file
-  ("Edit main.tex", "Update notes.tex"). Intents are kept per file, so a
+- **Commits.** Each write tool commits as author "Claude" before it answers,
+  and the result names the commit. `batch_write` and `commit` carry the
+  stated intent as the message; `edit_file` and `write_file` take an
+  optional `message` and are otherwise titled by file ("Edit main.tex",
+  "Update notes.tex"); `references_add` is titled "Add reference <key>".
+  Every call is one commit, so a
   commit's title always names what it holds. Before a write, whatever a
   person had typed into that file and not yet committed is checkpointed
-  separately, so a Claude commit's diff is Claude's change plus anything
-  typed into that same file in the ~20 seconds before the commit lands (the
-  autosave debounce; the review dialog says so before a revert). The History
-  panel marks these commits with a violet dot and refreshes while Claude is
-  present. A graceful stop commits pending Claude work under its name before
-  exiting — the server on SIGTERM (a deploy), the stdio process when Claude
-  Code ends the session (stdin closes, or SIGTERM); only a hard kill inside
-  that ~20-second window loses the attribution — the edit itself survives on
-  disk and the next autosave commits it as an anonymous autosave.
-- **The `commit` tool is scoped to Claude's own work.** It commits the
-  paths Claude wrote on that branch and has not committed yet, as one commit
-  titled with the message it was given — the caller is naming the checkpoint,
-  so the per-file intents those writes registered are replaced. A
-  collaborator's unsaved typing, and anything a person changed over REST,
-  stays pending and reaches history as an ordinary anonymous autosave. When
-  Claude's edits already auto-committed there is nothing to do: the result is
-  `committed:false` with the current head and the latest Claude commits on
-  the branch (`recentClaudeCommits`), so it can name the commit that holds
-  its edits. Claude is still steered to `batch_write` when the change is one
-  it is making right now.
+  separately, and the commit is built from the text the tool held while it
+  applied the edit — not from the working tree — so a Claude commit's diff
+  is exactly Claude's change: typing that lands before, between or during
+  agent edits reaches history as the person's own autosave, and reverting
+  Claude's commits never removes it. The History panel marks these commits
+  with a violet dot and shows them as they land. A write that leaves the
+  file as HEAD has it makes no commit: the result says `commit: null` with
+  `unchanged: true`, and nothing is pending. Should git refuse a commit,
+  the result says so (`commit: null` without `unchanged`), the write stays registered under
+  Claude's name and the next autosave (or a graceful stop — the server on
+  SIGTERM, the stdio process when Claude Code ends the session) commits it;
+  only a hard kill in between loses the attribution, and the edit itself
+  survives on disk.
+- **The `commit` tool is scoped to Claude's own work.** It commits whatever
+  agent work is still waiting on that branch, as one commit titled with the
+  message it was given — the caller is naming the checkpoint, so the
+  per-file intents those writes registered are replaced. A collaborator's
+  unsaved typing, and anything a person changed over REST, stays pending and
+  reaches history as an ordinary anonymous autosave. Since every write
+  commits itself, the usual answer is `committed:false` with the current head
+  and the latest Claude commits on the branch (`recentClaudeCommits`), so
+  Claude can name the commit that holds its edits. Claude is still steered to
+  `batch_write` when the change is one it is making right now.
 - **Human authors.** With `AUTH_ENABLED`, a person's checkpoints, merges and
   reverts are committed under their account name (the server ignores the
-  name the browser sends); the anonymous "Writer N" identity applies only
-  without accounts. Autosaves carry no author.
+  name the browser sends), and collaborators and comment threads see that
+  name too, with one colour in every browser; the anonymous "Writer N"
+  identity applies only without accounts. Autosaves carry no author.
 - **Presence.** While Claude edits a document that is open in someone's
   editor, it appears in the presence strip as a violet spark glyph (never an
   initial; the violet is reserved for agents) and leaves about a minute after
-  its last call. With the experimental flag
+  its last call. The session is kept on the server, so reloading the page
+  mid-session shows it again with its original start time, and the away
+  prompt below waits for it to end. With the experimental flag
   `aldine.experimental.agentPresence` (command palette: "Enable experimental
-  agent edit highlights"), incoming agent edits get a violet tint that fades
-  over a few seconds.
+  agent edit highlights"), incoming agent edits — the first one included —
+  get a violet tint that fades over a few seconds.
 - **The preview follows Claude.** With auto-typeset on, an agent write arms
   the same debounce a keystroke arms, so an open editor typesets without
   anyone touching the keyboard. Only one tab per branch runs it (the others
@@ -247,13 +305,19 @@ to GitHub or manages tokens.
   shows a sticky toast, "Claude edited N files", with a **Review** action
   that opens the diff of the session's commits and a **Revert these changes**
   button. Revert creates one new commit that undoes them; history is never
-  rewritten. The same prompt reaches you when you were not watching at all:
-  open a project whose branch carries Claude commits newer than your last
-  acknowledged visit and the toast says "Claude edited N files while you were
-  away". The mark is per person, project and branch — server-side with
-  accounts, per browser without — so it follows you across devices when you
-  are signed in. Reviewing or dismissing ends it; an ignored prompt returns
-  exactly once more and then counts as seen. Your own commits never trigger
+  rewritten. With auto-typeset on the preview re-typesets after the revert,
+  with it off the preview is marked stale. When a person's later edit
+  overlaps one of the commits the revert stops with nothing committed and
+  names the commit it stopped on; undo the overlap by hand (History shows
+  both diffs) and revert again. The same prompt reaches you when you were
+  not watching at all: open a project whose branch carries Claude commits
+  newer than your last visit and the toast says "Claude edited N files while
+  you were away" — "in this project" if you had never opened it. The mark is
+  per person, project and branch — server-side with accounts, per browser
+  without — so it follows you across devices when you are signed in.
+  Reviewing or dismissing ends it; an ignored prompt returns exactly once
+  more and then counts as seen. There is one review prompt at a time: a
+  session ending replaces an away prompt still on screen. Your own commits never trigger
   it, and a branch with a long agent history shows the count with the newest
   20 commits' diffs, which are also the only ones Revert undoes.
 
@@ -271,7 +335,9 @@ Hosts that support MCP Apps (claude.ai, Claude Desktop, Cowork) render the
 result with Aldine's viewer, `ui://aldine/pdf-viewer`: page well, error rows
 that deep-link to the failing line, and "Open in Aldine". The viewer's sandbox
 may only fetch from the origin in `ALDINE_PUBLIC_URL`; a wrong value fails
-closed (a fetch error on the card), never open. Other hosts get the link in
+closed (a fetch error on the PDF card in the chat), never open. The Agent
+access card in Aldine's account settings is a different thing; the
+Troubleshooting rows name each. Other hosts get the link in
 the text result. The viewer is one built file,
 `apps/server/assets/pdf-viewer.html`; the published image contains it, a
 source checkout builds it with `npm run build:viewer -w apps/server` (part of
@@ -318,8 +384,10 @@ If you do not want to expose the instance:
   Protected (showcase) projects stay read-only. Agent typesets take at most
   one of the account's two concurrent slots, so the person always keeps one,
   and count against the account's monthly quota.
-- **What it cannot do.** Delete or trash a project, change sharing, push to
-  GitHub, or create, list or revoke tokens; those routes accept browser
+- **What it cannot do.** Purge a project (the one trash tool reaches only
+  projects the agent created, and only as far as the workspace trash),
+  change sharing, push to a git remote (GitHub or GitLab), or create, list or
+  revoke tokens; those routes accept browser
   sessions only, so a leaked token cannot escalate to a session or mint
   another token.
 - **At rest and in transit.** Tokens are stored as SHA-256 digests. `/mcp`
@@ -338,10 +406,12 @@ If you do not want to expose the instance:
 |---|---|
 | `401 A valid access token is required` | Auth on: the token is revoked, expired or mistyped; reconnect, or mint a new one. Auth off: `ALDINE_MCP_TOKEN` is unset or does not match; the boot log says which. |
 | Connect fails; `/.well-known/oauth-protected-resource/mcp` is 404 | `AUTH_ENABLED` is off, so there is no authorization server. Send `ALDINE_MCP_TOKEN` in the `X-Aldine-Token` header instead ("With a static token" above), or turn auth on. |
-| Connect probe gets HTML | The connector URL lacks `/mcp`. |
+| Connect probe gets HTML, or `404 {"error":"not found"}` | The URL is not exactly `https://<host>/mcp`: HTML means `/mcp` is missing (the SPA answered); a JSON 404 means the path is off by a trailing slash or a prefix (`/mcp/`, `/api/mcp`), the instance is under a path prefix the URL lacks, or the proxy does not forward `/mcp` — paste the address the Agent access card shows. |
+| `You do not have access to this project`, `No project "…" is reachable with this token`, or `This token does not have access to that project` | Three denials. The first: the project exists but the token's user is not a member — share it with them, or use their token. The second: no project has that id for this credential — a project *name* was passed where tools take ids (`list_projects` has them), a typo, or the project is in the trash. The third: the token is scoped to other projects — mint one scoped to this project, or an unscoped one. Over REST the first is a 403 with the same text and a missing project a 404 `project not found`. |
+| `version_conflict` on a file nobody edited | `reason` says which rule fired. A `base_version` newer than the branch's `contentVersion` came from another server process (a restart, another node) — re-read the file and use the version that read returns. See "Versions and conflicts". |
 | Instance under a path prefix | The connector URL carries it (`https://host/prefix/mcp`) and `ALDINE_PUBLIC_URL` includes it. The discovery documents sit at the origin root with the prefix inserted after the well-known segment (`/.well-known/oauth-authorization-server/prefix`, `/.well-known/oauth-protected-resource/prefix/mcp`), so the proxy must forward those two paths to Aldine as well as the prefix itself (`deploy/nginx.conf` shows it). |
-| The card says the PDF viewer is not built | `apps/server/assets/pdf-viewer.html` is missing: run `npm run build:viewer -w apps/server`. The tools keep returning the link meanwhile. |
-| The card shows a fetch error but the link opens in a tab | `ALDINE_PUBLIC_URL` is not the origin the browser reaches (the viewer may only fetch from that origin). |
+| The PDF card in the chat says the viewer is not built | `apps/server/assets/pdf-viewer.html` is missing: run `npm run build:viewer -w apps/server`. The tools keep returning the link meanwhile. |
+| The PDF card in the chat shows a fetch error but the link opens in a tab | `ALDINE_PUBLIC_URL` is not the origin the browser reaches (the viewer may only fetch from that origin). |
 | Link expired | Signed links last 15 minutes; ask Claude for the PDF again and it calls `get_pdf_url`. |
 | `429 Too many requests` | The per-IP or per-token bucket is empty; slow the loop, or raise `RL_MCP_BURST`. |
 | `GET /mcp` answers 401 (or 405 with a valid token) | Expected: the endpoint is POST-only and checks the credential first. |

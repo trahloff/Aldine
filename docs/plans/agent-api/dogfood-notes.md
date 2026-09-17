@@ -51,11 +51,12 @@ Conventions:
   `aldine: autosave` (no Claude commit, no review coverage) or collided on
   `index.lock`; reproduced 5 of 8 runs at a 120 ms debounce. Fixed with the
   per-repo write lock (`gitops.withRepoLock`) and the attribution taken
-  under it. Still open by design: keystrokes typed into the same file
-  between the agent's write and the debounce fire land in the Claude commit
-  — closing that needs the attributed commit built from the agent's
-  snapshot with plumbing (hash-object / commit-tree), not from the working
-  tree.
+  under it. Was still open by design: keystrokes typed into the same file
+  between the agent's write and the debounce fire landed in the Claude
+  commit. Closed 2026-09-17 (browser QA #2): the write tools commit at once
+  from the snapshots they held while applying, with plumbing (hash-object /
+  commit-tree, `gitops.commitSnapshotHeld`), not from the working tree; the
+  ledger and the debounce are the fallback for a commit git refuses.
 
 - 2026-09-06 · `edit_file`/`write_file` + checkpoint · QA (PM loop) ·
   Commit titles misattributed intent: one pending message per branch window
@@ -174,6 +175,9 @@ hosted client metadata"):
       card).
 - [ ] Wrong host settings: connector URL without `/mcp` → the discovery
       probe fails cleanly (no HTML answer from `/.well-known/*`).
+      Server side seen 2026-09-17 (local, browser QA "stranger"): `/mcp/`,
+      `/api/mcp` and `/.well-known/*` answer a JSON 404, never HTML; the
+      claude.ai side of the probe is still to see.
 - [ ] Auth off (static token): Add custom connector with
       `X-Aldine-Token: <ALDINE_MCP_TOKEN>` in the additional request headers
       and no Connect → `list_projects` lists every project. Record the exact

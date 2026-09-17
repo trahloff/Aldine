@@ -9,7 +9,11 @@ LaTeX projects contain pasted web content, reviewer comments, .bib entries from 
 internet — all of it reaches the model. Never trust the model to decline.
 
 Mitigations (all server-side):
-- Destructive tools DO NOT EXIST: no delete/purge, no share management, no GitHub
+- Destructive tools DO NOT EXIST: no purge, no share management, no GitHub
+  (2026-09-17: `trash_project` is the one exception — soft delete only, owner
+  only, and only projects stamped `createdVia: 'agent'` by `create_project`,
+  so an injected instruction can at most trash a scratch project the agent
+  made, restorable from the workspace),
   push, no token management in any tool surface (00-overview non-goals).
 - MCP handlers call the SAME guard functions as REST (canAccess, protected
   projects, trash, hidden paths) — shared functions, never copies.

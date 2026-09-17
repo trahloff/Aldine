@@ -89,8 +89,10 @@ test.describe('MCP over PAT auth', () => {
         message: 'Change the opening line',
       });
       expect(edit.isError).toBeFalsy();
+      // the edit committed as it landed; commit finds nothing waiting and says so
+      expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       const committed = await call(client, 'commit', { project: project.id, message: 'Change the opening line' });
-      expect(committed.body.committed).toBe(true);
+      expect(committed.body.committed).toBe(false);
       const log = await (await request.get(`/api/projects/${project.id}/log?branch=main`)).json();
       const claude = log.find((c: any) => c.author === 'Claude');
       expect(claude).toBeTruthy();
@@ -124,8 +126,9 @@ test.describe('MCP over PAT auth', () => {
         edits: [{ quote: 'Original line.', replacement: 'Line rewritten while Ada was away.' }],
       });
       expect(edit.isError).toBeFalsy();
+      expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       const committed = await call(client, 'commit', { project: project.id, message: 'Rewrite the opening line' });
-      expect(committed.body.committed).toBe(true);
+      expect(committed.body.committed).toBe(false);
     } finally {
       await client.close().catch(() => {});
     }

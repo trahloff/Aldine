@@ -77,7 +77,9 @@ and has not reverted an agent commit in anger for two weeks of daily use.
 - Async compile job API / webhooks (compile is 120 s-bounded; progress notifications suffice).
 - Per-conversation server-side state (a project-scoped PAT is the context).
 - Agent tools for delete/purge, share management, GitHub push, token management
-  (destructive surface — deliberately not expressible).
+  (destructive surface — deliberately not expressible). Amended 2026-09-17 (Toby):
+  `trash_project`, a soft delete limited to projects the agent created, so
+  scratch projects can be cleaned up without a person clicking through the trash.
 - SyncTeX tools for agents; vision-in-the-loop layout judging; keystroke-simulation
   "typing" animation.
 - Verb-level token scopes (project scope only in v1).

@@ -115,6 +115,27 @@ test.describe('OAuth Connect flow', () => {
     expect(page.url()).toContain('/oauth/authorize');
   });
 
+  test('a request without its PKCE challenge ends on the error card before consent, with no redirect', async ({ page, baseURL }) => {
+    await page.goto(authorizeUrl('', 'nopkce', baseURL!));
+    await expect(page.getByTestId('oauth-error')).toContainText('This link is incomplete');
+    await expect(page.getByTestId('oauth-error-detail')).toContainText('code_challenge');
+    await expect(page.getByTestId('oauth-consent')).toHaveCount(0);
+    await expect(page.getByTestId('auth-email')).toHaveCount(0);
+    expect(page.url()).toContain('/oauth/authorize');
+  });
+
+  test('a session that ends mid-consent brings the sign-in back with a warning, not a success', async ({ page, baseURL }) => {
+    const { challenge } = pkce();
+    await page.goto(authorizeUrl(challenge, 'ended-state', baseURL!));
+    await signUpInline(page, uniq());
+    await expect(page.getByTestId('oauth-consent')).toBeVisible();
+    await page.request.post('/api/auth/logout');
+    await page.getByTestId('oauth-allow').click();
+    await expect(page.getByTestId('auth-info')).toContainText('Your session ended');
+    await expect(page.getByTestId('auth-info')).toHaveClass(/login__info--warn/);
+    await expect(page.getByTestId('oauth-consent')).toHaveCount(0);
+  });
+
   test('sign in on the consent page → Deny → error=access_denied at the redirect', async ({ page, baseURL }) => {
     const { challenge } = pkce();
     await page.goto(authorizeUrl(challenge, 'deny-state', baseURL!));
@@ -230,8 +251,10 @@ test.describe('OAuth Connect flow', () => {
     await expect(page.getByTestId('account-settings')).toBeVisible();
     await expect(page.getByTestId('agent-token-via-connect')).toBeVisible();
     await expect(page.getByTestId('account-settings')).toContainText('Loopback e2e client');
-    // a Connect row shows its scope and never the daily access-token expiry
-    await expect(page.getByTestId('agent-token-scope').first()).toContainText('1 project');
+    // a Connect row lists under its own heading, names its project and never shows the daily access-token expiry
+    await expect(page.getByTestId('agent-connections')).toBeVisible();
+    await expect(page.getByTestId('agent-token-scope').first()).toHaveText('OAuth Picked');
+    await expect(page.getByTestId('agent-token-via-connect')).toHaveAttribute('title', /Claude asks you to connect again/);
     await expect(page.getByTestId('account-settings')).not.toContainText('Expires');
     await page.getByTestId('agent-token-revoke').first().click();
     await page.getByTestId('agent-token-revoke-confirm').click();

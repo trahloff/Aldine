@@ -103,11 +103,12 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(onDisk).toContain('Results improve markedly across trials.');
       expect(onDisk).not.toContain('dramatically');
 
-      // ---- commit: lands the edit now so the batch_write window is clean ----
+      // the edit committed as it landed; commit finds nothing waiting and says so
+      expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       const committed = await call(client, 'commit', { project: id, message: 'Reword the results line' });
       expect(committed.isError).toBeFalsy();
-      expect(committed.body.committed).toBe(true);
-      expect(committed.body.hash).toMatch(/^[0-9a-f]{7,}$/);
+      expect(committed.body.committed).toBe(false);
+      expect(committed.body.recentClaudeCommits[0].message).toBe('Edit main.tex');
 
       // ---- batch_write: multi-file change, exactly ONE commit with the message ----
       const logBefore = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
@@ -165,10 +166,18 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(badCompile.isError).toBeFalsy();
       expect(badCompile.body.ok).toBe(false);
       expect(badCompile.body.errors.length).toBeGreaterThanOrEqual(1);
+      // errorsTotal counts type:"error" rows only; warnings have their own total
+      expect(badCompile.body.errorsTotal).toBe(badCompile.body.errors.filter((e: any) => e.type === 'error').length);
+      expect(badCompile.body.warningsTotal).toBe(badCompile.body.errors.filter((e: any) => e.type === 'warning').length);
       const err = badCompile.body.errors.find((e: any) => e.type === 'error');
       expect(err).toBeTruthy();
       expect(err.message).toMatch(/undefined control sequence|thisisnotacommand/i);
       expect(typeof err.line).toBe('number');
+      // the row names the token and carries the source line TeX was reading
+      expect(err.message).toContain('\\thisisnotacommand');
+      expect(err.context).toContain('\\thisisnotacommand');
+      // the log window is anchored on the first error, not the end of the log
+      expect(badCompile.body.logTail).toMatch(/thisisnotacommand/);
       expect(badCompile.body.log).toBeUndefined();
       expect(Buffer.byteLength(badCompile.body.logTail, 'utf8')).toBeLessThanOrEqual(4096);
     } finally {
@@ -210,8 +219,7 @@ test.describe('MCP connector (static-token mode)', () => {
     }
   });
 
-  test('a person\'s unsaved typing stays out of the agent commit and the agent edit is never swept into the autosave', async ({ page, request }) => {
-    test.setTimeout(120_000); // waits out the real 20 s autosave debounce
+  test('a person\'s typing before and between agent edits stays out of the Claude commits and is never swept into them', async ({ page, request }) => {
     const id = await createProject(request, 'MCP Autosave Race');
     const client = await connect();
     try {
@@ -230,33 +238,53 @@ test.describe('MCP connector (static-token mode)', () => {
       });
       expect(edit.isError).toBeFalsy();
       expect(edit.body.applied).toBe(1);
-
-      // the attributed commit lands with the real debounce, not before
-      let log: Array<{ hash: string; author: string; message: string }> = [];
-      await expect.poll(async () => {
-        log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-        return log.some((c) => c.author === 'Claude' && c.message === 'Edit main.tex');
-      }, { timeout: 60_000, intervals: [1000] }).toBe(true);
+      // the commit is made before the tool answers, not by a later debounce
+      expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
+      let log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+      expect(log[0].author).toBe('Claude');
+      expect(log[0].message).toBe('Edit main.tex');
 
+      // typing BETWEEN two agent edits: the window that used to end up in the
+      // second edit's Claude commit (and be undone by "Revert these changes")
+      await typeAtEnd(page, 'TYPED-BETWEEN-EDITS ');
+      await page.waitForTimeout(2000);
+      const second = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'Edited opening line.' }],
+        message: 'Edit the opening line',
+      });
+      expect(second.isError).toBeFalsy();
+      expect(second.body.commit).toMatch(/^[0-9a-f]{7,}$/);
+
+      log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
       const claude = log.filter((c) => c.author === 'Claude');
-      expect(claude).toHaveLength(1);
-      const claudePatch = await patchOf(claude[0].hash);
-      expect(claudePatch).toMatch(/^\+.*markedly/m);
-      // added lines only: the typed line may appear as unchanged hunk context
-      expect(claudePatch).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
+      expect(claude.map((c) => c.message)).toEqual(['Edit the opening line', 'Edit main.tex']);
+      const claudePatches = await Promise.all(claude.map((c) => patchOf(c.hash)));
+      expect(claudePatches[1]).toMatch(/^\+.*markedly/m);
+      expect(claudePatches[0]).toMatch(/^\+.*Edited opening line/m);
+      // added lines only: the typed lines may appear as unchanged hunk context
+      for (const p of claudePatches) {
+        expect(p).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
+        expect(p).not.toMatch(/^\+.*TYPED-BETWEEN-EDITS/m);
+      }
 
+      // both typed lines reached history as anonymous autosaves, before the edit that followed them
       const autosaves = log.filter((c) => c.message === 'aldine: autosave');
-      expect(autosaves.length).toBeGreaterThan(0);
       const autosavePatches = await Promise.all(autosaves.map((c) => patchOf(c.hash)));
       expect(autosavePatches.some((p) => /^\+.*HUMAN-TYPED-LINE/m.test(p))).toBe(true);
+      expect(autosavePatches.some((p) => /^\+.*TYPED-BETWEEN-EDITS/m.test(p))).toBe(true);
+      expect(log.findIndex((c) => c.message === 'Edit the opening line')).toBeLessThan(log.findIndex((c) => c.message === 'aldine: autosave'));
+      // and the editor still shows everything
+      await expect(page.locator('.cm-content')).toContainText('TYPED-BETWEEN-EDITS');
+      await expect(page.locator('.cm-content')).toContainText('Edited opening line.');
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
     }
   });
 
-  test('the commit tool commits only the files Claude wrote; a person\'s unsaved typing waits for the autosave', async ({ page, request }) => {
+  test('write_file commits only the file Claude wrote; a person\'s unsaved typing waits for the autosave', async ({ page, request }) => {
     test.setTimeout(120_000); // waits out the real 20 s autosave debounce
     const id = await createProject(request, 'MCP Commit Scope');
     const client = await connect();
@@ -266,31 +294,27 @@ test.describe('MCP connector (static-token mode)', () => {
       await openProject(page, id);
       await typeAtEnd(page, 'HUMAN-TYPED-LINE ');
       // past the 1.5 s store debounce (on disk, uncommitted), well inside the
-      // 20 s autosave: the checkpoint below must leave this line alone
+      // 20 s autosave: the write's commit below must leave this line alone
       await page.waitForTimeout(2000);
 
       const wrote = await call(client, 'write_file', { project: id, path: 'notes.tex', content: 'Reviewer notes.\n', message: 'Add reviewer notes' });
       expect(wrote.isError).toBeFalsy();
-      const committed = await call(client, 'commit', { project: id, message: 'Checkpoint the notes' });
-      expect(committed.isError).toBeFalsy();
-      expect(committed.body.committed).toBe(true);
-      expect(committed.body.hash).toMatch(/^[0-9a-f]{7,}$/);
-      expect(committed.body.files).toEqual(['notes.tex']);
-      expect(committed.body.branch).toBe('main');
+      expect(wrote.body.commit).toMatch(/^[0-9a-f]{7,}$/);
+      expect(wrote.body.branch).toBe('main');
 
       const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
       let log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
       const claude = log.filter((c) => c.author === 'Claude');
       expect(claude).toHaveLength(1);
-      expect(claude[0].message).toBe('Checkpoint the notes');
+      expect(claude[0].message).toBe('Add reviewer notes');
       const claudePatch = await patchOf(claude[0].hash);
       expect(claudePatch).toContain('+Reviewer notes.');
       // added lines only: the typed line may appear as unchanged hunk context
       expect(claudePatch).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
       for (const c of log) expect(await patchOf(c.hash)).not.toMatch(/^\+.*HUMAN-TYPED-LINE/m);
 
-      // the debounce has already taken Claude's work, so a second checkpoint
-      // is a result, not a failure
+      // the write has already committed itself, so a checkpoint is a result,
+      // not a failure — and it never sweeps the person's file
       const again = await call(client, 'commit', { project: id, message: 'Nothing new' });
       expect(again.isError).toBeFalsy();
       expect(again.body.committed).toBe(false);
@@ -318,7 +342,6 @@ test.describe('MCP connector (static-token mode)', () => {
   });
 
   test('commit titles follow each write\'s own intent: a checkpoint never inherits the next tool\'s message', async ({ request }) => {
-    test.setTimeout(120_000); // waits out the real 20 s autosave debounce
     const id = await createProject(request, 'MCP Intent Titles');
     const client = await connect();
     try {
@@ -338,11 +361,9 @@ test.describe('MCP connector (static-token mode)', () => {
       });
       expect(again.isError).toBeFalsy();
 
-      let log: Array<{ hash: string; author: string; message: string }> = [];
-      await expect.poll(async () => {
-        log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-        return log.filter((c) => c.author === 'Claude').length;
-      }, { timeout: 60_000, intervals: [1000] }).toBe(3);
+      // each write committed before it answered: nothing to wait for
+      const log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
+      expect(log.filter((c) => c.author === 'Claude')).toHaveLength(3);
       const statOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).stat;
       const byMessage: Record<string, string> = {};
       for (const c of log.filter((x) => x.author === 'Claude')) byMessage[c.message] = await statOf(c.hash);
@@ -470,6 +491,23 @@ test.describe('MCP connector (static-token mode)', () => {
       const title = await call(client, 'references_add', { project: id, query: 'Attention is all you need' });
       expect(title.isError).toBeTruthy();
       expect(title.text).toMatch(/No reference found/);
+      // a DOI doi.org does not know is "not found" with the query, never an outage
+      const unregistered = await call(client, 'references_add', { project: id, query: '10.1145/mock.unregistered' });
+      expect(unregistered.isError).toBeTruthy();
+      expect(unregistered.text).toMatch(/No reference found for "10.1145\/mock.unregistered"/);
+      expect(unregistered.text).not.toMatch(/lookup failed/);
+
+      // Crossref's blob is made typesettable under pdflatex and biber: the
+      // emoji goes, the Greek letter becomes its macro, month = June becomes
+      // jun, and the entry is keyed and laid out like a synthesized one
+      const parrot = await call(client, 'references_add', { project: id, query: '10.1145/mock.parrot' });
+      expect(parrot.isError).toBeFalsy();
+      expect(parrot.body.key).toBe('bender2021');
+      const bibWithParrot = await (await request.get(`/api/projects/${id}/file?branch=main&path=references.bib`)).text();
+      expect(bibWithParrot).not.toMatch(/[\u{10000}-\u{10FFFF}]/u);
+      expect(bibWithParrot).toContain('Stochastic Parrots: $\\alpha$ Models');
+      expect(bibWithParrot).toMatch(/^  month\s+= jun,$/m);
+      expect(bibWithParrot).toMatch(/^@article\{bender2021,\n  title\s+= \{/m);
 
       // an explicit bibFile targets that file and lands beside the seeded entry
       const other = await call(client, 'references_add', { project: id, query: '10.1145/mock.67890', bibFile: 'chapters/more.bib' });
@@ -530,6 +568,18 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(again.body.error).toBe('version_conflict');
       expect(again.body.fileVersion).toBeGreaterThan(base);
       expect(again.body.currentVersion).toBeGreaterThanOrEqual(again.body.fileVersion);
+      // the conflict says which rule fired and carries the same echo as a success
+      expect(again.body.reason).toMatch(/"main\.tex" changed after version/);
+      expect(again.body.path).toBe('main.tex');
+      expect(again.body.branch).toBe('main');
+      expect(typeof again.body.head).toBe('string');
+      const newer = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line, edited once.', replacement: 'Stable opening line, edited twice.' }],
+        base_version: again.body.currentVersion + 500,
+      });
+      expect(newer.body.error).toBe('version_conflict');
+      expect(newer.body.reason).toMatch(/newer than the branch's contentVersion/);
       const onDisk = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
       expect(onDisk).toContain('edited once');
       expect(onDisk).not.toContain('edited twice');
@@ -548,10 +598,14 @@ test.describe('MCP connector (static-token mode)', () => {
       const bibPut = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'references.bib', content: bibText + '% touched\n', baseVersion: bibV } });
       expect(bibPut.ok()).toBeTruthy();
 
-      // a git revert rewrites the tree: every path counts as changed
-      const committed = await call(client, 'commit', { project: id, message: 'Land the per-file edits' });
-      expect(committed.isError).toBeFalsy();
-      const hash: string = committed.body.hash ?? (await (await request.get(`/api/projects/${id}/log?branch=main`)).json())[0].hash;
+      // a git revert rewrites the tree: every path counts as changed. The
+      // agent's edits committed on their own; the REST rewrites above are
+      // checkpointed here, and that newest commit is the one reverted (an
+      // older one would conflict with the later same-line rewrite).
+      const committed = await request.post(`/api/projects/${id}/commit`, { data: { branch: 'main', message: 'Land the per-file edits' } });
+      expect(committed.ok()).toBeTruthy();
+      expect((await committed.json()).committed).toBe(true);
+      const hash: string = (await (await request.get(`/api/projects/${id}/log?branch=main`)).json())[0].hash;
       expect(hash).toMatch(/^[0-9a-f]{7,}$/);
       const pre = await call(client, 'read_file', { project: id, path: 'main.tex' });
       const V: number = pre.body.contentVersion;
@@ -579,6 +633,146 @@ test.describe('MCP connector (static-token mode)', () => {
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
+    }
+  });
+
+  test('a rootless project says so; refusals name their cause; a fatal typeset keeps the previous PDF as stale', async ({ request }) => {
+    test.setTimeout(300_000); // two real latexmk runs
+    const created = await request.post('/api/projects', { data: { name: 'MCP Rootless', template: 'blank' } });
+    expect(created.ok()).toBeTruthy();
+    const id = (await created.json()).id as string;
+    const client = await connect();
+    try {
+      // no .tex yet: compile and wordcount say so — never "the compiler is down", never "0 words"
+      const noTex = await call(client, 'compile', { project: id });
+      expect(noTex.isError).toBeTruthy();
+      expect(noTex.text).toMatch(/no \.tex file to typeset on main/);
+      expect(noTex.text).not.toMatch(/compiler/);
+      const noWords = await call(client, 'wordcount', { project: id });
+      expect(noWords.isError).toBeTruthy();
+      expect(noWords.text).toMatch(/no main document yet/);
+
+      // the first .tex written through the tools becomes the main document
+      const wrote = await call(client, 'write_file', { project: id, path: 'paper.tex', content: MAIN });
+      expect(wrote.isError).toBeFalsy();
+      expect(wrote.body.newRoot).toBe('paper.tex');
+      const struct = await call(client, 'project_structure', { project: id });
+      expect(struct.body.rootFile).toBe('paper.tex');
+      expect(struct.body.files.find((f: any) => f.path === 'paper.tex').binary).toBe(false);
+      const wc = await call(client, 'wordcount', { project: id });
+      expect(wc.isError).toBeFalsy();
+      expect(wc.body.rootFile).toBe('paper.tex');
+      expect(wc.body.total).toBeGreaterThan(0);
+
+      const good = await call(client, 'compile', { project: id });
+      expect(good.isError).toBeFalsy();
+      expect(good.body.ok).toBe(true);
+      expect(good.body.errorsTotal).toBe(0);
+      expect(good.body.warningsTotal).toBe(0);
+      expect(good.body.pdfStale).toBe(false);
+      const goodT = new URL(good.body.pdfUrl).searchParams.get('t');
+
+      // a missing package stops the engine before any page: no PDF from this
+      // run, so the result is stale and links the previous run's PDF
+      const fatalSrc = MAIN.replace('\\begin{document}', '\\usepackage{nonexistentpkgxyz}\n\\begin{document}');
+      const rewrote = await call(client, 'write_file', { project: id, path: 'paper.tex', content: fatalSrc, base_version: good.body.contentVersion });
+      expect(rewrote.isError).toBeFalsy();
+      const fatal = await call(client, 'compile', { project: id });
+      expect(fatal.isError).toBeFalsy();
+      expect(fatal.body.ok).toBe(false);
+      expect(fatal.body.pdfStale).toBe(true);
+      expect(fatal.body.pages).toBeNull();
+      expect(fatal.body.errorsTotal).toBeGreaterThanOrEqual(1);
+      expect(fatal.body.hint).toMatch(/nonexistentpkgxyz/);
+      expect(new URL(fatal.body.pdfUrl).searchParams.get('t')).toBe(goodT);
+      expect(fatal.body.typesetAt).toBe(good.body.typesetAt);
+
+      // refusals name what was asked and what exists
+      await call(client, 'write_file', { project: id, path: 'sections/intro.tex', content: 'Repeated sentence here.\nRepeated sentence here.\n' });
+      const onFolder = await call(client, 'write_file', { project: id, path: 'sections', content: 'x\n' });
+      expect(onFolder.isError).toBeTruthy();
+      expect(onFolder.text).toMatch(/"sections" is a folder/);
+      const underFile = await call(client, 'write_file', { project: id, path: 'paper.tex/inside.tex', content: 'x\n' });
+      expect(underFile.isError).toBeTruthy();
+      expect(underFile.text).toMatch(/"paper\.tex" is a file, so "paper\.tex\/inside\.tex" cannot be created/);
+      const slash = await call(client, 'write_file', { project: id, path: 'figs/', content: 'x\n' });
+      expect(slash.isError).toBeTruthy();
+      expect(slash.text).toMatch(/must name a file, not a folder/);
+      const folderRead = await call(client, 'read_file', { project: id, path: 'sections' });
+      expect(folderRead.isError).toBeTruthy();
+      expect(folderRead.text).toMatch(/"sections" is a folder on main/);
+      const noBranch = await call(client, 'read_file', { project: id, path: 'paper.tex', branch: 'nope' });
+      expect(noBranch.isError).toBeTruthy();
+      expect(noBranch.text).toMatch(/No branch "nope" in this project — branches: main/);
+      const noProject = await call(client, 'project_structure', { project: 'zzzzzzzzzz' });
+      expect(noProject.isError).toBeTruthy();
+      expect(noProject.text).toMatch(/No project "zzzzzzzzzz"/);
+      expect(noProject.text).toMatch(/list_projects/);
+      const dotdot = await call(client, 'read_file', { project: id, path: '../paper.tex' });
+      expect(dotdot.isError).toBeTruthy();
+      expect(dotdot.text).toMatch(/cannot contain "\.\."/);
+
+      // a windowed read echoes its window; a window past the end is refused
+      const win = await call(client, 'read_file', { project: id, path: 'sections/intro.tex', from_line: 2, to_line: 50 });
+      expect(win.isError).toBeFalsy();
+      expect(win.body.from_line).toBe(2);
+      expect(win.body.to_line).toBe(win.body.totalLines);
+      const past = await call(client, 'read_file', { project: id, path: 'sections/intro.tex', from_line: 500 });
+      expect(past.isError).toBeTruthy();
+      expect(past.text).toMatch(/from_line 500 is past the end/);
+
+      // an ambiguous quote is ambiguous_anchor, and the candidates carry the occurrence to resend
+      const amb = await call(client, 'edit_file', { project: id, path: 'sections/intro.tex', edits: [{ quote: 'Repeated sentence here.', replacement: 'Second one.' }] });
+      expect(amb.isError).toBeFalsy();
+      expect(amb.body.error).toBe('ambiguous_anchor');
+      expect(amb.body.candidates.map((c: any) => c.occurrence)).toEqual([1, 2]);
+      expect(amb.body.path).toBe('sections/intro.tex');
+      const picked = await call(client, 'edit_file', { project: id, path: 'sections/intro.tex', edits: [{ quote: 'Repeated sentence here.', replacement: 'Second one.', occurrence: 2 }] });
+      expect(picked.isError).toBeFalsy();
+      expect(picked.body.applied).toBe(1);
+      expect(await (await request.get(`/api/projects/${id}/file?branch=main&path=sections/intro.tex`)).text()).toBe('Repeated sentence here.\nSecond one.\n');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('trash_project: only an agent-made project, soft-deleted into the workspace trash, restorable over REST', async ({ request }) => {
+    const human = await request.post('/api/projects', { data: { name: 'MCP Human paper' } });
+    expect(human.ok()).toBeTruthy();
+    const humanId = (await human.json()).id as string;
+    const client = await connect();
+    let agentId = '';
+    try {
+      const made = await call(client, 'create_project', { name: 'MCP Scratch' });
+      expect(made.isError).toBeFalsy();
+      agentId = made.body.id as string;
+      const listed = await call(client, 'list_projects', {});
+      const rows = listed.body as Array<{ id: string; agentCreated: boolean }>;
+      expect(rows.find((r) => r.id === agentId)?.agentCreated).toBe(true);
+      expect(rows.find((r) => r.id === humanId)?.agentCreated).toBe(false);
+
+      const refused = await call(client, 'trash_project', { project: humanId });
+      expect(refused.isError).toBeTruthy();
+      expect(refused.text).toMatch(/created through the Agent API/);
+      expect((await request.get(`/api/projects/${humanId}`)).ok()).toBeTruthy();
+
+      const trashed = await call(client, 'trash_project', { project: agentId });
+      expect(trashed.isError).toBeFalsy();
+      expect(trashed.body.trashed).toBe(true);
+      expect(Date.parse(trashed.body.restorableUntil)).toBeGreaterThan(Date.now());
+      const gone = await call(client, 'project_structure', { project: agentId });
+      expect(gone.isError).toBeTruthy();
+      const trash = (await (await request.get('/api/projects/trash')).json()) as Array<{ id: string }>;
+      expect(trash.some((p) => p.id === agentId)).toBe(true);
+
+      expect((await request.post(`/api/projects/${agentId}/restore`)).ok()).toBeTruthy();
+      const back = await call(client, 'project_structure', { project: agentId });
+      expect(back.isError).toBeFalsy();
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, humanId);
+      if (agentId) await cleanup(request, agentId);
     }
   });
 
