@@ -122,9 +122,9 @@ async function runSuite(store, label) {
   eq(revoked.revokedAt, '2026-07-02T00:00:00.000Z', `${label}: updateToken revokedAt`);
 
   await store.touchToken(tok.id, '2026-07-03T00:00:00.000Z');
-  const touched = await store.getToken(tok.id);
-  eq(touched.lastUsedAt, '2026-07-03T00:00:00.000Z', `${label}: touchToken sets lastUsedAt`);
-  eq(touched.revokedAt, '2026-07-02T00:00:00.000Z', `${label}: touchToken leaves revokedAt intact`);
+  const touchedTok = await store.getToken(tok.id);
+  eq(touchedTok.lastUsedAt, '2026-07-03T00:00:00.000Z', `${label}: touchToken sets lastUsedAt`);
+  eq(touchedTok.revokedAt, '2026-07-02T00:00:00.000Z', `${label}: touchToken leaves revokedAt intact`);
   await store.touchToken(`missing-${t}`, '2026-07-03T00:00:00.000Z');
   check((await store.getToken(`missing-${t}`)) === null, `${label}: touchToken on a missing id is a no-op`);
 
