@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-19
+
 ### Added
 - The Aldine Agent API: Claude and any MCP client read and write LaTeX in
   Aldine projects, with Aldine as the source of truth. `ALDINE_MCP=1` serves

@@ -24,7 +24,7 @@ claude --plugin-dir ./claude-plugin/aldine
 ## Setup
 
 Requires an Aldine that serves the Agent API (`/mcp`, started with
-`ALDINE_MCP=1`) — the release after 0.9.0 or a build from `main`; 0.9.0 and
+`ALDINE_MCP=1`) — 0.10.0 or later, or a build from `main`; 0.9.0 and
 earlier have no `/mcp` route.
 
 The plugin reads two environment variables when Claude Code starts:
