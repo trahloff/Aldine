@@ -7,6 +7,10 @@ packages:
 
 write_files:
   # Demo config: auth off, TLS via the compose tls profile, app on loopback.
+  # The Agent API runs with the published static token from variables.tf;
+  # ALDINE_SIGNING_SECRET stays unset on purpose: the app generates one into
+  # the secrets volume, which the wipe destroys, so PDF links die with the
+  # data they point at.
   - path: /opt/aldine/.env.demo
     content: |
       ALDINE_DOMAIN=${demo_domain}
@@ -14,6 +18,8 @@ write_files:
       ALDINE_APP_BIND=127.0.0.1
       ALDINE_COMPILE_PER_MIN=6
       ALDINE_PROTECTED_PROJECTS=${protected_projects}
+      ALDINE_MCP=1
+      ALDINE_MCP_TOKEN=${mcp_token}
 
   # Nightly wipe: pull the current main, destroy the project data and rebuild
   # the stack, so the demo never runs a fixed commit for months. A failed pull

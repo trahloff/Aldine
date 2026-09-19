@@ -1,5 +1,8 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { projectsDir } from './config.js';
 import { repoDir, branchDir, git } from './store.js';
 import { spawn } from 'node:child_process';
@@ -16,15 +19,34 @@ export async function listBranches(id: string): Promise<BranchInfo[]> {
   });
 }
 
+/** Per-repository write serialisation: every operation that changes an index,
+ *  a ref or a worktree of project `id` runs inside this lock, in arrival
+ *  order. NOT reentrant — an operation that already holds it calls the `…Held`
+ *  variants below. A rejection reaches only that caller and never breaks the
+ *  chain for the next one. Per process: two app nodes writing one repo are
+ *  outside the supported topology (docs/SCALING.md). Keyed by project, not
+ *  branch: worktrees share one `.git`, and `merge` spans two branches. */
+const repoLocks = new Map<string, Promise<void>>();
+export function withRepoLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = repoLocks.get(id) ?? Promise.resolve();
+  const run = prev.then(fn);
+  const tail = run.then(() => undefined, () => undefined);
+  repoLocks.set(id, tail);
+  void tail.then(() => { if (repoLocks.get(id) === tail) repoLocks.delete(id); });
+  return run;
+}
+
 /** Create branch from a base and materialize its worktree. */
 export async function createBranch(id: string, name: string, from = 'main'): Promise<void> {
   if (!BRANCH_RE.test(name) || name.includes('..')) throw new Error('bad branch name');
   if (!BRANCH_RE.test(from) || from.includes('..')) throw new Error('bad base branch name');
   if (name === 'main') throw new Error('main already exists');
-  const g = git(repoDir(id));
-  const dir = branchDir(id, name);
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
-  await g.raw(['worktree', 'add', '-b', name, dir, from]);
+  return withRepoLock(id, async () => {
+    const g = git(repoDir(id));
+    const dir = branchDir(id, name);
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    await g.raw(['worktree', 'add', '-b', name, dir, from]);
+  });
 }
 
 /**
@@ -43,10 +65,15 @@ export async function unmergedCommits(id: string, name: string): Promise<{ count
 
 export async function deleteBranch(id: string, name: string): Promise<void> {
   if (name === 'main') throw new Error('cannot delete main');
-  const g = git(repoDir(id));
-  const dir = branchDir(id, name);
-  try { await g.raw(['worktree', 'remove', '--force', dir]); } catch { /* worktree may be gone */ }
-  await g.raw(['branch', '-D', name]);
+  return withRepoLock(id, async () => {
+    const g = git(repoDir(id));
+    const dir = branchDir(id, name);
+    try { await g.raw(['worktree', 'remove', '--force', dir]); } catch { /* worktree may be gone */ }
+    await g.raw(['branch', '-D', name]);
+    // A deleted branch must not keep a stale attribution: nothing can commit
+    // under it, and a later branch of the same name would inherit it.
+    pendingAttributed.delete(attributionKey(id, name));
+  });
 }
 
 /** Ensure a worktree exists for an already-existing branch (e.g. after container restart). */
@@ -81,7 +108,86 @@ function ensureOutputExcluded(id: string): void {
   } catch { /* best-effort; commit path must not fail on this */ }
 }
 
-export async function commitAll(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+/** Attributed (agent) work awaiting the debounced auto-commit of a branch:
+ *  the touched paths, each under the intent it was scheduled with. Lives
+ *  next to the commit primitives because a whole-tree commit must consume it
+ *  — after commitAll the tree is clean, so a surviving entry would attribute
+ *  whatever a human types into those files NEXT to the agent
+ *  (HistoryPanel/session review key on the author string, and "Revert these
+ *  changes" would undo the human's work). Intents are per path, not per
+ *  window: one message for the window would title an earlier edit_file's
+ *  checkpoint with a later write's intent, and a reviewer reading History
+ *  could not trust the titles. */
+export interface PendingAttributedCommit { projectId: string; branch: string; author: string; paths: Map<string, string> }
+const pendingAttributed = new Map<string, PendingAttributedCommit>();
+const attributionKey = (id: string, branch: string) => `${id}::${branch}`;
+
+export function registerAttributedPaths(id: string, branch: string, message: string, author: string, paths: string[]): void {
+  const key = attributionKey(id, branch);
+  const cur = pendingAttributed.get(key) || { projectId: id, branch, author, paths: new Map<string, string>() };
+  cur.author = author;
+  for (const p of paths) cur.paths.set(p, message); // a re-edit of a pending path carries the newer intent
+  pendingAttributed.set(key, cur);
+}
+
+/** Branches with agent work registered but not yet committed. The shutdown
+ *  flush must cover these as well as the open docs: an agent writing with no
+ *  browser tab open has no doc, and the ledger dies with the process — the
+ *  next autosave after a restart would sweep its delta anonymously. */
+export function pendingAttributionKeys(): Array<{ projectId: string; branch: string }> {
+  return [...pendingAttributed.values()].map((e) => ({ projectId: e.projectId, branch: e.branch }));
+}
+
+/** Remove and return the pending attribution for a branch (the debounce fire).
+ *  Call only while holding the repo lock: taken outside it, an agent write
+ *  that registers between the take and the commit is swept anonymously. */
+export function takeAttributedPaths(id: string, branch: string): PendingAttributedCommit | undefined {
+  const key = attributionKey(id, branch);
+  const cur = pendingAttributed.get(key);
+  pendingAttributed.delete(key);
+  return cur;
+}
+
+/** Paths grouped by intent, in first-scheduled order — one commit per group. */
+function byIntent(paths: Map<string, string>): Array<{ message: string; paths: string[] }> {
+  const groups = new Map<string, string[]>();
+  for (const [p, message] of paths) {
+    const g = groups.get(message);
+    if (g) g.push(p); else groups.set(message, [p]);
+  }
+  return [...groups].map(([message, ps]) => ({ message, paths: ps }));
+}
+
+/**
+ * `git commit` as one argv with `--` before the pathspec and the author
+ * before it: simple-git's commit(message, files, opts) appends options after
+ * the files, so a path named `--amend` or `-a` would be read as an option
+ * (rewriting the previous commit, or folding every tracked edit in). The
+ * boundaries refuse such names too; this holds even if one of them does not.
+ * `--` ends option parsing only: the path is still a pathspec, and `*`, `?`,
+ * `[` and a leading `:` are legal in a file name — `*.tex` would stage every
+ * dirty .tex file into the attributed commit, an all-negative `:!x` the whole
+ * tree, `:(icase)MAIN.TEX` main.tex instead of itself. --literal-pathspecs
+ * (here and on the add in commitPathsHeld) keeps the name a name; directory
+ * prefixes still match. Argv, not GIT_LITERAL_PATHSPECS in the child env:
+ * simple-git refuses a supplied env that carries the operator's GIT_EDITOR.
+ */
+const authorEmail = (author: string) => `${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local`;
+
+async function commitArgv(g: ReturnType<typeof git>, message: string, author: string | undefined, paths?: string[]): Promise<string> {
+  const args = ['--literal-pathspecs', 'commit', '-m', message];
+  if (author) args.push(`--author=${author} <${authorEmail(author)}>`);
+  if (paths?.length) args.push('--', ...paths);
+  await g.raw(args);
+  return (await g.revparse(['HEAD'])).trim();
+}
+
+/** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
+export function commitAll(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+  return withRepoLock(id, () => commitAllHeld(id, branch, message, author));
+}
+
+export async function commitAllHeld(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
   const dir = await ensureWorktree(id, branch);
   const g = git(dir);
   ensureOutputExcluded(id);
@@ -90,39 +196,412 @@ export async function commitAll(id: string, branch: string, message: string, aut
   await g.raw(['rm', '-r', '--cached', '--ignore-unmatch', '--quiet', '--', '.aldine-out', '.papyr-out']).catch(() => {});
   await g.add(['-A']);
   const status = await g.status();
-  if (status.staged.length === 0 && status.files.length === 0) return { committed: false };
-  const opts: Record<string, string | null> = {};
-  if (author) opts['--author'] = `${author} <${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local>`;
-  const res = await g.commit(message, undefined, opts);
-  return { committed: true, hash: res.commit };
+  // Consumed only once the tree is known clean (or committed below): a failed
+  // add/status must leave the attribution for the debounce to retry.
+  if (status.staged.length === 0 && status.files.length === 0) {
+    pendingAttributed.delete(attributionKey(id, branch));
+    return { committed: false };
+  }
+  const hash = await commitArgv(g, message, author);
+  pendingAttributed.delete(attributionKey(id, branch));
+  return { committed: true, hash };
+}
+
+/**
+ * Commit ONLY the given paths (already-written files or their deletions).
+ * Used by the debounced auto-commit to keep agent-attributed work out of the
+ * anonymous autosave sweep and vice versa — a whole-tree commit here would
+ * attribute a human collaborator's concurrent edits to the agent.
+ * Paths that are neither changed nor untracked are dropped before the add:
+ * a single `git add` with one unmatched pathspec (an agent-created file a
+ * human deleted before the debounce fired) stages NOTHING, which would push
+ * every other agent path in the window into the anonymous sweep.
+ */
+export async function commitPathsHeld(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  if (!paths.length) return { committed: false, files: [] };
+  const dir = await ensureWorktree(id, branch);
+  const g = git(dir);
+  ensureOutputExcluded(id);
+  const changed = new Set((await g.status()).files.flatMap((f) => (f.from ? [f.path, f.from] : [f.path])));
+  const present = paths.filter((p) => changed.has(p));
+  if (!present.length) return { committed: false, files: [] };
+  await g.raw(['--literal-pathspecs', 'add', '--', ...present]);
+  const status = await g.status();
+  const staged = new Set(status.staged);
+  if (!present.some((p) => staged.has(p))) return { committed: false, files: [] };
+  // Committing the explicit pathspec (not the whole index) keeps anything else
+  // that happens to be staged out of the attributed commit.
+  const hash = await commitArgv(g, message, author, present);
+  // `present`, not `paths`: a requested path git saw no change in was never
+  // staged, so a caller reporting what landed must not name it.
+  return { committed: true, hash, files: present };
+}
+
+/** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
+export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
+}
+
+/** One git invocation with stdin and extra env — the plumbing below needs
+ *  both, which simple-git's raw() does not offer. */
+function gitPlumb(dir: string, args: string[], opts: { input?: string | Buffer; env?: Record<string, string> } = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile('git', args, { cwd: dir, env: { ...process.env, ...opts.env }, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`git ${args[0]} failed: ${String(stderr || err.message).trim()}`));
+      else resolve(stdout);
+    });
+    child.stdin?.end(opts.input ?? '');
+  });
+}
+
+/** `content` as a Buffer keeps bytes that are not UTF-8 (a Latin-1 .tex, an image) exact. */
+export interface FileSnapshot { path: string; content: string | Buffer }
+
+/**
+ * Commit exactly `content` for each path — the bytes the caller holds, not
+ * whatever the working tree holds by the time git reads it. Built with
+ * plumbing (hash-object, a private index, write-tree, commit-tree) so a
+ * store of a collaborator's keystrokes, a REST write or a flush landing
+ * during the commit can never enter it: `git commit -- path` always reads
+ * the working tree, and that window is where a person's typing used to end
+ * up under Claude's name. Paths whose blob equals HEAD's are dropped; with
+ * none left nothing is committed. The working tree is not touched — later
+ * typing simply shows as the uncommitted change it is — and the real index
+ * is pointed at the committed blobs so status does not read them as staged
+ * reversals. An unborn branch (no HEAD) falls back to a working-tree commit.
+ */
+export async function commitSnapshotHeld(id: string, branch: string, files: FileSnapshot[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  if (!files.length) return { committed: false, files: [] };
+  const dir = await ensureWorktree(id, branch);
+  const head = await gitPlumb(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']).then((h) => h.trim(), () => '');
+  if (!head) {
+    for (const f of files) { const abs = path.join(dir, f.path); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, f.content); }
+    return commitPathsHeld(id, branch, files.map((f) => f.path), message, author);
+  }
+  // Mode and blob per path as HEAD has them: the mode is kept (a 100755 must
+  // not silently become 100644), the blob decides whether anything changed.
+  const inHead = new Map<string, { mode: string; blob: string }>();
+  const listed = await gitPlumb(dir, ['--literal-pathspecs', 'ls-tree', '-z', head, '--', ...files.map((f) => f.path)]);
+  for (const rec of listed.split('\0')) {
+    const m = /^(\d{6}) blob ([0-9a-f]{40})\t(.*)$/s.exec(rec);
+    if (m) inHead.set(m[3], { mode: m[1], blob: m[2] });
+  }
+  const staged: Array<{ path: string; mode: string; blob: string }> = [];
+  for (const f of files) {
+    const blob = (await gitPlumb(dir, ['hash-object', '-w', '--stdin', '--path', f.path], { input: f.content })).trim();
+    const prev = inHead.get(f.path);
+    if (prev?.blob === blob) continue;
+    staged.push({ path: f.path, mode: prev?.mode ?? '100644', blob });
+  }
+  if (!staged.length) return { committed: false, files: [] };
+  const index = path.join(os.tmpdir(), `aldine-index-${crypto.randomBytes(8).toString('hex')}`);
+  const env = { GIT_INDEX_FILE: index };
+  try {
+    await gitPlumb(dir, ['read-tree', head], { env });
+    for (const s of staged) await gitPlumb(dir, ['update-index', '--add', '--cacheinfo', `${s.mode},${s.blob},${s.path}`], { env });
+    const tree = (await gitPlumb(dir, ['write-tree'], { env })).trim();
+    const ident: Record<string, string> = author ? { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: authorEmail(author) } : {};
+    const hash = (await gitPlumb(dir, ['commit-tree', tree, '-p', head, '-m', message], { env: ident })).trim();
+    // The worktree's HEAD is the branch ref; the old value guards against a
+    // ref that moved underneath (impossible under the repo lock, fatal if not).
+    await gitPlumb(dir, ['update-ref', 'HEAD', hash, head]);
+    for (const s of staged) await gitPlumb(dir, ['update-index', '--add', '--cacheinfo', `${s.mode},${s.blob},${s.path}`]);
+    return { committed: true, hash, files: staged.map((s) => s.path) };
+  } finally {
+    fs.rmSync(index, { force: true });
+  }
+}
+
+/**
+ * The commit pair every agent write makes, from the snapshots the tool held
+ * while it applied the edit: first whatever a person had in those files that
+ * HEAD does not (typing that landed after the working-tree checkpoint, an
+ * out-of-band write), as an anonymous autosave; then the agent's result under
+ * Claude and the intent. By construction the Claude commit's diff is the
+ * agent's delta and nothing else, whatever lands on disk meanwhile. `before`
+ * null = the file did not exist. Callers hold the repo lock.
+ */
+export async function commitAgentWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  const typed = files.filter((f) => f.before !== null).map((f) => ({ path: f.path, content: f.before as string | Buffer }));
+  if (typed.length) await commitSnapshotHeld(id, branch, typed, 'aldine: autosave');
+  return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, AGENT_COMMIT_AUTHOR);
+}
+
+/**
+ * Commit the current on-disk state of `paths` BEFORE an agent overwrites
+ * them, so the attributed commit that follows carries exactly the agent's
+ * delta. Without this the human's uncommitted edits to the same file — up to
+ * a whole session's worth, since continuous typing keeps resetting the
+ * autosave debounce — would land under author Claude. A path already pending
+ * under an agent attribution checkpoints under THAT attribution (an
+ * anonymous checkpoint would bury the agent's earlier edit in an autosave);
+ * the rest checkpoint as an anonymous autosave. Callers flush open docs
+ * first so unflushed keystrokes are part of the checkpoint.
+ */
+export async function checkpointPathsHeld(id: string, branch: string, paths: string[]): Promise<void> {
+  const key = attributionKey(id, branch);
+  const pending = pendingAttributed.get(key);
+  const attributed = pending ? paths.filter((p) => pending.paths.has(p)) : [];
+  const anonymous = pending ? paths.filter((p) => !pending.paths.has(p)) : paths;
+  if (pending && attributed.length) {
+    // Under the intent each path was scheduled with, never the incoming write's.
+    for (const g of byIntent(new Map(attributed.map((p) => [p, pending.paths.get(p)!])))) {
+      await commitPathsHeld(id, branch, g.paths, g.message, pending.author);
+    }
+    for (const p of attributed) pending.paths.delete(p);
+    if (!pending.paths.size) pendingAttributed.delete(key);
+  }
+  if (anonymous.length) await commitPathsHeld(id, branch, anonymous, 'aldine: autosave');
+}
+
+/** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
+export function checkpointPaths(id: string, branch: string, paths: string[]): Promise<void> {
+  return withRepoLock(id, () => checkpointPathsHeld(id, branch, paths));
+}
+
+/** Title an attributed group retries under after its commit failed: the
+ *  original subject is the one input the ledger cannot vouch for, and a
+ *  subject that fails git twice would block the branch's sweep for good. */
+const RETRY_INTENT = 'aldine: agent edit';
+
+/** The debounced auto-commit, and the shape of every whole-tree commit a
+ *  person triggers (checkpoint, revert, merge, GitHub sync): attributed
+ *  (agent) paths first under their author + intent, then a sweep of whatever
+ *  remains under `sweepMessage`/`sweepAuthor`. The attribution is taken only
+ *  once the lock is held: a fire queued behind an agent write sees the
+ *  attribution that write registered, a fire that ran before it sees the
+ *  tree the checkpoint then finds clean — neither can stage the agent's
+ *  delta as an autosave. When an attributed commit fails the remaining groups
+ *  are put back (the failed one under RETRY_INTENT) and the sweep is skipped
+ *  (sweeping would sign the agent's delta anonymously, or under the person);
+ *  the next edit re-arms the debounce. */
+export async function autoCommitHeld(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string): Promise<{ committed: boolean; hash?: string }> {
+  const attributed = takeAttributedPaths(id, branch);
+  if (attributed) {
+    // One commit per intent, so History titles name what each commit holds.
+    const groups = byIntent(attributed.paths);
+    for (let i = 0; i < groups.length; i++) {
+      try { await commitPathsHeld(id, branch, groups[i].paths, groups[i].message, attributed.author); }
+      catch (err) {
+        registerAttributedPaths(id, branch, RETRY_INTENT, attributed.author, groups[i].paths);
+        for (const g of groups.slice(i + 1)) registerAttributedPaths(id, branch, g.message, attributed.author, g.paths);
+        throw err;
+      }
+    }
+  }
+  return commitAllHeld(id, branch, sweepMessage, sweepAuthor);
+}
+
+/** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
+export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string): Promise<{ committed: boolean; hash?: string }> {
+  return withRepoLock(id, () => autoCommitHeld(id, branch, sweepMessage, sweepAuthor));
+}
+
+/**
+ * Commit ONLY the agent work the ledger holds for this branch, as one commit
+ * under `message`: the named checkpoint the MCP `commit` tool makes. The
+ * caller is stating the intent of the checkpoint, so the per-path intents the
+ * individual writes registered are replaced, not grouped — byIntent here would
+ * title the checkpoint with an earlier write's message. Whatever else is dirty
+ * stays for the anonymous sweep: a whole-tree commit would sign a
+ * collaborator's flushed typing as the agent (HistoryPanel and the session
+ * review key on the author string). No pending work is `committed:false`, not
+ * a failure — the debounce may already have committed it.
+ * Held-only on purpose: the caller must hold the lock across its own flush, so
+ * a lock-taking wrapper would be dead code and an invitation to nest
+ * withRepoLock inside that span (the lock is a promise chain: a nested take
+ * never resolves).
+ */
+export async function commitAttributedHeld(id: string, branch: string, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  const pending = takeAttributedPaths(id, branch);
+  if (!pending) return { committed: false, files: [] };
+  const paths = [...pending.paths.keys()];
+  try {
+    // The author comes from the ledger, never from the caller: no call site
+    // can sign a commit as somebody else.
+    return await commitPathsHeld(id, branch, paths, message, pending.author);
+  } catch (err) {
+    // Same rule as autoCommitHeld: the subject is the one input the ledger
+    // cannot vouch for, and dropping the attribution would let the next sweep
+    // sign the agent's delta anonymously.
+    registerAttributedPaths(id, branch, RETRY_INTENT, pending.author, paths);
+    throw err;
+  }
+}
+
+/** Short HEAD of a branch — the `{branch, head}` echo every MCP tool result
+ *  carries so the agent can narrate what it touched. '' when the ref cannot
+ *  be resolved (echo is informational; it must never fail the tool call). */
+export async function branchShortHead(id: string, branch: string): Promise<string> {
+  try { return (await git(repoDir(id)).revparse(['--short', branch])).trim(); } catch { return ''; }
 }
 
 export interface LogEntry { hash: string; date: string; message: string; author: string }
 
+/** Fields are split on NUL, the one byte no git field can hold: a commit
+ *  subject may carry any other byte, including the control characters a
+ *  parser might pick as markers, and simple-git's default parser splits on a
+ *  printable one, letting a message move itself into the author field — the
+ *  field the History panel and the session review key on. %an, not %aN: a
+ *  .mailmap committed into the project would otherwise rename authors. */
 export async function log(id: string, branch: string, limit = 50): Promise<LogEntry[]> {
+  if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
+  const raw = await git(repoDir(id)).raw(['log', branch, `--max-count=${limit}`, '--format=%H%x00%aI%x00%an%x00%s%x00', '--']);
+  const f = raw.split('\0');
+  const out: LogEntry[] = [];
+  for (let i = 0; i + 3 < f.length; i += 4) {
+    const hash = f[i].trim(); // the newline git prints after each record leads the next hash
+    if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3] });
+  }
+  return out;
+}
+
+/** The branch's head, or '' when the project or the branch does not exist.
+ *  Read-only, no lock. */
+export async function branchHead(id: string, branch: string): Promise<string> {
+  if (!BRANCH_RE.test(branch) || branch.includes('..')) return '';
+  try {
+    return await git(repoDir(id)).revparse(['--verify', '--quiet', `refs/heads/${branch}`]).then((h) => h.trim());
+  } catch { return ''; }
+}
+
+/** Author string every agent write commits under; the History dot, the
+ *  session review and this answer all key on it. */
+export const AGENT_COMMIT_AUTHOR = 'Claude';
+/** Commits walked per answer. Past this the counts are a floor
+ *  (`truncated`), which is the honest reading of "Claude wrote 300 commits". */
+const AGENT_SCAN_LIMIT = 500;
+/** Commits handed back with a hash — the reviewer pays one diff request each. */
+const AGENT_REVIEW_LIMIT = 20;
+
+export interface AgentCommit { hash: string; date: string; message: string; files: string[] }
+export interface AgentActivity {
+  since: { head: string; at: string } | null;
+  head: string;
+  /** Newest first, at most AGENT_REVIEW_LIMIT. */
+  commits: AgentCommit[];
+  /** Claude commits newer than the mark, over the whole scan. */
+  commitCount: number;
+  /** Distinct paths across those commits. */
+  fileCount: number;
+  /** The scan hit its ceiling: the counts are a floor, not a total. */
+  truncated: boolean;
+}
+
+/**
+ * What Claude committed on `branch` past the caller's mark. Only ever runs
+ * revparse / merge-base / log in the repo dir: no flush, no commit, no
+ * `withRepoLock` — git reads take no index lock, so this is safe to answer
+ * while an autosave holds the write lock.
+ */
+export async function agentActivitySince(id: string, branch: string, mark: { head: string; at: string } | null): Promise<AgentActivity> {
+  if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
+  const head = await branchHead(id, branch);
+  if (!head) return { since: mark, head: '', commits: [], commitCount: 0, fileCount: 0, truncated: false };
   const g = git(repoDir(id));
-  const res = await g.log([branch, `--max-count=${limit}`]);
-  return res.all.map((c) => ({ hash: c.hash, date: c.date, message: c.message, author: c.author_name }));
+
+  // A mark whose commit is no longer on the branch (a reset to the remote, a
+  // recreated branch) cannot bound a range; the date bound below is one
+  // second early on purpose — re-showing a commit is a smaller failure than
+  // hiding one.
+  let usable = false;
+  if (mark?.head && /^[0-9a-f]{4,40}$/.test(mark.head)) {
+    usable = await g.raw(['merge-base', '--is-ancestor', mark.head, branch]).then(() => true, () => false);
+  }
+  // NUL-separated like log(), but the record separator LEADS the format here:
+  // --name-only prints the file list after the header, so a trailing one
+  // would attach each commit's files to the next record. %an, not %aN: a
+  // committed .mailmap must not be able to rename the agent.
+  const args = ['log', usable ? `${mark!.head}..${branch}` : branch,
+                `--max-count=${AGENT_SCAN_LIMIT}`,
+                '--format=%x00%H%x00%aI%x00%an%x00%s', '--name-only'];
+  if (!usable && mark?.at) {
+    const t = Date.parse(mark.at);
+    if (!Number.isNaN(t)) args.push(`--since=${new Date(t - 1000).toISOString()}`);
+  }
+  args.push('--');
+  const raw = await g.raw(args).catch(() => '');
+
+  const f = raw.split('\0'); // opens with the text before the first separator: nothing
+  const files = new Set<string>();
+  const commits: AgentCommit[] = [];
+  let records = 0;
+  let commitCount = 0;
+  for (let i = 1; i + 3 < f.length; i += 4) {
+    const hash = f[i].trim();
+    if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+    records++;
+    const [date, author, rest] = [f[i + 1], f[i + 2], f[i + 3]];
+    if (author !== AGENT_COMMIT_AUTHOR) continue;
+    const lines = rest.split('\n');
+    const message = lines[0] ?? '';
+    const touched = lines.slice(1).map((l) => l.trim()).filter(Boolean);
+    for (const f of touched) files.add(f);
+    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched });
+    commitCount++;
+  }
+  return { since: mark, head, commits, commitCount, fileCount: files.size, truncated: records >= AGENT_SCAN_LIMIT };
 }
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }
 
 /** Merge `from` into `into`. On conflict: abort and report conflicting files. */
 export async function merge(id: string, from: string, into: string, author?: string): Promise<MergeResult> {
-  // commit any pending changes in both branches first so the merge sees latest state
-  await commitAll(id, from, `aldine: checkpoint before merge`, author).catch(() => {});
-  await commitAll(id, into, `aldine: checkpoint before merge`, author).catch(() => {});
-  const dir = await ensureWorktree(id, into);
-  const g = git(dir);
-  let mergeErr: unknown = null;
-  try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, from]); } catch (e) { mergeErr = e; }
-  const conflicts = (await g.status()).conflicted;
-  if (conflicts.length) {
-    await g.raw(['merge', '--abort']).catch(() => {});
-    return { ok: false, conflicts };
-  }
-  if (mergeErr) return { ok: false, message: String((mergeErr as Error)?.message || mergeErr) };
-  return { ok: true };
+  return withRepoLock(id, async () => {
+    // commit any pending changes in both branches first so the merge sees latest state
+    await autoCommitHeld(id, from, `aldine: checkpoint before merge`, author).catch(() => {});
+    await autoCommitHeld(id, into, `aldine: checkpoint before merge`, author).catch(() => {});
+    const dir = await ensureWorktree(id, into);
+    const g = git(dir);
+    let mergeErr: unknown = null;
+    try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, from]); } catch (e) { mergeErr = e; }
+    const conflicts = (await g.status()).conflicted;
+    if (conflicts.length) {
+      await g.raw(['merge', '--abort']).catch(() => {});
+      return { ok: false, conflicts };
+    }
+    if (mergeErr) return { ok: false, message: String((mergeErr as Error)?.message || mergeErr) };
+    return { ok: true };
+  });
+}
+
+/**
+ * Revert the given commits as ONE new commit — session "undo" is additive
+ * history, never a rewrite. Hashes must arrive newest-first so each revert
+ * applies against the state it expects. On conflict the revert is aborted and
+ * nothing is committed.
+ */
+export async function revertCommits(id: string, branch: string, hashes: string[], message: string, author?: string): Promise<{ ok: boolean; hash?: string }> {
+  if (!hashes.length || hashes.some((h) => !/^[0-9a-f]{4,40}$/.test(h))) throw new Error('bad commit hash');
+  return withRepoLock(id, async () => {
+    const dir = await ensureWorktree(id, branch);
+    const g = git(dir);
+    try {
+      await g.raw(['revert', '--no-commit', ...hashes]);
+    } catch {
+      // REVERT_HEAD is the commit the sequencer stopped on: the one a later
+      // edit overlaps. Read it before the abort clears it.
+      const at = await g.raw(['rev-parse', '-q', '--verify', 'REVERT_HEAD']).then((s) => s.trim(), () => '');
+      const title = at ? await g.raw(['show', '-s', '--format=%s', at]).then((s) => s.trim(), () => '') : '';
+      await g.raw(['revert', '--abort']).catch(() => {});
+      throw new Error(at
+        ? `Could not revert "${title}" (${at.slice(0, 7)}) — later edits overlap it. Undo them by hand (History shows both diffs), then revert again`
+        : 'Could not revert cleanly — later edits overlap these changes. Undo them by hand (History shows both diffs), then revert again');
+    }
+    const status = await g.status();
+    if (status.staged.length === 0 && status.files.length === 0) return { ok: false };
+    return { ok: true, hash: await commitArgv(g, message, author) };
+  });
+}
+
+/** Author name of each commit, in the order given (a hash that does not
+ *  resolve is skipped). Used to tell a revert of Claude's work from one of a
+ *  human's, which the revert route reports as a success metric. */
+export async function commitAuthors(id: string, hashes: string[]): Promise<string[]> {
+  if (!hashes.length || hashes.some((h) => !/^[0-9a-f]{4,40}$/.test(h))) throw new Error('bad commit hash');
+  const raw = await git(repoDir(id)).raw(['show', '-s', '--format=%an', ...hashes]).catch(() => '');
+  return raw.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
 /** Unified patch for a single commit (handles root commits, which have no parent). */
@@ -217,27 +696,31 @@ export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: s
 /** Discard all local changes and hard-reset local `main` to the remote branch. */
 export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
-  const g = git(repoDir(id));
-  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
-  await g.raw(['reset', '--hard', 'FETCH_HEAD']);
+  return withRepoLock(id, async () => {
+    const g = git(repoDir(id));
+    await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
+    await g.raw(['reset', '--hard', 'FETCH_HEAD']);
+  });
 }
 
 /** Pull (fetch + merge) the remote branch into local `main`. Reports conflicts. */
 export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<MergeResult> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
-  const g = git(repoDir(id));
-  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
-  // simple-git's raw() does NOT reject on a merge conflict, so check for unmerged
-  // paths after the merge rather than relying on the command to throw.
-  let mergeErr: unknown = null;
-  try { await g.raw(['merge', '--no-edit', 'FETCH_HEAD']); } catch (e) { mergeErr = e; }
-  const conflicts = (await g.status()).conflicted;
-  if (conflicts.length) {
-    await g.raw(['merge', '--abort']).catch(() => {});
-    return { ok: false, conflicts };
-  }
-  if (mergeErr) throw mergeErr; // a non-conflict failure
-  return { ok: true };
+  return withRepoLock(id, async () => {
+    const g = git(repoDir(id));
+    await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
+    // simple-git's raw() does NOT reject on a merge conflict, so check for unmerged
+    // paths after the merge rather than relying on the command to throw.
+    let mergeErr: unknown = null;
+    try { await g.raw(['merge', '--no-edit', 'FETCH_HEAD']); } catch (e) { mergeErr = e; }
+    const conflicts = (await g.status()).conflicted;
+    if (conflicts.length) {
+      await g.raw(['merge', '--abort']).catch(() => {});
+      return { ok: false, conflicts };
+    }
+    if (mergeErr) throw mergeErr; // a non-conflict failure
+    return { ok: true };
+  });
 }
 
 /**

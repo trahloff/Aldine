@@ -1,0 +1,21 @@
+{
+  "name": "aldine",
+  "displayName": "Aldine",
+  "description": "Claude writes, typesets and reviews LaTeX in your Aldine: every edit lands as a reviewable commit, every compile returns the errors with file and line, and a link to the PDF.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Toby Rahloff"
+  },
+  "homepage": "https://aldine.dev",
+  "repository": "https://github.com/trahloff/Aldine",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "latex",
+    "aldine",
+    "typesetting",
+    "bibliography",
+    "overleaf",
+    "mcp",
+    "academic-writing"
+  ]
+}

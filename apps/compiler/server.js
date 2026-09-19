@@ -36,6 +36,26 @@ function json(res, code, body) {
   res.end(buf);
 }
 
+/**
+ * The "l.<n> <source>" line TeX prints after an error, split at the point it
+ * stopped reading: the first half ends with the offending token, the second
+ * half is indented to that column. Rejoined they are the source line, and
+ * the token is the last control sequence of the first half — the one an
+ * "Undefined control sequence." never names itself.
+ */
+function errorContext(lines, i) {
+  for (let j = i + 1; j < Math.min(i + 12, lines.length); j++) {
+    const m = lines[j].match(/^l\.(\d+)(?:\s(.*))?$/);
+    if (!m) continue;
+    const head = (m[2] || '').replace(/\s+$/, '');
+    // ^^M is TeX's end-of-line marker, not source text
+    const tail = (lines[j + 1] || '').trim().replace(/\^\^M$/, '');
+    const token = (head.match(/(\\[A-Za-z@]+|\\[^A-Za-z@\s])\s*$/) || [])[1] || null;
+    return { line: Number(m[1]), context: (head + tail).trim() || null, token };
+  }
+  return { line: null, context: null, token: null };
+}
+
 /** Parse LaTeX log for errors/warnings with file/line where possible. */
 function parseLog(log) {
   const errors = [];
@@ -49,18 +69,17 @@ function parseLog(log) {
       // the offending token often follows on the next lines (e.g. "\thisisnotacommand")
       const next = (lines[i + 1] || '').trim();
       if (message && next.startsWith('\\') && !next.startsWith('\\l.')) message += ` — ${next}`;
-      errors.push({ type: 'error', file: fle[1], line: Number(fle[2]), message });
+      const ctx = errorContext(lines, i);
+      if (ctx.token && /^Undefined control sequence/.test(message) && !message.includes(' — ')) message += ` — ${ctx.token}`;
+      errors.push({ type: 'error', file: fle[1], line: Number(fle[2]), message, ...(ctx.context ? { context: ctx.context } : {}) });
       continue;
     }
     // ! LaTeX Error / ! Undefined control sequence, followed by l.<n>
     if (line.startsWith('!')) {
       let message = line.replace(/^!\s*/, '');
-      let lineNo = null;
-      for (let j = i + 1; j < Math.min(i + 12, lines.length); j++) {
-        const m = lines[j].match(/^l\.(\d+)/);
-        if (m) { lineNo = Number(m[1]); break; }
-      }
-      errors.push({ type: 'error', line: lineNo, message });
+      const ctx = errorContext(lines, i);
+      if (ctx.token && /^Undefined control sequence/.test(message)) message += ` — ${ctx.token}`;
+      errors.push({ type: 'error', line: ctx.line, message, ...(ctx.context ? { context: ctx.context } : {}) });
     } else if (/^(LaTeX|Package|Class) .*Warning/.test(line)) {
       let message = line;
       const m = line.match(/on input line (\d+)/) || (lines[i + 1] || '').match(/on input line (\d+)/);
@@ -99,9 +118,26 @@ function parseBibLog(log) {
     }
     // biber: "[0] ... ERROR - Cannot find 'refs.bib'!"
     const biber = line.match(/\b(ERROR|WARN) - (.*\S)/);
-    if (biber) errors.push({ type: biber[1] === 'ERROR' ? 'error' : 'warning', line: null, message: `Biber: ${biber[2].trim()}` });
+    if (biber) {
+      // biber reads a re-encoded copy of each .bib and names that copy:
+      // "BibTeX subsystem: /tmp/biber_tmp_X/refs.bib_123.utf8, line 16,
+      // warning: undefined macro "June"". The copy's name is the .bib's name
+      // (folder dropped) and the line is the .bib's own.
+      const at = biber[2].match(/(?:^|[\/\\\s])([^\/\\\s]+\.bib)\S*, line (\d+)/);
+      errors.push({ type: biber[1] === 'ERROR' ? 'error' : 'warning', ...(at ? { file: at[1], line: Number(at[2]) } : { line: null }), message: `Biber: ${biber[2].trim()}` });
+    }
   }
   return errors;
+}
+
+/**
+ * Whether the engine got past the preamble: TeX logs every \openout, and the
+ * first one (the .aux) happens at \begin{document}. A run that died before
+ * it rewrote no .bcf/.aux, so the bibliography tool did not run for it and
+ * whatever the .blg holds is a previous run's.
+ */
+function documentBodyReached(log) {
+  return /^\\openout\d+ = /m.test(log);
 }
 
 /**
@@ -256,7 +292,7 @@ async function compileInner(body) {
 
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
-  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp' } };
+  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000' } };
   // Freshness reference on the SAME filesystem clock as the outputs: a file
   // touched now. Comparing output mtimes against Date.now() needs slack for
   // coarse or skewed clocks, and that slack lets a run started right after
@@ -301,8 +337,11 @@ async function compileInner(body) {
   // until then reports "gave an error in previous invocation", whose located
   // errors are the ones in that older .blg. A stale .blg from a .bib the user
   // already fixed cannot reach here, because fixing the .bib re-runs the rule.
+  // A run that died in the preamble never reached the bibliography step, so
+  // the .blg on disk — whatever its mtime says on a coarse-clock volume — is
+  // not this run's.
   const bibRuleFailed = /\b(bibtex|biber)\b[^\n]*gave an error/i.test(out);
-  if (isFresh(bibLogPath) || bibRuleFailed) {
+  if (documentBodyReached(log) && (isFresh(bibLogPath) || bibRuleFailed)) {
     try { errors.push(...parseBibLog(fs.readFileSync(bibLogPath, 'utf8'))); } catch { /* unreadable is not an error */ }
   }
   // -file-line-error paths are relative to the compile dir (the root file's
@@ -425,7 +464,7 @@ const server = http.createServer(async (req, res) => {
 
 // The log parsers are pure and worth testing without a TeX Live image; the
 // server only starts when this file is run directly (the image's CMD).
-module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile };
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached };
 
 if (require.main === module) {
   probeTexLive().finally(() => {

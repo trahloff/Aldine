@@ -21,6 +21,8 @@ const BASE = process.env.ALDINE_URL || `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: './tests',
+  // 34 needs the provisioning stack (service token, mock GitLab on its own port); playwright.provisioning.config.ts runs it.
+  testIgnore: /34-provisioning\.spec\.ts$/,
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: 1,
@@ -56,13 +58,22 @@ export default defineConfig({
       // the remotes spec must not land in the developer's real .secrets.
       // OPENROUTER_API_KEY/OPENAI_API_KEY are emptied so an ambient key can't
       // override the mock Anthropic endpoint the AI-fix test relies on.
+      // ALDINE_MCP_TOKEN matches MCP_TOKEN in tests/15-mcp.spec.ts (auth is off
+      // in this suite, so /mcp runs in static-token mode).
+      // ALDINE_AGENT_PRESENCE_TTL_MS shortens the 60 s agent-presence expiry so
+      // the session-review toast test (16-agent-ui) doesn't idle for a minute.
+      // build:viewer emits apps/server/assets/pdf-viewer.html, which
+      // 18-pdf-viewer loads directly.
       // VENUES_FILE points at the registry the mock server writes (it names the
       // mock's own port), so no venue test ever reaches a real publisher;
       // ALDINE_TEST_HOOKS is what makes a loopback kit URL fetchable at all,
       // and what lets TEMPLATE_REPOS name the file:// bare repository that
       // tests/32-template-repos.spec.ts builds under .data-e2e once the
       // server is up (the boot sync fails until the spec's first refresh).
-      command: `npm run build -w apps/web && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e ALDINE_TEST_HOOKS=1 GITLAB_API_BASE=http://localhost:${GITLAB} GITEA_API_BASE=http://localhost:${GITEA} VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"file://'"$(pwd)"'/.data-e2e/template-repo.git"}]' TEMPLATE_REPOS_REFRESH_MS=60000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
+      // RL_MCP_BURST: the MCP specs make tens of calls a second from one IP
+      // and one token; at the default 60-burst/1 s bucket 15-mcp drains it and
+      // 16-agent-ui opens on 429s.
+      command: `npm run build -w apps/web && npm run build:viewer -w apps/server && PORT=${PORT} DATA_DIR=$(pwd)/.data-e2e META_DIR=$(pwd)/.secrets-e2e ALDINE_MCP=1 ALDINE_MCP_TOKEN=aldine-e2e-mcp RL_MCP_BURST=1000 ALDINE_AGENT_PRESENCE_TTL_MS=5000 ALDINE_TEST_HOOKS=1 GITLAB_API_BASE=http://localhost:${GITLAB} GITEA_API_BASE=http://localhost:${GITEA} VENUES_FILE=$(pwd)/.data-e2e/venues-e2e.json TEMPLATE_REPOS='[{"id":"lab","label":"Lab templates","url":"file://'"$(pwd)"'/.data-e2e/template-repo.git"}]' TEMPLATE_REPOS_REFRESH_MS=60000 OPENROUTER_API_KEY= OPENAI_API_KEY= ZOTERO_API_BASE=http://localhost:${MOCK} DOI_API_BASE=http://localhost:${MOCK} ARXIV_API_BASE=http://localhost:${MOCK} OPENALEX_API_BASE=http://localhost:${MOCK} ANTHROPIC_API_KEY=test-ai-key ANTHROPIC_BASE_URL=http://localhost:${MOCK} npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: PORT,
       reuseExistingServer: true,

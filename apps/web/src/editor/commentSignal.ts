@@ -14,16 +14,6 @@ export function useCommentSignal(projectId: string, branch: string, onRemoteChan
   return useSignalDoc(projectId, branch, '.aldine/comments-signal', onRemoteChange);
 }
 
-/**
- * The file list is a REST listing; the server bumps this doc whenever a
- * branch's files change on disk (write, upload, rename, delete, pull, merge,
- * an agent's write), so every open editor refetches instead of showing the
- * tree it loaded with the page.
- */
-export function useFilesSignal(projectId: string, branch: string, onRemoteChange: () => void) {
-  return useSignalDoc(projectId, branch, '.aldine/files-signal', onRemoteChange);
-}
-
 function useSignalDoc(projectId: string, branch: string, docPath: string, onRemoteChange: () => void) {
   const bumpRef = useRef<() => void>(() => {});
   const cbRef = useRef(onRemoteChange);

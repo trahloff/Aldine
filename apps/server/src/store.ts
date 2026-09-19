@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta, RemoteLink } from './db/types.js';
+import type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
 
-export type { ProjectMeta, RemoteLink } from './db/types.js';
+export type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -38,6 +38,15 @@ export function writeMeta(meta: ProjectMeta): Promise<void> {
   return db().writeMeta(meta);
 }
 
+/** How far `userId` has been shown Claude's commits on one branch. */
+export function getProjectVisit(userId: string, id: string, branch: string): Promise<ProjectVisit | null> {
+  return db().getProjectVisit(userId, id, branch);
+}
+
+export function setProjectVisit(v: ProjectVisit): Promise<void> {
+  return db().setProjectVisit(v);
+}
+
 export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
 }
@@ -60,7 +69,8 @@ export function setRemoteLink(meta: ProjectMeta, link: RemoteLink | null): void 
  *  ZIP entries and may not reach `.git` or `.aldine*`: the initial commit runs
  *  git on the fresh repo, so a seeded `.git/config` would execute on the
  *  server. A rejected key or a failed write leaves no repo dir behind. */
-export async function createProject(name: string, files?: Record<string, string | Buffer>, ownerId?: string): Promise<ProjectMeta> {  const id = newId();
+export async function createProject(name: string, files?: Record<string, string | Buffer>, ownerId?: string, opts: { createdVia?: 'agent' } = {}): Promise<ProjectMeta> {
+  const id = newId();
   const dir = repoDir(id);
   fs.mkdirSync(dir, { recursive: true });
   const seed = files ?? {
@@ -95,6 +105,7 @@ export async function createProject(name: string, files?: Record<string, string 
   const rootFile = written.includes('main.tex') ? 'main.tex' : written.find((f) => f.endsWith('.tex')) || '';
   const meta: ProjectMeta = { id, name, rootFile, engine: 'pdf', createdAt: new Date().toISOString() };
   if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+  if (opts.createdVia) meta.createdVia = opts.createdVia;
   await writeMeta(meta);
   return meta;
 }
@@ -104,6 +115,7 @@ export async function deleteProject(id: string): Promise<void> {
   fs.rmSync(repoDir(id), { recursive: true, force: true });
   fs.rmSync(path.join(worktreesDir, id), { recursive: true, force: true });
   await db().deleteMeta(id);
+  await db().deleteProjectVisits(id);
 }
 
 /** Move a project to trash: data stays on disk, listings hide it, purge collects it later. */
@@ -163,6 +175,10 @@ export function readFile(id: string, branch: string, rel: string): Buffer {
 
 export function fileExists(id: string, branch: string, rel: string): boolean {
   try { return fs.existsSync(safeJoin(branchDir(id, branch), rel)); } catch { return false; }
+}
+
+export function isDirectory(id: string, branch: string, rel: string): boolean {
+  try { return fs.statSync(safeJoin(branchDir(id, branch), rel)).isDirectory(); } catch { return false; }
 }
 
 export function writeFile(id: string, branch: string, rel: string, content: string | Buffer): void {

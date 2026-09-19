@@ -66,7 +66,7 @@ test.describe('venue kits fetched from the publisher', () => {
     const sty = await request.get(`/api/projects/${id}/file?branch=main&path=e2evenue.sty`);
     expect(await sty.text()).toContain('ProvidesPackage{e2evenue}');
     // Only what the registry names: the archive's manual and its junk stay out.
-    const files = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { path: string }[];
+    const { files } = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { files: { path: string }[] };
     const paths = files.map((f) => f.path);
     expect(paths).toEqual(expect.arrayContaining(['e2e.bib', 'e2evenue.sty', 'main.tex']));
     expect(paths).not.toContain('kit-manual.pdf');

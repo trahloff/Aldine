@@ -1,0 +1,21 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-marketplace.json",
+  "name": "aldine",
+  "description": "Claude Code plugins for Aldine, the self-hosted collaborative LaTeX platform.",
+  "owner": {
+    "name": "Toby Rahloff"
+  },
+  "plugins": [
+    {
+      "name": "aldine",
+      "source": "./claude-plugin/aldine",
+      "description": "Claude writes, typesets and reviews LaTeX in your Aldine: repair loop, section drafting and bibliography skills over the Aldine MCP connector.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Toby Rahloff"
+      },
+      "homepage": "https://aldine.dev",
+      "category": "productivity"
+    }
+  ]
+}

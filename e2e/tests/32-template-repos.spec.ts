@@ -206,7 +206,7 @@ test.describe('templates from a git repository', () => {
     expect(main).toContain(`\\date{${new Date().toISOString().slice(0, 10)}}`);
     expect(main).not.toContain('{{');
     // Only the template's files (plus the .gitignore every project starts with): the manifest stays behind.
-    const files = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { path: string }[];
+    const { files } = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { files: { path: string }[] };
     expect(files.map((f) => f.path).filter((f) => f !== '.gitignore').sort()).toEqual(['logo.png', 'main.tex']);
   });
 

@@ -1,15 +1,17 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { buildApp, isCollabUpgrade } from './app.js';
-import { hocuspocus, flushAllDocs, closeProjectConnections, onAutoCommit } from './collab.js';
+import { hocuspocus, shutdownFlushSet, closeProjectConnections, onAutoCommit } from './collab.js';
 import { scheduleAutopush } from './autopush.js';
 import { checkProvisioning, deprovisionProject } from './provision.js';
+import { TRASH_DAYS } from './trash.js';
 import { initProjectEvents } from './events.js';
-import { commitAll } from './gitops.js';
+import { autoCommit } from './gitops.js';
 import * as store from './store.js';
 import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
+import { ensureSigningSecret } from './output-signing.js';
 
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
@@ -18,6 +20,8 @@ process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandled
 await initDb();
 // Connect Redis for cross-node rate limiting if REDIS_URL is set (else in-memory).
 await initRateLimit();
+// The PDF-link signer: a weak ALDINE_SIGNING_SECRET must not reach the first compile.
+ensureSigningSecret();
 // Cross-node revocation: when a peer node changes a project's access, close
 // our local collab sockets for it so clients re-authenticate. No-op without Redis.
 initProjectEvents({ onAccessChanged: closeProjectConnections });
@@ -42,7 +46,6 @@ console.log(`[aldine] server on :${config.port}${config.basePath} — data=${con
 
 // Trash purge: hard-delete soft-deleted projects after ALDINE_TRASH_DAYS
 // (default 30). Swept on boot and daily; errors are logged, never fatal.
-const TRASH_DAYS = Number(process.env.ALDINE_TRASH_DAYS || 30);
 // Every autosave that landed on main is pushed to the linked remote (when the
 // project has autopush on); provisioned GitLab projects are removed with the
 // purge in case the trash-time deletion failed.
@@ -60,10 +63,13 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`[aldine] ${signal} — flushing ${hocuspocus.documents.size} open documents…`);
   try {
-    // commit only the branches that actually had open docs (typically a handful),
-    // not every project — avoids a SIGTERM fan-out of hundreds of git processes
-    const dirty = flushAllDocs();
-    await Promise.allSettled(dirty.map((d) => commitAll(d.projectId, d.branch, 'aldine: autosave on shutdown')));
+    // commit only the branches that had open docs or pending agent work
+    // (typically a handful), not every project — avoids a SIGTERM fan-out of
+    // hundreds of git processes. autoCommit, not commitAll: pending agent work
+    // must land under its author before the anonymous sweep, exactly as the
+    // debounce would have done.
+    const dirty = shutdownFlushSet();
+    await Promise.allSettled(dirty.map((d) => autoCommit(d.projectId, d.branch, 'aldine: autosave on shutdown')));
     console.log(`[aldine] flushed ${dirty.length} project/branch(es); exiting`);
   } catch (err) {
     console.error('[aldine] shutdown flush error', err);

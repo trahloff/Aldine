@@ -29,6 +29,7 @@ COPY apps/server/package.json apps/server/
 RUN npm ci --workspace apps/server --include-workspace-root=false --omit=dev
 COPY apps/server apps/server
 COPY --from=serverbuild /build/apps/server/dist apps/server/dist
+COPY --from=serverbuild /build/apps/server/assets apps/server/assets
 COPY plugins plugins
 COPY templates templates
 COPY --from=webbuild /build/apps/web/dist apps/web/dist

@@ -118,7 +118,7 @@ test.describe('ZIP import hardening', () => {
       const meta = await (await request.get(`/api/projects/${id}`)).json();
       expect(meta.name).toBe(name);
       expect(meta.rootFile).toBe('main.tex');
-      const files = await (await request.get(`/api/projects/${id}/files?branch=main`)).json();
+      const { files } = (await (await request.get(`/api/projects/${id}/files?branch=main`)).json()) as { files: { path: string; size: number }[] };
       const blob = files.find((f: { path: string }) => f.path === 'assets/blob.bin');
       expect(blob?.size).toBe(asset.length);
     } finally {

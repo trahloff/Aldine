@@ -14,6 +14,7 @@ import Onboarding from '../components/Onboarding';
 import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
 import { friendlyDate } from '../util/dates';
+import { OAUTH_RESUME_KEY } from '../util/oauthParams';
 import { pickTemplate, templateToPost } from '../util/templates';
 import { importSummary } from '../util/engines';
 
@@ -115,6 +116,14 @@ export default function Home() {
       .catch(() => { setLoadFailed(true); setProjects((cur) => cur ?? []); });
   };
   useEffect(() => { load(); }, []);
+  // Signed in through an SSO provider while an app was waiting on
+  // /oauth/authorize: the provider callback lands here, so resume the consent.
+  useEffect(() => {
+    if (!authEnabled || !user) return;
+    let resume: string | null = null;
+    try { resume = sessionStorage.getItem(OAUTH_RESUME_KEY); sessionStorage.removeItem(OAUTH_RESUME_KEY); } catch { /* private mode */ }
+    if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
+  }, []);
   useEffect(() => { api.remotes().then(setRemotes).catch(() => setRemotes([])); }, []);
   // returning from a host's OAuth connect → reopen the import flow (now
   // connected). `?github=connected` is the pre-GitLab callback and stays.
@@ -437,7 +446,7 @@ export default function Home() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
             />
-            <NamespacePicker value={namespace} onChange={setNamespace} />
+            {remotes.some((r) => r.provisioning) && <NamespacePicker value={namespace} onChange={setNamespace} />}
             {templates === null && <p className="tpl-empty">Loading templates…</p>}
             {templates !== null && templates.length > 0 && (
               <>

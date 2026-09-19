@@ -1,4 +1,4 @@
-import { listFiles, readFile } from './store.js';
+import { listFiles, readFile, readMeta, writeMeta } from './store.js';
 
 /** \documentclass or \begin{document} outside a `%` comment — a commented-out
  *  preamble in a snippet must not make it a root candidate. */
@@ -51,4 +51,23 @@ export function detectRoot(id: string, branch: string): string {
     try { files[f.path] = readFile(id, branch, f.path); } catch { /* removed between listing and reading */ }
   }
   return guessRoot(files) ?? '';
+}
+
+/** A project without a typeset root (blank, or its last .tex deleted) adopts
+ *  a root once a .tex appears, ranked like an import (the branch may already
+ *  hold .tex files that arrived through git). The root comes from the file
+ *  listing, never from the request path, so it always matches the tree.
+ *  Shared by the REST file routes and the MCP writers. Returns the new root
+ *  when one was adopted. */
+export async function adoptRootIfUnset(id: string, branch: string, rel: string): Promise<string | undefined> {
+  if (!/\.tex$/i.test(rel)) return undefined;
+  try {
+    const meta = await readMeta(id);
+    if (meta.rootFile) return undefined;
+    const root = detectRoot(id, branch);
+    if (!root) return undefined;
+    meta.rootFile = root;
+    await writeMeta(meta);
+    return root;
+  } catch { return undefined; }
 }

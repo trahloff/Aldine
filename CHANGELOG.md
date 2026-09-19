@@ -7,31 +7,229 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The Aldine Agent API: Claude and any MCP client read and write LaTeX in
+  Aldine projects, with Aldine as the source of truth. `ALDINE_MCP=1` serves
+  the Model Context Protocol over Streamable HTTP at `POST /mcp` (stateless;
+  bodies capped at 2 MB; rate limited per client IP and per token, 60 burst
+  and 1/s sustained, `RL_MCP_BURST`); the same tools run over stdio
+  (`tsx apps/server/src/mcp/stdio.ts`). Auth is mandatory: with
+  `AUTH_ENABLED` a personal access token (`Authorization: Bearer aldn_…` or
+  `X-Aldine-Token`), without it an operator-set `ALDINE_MCP_TOKEN`; with
+  neither every request is 401 and the boot log says how to fix it. Setup
+  guide: `docs/AGENT_API.md`.
+- Personal access tokens (auth deployments): `POST /api/tokens` mints an
+  `aldn_…` bearer (shown once, only a SHA-256 digest stored), optionally
+  scoped to projects and with an expiry; `GET /api/tokens` lists, `DELETE
+  /api/tokens/:tokenId` revokes. Bearers follow the same project access rules
+  as sessions and are refused outside their scope; account surfaces accept
+  session cookies only, so a leaked token cannot mint tokens, set a password
+  or reach a stored GitHub credential. The "Agent access" card in account
+  settings manages tokens and shows the connector URL. `/api/auth/me` returns
+  `mcpEnabled` and `publicUrl`.
+- OAuth 2.1 for the connector (auth deployments): claude.ai and Claude Code
+  connect with a Connect button. Aldine serves the RFC 9728 / RFC 8414
+  discovery documents, a consent page at `/oauth/authorize` where the user
+  picks the projects the client may touch, `/oauth/token` (authorization code
+  + PKCE S256, refresh-token rotation with reuse detection),
+  `/oauth/register` (public clients only, capped at 500) and `/oauth/revoke`.
+  Clients identify by a registered `aldc_` id or an https client-metadata URL
+  fetched with SSRF checks. Access tokens are ordinary 24 h `aldn_` tokens
+  listed under Connections on the Agent access card. `/mcp` 401s carry a
+  `WWW-Authenticate` challenge; everything is 404 while `AUTH_ENABLED` is
+  off.
+- Fifteen tools: `list_projects`, `project_structure`, `read_file`,
+  `edit_file`, `write_file`, `batch_write`, `compile`, `get_pdf_url`,
+  `commit`, `references_add`, `list_citations`, `list_labels`, `wordcount`,
+  `create_project`, `trash_project`, plus `ping`, under the same access,
+  trash, hidden-path and token-scope guards as the REST API; every result
+  echoes `{branch, head}`. `edit_file` anchors on exact quotes (at least 8
+  characters, `occurrence` to disambiguate) and lands them in the live
+  collaboration document as CRDT edits; a drifted anchor returns
+  `stale_anchor` with up to 3 candidates and applies nothing. `write_file`
+  and `batch_write` honour `base_version` and refuse with `version_conflict`
+  instead of overwriting; `batch_write` lands a multi-file change as one
+  commit. A name differing from an existing one only by case, or starting
+  with `-`, is refused. `compile` returns parsed errors (capped at 50 with
+  `errorsTotal`; a missing `.sty` as a `hint`), a 4 KB log tail, a signed PDF
+  link and a deep link, with progress notifications every 10 s; it takes at
+  most one of a person's two typeset slots. `references_add` resolves a DOI,
+  arXiv or OpenAlex id into the project's `.bib` (default `references.bib`
+  beside the root file); `list_citations` and `list_labels` are the indexes
+  to consult before writing `\cite` and `\ref`; `wordcount` walks the root
+  file's `\input` graph. `trash_project` moves a project to the workspace
+  trash (restorable for `ALDINE_TRASH_DAYS`) and accepts only projects made
+  with `create_project` (`agentCreated` in `list_projects`); `create_project`
+  is refused for a project-scoped token.
+- Every agent write is a reviewable commit under the author "Claude", made
+  before the tool answers and titled with the intent (`batch_write` under its
+  message, `edit_file` and `write_file` under an optional `message`, else
+  "Edit <path>" / "Update <path>"; `references_add` under "Add reference
+  <key>"). A Claude commit's diff is exactly the agent's delta; a person's
+  concurrent typing lands as their own autosave, and "Revert these changes"
+  never removes it. `batch_write` edits an open document per span like
+  `edit_file` instead of replacing it. `commit` lands agent work a
+  refused commit left waiting, else answers `committed:false` with the
+  current head and `recentClaudeCommits`. Shutdown flushes pending agent work
+  under Claude's name first.
+- Signed PDF links: `compile` returns a `pdfUrl` that opens without a session
+  for 15 minutes (HMAC-signed, one artifact on one branch, `no-store`), plus
+  `pages`, `typesetAt`, `pdfFile` and `pdfStale`; `get_pdf_url` hands out a
+  fresh link without recompiling. The secret is `ALDINE_SIGNING_SECRET` (32+
+  characters, checked at boot) or is generated once into `META_DIR`.
+- The PDF viewer (MCP App): `compile` and `get_pdf_url` results render inline
+  in hosts that speak `io.modelcontextprotocol/ui` (claude.ai, Claude Desktop,
+  Cowork; other hosts get the link). One self-contained file (`npm run
+  build:viewer -w apps/server`, part of `npm run build`, about 2.1 MB; served
+  as `ui://aldine/pdf-viewer` when built) with a status row, an error strip
+  whose `file:line` rows deep-link into Aldine, page and zoom controls and
+  "Open in Aldine". PDFs over 50 MB are not fetched into the chat column.
+- Deep links into the editor: `/p/<id>?file=<path>&line=<n>` opens the file
+  (exact path, then a suffix match), scrolls the line into view and flashes
+  it once the collab doc has synced. A missing file gets a toast and the root
+  file; a line past the end says so.
+- Agent presence and review in the editor: an agent session shows in the
+  presence strip (violet is now reserved for agents), History marks Claude's
+  commits, and behind `aldine.experimental.agentPresence` incoming agent
+  edits get a tint that fades; the session survives a reload of the page.
+  When a session that produced commits goes quiet, a sticky toast ("Claude edited N files", Review) opens its commits
+  with their diffs and a "Revert these changes" button backed by `POST
+  /api/projects/:id/revert`, which undoes them as one new commit; history is
+  never rewritten. Opening a project with Claude commits newer than your last
+  acknowledged visit raises the same prompt ("while you were away"); the mark
+  is per person, project and branch (`project_visits` on Postgres,
+  `visits.json` on the JSON backend, `aldine.agentSeen.<project>.<branch>` in
+  the browser without accounts). `GET /api/projects/:id/agent-activity` is
+  read-only and `POST …/agent-activity/seen` session-only, so an agent's
+  token can never clear a person's prompt.
+- The connector works under a URL prefix (`ALDINE_BASE_PATH`, #40): the
+  discovery documents are served at the origin-root locations MCP clients
+  probe first as well as under the prefix, and `deepLink`, `pdfUrl`, the
+  consent page and the connector URL carry it. Reverse proxies must forward
+  the two well-known paths (deploy/README.md, deploy/nginx.conf).
+- Success metrics as log lines: `[metric] agent_connect`, `agent_compile
+  user=… project=… ok=… ms=…` and `agent_revert … commits=…`;
+  deploy/README.md carries the CloudWatch Logs Insights queries.
+- The public demo box serves the Agent API with a published token
+  (`deploy/demo`, variable `mcp_token`, default `aldine-demo`): connector URL
+  `https://demo.aldine.dev/mcp` with `X-Aldine-Token: aldine-demo`,
+  world-writable, wiped nightly at 04:00 UTC.
+- With auth off, the connector's typeset budget (`ALDINE_COMPILE_PER_MIN`) and
+  the one-agent-typeset gate are keyed by client address instead of one
+  operator bucket; stdio keeps the operator bucket.
+- A Claude Code plugin (`claude-plugin/aldine`; `/plugin marketplace add
+  trahloff/Aldine`, then `/plugin install aldine@aldine`): the Aldine MCP
+  server configured from `ALDINE_URL` (and `ALDINE_TOKEN`; Connect otherwise)
+  plus the skills `latex-fix-build`, `latex-draft-section` and
+  `latex-bibliography`. Setup in `docs/AGENT_API.md`, "Claude Code plugin".
+- Landing page and README: a "Claude as a collaborator" section with a
+  recorded clip of the loop, and `llms.txt` names the Agent API and its guide.
 - Gitea and Forgejo as a third remote provider, "Gitea / Forgejo", next to
-  GitHub and GitLab; Codeberg runs Forgejo and is the example instance the
-  connect form offers. Both share the Gitea API, so one provider covers any
-  instance, sub-path installs included. Connect with a personal access token
-  (`read:user` and `write:repository`) and the instance URL, which is
-  mandatory since there is no canonical host; there is no OAuth. Import a
-  repository, publish a local project to your account (or, through the API,
-  into an organisation), push and pull, switch and create branches, and open
-  a pull request from the editor; publishing into an organisation
-  additionally needs `write:organization`. The token goes over https as the
-  git password under your own login. A link records the instance it was made
-  on, so a collaborator connected to another instance never syncs it with the
-  wrong host, and the server only clones from or pushes to an https URL on
-  the connected instance itself. `REMOTE_PROVIDERS` now defaults to
-  `github,gitlab,gitea`; `GITEA_API_BASE` exists for the tests only. (#60)
+  GitHub and GitLab; one provider covers any instance (Codeberg is the
+  example the connect form offers), sub-path installs included. Connect with
+  a personal access token (`read:user` and `write:repository`; publishing
+  into an organisation also needs `write:organization`) and the mandatory
+  instance URL; there is no OAuth. Import, publish, push and pull, branches
+  and pull requests work as for the other providers, and the server only
+  syncs with an https URL on the instance the link was made on.
+  `REMOTE_PROVIDERS` now defaults to `github,gitlab,gitea`; `GITEA_API_BASE`
+  exists for the tests only. (#60)
 - Download a project as a ZIP: `GET /api/projects/:id/archive?branch=` returns
   the branch's tracked files from git, flat like an Overleaf download (never
-  `.git` or build output), after the open documents are flushed and
-  committed so it matches the editor. Reachable from project settings ("Download as ZIP") and the
-  command palette; the archive imports back through the ZIP import. (#58)
+  `.git` or build output), after open documents are flushed and committed.
+  Reachable from project settings ("Download as ZIP") and the command
+  palette; the archive imports back through the ZIP import. (#58)
+
+### Changed
+- Write conflicts for the Agent API and `PUT /file` are detected per file, not
+  per branch. The branch `contentVersion` is still what a caller passes as
+  `base_version` (`baseVersion` on REST), but a write is refused with
+  `version_conflict` only when that file changed after the version the caller
+  read; git-level rewrites (revert, merge, pull, reset, branch switch) count
+  as a change to every path. `GET /file` returns `x-aldine-content-version`
+  and `x-aldine-file-version`, `GET /files` returns `{ files, contentVersion
+  }` (previously a bare array), tool results carry `fileVersion`, and
+  `batch_write` accepts `base_version` per entry.
+- Auto-typeset follows Claude, not only the person typing: an agent edit arms
+  the same debounce a keystroke arms; with several tabs open on a branch
+  exactly one typesets and the others adopt its run. `POST
+  /api/projects/:id/compile` takes `reason: "agent"` and `GET
+  /api/projects/:id/compile-status` reports the branch's last run. With
+  auto-typeset off the preview moves only when the person presses Typeset.
+- Reverts, checkpoints and merges made by a signed-in person are committed
+  under their account name, and a person's whole-tree commit inside Claude's
+  autosave window commits Claude's pending edits under Claude's name first,
+  so a human never signs an agent's delta.
+- Agent API result shapes: an ambiguous quote is `ambiguous_anchor`
+  (candidates carry the `occurrence` that picks each) and `stale_anchor`
+  means the quote is gone. `version_conflict` carries a `reason`, and every
+  error result echoes `path`, `branch` and `head`. `compile` reports
+  `errorsTotal` for errors only and a new `warningsTotal`. `write_file` and
+  `batch_write` adopt the first `.tex` of a rootless project as its main
+  document (`newRoot`); `wordcount` without one is an error, not 0 words.
+  `references_add` returns `created` and a `note` when no `.tex` loads the
+  `.bib`; `create_project` returns `contentVersion` and `files`;
+  `project_structure` flags `binary` files; a windowed `read_file` echoes
+  `from_line`/`to_line`. Missing branches and projects, malformed paths and
+  over-long messages are refused with the cause and the fix.
+- Commit messages from the tools, `POST /commit`, `/revert` and the GitHub
+  push are capped at 200 characters and stripped of control characters before
+  they reach git; a commit that still fails is retried under a neutral title.
 
 ### Fixed
+- Dialogs open at their title: moving focus to the first control no longer
+  scrolls a long dialog to its action row.
+- The server's git commands can no longer reach outside `DATA_DIR`
+  (`GIT_CEILING_DIRECTORIES`): a project directory that lost its repository
+  let git discover an enclosing checkout and commit to it.
+- A project or branch deleted inside the autosave window no longer logs
+  `[collab] autocommit failed …` on every debounce that fires afterwards.
+- A typeset that stops on an error and removes the PDF no longer drops the
+  preview's stale flag; the download link goes away until the next successful
+  run.
+- `GET`/`PUT /api/projects/:id/file` flush open collaboration documents to
+  disk first; a REST write could silently discard a collaborator's unflushed
+  keystrokes.
+- `GET /api/projects/:id/wordcount` no longer serves the previous root file's
+  count after the root file is switched.
+- A file whose name starts with `-` can no longer reach `git commit` as an
+  option (`PUT /file` and rename refuse such names), a glob or pathspec-magic
+  name (`*.tex`, `:!x.tex`) commits literally, and `/api/projects/:id/log` is
+  parsed so a message can no longer move itself into the author field.
+- `compile` over the Agent API: a project with no `.tex` file says it has
+  nothing to typeset (not that the compiler is down), and a fatal run with no
+  PDF is `pdfStale:true` with the previous run's link. Error rows carry
+  `context` (the source line TeX was reading) and warnings a `source`
+  (`latex`, the package name, `biber`); a biber warning points at the `.bib`
+  and its line, a run that died in the preamble no longer repeats the
+  previous run's bibliography warnings, and the log tail is the 4 KB around
+  the first error. The editor gets the same `context`.
+- `references_add` makes every entry typesettable under pdflatex and biber:
+  emoji are dropped, Greek letters and relation symbols become their macros
+  with their `$` intact, and doi.org's `month = June` becomes the `jun`
+  macro. DOI, arXiv and OpenAlex entries share one key rule (`bender2021`)
+  and one layout. An unknown id is "No reference found for …", not a lookup
+  failure; an entry already present under an older key style (`LeCun_2015`
+  for `lecun2015`) is reported as the duplicate, naming the existing key.
+- `write_file` onto a folder, under a file or with a trailing slash, and
+  `read_file` on a folder, name the cause instead of a server error.
+  `read_file` decides text by content, not extension (`.dat`, `.tsv`, `.log`,
+  `.xml`, `.svg`, `.lua`, `.py` count as text in the file tree too), and
+  refuses a window past the end or running backwards. An agent write keeps a
+  Latin-1 or binary file's bytes exact in the commit it makes, so reverting
+  the Claude commit restores the original. A write that changes nothing
+  answers `commit: null` with `unchanged: true`.
+- The new-project dialog asks for GitLab groups only when `/api/remotes`
+  reports provisioning (new field `provisioning`), instead of logging a 404
+  on each open of an instance without a service token.
+- Editor and review flow: on a phone (≤640 px) the preview pane is hidden so
+  the editor gets the width; the review dialog wraps long source lines.
+  "Revert these changes" re-typesets the preview when auto-typeset is on and
+  marks it stale when off; a revert that overlaps a later edit names the
+  commit it stopped on. Signed-in people appear to collaborators under their
+  account name with one colour in every browser, not "Writer N".
 - The sidebar tab row (Files, History, Review and the plugin tabs) wraps
   again instead of hiding its overflow: on wider system fonts and at browser
-  zoom the last tabs were cut off with no scrollbar to reveal them. (#59)
+  zoom the last tabs were cut off. (#59)
 
 ## [0.9.0] — 2026-09-10
 

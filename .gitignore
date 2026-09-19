@@ -9,6 +9,7 @@ dist/
 .data-base-path/
 .data-remote/
 .data-shots/
+.data-demo/
 .secrets/
 .secrets-e2e/
 .secrets-e2e-prov/
@@ -17,6 +18,7 @@ dist/
 .secrets-remote/
 .secrets-pb/
 .secrets-shots/
+.secrets-demo/
 .cache/
 .cache-shots/
 *.log
@@ -44,3 +46,6 @@ deploy/demo/*.pub
 
 # local tooling
 .entire/
+
+# built MCP App viewer (npm run build:viewer -w apps/server)
+apps/server/assets/pdf-viewer.html

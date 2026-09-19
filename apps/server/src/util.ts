@@ -1,5 +1,17 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { config } from './config.js';
+
+/** Public origin for OAuth redirects and the OAuth issuer — ALDINE_PUBLIC_URL,
+ *  else derived from the request. Behind a proxy set ALDINE_PUBLIC_URL: the
+ *  Host/X-Forwarded-Host fallback is attacker-influenced on a request the
+ *  attacker sends, and only that request's response reflects it. */
+export function publicBase(req: { headers: Record<string, string | string[] | undefined>; protocol?: string }): string {
+  if (config.publicUrl) return config.publicUrl;
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+  return `${proto}://${host}${config.basePath}`;
+}
 
 export function newId(len = 10): string {
   return crypto.randomBytes(16).toString('base64url').replace(/[^a-zA-Z0-9]/g, '').slice(0, len).toLowerCase();
@@ -34,6 +46,12 @@ export function importPath(entry: string): string | null {
   return segments.join('/');
 }
 
+/** "<root file's dir>/<name>" — where \\addbibresource{<name>} actually resolves. */
+export function rootSiblingPath(rootFile: string, name: string): string {
+  const dir = path.dirname(rootFile || 'main.tex');
+  return dir === '.' ? name : path.posix.join(dir, name);
+}
+
 /** A path segment that names git internals or compile output. Compared
  *  case-insensitively and without trailing dots or spaces: on macOS and
  *  Windows `.GIT/config` and `.git./config` open `.git/config`, and the
@@ -48,8 +66,37 @@ export function importPath(entry: string): string | null {
 export function invalidRootFile(rootFile: unknown): string | null {
   if (typeof rootFile !== 'string' || !rootFile.trim()) return 'Main document cannot be empty';
   if (rootFile.includes('..') || rootFile.startsWith('/') || rootFile.startsWith('\\')) return 'Main document must be a path inside the project';
-  if (rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'))) return 'Main document name cannot start with "-"';
+  if (optionLikePath(rootFile)) return 'Main document name cannot start with "-"';
   return null;
+}
+
+/** A segment starting with "-" reads as an option wherever the path is an
+ *  argv word — latexmk's command line and a git pathspec alike. The commit
+ *  primitives put `--` before their pathspecs, so this is the boundary
+ *  refusal that keeps such a name out of the tree in the first place. */
+export function optionLikePath(rel: string): boolean {
+  return rel.split(/[\\/]/).some((seg) => seg.startsWith('-'));
+}
+
+export const COMMIT_MESSAGE_MAX = 200;
+
+/**
+ * A commit subject safe to hand to git and to show back: control characters
+ * are dropped (a NUL fails the spawn, and a failed attributed commit blocks
+ * the branch's autosave until it lands; ESC/C1 reach terminals and the
+ * History panel unfiltered), CR and tab become spaces (both split the
+ * for-each-ref and log records), and the subject is bounded so one call
+ * cannot plant a megabyte every `git log` carries. Empty after cleaning →
+ * `fallback`.
+ */
+export function cleanCommitMessage(message: string | undefined | null, fallback: string): string {
+  const cleaned = (message ?? '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+    .replace(/[\r\t]+/g, ' ')
+    .trim()
+    .slice(0, COMMIT_MESSAGE_MAX)
+    .trim();
+  return cleaned || fallback;
 }
 
 export function isHiddenName(seg: string): boolean {
@@ -142,7 +189,17 @@ export function seedError(files: unknown): string | null {
 }
 
 export function isTextFile(p: string): boolean {
-  return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|json|yml|yaml|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
+  return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|tsv|dat|log|json|yml|yaml|xml|svg|lua|py|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
+}
+
+/** Bytes that cannot be served as text: a NUL in the head, or a head that is
+ *  not UTF-8. Checked on content, not the extension — a `.dat` of numbers is
+ *  text, a `.tex` with a NUL is not. */
+export function looksBinary(data: Buffer): boolean {
+  const head = data.subarray(0, 8000);
+  if (head.includes(0)) return true;
+  // Streaming mode buffers a sequence the cut split instead of throwing; invalid bytes still throw.
+  try { new TextDecoder('utf-8', { fatal: true }).decode(head, { stream: data.length > head.length }); return false; } catch { return true; }
 }
 
 export function debouncePerKey<A extends unknown[]>(ms: number, fn: (key: string, ...args: A) => void) {

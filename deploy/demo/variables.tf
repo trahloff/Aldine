@@ -32,3 +32,9 @@ variable "protected_projects" {
   default     = ""
   description = "Comma-separated project ids served read-only (the showcase paper). Seed the project first, then re-apply with its id."
 }
+
+variable "mcp_token" {
+  description = "Static credential for the Agent API (ALDINE_MCP_TOKEN). The default is deliberately public — docs/AGENT_API.md prints it so anyone can try the Claude connector against the demo; change it only together with that page."
+  type        = string
+  default     = "aldine-demo"
+}

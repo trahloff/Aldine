@@ -6,9 +6,9 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { commitAll, ensureWorktree } from './gitops.js';
+import { autoCommit, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
 import { safeJoin, debouncePerKey } from './util.js';
-import { AUTH_ENABLED, userFromRequest } from './auth.js';
+import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 
@@ -66,20 +66,67 @@ function deleteSnapshot(name: string): void {
 /** Listeners told when an autosave commit actually landed (autopush hooks here). */
 const autoCommitListeners: Array<(projectId: string, branch: string) => void> = [];
 export function onAutoCommit(cb: (projectId: string, branch: string) => void): void { autoCommitListeners.push(cb); }
+/** An agent write committed on its own, outside the debounce: the same listeners must hear it. */
+export function notifyCommitted(projectId: string, branch: string): void { for (const cb of autoCommitListeners) cb(projectId, branch); }
 
-/** Debounced auto-commit per project::branch after edits settle. */
-const scheduleAutoCommit = debouncePerKey(20_000, (key: string) => {
+/** Overridable so tests can exercise the debounced commit without 20 s waits. */
+const AUTOCOMMIT_DEBOUNCE_MS = Number(process.env.ALDINE_AUTOCOMMIT_MS || '') || 20_000;
+
+/** Debounced auto-commit per project::branch after edits settle. One debounce
+ *  window with mixed human and agent work must never co-mingle the two into
+ *  one wrongly-attributed commit (UX.md: git is the audit ledger;
+ *  HistoryPanel/session review key on the author string) — the ordering rule
+ *  (attributed paths first under their author + intent, then the anonymous
+ *  sweep) lives in gitops.autoCommit, which takes the attribution only while
+ *  it holds the repo lock. The attribution lives in gitops, OUTSIDE the
+ *  debounce args — the debounce is last-writer-wins, and a human keystroke
+ *  scheduling anonymously after an agent write must not erase the agent's
+ *  attribution (or vice versa); an explicit whole-tree commit in the window
+ *  consumes it. */
+const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   const [projectId, branch] = key.split('::');
-  commitAll(projectId, branch, 'aldine: autosave')
-    .then((r) => { if (r.committed) for (const cb of autoCommitListeners) cb(projectId, branch); })
+  // A project or branch deleted inside the debounce window has nothing left
+  // to commit; that is the ordinary end of a test or a trash action, not an error.
+  if (!fs.existsSync(branchDir(projectId, branch))) return;
+  autoCommit(projectId, branch)
+    .then((r) => { if (r && r.committed) for (const cb of autoCommitListeners) cb(projectId, branch); })
     .catch((err) => console.error('[collab] autocommit failed', err.message));
 });
 
 /** Schedule the same debounced auto-commit for non-collab writes (REST file
- *  upload / rename / reference add) so working-tree changes reach git history
- *  even when no Yjs doc is open — not just on the next manual push. */
-export function scheduleCommit(projectId: string, branch: string): void {
+ *  upload / rename / reference add, MCP tools) so working-tree changes reach
+ *  git history even when no Yjs doc is open — not just on the next manual
+ *  push. Agent (MCP) callers pass their stated intent + author "Claude" +
+ *  the touched paths, which commit separately from the anonymous sweep.
+ *  Agent (MCP) callers invoke this inside gitops.withRepoLock, in the same
+ *  synchronous run as their disk write, after checkpointPathsHeld — the lock
+ *  is what keeps an in-flight autosave from staging the write before it is
+ *  attributed. */
+export function scheduleCommit(projectId: string, branch: string, message?: string, author?: string, paths?: string[]): void {
+  if (message && author && paths?.length) registerAttributedPaths(projectId, branch, message, author, paths);
   scheduleAutoCommit(`${projectId}::${branch}`);
+}
+
+/**
+ * Land an agent write in history right away, from the snapshots the tool held
+ * while applying it (gitops.commitAgentWriteHeld). `hash` is the commit made;
+ * null with `unchanged` when the write left every file as HEAD has it (nothing
+ * to commit, nothing pending), null without it when git refused: a refused
+ * commit leaves the delta registered for the debounced sweep to retry under
+ * Claude's name, so it can never surface as an anonymous autosave. Callers
+ * hold the repo lock.
+ */
+export async function commitAgentWrite(projectId: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ hash: string | null; unchanged: boolean }> {
+  try {
+    const res = await commitAgentWriteHeld(projectId, branch, files, message);
+    if (!res.committed) return { hash: null, unchanged: true };
+    notifyCommitted(projectId, branch);
+    return { hash: res.hash ?? null, unchanged: false };
+  } catch (err) {
+    console.warn(`[collab] commit of ${files.map((f) => f.path).join(', ')} failed, left for the autosave: ${(err as Error).message}`);
+    scheduleCommit(projectId, branch, message, AGENT_COMMIT_AUTHOR, files.map((f) => f.path));
+    return { hash: null, unchanged: false };
+  }
 }
 
 /** Docs evicted because their file/branch was deleted — never write these back. */
@@ -95,17 +142,78 @@ const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 export function tombstone(name: string): void { tombstoned.add(name); }
 export function untombstone(name: string): void { tombstoned.delete(name); }
 
-// Monotonic per-branch content version — the invalidation signal for derived
-// indexes (the /bib and /labels caches in routes.ts). Bumped by every path
-// that changes branch content on disk: Yjs doc stores, REST file mutations,
-// and git rewrites (merge/revert/pull → refreshBranchDocsFromDisk).
-const contentVersions = new Map<string, number>();
-export function bumpContentVersion(projectId: string, branch: string): void {
-  const k = `${projectId}::${branch}`;
-  contentVersions.set(k, (contentVersions.get(k) || 0) + 1);
+// Per-branch change log behind the content version: the version at which each
+// path last changed on disk, plus a watermark for tree-wide rewrites (git
+// merge/revert/pull/reset), after which every path — listed or not — counts
+// as changed. Conflict checks compare one path's version with the caller's
+// base, so a write to one file never conflicts with a read of another.
+// Per process (like the version itself): docs/SCALING.md sticky routing.
+//
+// Invariants the tests pin:
+//  I1 contentVersion(b) is monotonic per process and bumps on every disk
+//     change of branch content (indexes.ts, compile results and listings key
+//     on it unchanged).
+//  I2 fileVersion(P) <= contentVersion(b); every entry in `paths` is > `tree`
+//     (paths is cleared whenever tree moves), so `paths.get(P) ?? tree` is
+//     the max of the two.
+//  I3 A write of P with base V is refused iff fileVersion(P) > V (P changed
+//     after the read) or V > contentVersion(b) (V is from another process
+//     lifetime or node — unknowable, so refused rather than trusted).
+//  I4 A path nobody wrote since the last tree-wide mark has fileVersion =
+//     tree; a brand-new path therefore conflicts only with a git-level
+//     rewrite after V.
+//  I5 writeDocToDisk marks its path only when the bytes actually change, so
+//     pending typing in the SAME file still conflicts and pending typing in
+//     another file does not.
+interface BranchChanges { version: number; paths: Map<string, number>; tree: number }
+const branchChanges = new Map<string, BranchChanges>();
+const changesKey = (projectId: string, branch: string) => `${projectId}::${branch}`;
+function changesOf(projectId: string, branch: string): BranchChanges {
+  const k = changesKey(projectId, branch);
+  let c = branchChanges.get(k);
+  if (!c) { c = { version: 0, paths: new Map(), tree: 0 }; branchChanges.set(k, c); }
+  return c;
 }
+// "./main.tex" and "main.tex" are one file; a key mismatch would miss a conflict.
+const pathKey = (p: string) => path.posix.normalize(p);
+
 export function contentVersion(projectId: string, branch: string): number {
-  return contentVersions.get(`${projectId}::${branch}`) || 0;
+  return branchChanges.get(changesKey(projectId, branch))?.version ?? 0;
+}
+/** Bump the branch version once and record it as the last-change version of each path. */
+export function markPathsChanged(projectId: string, branch: string, paths: string[]): number {
+  const c = changesOf(projectId, branch);
+  c.version += 1;
+  for (const p of paths) c.paths.set(pathKey(p), c.version);
+  return c.version;
+}
+/** Bump the branch version and count every path — known or not — as changed at it. */
+export function markTreeChanged(projectId: string, branch: string): number {
+  const c = changesOf(projectId, branch);
+  c.version += 1;
+  c.tree = c.version;
+  c.paths.clear();
+  return c.version;
+}
+/** The branch version at which `filePath` last changed (0 = untouched this process lifetime). */
+export function fileVersion(projectId: string, branch: string, filePath: string): number {
+  const c = branchChanges.get(changesKey(projectId, branch));
+  if (!c) return 0;
+  return c.paths.get(pathKey(filePath)) ?? c.tree;
+}
+export interface VersionConflict { error: 'version_conflict'; currentVersion: number; fileVersion: number; reason: string }
+/** null when a write of `filePath` at `baseVersion` is safe; else the conflict
+ *  body every caller returns verbatim. `reason` names the rule of I3 that
+ *  fired: the two need different recoveries (re-read this file, or drop a
+ *  base that no process on this branch ever issued). */
+export function versionConflict(projectId: string, branch: string, filePath: string, baseVersion: number): VersionConflict | null {
+  const currentVersion = contentVersion(projectId, branch);
+  const fv = fileVersion(projectId, branch, filePath);
+  if (fv <= baseVersion && baseVersion <= currentVersion) return null;
+  const reason = baseVersion > currentVersion
+    ? `base_version ${baseVersion} is newer than the branch's contentVersion ${currentVersion} — it was not issued by this server process (a restart or another node); re-read the file and use the contentVersion that read returns`
+    : `"${filePath}" changed after version ${baseVersion} (its fileVersion is now ${fv}) — re-read it and retry with the contentVersion that read returns`;
+  return { error: 'version_conflict', currentVersion, fileVersion: fv, reason };
 }
 
 /** Ephemeral coordination docs (e.g. the comment-change signal) are never written to disk. */
@@ -134,7 +242,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, text);
   lastWritten.set(name, hash);
-  bumpContentVersion(projectId, branch);
+  markPathsChanged(projectId, branch, [filePath]);
   scheduleAutoCommit(`${projectId}::${branch}`);
 }
 
@@ -144,7 +252,21 @@ const authHook = AUTH_ENABLED ? {
   async onAuthenticate({ documentName, requestHeaders }: { documentName: string; requestHeaders: Record<string, string | string[] | undefined> }) {
     const parsed = parseDocName(documentName);
     if (!parsed) throw new Error('invalid document');
-    const user = await userFromRequest(requestHeaders.cookie as string | undefined);
+    // Bearer tokens (agents) are accepted alongside session cookies, with the
+    // same project scoping the HTTP preHandler enforces. A presented bearer is
+    // authoritative (mirrors the HTTP onRequest hook): a revoked/expired/
+    // malformed token must refuse the connection, not silently borrow the
+    // cookie session's identity — which would also drop the project scope.
+    const header = requestHeaders.authorization;
+    let user: Awaited<ReturnType<typeof userFromRequest>>;
+    if (typeof header === 'string' && header.startsWith(`Bearer ${TOKEN_PREFIX}`)) {
+      const bearer = await userFromToken(header);
+      if (!bearer) throw new Error('Not authenticated');
+      if (bearer.tokenScope.projectIds && !bearer.tokenScope.projectIds.includes(parsed.projectId)) throw new Error('Access denied');
+      user = bearer.user;
+    } else {
+      user = await userFromRequest(requestHeaders.cookie as string | undefined);
+    }
     if (!user) throw new Error('Not authenticated');
     let meta;
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
@@ -246,6 +368,13 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     lastWritten.set(documentName, sha1(content));
     return document;
   },
+  // A sole viewer's reload unloads the doc (unloadImmediately) and with it the
+  // awareness the agent's presence rode on; the session itself is still live
+  // in agentPresence, so the reloaded doc gets it back before the client syncs.
+  async afterLoadDocument({ documentName, document }: { documentName: string; document: AwarenessDoc }) {
+    const live = agentPresence.get(documentName);
+    if (live && live.expiresAt > Date.now()) setAgentAwareness(document, live);
+  },
   async onStoreDocument({ documentName, document }) {
     writeDocToDisk(documentName, document);
   },
@@ -266,6 +395,18 @@ export function flushAllDocs(): { projectId: string; branch: string }[] {
     if (p) dirty.set(`${p.projectId}::${p.branch}`, { projectId: p.projectId, branch: p.branch });
   });
   return [...dirty.values()];
+}
+
+/** Everything the shutdown flush must commit: the branches with open docs
+ *  (flushed to disk here) plus the branches holding agent work that no doc
+ *  carries — an MCP client with no browser tab open writes straight to disk,
+ *  and only the in-memory ledger knows the delta is Claude's. Not covered: a
+ *  kill -9 inside the ~20 s debounce, which the next autosave sweeps as an
+ *  anonymous autosave (docs/AGENT_API.md). */
+export function shutdownFlushSet(): { projectId: string; branch: string }[] {
+  const set = new Map<string, { projectId: string; branch: string }>();
+  for (const d of [...flushAllDocs(), ...pendingAttributionKeys()]) set.set(`${d.projectId}::${d.branch}`, d);
+  return [...set.values()];
 }
 
 /**
@@ -295,12 +436,43 @@ export function evictDoc(projectId: string, branch: string, filePath: string): v
  * REST listing; this bumps a shared counter in an ephemeral collab doc (the
  * same trick the review comments use) so open editors refetch instead of
  * showing a snapshot from page load. No client on the branch, nothing to do.
+ *
+ * The path is a wire identifier shared with browser tabs running an older
+ * bundle: renaming it during a rolling deploy puts old and new clients on
+ * different docs, so neither hears the other's signals.
  */
 export const FILES_SIGNAL = '.aldine/files-signal';
-export function bumpFilesSignal(projectId: string, branch: string): void {
+
+let lastSignalStamp = 0;
+/** Strictly increasing: two signals in the same millisecond must still read as
+ *  two events to clients that compare against the last value they saw. */
+function signalStamp(): number {
+  lastSignalStamp = Math.max(Date.now(), lastSignalStamp + 1);
+  return lastSignalStamp;
+}
+
+function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td'): void {
   const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as Y.Doc | undefined;
   if (!doc) return;
-  try { doc.getMap<number>('signal').set('v', Date.now()); } catch { /* best effort */ }
+  try { doc.getMap<number>('signal').set(key, signalStamp()); } catch { /* best effort */ }
+}
+
+export function bumpFilesSignal(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'v');
+}
+
+/** An agent changed this branch's source. Clients with auto-typeset on arm the
+ *  same debounce a keystroke arms; only the elected one compiles. Callers hold
+ *  the per-repo git lock, so this must stay a synchronous in-memory write. */
+export function signalAgentWrite(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'a');
+}
+
+/** An agent-caused typeset started ('start', emitted only after the branch's
+ *  docs are flushed, so it covers every edit a client can already see) or
+ *  finished ('done'). */
+export function signalAgentTypeset(projectId: string, branch: string, phase: 'start' | 'done'): void {
+  setSignal(projectId, branch, phase === 'start' ? 'ts' : 'td');
 }
 
 
@@ -332,6 +504,7 @@ export function applySuggestionToDoc(
   filePath: string,
   anchor: { from: number; to: number; quote: string },
   replacement: string,
+  origin?: unknown,
 ): 'applied' | 'stale' | 'no-doc' {
   const name = docName(projectId, branch, filePath);
   const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
@@ -355,9 +528,83 @@ export function applySuggestionToDoc(
   doc.transact(() => {
     ytext.delete(from, to - from);
     if (replacement) ytext.insert(from, replacement);
-  });
+  }, origin);
   writeDocToDisk(name, doc); // suggestion is on disk immediately, like a manual flush
   return 'applied';
+}
+
+/** Live content of a loaded collab doc, or null when no doc is open — the
+ *  reader edit_file uses to choose CRDT-apply over disk-splice. The returned
+ *  string is only trustworthy for offsets within the same synchronous tick
+ *  (any await lets human keystrokes land in between). */
+export function openDocContent(projectId: string, branch: string, filePath: string): string | null {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, filePath)) as Y.Doc | undefined;
+  return doc ? doc.getText(TEXT_KEY).toString() : null;
+}
+
+/** Yjs transaction origin stamped on agent (MCP) edits. Origins do not cross
+ *  the wire — remote clients see the provider as origin — so this serves
+ *  server-side attribution; the web fade-highlight needs another signal. */
+export const AGENT_ORIGIN = 'aldine-agent';
+
+/** Reserved agent awareness identity (UX.md): the violet is kept OUT of the
+ *  human color palette — if a human can get agent-violet, the semantics
+ *  collapse. Field shape mirrors what CodePane.tsx sets for humans. */
+export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
+
+/** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
+const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS || '') || 60_000;
+
+/** A live agent session per doc: when it began and when it lapses without
+ *  another tool call. Kept apart from the loaded docs on purpose — Hocuspocus
+ *  unloads a doc with its last connection (a sole viewer's reload), and the
+ *  session must outlive that so the reloaded doc shows it again and the away
+ *  check stays quiet while it runs. */
+interface AgentPresence { startedAt: number; expiresAt: number; timer: NodeJS.Timeout }
+const agentPresence = new Map<string, AgentPresence>();
+type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void } };
+
+function setAgentAwareness(doc: AwarenessDoc | undefined, live: AgentPresence): void {
+  // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
+  // local state at doc creation, and y-protocols' setLocalStateField is a
+  // silent no-op on a null state — the agent would never appear.
+  doc?.awareness?.setLocalState({ user: { ...AGENT_AWARENESS_USER, startedAt: live.startedAt } });
+}
+
+/**
+ * Show the agent in a doc's presence while a tool session is active. MCP
+ * writes run in-process with no Hocuspocus connection, so presence rides the
+ * loaded doc's own awareness instance (the server relays its local state to
+ * clients). Call it BEFORE the write's first transaction: the client tints
+ * a remote change only if the agent is already in awareness when it arrives.
+ * Expires ~60 s after the last tool call so an idle agent doesn't permanently
+ * haunt the presence chip; the start time survives re-marks so a session's
+ * first commit is still the session's after a reload.
+ */
+export function markAgentPresence(projectId: string, branch: string, filePath: string): void {
+  const name = docName(projectId, branch, filePath);
+  const now = Date.now();
+  const prev = agentPresence.get(name);
+  if (prev) clearTimeout(prev.timer);
+  const timer = setTimeout(() => {
+    agentPresence.delete(name);
+    const d = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
+    try { d?.awareness?.setLocalState(null); } catch { /* doc unloaded meanwhile */ }
+  }, AGENT_PRESENCE_TTL_MS);
+  timer.unref?.();
+  const live: AgentPresence = { startedAt: prev?.startedAt ?? now, expiresAt: now + AGENT_PRESENCE_TTL_MS, timer };
+  agentPresence.set(name, live);
+  setAgentAwareness(hocuspocus.documents.get(name) as AwarenessDoc | undefined, live);
+}
+
+/** Whether an agent session is live on any doc of the branch — what the away
+ *  check asks, so a prompt is never raised for work a running session will
+ *  report itself when it ends. */
+export function agentSessionActive(projectId: string, branch: string): boolean {
+  const prefix = `${projectId}::${branch}::`;
+  const now = Date.now();
+  for (const [name, live] of agentPresence) if (name.startsWith(prefix) && live.expiresAt > now) return true;
+  return false;
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */
@@ -374,12 +621,17 @@ export function flushBranchDocs(projectId: string, branch: string): number {
 }
 
 /**
- * After git changed files on disk (merge/revert), push new content into loaded docs
- * so connected editors update in place.
+ * After files changed on disk behind the docs (a REST/tool write, git
+ * merge/revert/pull), push new content into loaded docs so connected editors
+ * update in place. `changed` = the paths the caller rewrote; omitted means
+ * git rewrote the tree and every path counts as changed — the conservative
+ * default, so a caller that forgets its paths gets spurious conflicts, never
+ * missed ones.
  */
-export function refreshBranchDocsFromDisk(projectId: string, branch: string): void {
+export function refreshBranchDocsFromDisk(projectId: string, branch: string, changed?: string[]): void {
   bumpFilesSignal(projectId, branch); // every caller just changed the branch on disk
-  bumpContentVersion(projectId, branch); // git just rewrote files under this branch
+  if (changed) markPathsChanged(projectId, branch, changed);
+  else markTreeChanged(projectId, branch);
   hocuspocus.documents.forEach((doc: Y.Doc & { name: string }, name: string) => {
     const parsed = parseDocName(name);
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;

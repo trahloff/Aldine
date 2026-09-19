@@ -37,7 +37,12 @@ export function scheduleAutopush(id: string, delay = debounceMs()): void {
   s.timer.unref();
 }
 
+/** Head last pushed by the browser's auto-push (`POST …/remote/push` with
+ *  `auto`), so an unchanged head is not pushed again. Cleared with the project. */
+export const lastPushedHead = new Map<string, string>();
+
 export function cancelAutopush(id: string): void {
+  lastPushedHead.delete(id);
   const s = states.get(id);
   if (!s) return;
   if (s.timer) clearTimeout(s.timer);

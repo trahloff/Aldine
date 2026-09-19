@@ -28,8 +28,11 @@
   color: var(--on-accent);
 }
 .btn--primary:hover { background: var(--accent-fill-hover); }
-/* the hero action stays saturated while working — the spinner carries the state */
-.btn--primary:disabled { opacity: 1; background: var(--accent-fill); cursor: progress; }
+.btn--primary:disabled { background: var(--accent-fill); }
+/* The hero action stays saturated while WORKING (aria-busy) — the spinner
+   carries the state. Disabled for validation it fades like any button, or a
+   click that does nothing looks like a broken one. */
+.btn--primary[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }
 
 .btn--ghost { border-color: transparent; background: transparent; }
 .btn--ghost:hover { background: var(--bg-hover); }
@@ -104,6 +107,8 @@
 .dot--ok { background: var(--ok); }
 .dot--error { background: var(--error); }
 .dot--busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+/* the reserved agent violet (theme.css --agent) — kept out of the human color palette */
+.dot--agent { background: var(--agent); }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 /* ---------- modal ---------- */
@@ -125,6 +130,9 @@
   max-width: calc(100vw - 48px);
   max-height: 70vh;
   overflow: auto;
+  /* the sticky action row below overlays the last 60px of the scrollport;
+     scrollIntoView and focus have to land above it, with a little room */
+  scroll-padding-bottom: 72px;
   background: var(--bg-panel);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-pop);
@@ -242,6 +250,7 @@
 .login__switch { width: 100%; justify-content: center; margin-top: 8px; color: var(--text-2); }
 .login__error { color: var(--error); font-size: 12.5px; margin: 2px 0 8px; }
 .login__info { color: var(--ok-text); font-size: 12.5px; margin: 2px 0 8px; }
+.login__info--warn { color: var(--warn-text); }
 /* first-run onboarding */
 .onboard { width: 100%; text-align: center; }
 .onboard__tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
@@ -313,6 +322,29 @@
 .gh-repo__meta { font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
 
 .settings__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+
+/* agent access card (account settings) */
+.agent-connector { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.agent-connector code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.agent-connector .btn { flex-shrink: 0; margin-left: auto; }
+.agent-command { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; }
+.agent-command code { flex: 1; min-width: 0; font-size: 12px; overflow-wrap: anywhere; line-height: 24px; }
+.agent-command .btn { flex-shrink: 0; }
+/* the shown-once secret: wraps so all 48 characters are readable, one click selects the whole thing */
+.agent-token { display: block; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 5px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--bg-inset); overflow-wrap: anywhere; user-select: all; cursor: text; }
+.agent-token:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field__error { color: var(--error); font-size: 12px; margin: -4px 0 8px; }
+.input[aria-invalid="true"] { border-color: var(--error); }
+@media (max-width: 480px) {
+  /* the address about to be copied has to be readable: wrap it, button underneath */
+  .agent-connector, .agent-command { flex-wrap: wrap; }
+  .agent-connector code, .agent-command code { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
+/* thumbs: a 24px button is a miss waiting to happen; the glyphs keep their size */
+@media (pointer: coarse) {
+  .btn--small { height: 36px; }
+  .toast__actions .btn--ghost { min-width: 40px; height: 40px; justify-content: center; }
+}
 .settings__label { color: var(--text-2); }
 .settings__control { flex: 0 0 62%; width: auto; }
 .settings__control--check { display: flex; align-items: center; gap: 8px; }
@@ -456,6 +488,7 @@
   color: #fff;
 }
 .presence__avatar:first-child { margin-left: 0; }
+.presence__avatar--agent svg { display: block; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
 
@@ -668,8 +701,9 @@
 .diff__ctx { color: var(--text-2); }
 .diff__file { color: var(--text); font-weight: 600; background: var(--bg-active); }
 .diff__hunk { color: var(--accent); }
-.diff__add { color: var(--ok); background: rgba(40, 167, 69, 0.10); }
-.diff__del { color: var(--error); background: var(--error-soft); }
+/* text-grade colors: the raw --ok/--error fills sit below 4.5:1 on their tints */
+.diff__add { color: var(--ok-text); background: rgba(40, 167, 69, 0.10); }
+.diff__del { color: color-mix(in srgb, var(--error) 80%, var(--text)); background: var(--error-soft); }
 
 /* log viewer */
 .modal--wide { width: 760px; }
@@ -841,8 +875,10 @@
 .palette__hint { font-size: 11px; color: var(--text-2); }
 .palette__empty { padding: 18px; text-align: center; color: var(--text-2); font-size: 13px; }
 
-/* toast */
-.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; }
+/* toast — capped to the viewport; on a phone the action group drops under
+   the sentence as a whole. Dot + text and Review + × are each one flex item,
+   so wrapping can never strand the dot or the × on a line of its own. */
+.toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 300; width: max-content; max-width: min(560px, calc(100vw - 24px)); }
 .toast {
   background: var(--bg-panel);
   border-radius: var(--radius-l);
@@ -850,16 +886,38 @@
   padding: 9px 16px;
   font-size: 13px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   animation: toast-in 200ms var(--ease);
 }
+.toast__body { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 auto; min-width: 0; }
+/* centred on the first line of the sentence, wrapped or not */
+.toast__body .dot { margin-top: calc((1lh - 7px) / 2); }
+.toast__text { min-width: 0; }
+.toast__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* comment highlights in the editor */
 .cm-comment-range { background: rgba(240, 162, 2, 0.20); border-bottom: 1.5px solid var(--warn); }
 .cm-comment-resolved { background: transparent; border-bottom: 1.5px dotted var(--text-3); }
 :root[data-theme="dark"] .cm-comment-range { background: rgba(255, 214, 10, 0.16); }
+
+/* Agent-edit fade: the decoration is removed after ~4 s, the animation just
+   gets the background there gracefully. Violet is the reserved agent color. */
+.cm-agent-edit { animation: agent-fade 4s ease-out forwards; border-radius: 2px; }
+@keyframes agent-fade {
+  from { background: rgba(167, 139, 250, 0.32); }
+  to { background: rgba(167, 139, 250, 0); }
+}
+
+/* Deep-link flash (?file=&line=): the line decoration is removed after ~1.6 s,
+   the animation fades the accent tint out before that. */
+.cm-deeplink-flash { animation: deeplink-flash 1.6s var(--ease) forwards; }
+@keyframes deeplink-flash {
+  from { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+  to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
+}
 
 /* review panel */
 .review__item { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -877,6 +935,9 @@
 .review__actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .review__reply-input { flex: 1; min-width: 0; height: 26px; }
 .review__divider { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 0 6px; }
+/* Per-commit headings in the agent review dialog carry Claude's own message
+   (file names, LaTeX tokens) — no case transform, unlike the section label above. */
+.review__commit { font-size: 12.5px; font-weight: 600; color: var(--text); margin: 14px 0 6px; overflow-wrap: anywhere; }
 
 /* sidebar panels (history, plugins) */
 .panel-list { display: flex; flex-direction: column; }
@@ -884,6 +945,7 @@
 .history__item:hover { background: var(--bg-hover); }
 .history__msg { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history__meta { font-size: 11px; color: var(--text-2); }
+.history__meta .dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
 
 /* segmented control (Source | Visual) */
 .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg-inset); }
@@ -928,12 +990,59 @@
   .toolbar { flex-wrap: wrap; height: auto; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .toolbar__name { max-width: 40vw; }
 }
+.sidebar-toggle { display: none; }
 @media (max-width: 640px) {
   .home__bar { flex-direction: column; align-items: stretch; gap: 12px; }
   .home__bar > div:last-child { flex-wrap: wrap; }
-  .split-pdf, .pdf-pane { display: none; }
-  .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: var(--shadow-pop); }
+  /* The whole preview pane goes, not just the PDF inside it: the pane keeps an
+     inline width of at least 360px, which on a 390px screen left the editor a
+     30px column. */
+  .pane--preview { display: none; }
+  .sidebar { position: absolute; z-index: 30; height: 100%; width: calc(100vw - 40px); box-shadow: var(--shadow-pop); }
+  /* Touch browsers draw no scrollbar, so a source line longer than the
+     screen has to wrap to be readable at all. */
+  .diff { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* The overlay hides the editor; a deep link to a line collapses it and the
+     toolbar button brings it back. */
+  .sidebar--hidden { display: none; }
+  .sidebar-toggle { display: inline-flex; }
 }
+
+/* ---------- OAuth consent (/oauth/authorize) ---------- */
+.consent { width: 420px; }
+.consent__title { font-size: 17px; font-weight: 600; line-height: 1.35; margin: 0 0 4px; }
+.consent__client { color: var(--accent); }
+.consent__origin { color: var(--text-2); font-size: 12.5px; margin: 0 0 10px; }
+.consent__origin code { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.consent__warn { color: var(--warn-text); background: var(--warn-soft); border-radius: var(--radius-m); padding: 8px 10px; font-size: 12.5px; margin: 0 0 10px; }
+/* light theme: --warn-text on --warn-soft is 4.35:1 at 12.5px; a darker amber reads */
+:root:not([data-theme="dark"]) .consent__warn { color: #6f5700; }
+.consent__detail { margin: 0 0 14px; font-size: 12px; color: var(--text-3); }
+.consent__detail summary { cursor: pointer; }
+.consent__detail code { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); word-break: break-word; }
+.consent__what { color: var(--text-2); font-size: 13px; line-height: 1.45; margin: 0 0 14px; }
+.consent__scope { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.consent__option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-m); cursor: pointer; }
+.consent__option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.consent__option input { margin: 3px 0 0; accent-color: var(--accent); }
+.consent__option-title { display: block; font-size: 13.5px; font-weight: 550; }
+.consent__option-sub { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
+/* --text-2 on the selected card's accent tint is 4.3:1; blend toward --text */
+.consent__option:has(input:checked) .consent__option-sub { color: color-mix(in srgb, var(--text) 80%, var(--text-2)); }
+.consent__projects { max-height: 180px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 4px 10px; background: var(--bg-inset); }
+.consent__project { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; cursor: pointer; }
+.consent__project input { accent-color: var(--accent); }
+.consent__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.consent__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.consent__actions .btn { min-width: 84px; justify-content: center; height: 34px; }
+.consent__who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-3); font-size: 12px; margin: 14px 0 0; }
+/* the ghost button's own padding would indent it once it wraps under the name */
+.consent__who .btn--ghost { margin-left: -8px; }
+.consent__who strong { color: var(--text-2); font-weight: 600; }
+.consent__error { color: var(--error); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
+.consent__error .btn { display: inline-flex; vertical-align: baseline; }
+.consent__hint { color: var(--text-2); font-size: 12.5px; line-height: 1.45; margin: 0 0 14px; }
+.consent__back { align-self: flex-start; }
 
 /* The typesetting log opens at its first error; mark it so the eye lands there. */
 .logview__hit {

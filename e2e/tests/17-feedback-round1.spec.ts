@@ -269,7 +269,9 @@ test.describe('stale preview', () => {
       const failed = await (await second).json();
       expect(failed.ok).toBe(false);
       expect(failed.pdfStale).toBe(true);
-      expect(failed.pdfUrl).toBe(ok.pdfUrl);
+      // pdfTeX removes the PDF of a halted run once a page has shipped out,
+      // so the link is gone; the pages on screen stay, flagged.
+      expect([null, ok.pdfUrl]).toContain(failed.pdfUrl);
 
       await expect(page.getByTestId('pdf-stale')).toBeVisible();
       await expect(page.getByTestId('pdf-stale')).toContainText('last successful typeset');

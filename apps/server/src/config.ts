@@ -70,6 +70,13 @@ for (const d of [projectsDir, worktreesDir, metaDir, config.cacheDir]) {
   fs.mkdirSync(d, { recursive: true });
 }
 
+// Every git command this process runs is meant for a repo under dataDir. A
+// directory that lost its repo (a project deleted inside the autosave window)
+// would otherwise let git discover an enclosing checkout — a dataDir inside a
+// development worktree then gets that worktree committed as "aldine: autosave".
+process.env.GIT_CEILING_DIRECTORIES = [config.dataDir, process.env.GIT_CEILING_DIRECTORIES]
+  .filter(Boolean).join(path.delimiter);
+
 // Migrate meta from the old in-dataDir location (pre-security-fix) if present.
 // Copy+unlink (not rename) since the new location may be a different volume.
 const legacyMeta = path.join(config.dataDir, 'meta');

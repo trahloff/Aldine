@@ -30,7 +30,8 @@ export interface ProjectSummary {
 
 export type RemoteProviderId = 'github' | 'gitlab' | 'gitea';
 /** A provider the server offers (honours its REMOTE_PROVIDERS allowlist). */
-export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean; changeRequestLabel: 'pull request' | 'merge request' }
+/** `provisioning`: new projects are also created on this host (GitLab with a service token). */
+export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean; changeRequestLabel: 'pull request' | 'merge request'; provisioning: boolean }
 /** `fullName` is an opaque host path: `owner/repo` on GitHub, `group/sub/project` on GitLab. */
 export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
 /** `baseUrl` is set for a self-hosted instance connected with a token; `baseUrlRequired` when the host has no canonical instance. */
@@ -74,15 +75,62 @@ export interface CompileResult {
   pdfStale?: boolean;
   /** The run whose PDF pdfUrl serves; sent back with SyncTeX lookups. */
   compileId?: number;
+  /** This run; never reused, so it orders runs. */
+  runId?: number;
   synctex?: string | null;
   log: string;
   errors: CompileError[];
   durationMs: number;
   error?: string;
 }
+export interface CompileStatus {
+  /** A typeset for this branch is in flight on the server. */
+  running: boolean;
+  /** The branch's last completed run, or null (restart, or another node). */
+  result: CompileResult | null;
+  finishedAt: number | null;
+  /** That run followed agent edits. */
+  agent: boolean;
+}
 export interface BibEntry { key: string; type: string; author?: string; authorLabel?: string; title?: string; year?: string; journal?: string; file: string }
 export interface LogEntry { hash: string; date: string; message: string; author: string }
+/** Claude's commits on a branch past the caller's review mark. `commitCount`
+ *  and `fileCount` are a floor when `truncated`; `commits` is capped. */
+export interface AgentActivity {
+  since: { head: string; at: string } | null;
+  head: string;
+  commits: Array<{ hash: string; date: string; message: string; files: string[] }>;
+  commitCount: number;
+  fileCount: number;
+  truncated: boolean;
+  /** An agent session is live on the branch right now (server-side, so a fresh page knows before awareness syncs). */
+  sessionActive: boolean;
+}
 export interface PluginManifest { id: string; name: string; description?: string; version: string; entry: string; icon?: string; enabled?: boolean }
+/** Token metadata only — the `aldn_…` value itself is returned once, on create. */
+export interface AccessToken {
+  id: string;
+  name: string;
+  projectIds: string[] | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  /** Set when the token was minted through the OAuth Connect flow — the
+   *  connector's display name; null for hand-made tokens. */
+  clientName: string | null;
+}
+/** What the consent page shows about the app asking for access. */
+export interface OAuthClientInfo {
+  name: string;
+  /** Where the client's identity comes from: the metadata document's host
+   *  (CIMD) or the redirect host (dynamic registration). */
+  host: string;
+  redirectHost: string;
+  /** Every registered redirect is a loopback address — the request could
+   *  have been started by anything running on the user's machine. */
+  loopbackOnly: boolean;
+  kind: 'cimd' | 'dcr';
+}
 export interface CommentReply { author: string; body: string; createdAt: string }
 export interface Comment {
   id: string;
@@ -101,6 +149,31 @@ export interface Comment {
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) { super(message); }
+}
+
+/** OAuth routes answer in RFC 6749 shape (`error` is a code such as
+ *  `invalid_client`, `error_description` the sentence); the description is
+ *  the message and the code stays available for branching. */
+export class OAuthApiError extends ApiError {
+  constructor(message: string, status: number, public readonly code: string) { super(message, status); }
+}
+
+async function oauthReq<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+    ...init,
+  });
+  if (!res.ok) {
+    let code = `http_${res.status}`;
+    let msg = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string; error_description?: string };
+      if (body.error_description) { msg = body.error_description; code = body.error || code; }
+      else if (body.error) msg = body.error;
+    } catch { /* keep */ }
+    throw new OAuthApiError(msg, res.status, code);
+  }
+  return res.json() as Promise<T>;
 }
 
 /** The host refused the stored token (expired or revoked): the dialogs show
@@ -206,14 +279,21 @@ export const api = {
   claimProject: (id: string) => req<ProjectSummary>(`/api/projects/${id}/claim`, { method: 'POST' }),
   listTrash: () => req<{ id: string; name: string; deletedAt: string }[]>('/api/projects/trash'),
 
-  listFiles: (id: string, branch: string) => req<TreeEntry[]>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`),
+  listFiles: (id: string, branch: string) =>
+    req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),
+  // GET /file answers with `x-aldine-content-version` (the branch version —
+  // pass it back as `baseVersion`) and `x-aldine-file-version` (when this
+  // file last changed). PUT with `baseVersion` is refused with
+  // `409 { error: 'version_conflict', currentVersion, fileVersion }` only when
+  // THIS file changed after that version, or when the version is newer than
+  // the branch knows; writes to other files never conflict.
   readFile: async (id: string, branch: string, path: string) => {
     const res = await fetch(withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
-  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean } = {}) =>
-    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}) }) }),
+  writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean; baseVersion?: number } = {}) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}), ...(opts.baseVersion !== undefined ? { baseVersion: opts.baseVersion } : {}) }) }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
   deleteFile: (id: string, branch: string, path: string) =>
@@ -221,8 +301,10 @@ export const api = {
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
-  compile: (id: string, branch: string) =>
-    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  compile: (id: string, branch: string, reason?: 'agent') =>
+    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}) }) }),
+  compileStatus: (id: string, branch: string) =>
+    req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),
@@ -241,6 +323,16 @@ export const api = {
     req<{ committed: boolean; hash?: string }>(`/api/projects/${id}/commit`, { method: 'POST', body: JSON.stringify({ branch, message, author }) }),
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
+  revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
+    req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
+  // The mark travels in the query only without accounts; with a signed-in
+  // user the server uses its own row and ignores these.
+  agentActivity: (id: string, branch: string, mark?: { head: string; at: string } | null) =>
+    req<AgentActivity>(`/api/projects/${id}/agent-activity?branch=${encodeURIComponent(branch)}`
+      + (mark ? `&sinceHead=${encodeURIComponent(mark.head)}&sinceAt=${encodeURIComponent(mark.at)}` : '')),
+  markAgentActivitySeen: (id: string, branch: string, head: string, kind: 'prompted' | 'acknowledged') =>
+    req<{ ok: boolean; stored: boolean; acknowledged?: boolean }>(`/api/projects/${id}/agent-activity/seen`,
+      { method: 'POST', body: JSON.stringify({ branch, head, kind }) }),
 
   // Remote git hosts (GitHub, GitLab). Account routes name the provider; project
   // routes take it from the stored link, so the web never sends it for sync.
@@ -311,7 +403,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null }>('/api/auth/me'),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -325,22 +417,46 @@ export const api = {
   register: (email: string, password: string, name?: string) =>
     req<{ user: AuthUser }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  listTokens: () => req<AccessToken[]>('/api/tokens'),
+  createToken: (name: string, projectIds?: string[], expiresAt?: string) =>
+    req<AccessToken & { token: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ name, projectIds, expiresAt }) }),
+  revokeToken: (tokenId: string) => req<{ ok: boolean }>(`/api/tokens/${tokenId}`, { method: 'DELETE' }),
+  // OAuth consent (cookie session only — access tokens are refused here)
+  // The whole authorize request goes along, so a defect the consent POST
+  // would refuse (no PKCE challenge) is refused before the card renders.
+  getOAuthClient: (authorizeParams: Record<string, string>) =>
+    oauthReq<OAuthClientInfo>(`/api/oauth/client?${new URLSearchParams(authorizeParams)}`),
+  postOAuthConsent: (body: { [param: string]: string | string[] | null | undefined; decision: 'allow' | 'deny'; projectIds: string[] | null }) =>
+    oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
     req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
 };
 
-/** Local identity for presence + commit attribution. */
+// No violet: #a78bfa (and the violet family generally) is reserved for the
+// agent presence identity — a human with agent-violet breaks the semantics.
+const PRESENCE_PALETTE = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#d63384', '#0aa2c0'];
+
+/** Local identity for presence + commit attribution — the fallback without
+ *  accounts; a signed-in person is `accountIdentity(user)`. */
 export function localUser(): { name: string; color: string } {
   let name = localStorage.getItem('aldine.name');
   if (!name) {
     name = `Writer ${Math.floor(100 + Math.random() * 900)}`;
     localStorage.setItem('aldine.name', name);
   }
-  const palette = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#8f3ec9', '#d63384', '#0aa2c0'];
   let color = localStorage.getItem('aldine.color');
-  if (!color) {
-    color = palette[Math.floor(Math.random() * palette.length)];
+  if (!color || !PRESENCE_PALETTE.includes(color)) {
+    // re-roll colors picked before the violet reservation (e.g. legacy #8f3ec9)
+    color = PRESENCE_PALETTE[Math.floor(Math.random() * PRESENCE_PALETTE.length)];
     localStorage.setItem('aldine.color', color);
   }
   return { name, color };
+}
+
+/** Presence identity of a signed-in person: the account name, with a colour
+ *  that is the same in every browser they open the project from. */
+export function accountIdentity(user: { id: string; name: string; email?: string | null }): { name: string; color: string } {
+  let h = 0;
+  for (const ch of user.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { name: user.name || user.email || 'Signed in', color: PRESENCE_PALETTE[h % PRESENCE_PALETTE.length] };
 }

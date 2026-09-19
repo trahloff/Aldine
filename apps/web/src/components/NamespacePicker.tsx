@@ -15,10 +15,10 @@ function remember(ns: string) {
   try { localStorage.setItem(NAMESPACE_KEY, ns); } catch { /* private mode */ }
 }
 
-/** Which GitLab group a new project is provisioned into. Renders nothing
- *  until the server lists namespaces, and nothing at all when it cannot
- *  (404 = provisioning off, anything else = unreachable): creating a project
- *  never waits on GitLab. */
+/** Which GitLab group a new project is provisioned into. Mounted only when
+ *  `/api/remotes` reports provisioning; renders nothing until the server
+ *  lists namespaces, and nothing at all when it cannot (unreachable, or
+ *  switched off since): creating a project never waits on GitLab. */
 export default function NamespacePicker({ value, onChange }: { value: string | undefined; onChange(ns: string): void }) {
   const [list, setList] = useState<GitlabNamespace[] | null>(null);
   const [adding, setAdding] = useState(false);

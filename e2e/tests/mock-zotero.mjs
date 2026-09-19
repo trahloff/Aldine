@@ -72,6 +72,11 @@ const server = http.createServer((req, res) => {
   // Title carries an HTML &amp; like real CrossRef output — the server must
   // decode + LaTeX-escape it so the .bib compiles (regression: a bare & is an
   // alignment tab and breaks the whole document).
+  if (url.pathname === '/10.1145%2Fmock.parrot') {
+    // real Crossref shape: single line, `month = June`, an emoji and a Greek letter in the title
+    return send(200, '@article{Bender_2021, title={On the Dangers of Stochastic Parrots 🦜: α Models}, url={http://dx.doi.org/10.1145/mock.parrot}, DOI={10.1145/mock.parrot}, journal={FAccT}, author={Bender, Emily M. and Gebru, Timnit}, year={2021}, month=June }');
+  }
+  if (url.pathname === '/10.1145%2Fmock.unregistered') return send(404, 'DOI not found');
   if (url.pathname.startsWith('/10.')) {
     return send(200, `@article{doe2020,\n  title = {Knowledge Discovery &amp; Data Mining},\n  author = {Doe, Jane},\n  year = {2020},\n  doi = {${url.pathname.slice(1)}},\n}`);
   }

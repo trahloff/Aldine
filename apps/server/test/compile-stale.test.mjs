@@ -35,7 +35,14 @@ process.env.COMPILER_URL = `http://127.0.0.1:${mock.address().port}`;
 
 const { initDb, closeDb } = await import('../src/db/index.ts');
 const store = await import('../src/store.ts');
-const { compileProject, forgetPdfUrls, synctexLookup } = await import('../src/compile.ts');
+const { compileProject, forgetPdfUrls, synctexLookup, pagesFromLog } = await import('../src/compile.ts');
+
+// pdfTeX wraps log lines at max_print_line; the page count must survive one wrap.
+eq(pagesFromLog('Output written on .aldine-out/main.pdf (12 pages, 100 bytes).\n'), 12, 'pages on one line');
+eq(pagesFromLog('Output written on .aldine-out/thesis-final-version-2026-for-submission.pdf (\n12 pages, 100 bytes).\n'), 12, 'pages after a wrapped line');
+eq(pagesFromLog('Output written on .aldine-out/thesis-final-version-2026-for-submission.pdf\n(3 pages, 100 bytes).\nOutput written on x.pdf (4 pages).\n'), 4, 'the last run wins, wrapped or not');
+eq(pagesFromLog('Output written on .aldine-out/main.pdf (12\npages, 100 bytes).\n'), 12, 'a wrap between the count and "pages"');
+eq(pagesFromLog('No pages of output.\n'), null, 'no output → null');
 const gitops = await import('../src/gitops.ts');
 
 await initDb();
@@ -130,6 +137,38 @@ try {
   eq(r.ok, true, 'recovered');
   check(r.pdfUrl !== withErrors, 'a new success mints a new URL');
   const recovered = r.pdfUrl;
+  const recoveredId = r.compileId;
+
+  // latexmk found nothing to redo (ok, PDF on disk, nothing rewritten): the
+  // result is this run's under the SAME URL — not stale, no refetch, SyncTeX
+  // still bound to the run that wrote the files.
+  queue.push({ ...good, pdfFresh: false, synctexFresh: false, log: 'Output written on main.pdf (2 pages, 100 bytes).' });
+  r = await compileProject(meta.id, 'main');
+  eq(r.ok, true, 'up to date: ok');
+  eq(r.pdfUrl, recovered, 'up to date: the same URL');
+  eq(r.compileId, recoveredId, 'up to date: the same compileId');
+  eq(r.pdfStale, undefined, 'up to date: not stale');
+  eq(r.pages, 2, 'up to date: pages from the log latexmk left in place');
+  forgetPdfUrls(meta.id);
+  queue.push({ ...good, pdfFresh: false, synctexFresh: false });
+  r = await compileProject(meta.id, 'main');
+  check(typeof r.pdfUrl === 'string' && r.pdfUrl !== recovered, 'up to date after a restart: a URL is minted rather than none');
+  eq(r.pdfStale, undefined, 'and it is not stale either');
+
+  // stopOnFirstError: a halted run that got as far as writing the PDF left a
+  // torso on disk, and says so; one that halted before touching it does not.
+  meta.stopOnFirstError = true;
+  await store.writeMeta(meta);
+  queue.push({ ...errorsFull });
+  r = await compileProject(meta.id, 'main');
+  eq(r.pdfStale, true, 'halted after writing: stale');
+  eq(r.pdfTruncated, true, 'halted after writing: the file on disk is flagged truncated');
+  queue.push({ ...fatal });
+  r = await compileProject(meta.id, 'main');
+  eq(r.pdfStale, true, 'halted before writing: stale');
+  eq(r.pdfTruncated, undefined, 'halted before writing: nothing truncated');
+  meta.stopOnFirstError = false;
+  await store.writeMeta(meta);
 
   // Switching the main document: the remembered URL names main.pdf and must
   // not stand in for other.tex, nor, when switching back, the other way round
@@ -155,7 +194,10 @@ try {
   queue.push({ ...fatal });
   r = await compileProject(meta.id, 'main');
   eq(r.pdfUrl, null, 'no URL to a PDF that no longer exists');
-  eq(r.pdfStale, false, 'and nothing is flagged stale');
+  eq(r.pdfStale, true, 'but the pages a client still shows are flagged as the last successful typeset');
+  queue.push({ ...fatal });
+  r = await compileProject(meta.id, 'main');
+  eq(r.pdfStale, false, 'once forgotten, a further failure has nothing to flag');
 } finally {
   await closeDb();
   mock.close();

@@ -196,6 +196,27 @@ test.describe('auth', () => {
     await carol.close();
   });
 
+  test('collaborators see each other under their account names, not the anonymous writer', async ({ page, browser }) => {
+    const email = uniq();
+    await register(page, email, 'password123', 'Ada Presence');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Presence Names' } })).json();
+    await page.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'link', collaborators: [] } });
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.locator('.cm-content')).toBeVisible();
+
+    const carol = await browser.newContext();
+    await carol.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Carol Visitor' } });
+    const carolPage = await carol.newPage();
+    await carolPage.goto(`/p/${proj.id}`);
+    await expect(carolPage.locator('.cm-content')).toBeVisible();
+
+    // awareness carries the account, so History's author and the avatar agree
+    await expect(carolPage.getByTestId('presence')).toHaveAttribute('title', /Ada Presence/, { timeout: 15_000 });
+    await expect(page.getByTestId('presence')).toHaveAttribute('title', /Carol Visitor/, { timeout: 15_000 });
+    await expect(page.getByTestId('presence')).not.toHaveAttribute('title', /Writer \d+/);
+    await carol.close();
+  });
+
   test('percent-encoded project id cannot bypass the access guard (C1)', async ({ browser }) => {
     const alice = await browser.newContext();
     await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });

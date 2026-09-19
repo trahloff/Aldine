@@ -14,6 +14,14 @@ Key facts:
   restricted shell-escape.
 - Storage is plain files plus per-project git repos; Postgres is optional
   (`DATABASE_URL`). Your data stays greppable on disk.
+- Claude as a collaborator (Agent API, optional, `ALDINE_MCP=1`): the instance
+  serves plain MCP at `/mcp`; Claude edits the live document, typesets, and
+  shows the PDF in the chat (inline on claude.ai, Claude Desktop and Cowork; a
+  signed link in Claude Code and other MCP clients). Every change is a git
+  commit authored "Claude", with review and revert in the editor. Try it on
+  the demo: connector URL `https://demo.aldine.dev/mcp`, header
+  `X-Aldine-Token: aldine-demo`; the Agent API guide below covers your own
+  instance.
 - Live demo: https://demo.aldine.dev (world-writable, wiped nightly).
 - Source: https://github.com/trahloff/Aldine
 
@@ -24,6 +32,7 @@ Key facts:
 - [Scaling notes](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/SCALING.md): architecture, what scales and what is single-node by design
 - [Security policy](https://raw.githubusercontent.com/trahloff/Aldine/main/SECURITY.md): threat model, sandbox details, reporting
 - [Contributing](https://raw.githubusercontent.com/trahloff/Aldine/main/CONTRIBUTING.md): dev setup, workspace layout, test commands
+- [Agent API](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/AGENT_API.md): connecting Claude over MCP, the tools, reachability, attribution and review, security model
 - [Agent guide](https://raw.githubusercontent.com/trahloff/Aldine/main/AGENTS.md): repo conventions for AI coding agents
 
 ## Optional

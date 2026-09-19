@@ -35,8 +35,10 @@ everyone else. To also keep a showcase paper alive on a world-writable demo:
    delete it (enforced on both the HTTP API and the collab socket).
 
 The nightly wipe destroys the data volumes — and with them the showcase project
-and its id — so either re-seed each morning or disable the wipe timer for launch
-week (`systemctl disable --now aldine-demo-wipe.timer` on the box).
+and its id — so re-seed each morning. Do not disable the wipe timer, launch
+week included: docs/AGENT_API.md, `site/llms.txt` and the changelog promise
+strangers that the demo is wiped nightly at 04:00 UTC, and with the connector
+token published (below) that wipe is the only cleanup the box has.
 
 The wipe also pulls `main` and rebuilds the images, so the demo tracks the
 repository without anyone logging in; a box provisioned before this ran a
@@ -50,6 +52,37 @@ on the fifth day — which is exactly what happened once. A box created before
 this fix still carries the old unit; check it with
 `grep ExecStart /etc/systemd/system/aldine-demo-wipe.service` and look for
 `down -v`.
+
+## Trial connector
+
+The box also serves the [Agent API](../../docs/AGENT_API.md) so people can
+try Claude against Aldine without installing anything: `.env.demo` sets
+`ALDINE_MCP=1` and `ALDINE_MCP_TOKEN` to the `mcp_token` variable, whose
+default `aldine-demo` is **published** in docs/AGENT_API.md ("Try it on the
+demo") — change the two together, or pass `-var mcp_token=` and accept that
+the docs no longer match. The token is a courtesy handle, not a secret: with
+auth off it has no scope, every connector user acts as the one instance
+operator, and the nightly wipe is the only cleanup. Typeset budgets
+(`ALDINE_COMPILE_PER_MIN`) and the one-agent-typeset gate are keyed by client
+address when there is no account, so connector users get one each, like
+browser visitors (`TRUST_PROXY=1` in the prod overlay makes the address the
+real one behind Caddy). `ALDINE_SIGNING_SECRET` stays
+unset on purpose: the app generates it into the secrets volume, so PDF links
+die with the data at the wipe. `.env.demo` itself is not wiped, so the token
+survives every night.
+
+A box provisioned before this change has neither line in
+`/opt/aldine/.env.demo`, and `terraform apply` will not deliver them
+(`ignore_changes = [user_data]` in main.tf, for the reasons given there).
+Append `ALDINE_MCP=1` and `ALDINE_MCP_TOKEN=aldine-demo` by hand, then run the
+wipe unit (`systemctl start aldine-demo-wipe.service`) — after the Agent API
+has landed on `main`, because the unit pulls `main` and a build without it
+ignores both lines. Until
+`curl -s -o /dev/null -w '%{http_code}' -X POST https://demo.aldine.dev/mcp -d '{}'`
+prints `401` (a box without the Agent API prints `200`: the SPA answers), the
+present-tense "Try it on the demo" claims in docs/AGENT_API.md, `site/llms.txt`,
+the landing page and the changelog are false; that check is the gate before
+publishing them.
 
 ## Tear it down
 
