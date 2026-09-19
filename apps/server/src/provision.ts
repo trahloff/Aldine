@@ -1,7 +1,7 @@
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as gitlab from './gitlab.js';
-import { getProvider, serviceConnection, type RemoteConnection } from './remotes.js';
+import { checkCloneUrl, getProvider, serviceConnection, type RemoteConnection } from './remotes.js';
 import type { ProjectMeta, RemoteLink } from './db/types.js';
 
 /**
@@ -67,6 +67,11 @@ export async function provisionProject(meta: ProjectMeta, opts: { userId?: strin
     }
   }
   if (!repo) return fail(`Could not create the GitLab project: ${lastError}`, namespace);
+  try { checkCloneUrl(provider, conn, repo.cloneUrl); }
+  catch (err: any) {
+    await gitlab.deleteProject(conn, repo.fullName).catch(() => {});
+    return fail(String(err?.message || err), namespace);
+  }
 
   const link: RemoteLink = {
     provider: 'gitlab', fullName: repo.fullName, owner: repo.owner, repo: repo.name, remoteBranch: 'main',
@@ -86,7 +91,7 @@ export async function provisionProject(meta: ProjectMeta, opts: { userId?: strin
     return fail(`Could not store the GitLab link: ${err?.message || err}`, namespace);
   }
   try {
-    await gitops.pushToRemote(meta.id, 'main', provider.tokenUrl(repo.cloneUrl, conn.token));
+    await gitops.pushToRemote(meta.id, 'main', provider.tokenUrl(repo.cloneUrl, conn.token, conn.login));
   } catch (err: any) {
     // The project exists on both sides and the link is stored; autopush retries the push.
     console.warn(`[provision] first push of ${meta.id} to ${repo.fullName} failed: ${err?.message || err}`);

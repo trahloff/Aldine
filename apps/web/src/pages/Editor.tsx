@@ -256,7 +256,7 @@ export default function Editor() {
       const owner = !authEnabled || !!p.isOwner;
       if (owner && !p.remote && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
         localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to GitHub or GitLab to keep a synced copy.');
+        toast('This project lives only on this server — publish it to a git host to keep a synced copy.');
       }
     })();
   }, [id, branch]);
@@ -830,6 +830,7 @@ export default function Editor() {
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
+      { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
@@ -946,7 +947,7 @@ export default function Editor() {
           )
         ) : (
           isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to GitHub or GitLab — backup + sync">
+            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to a git host — backup + sync">
               Publish
             </button>
           )
@@ -1309,6 +1310,7 @@ export default function Editor() {
       {settingsOpen && (
         <ProjectSettings
           project={project}
+          branch={branch}
           files={files}
           autoTypeset={auto}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}

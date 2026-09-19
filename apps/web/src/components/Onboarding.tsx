@@ -40,7 +40,7 @@ export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onCl
         <ul className="onboard__points">
           <li><strong>Typeset</strong> with {shortcut('S')} — errors jump to the line; double-click the PDF to jump back.</li>
           <li><strong>Collaborate</strong> live — invite others, see their cursors, leave anchored comments.</li>
-          <li><strong>Version</strong> everything — branches, checkpoints, and full GitHub or GitLab sync.</li>
+          <li><strong>Version</strong> everything — branches, checkpoints, and full sync with GitHub, GitLab or Gitea.</li>
         </ul>
 
         <div className="modal__row" style={{ justifyContent: 'center', marginTop: 4 }}>

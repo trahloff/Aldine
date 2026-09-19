@@ -39,6 +39,14 @@ import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
+/** ASCII file name for a project archive, the fallback beside the UTF-8 one
+ *  in the header: anything outside letters, digits, dot, dash and underscore
+ *  becomes a dash. */
+function archiveFolderName(name: string): string {
+  const ascii = name.normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80);
+  return ascii || 'project';
+}
+
 /**
  * Current user for a request. Resolved once per request by an onRequest hook
  * (which awaits the async datastore) and cached on the request, so the many
@@ -788,6 +796,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // The project's source as a ZIP a person can keep, send to a journal or
+  // import again: the branch's tracked tree from git archive, after the live
+  // documents are flushed and committed so it matches the editor.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/archive', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch)) return reply.code(400).send({ error: 'invalid branch name' });
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); await gitops.ensureWorktree(req.params.id, branch); }
+    catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
+    flushBranchDocs(req.params.id, branch);
+    await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqUser(req)?.name).catch(() => {});
+    const folder = archiveFolderName(meta.name);
+    const zip = await gitops.archiveZip(req.params.id, branch);
+    return reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="${folder}.zip"; filename*=UTF-8''${encodeURIComponent(`${meta.name.trim() || 'project'}.zip`)}`)
+      .header('cache-control', 'no-store')
+      .send(zip);
+  });
+
   app.put<{ Params: { id: string }; Body: { branch?: string; path: string; content?: string; encoding?: 'utf8' | 'base64'; createOnly?: boolean; baseVersion?: number } }>(
     '/api/projects/:id/file', async (req, reply) => {
       const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false, baseVersion } = req.body || {};
@@ -1389,7 +1417,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // ---------- remote providers (GitHub, GitLab): per-user connection ----------
+  // ---------- remote providers (GitHub, GitLab, Gitea/Forgejo): per-user connection ----------
   // In no-auth (single-tenant) mode there's no user, so connections hang off a
   // fixed 'local' id. The provider comes from the URL for account-level routes
   // (`/api/remotes/:provider/*`) and from the stored link for project routes
@@ -1433,14 +1461,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // `provisioning` tells the new-project dialog whether to ask for a group at
   // all, so an instance without a service token never requests namespaces.
   app.get('/api/remotes', async () => remotes.providers().map((p) => ({
-    id: p.id, label: p.label, oauth: p.oauthEnabled(), selfHosted: p.selfHosted, changeRequestLabel: p.changeRequestLabel,
+    id: p.id, label: p.label, oauth: p.oauthEnabled(), selfHosted: p.selfHosted, baseUrlRequired: !!p.baseUrlRequired, changeRequestLabel: p.changeRequestLabel,
     provisioning: p.id === 'gitlab' && provisioningEnabled(),
   })));
 
   providerRoute('get', 'status', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
     const conn = await remotes.getConnection(remoteUserId(req), p.id);
-    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, oauth: p.oauthEnabled(), selfHosted: p.selfHosted };
+    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, oauth: p.oauthEnabled(), selfHosted: p.selfHosted, baseUrlRequired: !!p.baseUrlRequired };
   });
 
   providerRoute('post', 'connect', async (p, req, reply) => {
@@ -1453,13 +1481,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       try { baseUrl = p.normalizeBaseUrl(String(req.body.baseUrl)); }
       catch (err: any) { return reply.code(400).send({ error: err.message }); }
     }
+    if (p.baseUrlRequired && !baseUrl) return reply.code(400).send({ error: `The ${p.label} instance URL is required${p.baseUrlExample ? `, ${p.baseUrlExample} for example` : ''}` });
     try {
       const me = await p.whoami({ token, login: '', baseUrl });
       await remotes.setConnection(remoteUserId(req), p.id, { token, login: me.login, name: me.name, ...(baseUrl ? { baseUrl } : {}) });
       return { connected: true, login: me.login, baseUrl };
     } catch {
-      const scope = p.id === 'github' ? 'repo scope' : 'the api scope';
-      return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${scope}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` });
+      return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${p.tokenScopeHint}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` });
     }
   });
 
@@ -1510,17 +1538,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const conn = await remotes.getConnection(remoteUserId(req), p.id);
     if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
     const fullName = String(req.body?.fullName || '').trim().replace(/^\/+|\/+$/g, '');
-    if (!fullName.includes('/') || fullName.includes('..')) return reply.code(400).send({ error: p.id === 'github' ? 'Expected "owner/repo"' : 'Expected a project path like "group/project"' });
+    if (!fullName.includes('/') || fullName.includes('..')) return reply.code(400).send({ error: p.pathHint });
     let info: remotes.RemoteRepo;
     try { info = await p.getRepo(conn, fullName); }
     catch (err: any) { return reply.code(400).send({ error: `Repository not found or no access: ${err.message}` }); }
+    try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
+    catch (err: any) { return reply.code(502).send({ error: err.message }); }
     const id = newId();
     try {
-      const { remoteBranch } = await gitops.cloneRepo(id, p.tokenUrl(info.cloneUrl, conn.token));
+      const { remoteBranch } = await gitops.cloneRepo(id, p.tokenUrl(info.cloneUrl, conn.token, conn.login));
       const rootFile = detectRoot(id, 'main');
       const meta: store.ProjectMeta = {
         id, name: info.name, rootFile, engine: 'pdf', createdAt: new Date().toISOString(),
-        remote: { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, connectedBy: remoteUserId(req) },
+        remote: { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, ...(conn.baseUrl ? { baseUrl: conn.baseUrl } : {}), connectedBy: remoteUserId(req) },
       };
       const ownerId = reqUser(req)?.id;
       if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
@@ -1545,8 +1575,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const provider = remotes.getProvider(link.provider);
     if (!provider) { reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` }); return null; }
     const conn = await remotes.resolveConnection(link, remoteUserId(req), { allowService: true });
-    if (!conn) { reply.code(400).send({ error: `Connect ${provider.label} to sync` }); return null; }
-    return { meta, link, provider, conn, url: provider.tokenUrl(link.cloneUrl, conn.token), remoteBranch: link.remoteBranch };
+    if (!conn) {
+      // A connection to another instance of the same host does not count, so the instance is named.
+      const at = provider.selfHosted ? remotes.linkInstance(link) : null;
+      reply.code(400).send({ error: `Connect ${provider.label}${at ? ` on ${at}` : ''} to sync` });
+      return null;
+    }
+    return { meta, link, provider, conn, url: provider.tokenUrl(link.cloneUrl, conn.token, conn.login), remoteBranch: link.remoteBranch };
   };
   const projectRoute = (method: 'get' | 'post', tail: string, handler: (req: any, reply: any) => Promise<unknown>, legacyTail = tail) => {
     app[method](`/api/projects/:id/remote/${tail}`, handler);
@@ -1582,12 +1617,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     let info: remotes.RemoteRepo;
     try { info = await p.createRepo(conn, name, { private: req.body?.private !== false, namespace }); }
     catch (err: any) { return reply.code(400).send({ error: `Could not create the repository: ${err.message}` }); }
+    try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
+    catch (err: any) { return reply.code(502).send({ error: err.message }); }
     flushBranchDocs(req.params.id, 'main');
     await gitops.autoCommit(req.params.id, 'main', `aldine: publish to ${p.label}`, reqUser(req)?.name).catch(() => {});
-    const link: store.RemoteLink = { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, connectedBy: remoteUserId(req) };
+    const link: store.RemoteLink = { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, ...(conn.baseUrl ? { baseUrl: conn.baseUrl } : {}), connectedBy: remoteUserId(req) };
     store.setRemoteLink(meta, link);
     await store.writeMeta(meta);
-    try { await gitops.pushToRemote(req.params.id, 'main', p.tokenUrl(info.cloneUrl, conn.token)); }
+    try { await gitops.pushToRemote(req.params.id, 'main', p.tokenUrl(info.cloneUrl, conn.token, conn.login)); }
     catch (err: any) {
       // repo exists and the link is stored — the user can retry the push from the sync UI
       return reply.code(502).send({ error: `Repository created but the first push failed: ${err.message}. Use Push to retry.`, ...linkBody(link) });

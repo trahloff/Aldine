@@ -208,6 +208,26 @@ All notable changes to Aldine are documented here. The format follows
   a typeset, the PDF viewer, the commits in History and the review prompt;
   `e2e/demo-agent.mjs` records it into `e2e/shots`), a feature cell, and
   `llms.txt` names the Agent API and its guide.
+- Gitea and Forgejo as a third remote provider, "Gitea / Forgejo", next to
+  GitHub and GitLab; Codeberg runs Forgejo and is the example instance the
+  connect form offers. Both share the Gitea API, so one provider covers any
+  instance, sub-path installs included. Connect with a personal access token
+  (`read:user` and `write:repository`) and the instance URL, which is
+  mandatory since there is no canonical host; there is no OAuth. Import a
+  repository, publish a local project to your account (or, through the API,
+  into an organisation), push and pull, switch and create branches, and open
+  a pull request from the editor; publishing into an organisation
+  additionally needs `write:organization`. The token goes over https as the
+  git password under your own login. A link records the instance it was made
+  on, so a collaborator connected to another instance never syncs it with the
+  wrong host, and the server only clones from or pushes to an https URL on
+  the connected instance itself. `REMOTE_PROVIDERS` now defaults to
+  `github,gitlab,gitea`; `GITEA_API_BASE` exists for the tests only. (#60)
+- Download a project as a ZIP: `GET /api/projects/:id/archive?branch=` returns
+  the branch's tracked files from git, flat like an Overleaf download (never
+  `.git` or build output), after the open documents are flushed and
+  committed so it matches the editor. Reachable from project settings ("Download as ZIP") and the
+  command palette; the archive imports back through the ZIP import. (#58)
 
 ### Changed
 - Write conflicts for the Agent API and `PUT /file` are detected per file,
@@ -360,6 +380,10 @@ All notable changes to Aldine are documented here. The format follows
   were away" rather than "in this project", and the scan covers only what is
   new. Claude's commit titles in the review dialog keep their case, and a
   History row's tooltip shows the whole message.
+- The sidebar tab row (Files, History, Review and the plugin tabs) wraps
+  again instead of hiding its overflow: on wider system fonts and at browser
+  zoom the last tabs were cut off with no scrollbar to reveal them. (#59)
+
 
 ## [0.9.0] — 2026-09-10
 

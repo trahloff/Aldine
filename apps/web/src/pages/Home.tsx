@@ -426,7 +426,7 @@ export default function Home() {
         <AccountSettings user={user} onClose={() => setShowAccount(false)} />
       )}
       {importFrom && (
-        <RemoteImport provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
+        <RemoteImport key={importFrom} provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
       {showOnboarding && (
         <Onboarding onNew={() => setCreating(true)} onRemote={setImportFrom} remotes={remotes.map((r) => r.id)} onImportZip={importZip} onClose={dismissOnboarding} />
