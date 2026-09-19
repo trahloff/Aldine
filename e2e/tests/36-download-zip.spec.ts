@@ -35,7 +35,7 @@ test.describe('download a project as ZIP', () => {
       expect(imported.ok()).toBeTruthy();
       const { id: id2 } = await imported.json();
       try {
-        const listing = (await (await request.get(`/api/projects/${id2}/files?branch=main`)).json()) as Array<{ path: string; type: string }>;
+        const { files: listing } = (await (await request.get(`/api/projects/${id2}/files?branch=main`)).json()) as { files: Array<{ path: string; type: string }> };
         const back = listing.filter((f) => f.type === 'file' && f.path !== '.gitignore').map((f) => f.path).sort();
         const sent = names.filter((n) => n !== '.gitignore').sort();
         expect(back).toEqual(sent);
