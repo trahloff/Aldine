@@ -519,3 +519,14 @@ Server side, once per host:
 
 Next revision: after ≥1 week of daily use (spec §2.2), fill "Observed" from
 transcripts and move each answered question here with the change it drove.
+
+## Exit decision (2026-09-19)
+
+Toby called the dogfood done and asked for the merge to main and the release:
+two automated QA rounds (2026-09-17, five MCP sessions on staging and six
+Playwright sessions on a local stack, 64 findings fixed) plus his own use of
+the connector from claude.ai and Claude Code. The rows above that need a real
+host (the PDF card inside claude.ai, Desktop and Cowork; the 24-hour refresh;
+the away prompt across devices) stay open and are checked on prod after the
+release; the connector itself has been verified on staging with both client
+types.
