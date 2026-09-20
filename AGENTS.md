@@ -54,6 +54,10 @@ lacks packages); everything else passes locally. Two checkouts side by side
   (`aldine.experimental.*`), announced in the command palette.
 - User-visible strings are sentence-case, concrete, and name the action.
 - `CHANGELOG.md` (Keep-a-Changelog) is updated with the feature, not after.
+- PR bodies say `Refs #N`, never `Closes`/`Fixes #N`: a closing keyword shuts
+  the issue at merge time, days before a release exists, and the reporter gets
+  no answer. Close issues by hand after the tag, with a comment that names the
+  version and asks the reporter to confirm.
 
 ## Gotchas that have bitten before
 
