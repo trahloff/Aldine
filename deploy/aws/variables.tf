@@ -61,6 +61,12 @@ variable "sso_only" {
   default     = true
 }
 
+variable "agent_api" {
+  description = "Serve the Agent API (MCP) at POST /mcp (ALDINE_MCP=1). With auth_enabled, clients connect via OAuth or personal access tokens; see docs/AGENT_API.md."
+  type        = bool
+  default     = false
+}
+
 variable "admin_emails" {
   description = "Comma-separated account emails that may open /admin (ALDINE_ADMIN_EMAILS). Empty = nobody."
   type        = string
