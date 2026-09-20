@@ -111,7 +111,7 @@ Set `staging_domain_name` (a hostname in the same Route53 zone) and apply:
 
 ```hcl
 staging_domain_name    = "staging.latex.example.com"
-staging_env            = { ALDINE_MCP = "1" }   # anything you want to try before prod
+staging_env            = { ALDINE_MCP = "1" }   # anything you want to try before prod (agent_api = true turns it on for prod)
 staging_secret_env     = { OPENROUTER_API_KEY = "..." }  # staging's own keys; prod's never reach it
 github_deploy_branches = ["my-feature"]         # branches CI may deploy to staging
 ```

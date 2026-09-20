@@ -8,6 +8,8 @@ route53_zone_name = "example.com"
 # SSO-only by default (no passwords). Set sso_only = false to also allow email/password.
 auth_enabled = true
 sso_only     = true
+# Agent API (MCP at /mcp) for Claude and other MCP clients; see docs/AGENT_API.md.
+agent_api = false
 
 # Cheapest that still compiles real papers. Raise if big documents OOM.
 task_cpu         = 1024

@@ -6,6 +6,10 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- AWS stack: `agent_api = true` serves the Agent API on the production
+  service (`ALDINE_MCP=1`); until now only `staging_env` could enable it.
+
 ## [0.10.0] — 2026-09-19
 
 ### Added

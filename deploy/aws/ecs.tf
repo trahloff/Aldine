@@ -32,6 +32,7 @@ locals {
     var.auth_enabled ? { AUTH_ENABLED = "1" } : {},
     var.sso_only ? { ALDINE_SSO_ONLY = "1" } : {},
     var.admin_emails != "" ? { ALDINE_ADMIN_EMAILS = var.admin_emails } : {},
+    var.agent_api ? { ALDINE_MCP = "1" } : {},
     var.enable_ses ? { SES_FROM = local.ses_from, AWS_REGION = var.region } : {},
   )
 
