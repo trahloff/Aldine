@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-23
+
 ### Added
 - Sign in with your own OpenID Connect provider (Keycloak, Authentik,
   Authelia, Pocket ID, Dex, …) (#67). Set `OIDC_ISSUER` and `OIDC_CLIENT_ID`, plus
