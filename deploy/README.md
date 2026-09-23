@@ -43,6 +43,14 @@ GITHUB_LOGIN_CLIENT_SECRET=...
 # account without an email; invite them by ORCID iD.
 ORCID_CLIENT_ID=...
 ORCID_CLIENT_SECRET=...
+# Your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID):
+# redirect URI <ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback. Leave the
+# secret out for a public client (PKCE only). Recipes: docs/OIDC.md
+OIDC_ISSUER=https://auth.example.com/application/o/aldine/
+OIDC_CLIENT_ID=...
+OIDC_CLIENT_SECRET=...
+OIDC_LABEL=Company login
+#OIDC_ALLOWED_GROUPS=aldine-users
 
 # GitHub sync (import repos as projects, push/pull) — a SEPARATE OAuth app with
 # repo scope. Callback: <ALDINE_PUBLIC_URL>/api/github/oauth/callback
@@ -323,6 +331,10 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | OpenID Connect SSO with your own identity provider; redirect URI `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback`. No secret = public client (PKCE only). Setup recipes in [docs/OIDC.md](../docs/OIDC.md) |
+| `OIDC_LABEL`, `OIDC_SCOPES` | Button text (default `Single sign-on`); scopes (default `openid email profile`, `openid` always added) |
+| `OIDC_ALLOWED_GROUPS`, `OIDC_GROUPS_CLAIM` | Comma-separated groups allowed to sign in (unset = everyone the IdP authenticates); the claim holding them (default `groups`) |
+| `OIDC_EMAIL_VERIFIED` | `require` (default): use the IdP's address only when `email_verified` is true; `trust`: always (only if users cannot edit their address at the IdP) |
 | `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback` |
 | `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
 | `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |

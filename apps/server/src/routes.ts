@@ -276,30 +276,73 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- SSO / OAuth (each provider gated on its client id/secret) ----------
+  // The state cookie carries `<state>.<attempt secret>`: the secret derives
+  // the PKCE verifier and OIDC nonce, so they are bound to this state, never
+  // leave the browser except to us, and expire with the cookie.
+  const STATE_COOKIE = 'aldine_oauth_state';
+  const clearState = `${STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=0${auth.SECURE_COOKIES ? '; Secure' : ''}`;
+  const callbackUrl = (req: FastifyRequest, id: string) => `${publicBase(req)}/api/auth/oauth/${id}/callback`;
+  // "Google sign-in failed", but "Single sign-on failed" rather than "Single sign-on sign-in failed".
+  const signInName = (label: string) => (/sign[- ]?(on|in)|log[- ]?in/i.test(label) ? label : `${label} sign-in`);
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  // These routes are browser navigations: a person who lands here from the
+  // IdP gets a page with a way back, API clients keep the JSON body. No free
+  // text from the request URL reaches the page (only an RFC 6749 error code).
+  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string) => {
+    if (!/\btext\/html\b/.test(String(req.headers.accept || ''))) return reply.code(code).send({ error });
+    const back = `${config.basePath}/`;
+    return reply.code(code)
+      .type('text/html; charset=utf-8')
+      .header('cache-control', 'no-store')
+      .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+      .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in failed · Aldine</title><style>
+:root{color-scheme:light dark;--bg:#f7f6f3;--fg:#1d1c1a;--muted:#6b6862;--card:#fff;--line:#e3e0da;--accent:#2f5d8a}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe8;--muted:#a3a09a;--card:#1f1f1c;--line:#34332f;--accent:#8fb5dc}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:0 16px}
+main{max-width:30rem;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px 28px}
+h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);font-weight:600}
+</style></head><body><main><h1>Sign-in failed</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">Back to sign-in</a></main></body></html>`);
+  };
+
   app.get<{ Params: { provider: string } }>('/api/auth/oauth/:provider', async (req, reply) => {
     const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
-    if (!provider) return reply.code(404).send({ error: 'This sign-in provider is not configured' });
+    if (!provider) return signInFailed(req, reply, 404, 'This sign-in provider is not configured');
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_oauth_state=${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
-    const redirect = `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`;
-    return reply.redirect(provider.authorizeUrl(state, redirect));
+    const secret = oauth.newAttemptSecret();
+    let url: string;
+    try {
+      url = await provider.authorizeUrl(state, callbackUrl(req, provider.id), oauth.attemptFrom(secret));
+    } catch (err: any) {
+      req.log.warn({ provider: provider.id, err: err?.message }, 'sign-in provider unavailable');
+      return signInFailed(req, reply, 502, `${signInName(provider.label)} is unavailable: ${err.message}`);
+    }
+    reply.header('set-cookie', `${STATE_COOKIE}=${state}.${secret}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    return reply.redirect(url);
   });
 
-  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string } }>(
+  app.get<{ Params: { provider: string }; Querystring: Record<string, string | undefined> }>(
     '/api/auth/oauth/:provider/callback', async (req, reply) => {
       const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
-      if (!provider) return reply.code(404).send({ error: 'This sign-in provider is not configured' });
-      const cookies = auth.parseCookies(req.headers.cookie);
-      if (!req.query.code || !req.query.state || req.query.state !== cookies.aldine_oauth_state) {
-        return reply.code(400).send({ error: 'OAuth state mismatch — please try again' });
+      if (!provider) return signInFailed(req, reply, 404, 'This sign-in provider is not configured');
+      const [cookieState, secret] = (auth.parseCookies(req.headers.cookie)[STATE_COOKIE] || '').split('.');
+      const q = req.query;
+      if (typeof q.state !== 'string' || !q.state || !cookieState || !secret || q.state !== cookieState) {
+        return signInFailed(req, reply, 400, 'OAuth state mismatch — please try again');
       }
+      // One callback per attempt: a replayed or second callback finds no cookie.
+      reply.header('set-cookie', clearState);
+      if (typeof q.error === 'string' && q.error) {
+        return signInFailed(req, reply, 400, `${signInName(provider.label)} was cancelled or refused (${/^[a-z_]{1,40}$/.test(q.error) ? q.error : 'error'}) — please try again`);
+      }
+      if (typeof q.code !== 'string' || !q.code) return signInFailed(req, reply, 400, 'OAuth state mismatch — please try again');
       try {
-        const profile = await provider.exchange(req.query.code, `${publicBase(req)}/api/auth/oauth/${provider.id}/callback`);
+        const callback = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string'));
+        const profile = await provider.exchange(q.code, callbackUrl(req, provider.id), oauth.attemptFrom(secret), callback);
         const user = await auth.findOrCreateOAuth(profile, provider.id);
-        reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), `aldine_oauth_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`]);
+        reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
-        return reply.code(400).send({ error: `${provider.label} sign-in failed: ${err.message}` });
+        return signInFailed(req, reply, 400, `${signInName(provider.label)} failed: ${err.message}`);
       }
     });
 

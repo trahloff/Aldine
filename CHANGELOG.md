@@ -7,8 +7,44 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Sign in with your own OpenID Connect provider (Keycloak, Authentik,
+  Authelia, Pocket ID, Dex, …) (#67). Set `OIDC_ISSUER` and `OIDC_CLIENT_ID`, plus
+  `OIDC_CLIENT_SECRET` for a confidential client (without it: a public client,
+  PKCE only); the sign-in page shows the button next to Google, GitHub and
+  ORCID, labelled by `OIDC_LABEL`. The redirect URI is
+  `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback`. Discovery works for
+  issuers with a path, is fetched at startup (never fatal) and cached for an
+  hour; an unreachable IdP fails the sign-in with a clear message and never
+  the boot. Code flow with
+  PKCE (S256), state and nonce; the ID token is verified with jose against the
+  issuer's JWKS (asymmetric algorithms only; `iss`, `aud`, `azp`, `exp`,
+  `iat`, `nonce`). Accounts are keyed by issuer and `sub`; the email address
+  is used only when the IdP marks it verified (`OIDC_EMAIL_VERIFIED=trust`
+  overrides). `OIDC_ALLOWED_GROUPS` limits sign-in to members of the named
+  groups (`OIDC_GROUPS_CLAIM`, from the ID token or userinfo). Works with
+  `ALDINE_SSO_ONLY`, a path prefix, and in the middle of the Agent API
+  Connect flow. Network failures name their cause (an untrusted certificate
+  points at `NODE_EXTRA_CA_CERTS`), a failed hourly discovery refresh keeps
+  the last good document, and a half-set configuration is reported at boot.
+  Setup recipes, checked against Keycloak 26, Authelia 4.39 and Dex 2.41:
+  `docs/OIDC.md`.
 - AWS stack: `agent_api = true` serves the Agent API on the production
   service (`ALDINE_MCP=1`); until now only `staging_env` could enable it.
+
+### Changed
+- A single-sign-on login whose verified address matches an account already
+  bound to a different identity of the same provider is refused instead of
+  moving that account to the new identity. The refusal to sign into a
+  password or other-provider account with the same address now names the
+  provider by its label ("sign in with ORCID").
+- Accounts created by single sign-on (Google, GitHub, ORCID, OIDC) can no
+  longer be given a password through the API, get no password reset link,
+  and cannot use password sign-in. A password would have kept working after
+  the person lost access at their identity provider.
+- A single-sign-on account created without an email address takes the first
+  verified address a later sign-in reports, unless another account has it.
+- A failed single-sign-on attempt in the browser ends on a short page with
+  the reason and a link back to sign-in, instead of raw JSON.
 
 ## [0.10.0] — 2026-09-19
 

@@ -12,6 +12,8 @@ import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
 import { ensureSigningSecret } from './output-signing.js';
+import { AUTH_ENABLED } from './auth.js';
+import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings } from './oidc.js';
 
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
@@ -43,6 +45,16 @@ app.server.on('upgrade', (request, socket, head) => {
 });
 
 console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
+if (AUTH_ENABLED) {
+  for (const warning of oidcConfigWarnings()) console.warn(warning);
+  const line = oidcBootLine();
+  if (line) {
+    console.log(line);
+    // Warms the discovery cache; an unreachable IdP is logged, never fatal.
+    const c = oidcConfig()!;
+    discover(c.issuer).catch((err) => console.warn(`[aldine] OIDC discovery failed (sign-in will retry): ${err.message}`));
+  }
+}
 
 // Trash purge: hard-delete soft-deleted projects after ALDINE_TRASH_DAYS
 // (default 30). Swept on boot and daily; errors are logged, never fatal.

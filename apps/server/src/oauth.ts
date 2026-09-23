@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+import { oidc } from './oidc.js';
+
 /**
  * OAuth sign-in providers (SSO). Each provider is gated on its client
  * id/secret env vars, so configuring one is purely deployment config. The flow
@@ -17,14 +20,40 @@ export interface OAuthProfile {
   subject?: string;
 }
 
+/**
+ * Per-attempt secrets, derived from one random value that only the browser's
+ * short-lived httpOnly state cookie and this server ever see. Providers
+ * without PKCE or nonce support ignore them.
+ */
+export interface OAuthAttempt {
+  /** PKCE code_verifier (RFC 7636), 43 base64url characters. */
+  verifier: string;
+  /** S256 code_challenge for `verifier`. */
+  challenge: string;
+  /** OpenID Connect nonce, echoed in the ID token. */
+  nonce: string;
+}
+
 export interface OAuthProvider {
   id: string;
   label: string;
   configured(): boolean;
   /** URL to redirect the browser to, to begin sign-in. */
-  authorizeUrl(state: string, redirectUri: string): string;
-  /** Exchange the callback `code` for the user's verified profile. */
-  exchange(code: string, redirectUri: string): Promise<OAuthProfile>;
+  authorizeUrl(state: string, redirectUri: string, attempt: OAuthAttempt): string | Promise<string>;
+  /** Exchange the callback `code` for the user's verified profile. `callback` is the full callback query. */
+  exchange(code: string, redirectUri: string, attempt: OAuthAttempt, callback?: URLSearchParams): Promise<OAuthProfile>;
+}
+
+/** A fresh attempt secret, carried in the state cookie next to the state. */
+export function newAttemptSecret(): string {
+  return crypto.randomBytes(32).toString('base64url');
+}
+/** The attempt's verifier, challenge and nonce, all derived from its secret. */
+export function attemptFrom(secret: string): OAuthAttempt {
+  const verifier = secret;
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const nonce = crypto.createHash('sha256').update(`nonce:${secret}`).digest('base64url');
+  return { verifier, challenge, nonce };
 }
 
 const github: OAuthProvider = {
@@ -162,7 +191,7 @@ const orcid: OAuthProvider = {
   },
 };
 
-export const providers: OAuthProvider[] = [google, github, orcid];
+export const providers: OAuthProvider[] = [google, github, orcid, oidc];
 
 export function configuredProviders(): OAuthProvider[] {
   return providers.filter((p) => p.configured());

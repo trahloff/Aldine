@@ -102,8 +102,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
 - **Multi-user auth** (optional): set `AUTH_ENABLED=1` for login, per-project
-  ownership, and sharing (invite-only or link). Google, GitHub & ORCID SSO, or
-  email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
+  ownership, and sharing (invite-only or link). Google, GitHub & ORCID SSO,
+  your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID;
+  [docs/OIDC.md](docs/OIDC.md)), or email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
   `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
@@ -335,6 +336,13 @@ GITHUB_LOGIN_CLIENT_SECRET=
 # <ALDINE_PUBLIC_URL>/api/auth/oauth/orcid/callback); ORCID_SANDBOX=1 for sandbox.orcid.org
 ORCID_CLIENT_ID=
 ORCID_CLIENT_SECRET=
+# OpenID Connect SSO (Keycloak, Authentik, Authelia, Pocket ID, …): redirect URI
+# <ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback; every option in docs/OIDC.md
+OIDC_ISSUER=
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_LABEL=
+OIDC_ALLOWED_GROUPS=
 # GitHub repo sync: a separate OAuth app with repo scope
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
