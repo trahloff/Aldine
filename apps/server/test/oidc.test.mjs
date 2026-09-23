@@ -178,6 +178,7 @@ const rejects = [
   ['wrong-azp', 'azp claim', 'azp names another client'],
   ['expired', 'has expired', 'expired token'],
   ['future-iat', 'dated in the future (iat claim) — check that the clocks', 'iat in the future points at the clocks'],
+  ['no-iat', 'has no iat claim', 'a missing iat is named, not blamed on the clocks'],
   ['wrong-nonce', 'nonce claim', 'nonce from another attempt'],
   ['no-nonce', 'nonce claim', 'missing nonce'],
   ['iss-param', 'different identity provider', 'RFC 9207 iss response parameter from another IdP'],
@@ -234,6 +235,18 @@ mock.state.down = false;
 await throws(() => signIn(alice), 'answered 503', 'a failed discovery is not retried on every click');
 oidcMod.resetOidcCache();
 eq((await signIn(alice)).name, 'Alice Liddell', 'recovers once the retry window passes');
+
+// ---- an oversized discovery document is refused unread ----
+mock.state.discoveryPadding = 2 * 1024 * 1024;
+oidcMod.resetOidcCache();
+await throws(() => signIn(alice), 'did not return a discovery document', 'a discovery document over 1 MB');
+mock.state.discoveryPadding = 0;
+oidcMod.resetOidcCache();
+
+// ---- plain http only to this machine, and only when the issuer is on it ----
+eq(oidcMod.checkUrl('http://127.0.0.1:4020/token', 'token endpoint', true), 'http://127.0.0.1:4020/token', 'a local issuer may use local http endpoints');
+await throws(async () => oidcMod.checkUrl('http://127.0.0.1:4020/token', 'token endpoint', false), 'must use https', 'a remote issuer cannot point an endpoint at a plaintext port on the Aldine host');
+await throws(async () => oidcMod.checkUrl('http://idp.example/token', 'token endpoint', true), 'must use https', 'http to another host is refused even for a local issuer');
 {
   // After the hourly TTL a failed refresh keeps serving the last good document.
   // Only discover() runs under the shifted clock: jose and the mock keep real time.

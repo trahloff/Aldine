@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { createRemoteJWKSet, jwtVerify, errors as joseErrors, type JWTPayload } from 'jose';
+import { createRemoteJWKSet, customFetch, jwtVerify, errors as joseErrors, type JWTPayload } from 'jose';
 import type { OAuthProfile, OAuthProvider } from './oauth.js';
 
 /**
@@ -125,15 +125,42 @@ export function oidcSubject(iss: string, sub: string): string {
 }
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
-/** https, or plain http to this machine only (a local IdP, the test suites). */
-function checkUrl(raw: unknown, what: string): string {
+const isLoopback = (raw: string) => { try { return LOOPBACK.has(new URL(raw).hostname); } catch { return false; } };
+/**
+ * https, or plain http to this machine when the issuer itself is on this
+ * machine (a local IdP, the test suites). A remote issuer's discovery document
+ * must not steer the code, the client secret or the access token to a
+ * plaintext port on the Aldine host.
+ */
+export function checkUrl(raw: unknown, what: string, allowLoopbackHttp: boolean): string {
   if (typeof raw !== 'string' || !raw) throw new Error(`the identity provider's discovery document has no ${what}`);
   let u: URL;
   try { u = new URL(raw); } catch { throw new Error(`the identity provider's ${what} is not a URL`); }
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOOPBACK.has(u.hostname))) {
+  if (u.protocol !== 'https:' && !(allowLoopbackHttp && u.protocol === 'http:' && LOOPBACK.has(u.hostname))) {
     throw new Error(`the identity provider's ${what} must use https`);
   }
   return u.href;
+}
+
+/** IdP answers are small JSON documents; a larger body is refused unread. */
+const MAX_IDP_BODY_BYTES = 1024 * 1024;
+async function readCapped(res: Response): Promise<Buffer> {
+  if (Number(res.headers.get('content-length')) > MAX_IDP_BODY_BYTES) throw new Error('the response is larger than 1 MB');
+  const reader = res.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IDP_BODY_BYTES) { await reader.cancel().catch(() => {}); throw new Error('the response is larger than 1 MB'); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+async function readJson(res: Response): Promise<unknown> {
+  return JSON.parse((await readCapped(res)).toString('utf8'));
 }
 
 interface CacheEntry { key: string; value?: Discovery; valueAt: number; error?: Error; errorAt: number; pending?: Promise<Discovery> }
@@ -147,7 +174,8 @@ export function resetOidcCache(): void {
 }
 
 async function fetchDiscovery(issuer: string): Promise<Discovery> {
-  checkUrl(issuer, 'issuer URL');
+  const local = isLoopback(issuer);
+  checkUrl(issuer, 'issuer URL', local);
   // OpenID Connect Discovery §4: the well-known suffix goes after the issuer's
   // path, so https://idp/application/o/aldine/ keeps its path.
   const url = `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
@@ -159,7 +187,7 @@ async function fetchDiscovery(issuer: string): Promise<Discovery> {
   }
   if (!res.ok) throw new Error(`the identity provider at ${issuer} answered ${res.status} for its discovery document`);
   let doc: Partial<Discovery>;
-  try { doc = (await res.json()) as Partial<Discovery>; } catch { throw new Error(`the identity provider at ${issuer} did not return a discovery document`); }
+  try { doc = (await readJson(res)) as Partial<Discovery>; } catch { throw new Error(`the identity provider at ${issuer} did not return a discovery document`); }
   // §4.3: the document's issuer must be the one we asked. A lone trailing
   // slash is forgiven in the env value; ID tokens are then checked against
   // the issuer exactly as the IdP spells it.
@@ -168,10 +196,10 @@ async function fetchDiscovery(issuer: string): Promise<Discovery> {
   }
   return {
     issuer: doc.issuer,
-    authorization_endpoint: checkUrl(doc.authorization_endpoint, 'authorization endpoint'),
-    token_endpoint: checkUrl(doc.token_endpoint, 'token endpoint'),
-    jwks_uri: checkUrl(doc.jwks_uri, 'JWKS URI'),
-    userinfo_endpoint: doc.userinfo_endpoint ? checkUrl(doc.userinfo_endpoint, 'userinfo endpoint') : undefined,
+    authorization_endpoint: checkUrl(doc.authorization_endpoint, 'authorization endpoint', local),
+    token_endpoint: checkUrl(doc.token_endpoint, 'token endpoint', local),
+    jwks_uri: checkUrl(doc.jwks_uri, 'JWKS URI', local),
+    userinfo_endpoint: doc.userinfo_endpoint ? checkUrl(doc.userinfo_endpoint, 'userinfo endpoint', local) : undefined,
     id_token_signing_alg_values_supported: Array.isArray(doc.id_token_signing_alg_values_supported) ? doc.id_token_signing_alg_values_supported : undefined,
     token_endpoint_auth_methods_supported: Array.isArray(doc.token_endpoint_auth_methods_supported) ? doc.token_endpoint_auth_methods_supported : undefined,
     authorization_response_iss_parameter_supported: doc.authorization_response_iss_parameter_supported === true,
@@ -209,7 +237,13 @@ export async function discover(issuer: string): Promise<Discovery> {
 function jwks(uri: string) {
   let set = jwksCache.get(uri);
   if (!set) {
-    set = createRemoteJWKSet(new URL(uri), { timeoutDuration: DISCOVERY_TIMEOUT_MS });
+    set = createRemoteJWKSet(new URL(uri), {
+      timeoutDuration: DISCOVERY_TIMEOUT_MS,
+      [customFetch]: async (url, init) => {
+        const res = await fetch(url, init);
+        return new Response(new Uint8Array(await readCapped(res)), { status: res.status, headers: res.headers });
+      },
+    });
     jwksCache.set(uri, set);
   }
   return set;
@@ -239,6 +273,7 @@ export async function verifyIdToken(idToken: string, d: Discovery, clientId: str
   } catch (err) {
     if (err instanceof joseErrors.JWTExpired) throw new Error(`the ID token has expired (${err.claim} claim) — check that the clocks of Aldine and the identity provider agree`);
     if (err instanceof joseErrors.JWTClaimValidationFailed) {
+      if (err.reason === 'missing') throw new Error(`the ID token has no ${err.claim} claim`);
       if (err.claim === 'iat' || err.claim === 'nbf') throw new Error(`the ID token is dated in the future (${err.claim} claim) — check that the clocks of Aldine and the identity provider agree`);
       throw new Error(`the ID token was rejected (${err.claim} claim)`);
     }
@@ -282,7 +317,7 @@ async function userinfo(d: Discovery, accessToken: string | undefined, sub: stri
     const res = await fetch(d.userinfo_endpoint, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS), redirect: 'error' });
     // A signed (application/jwt) userinfo response is not read; the ID token carries what it would.
     if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return null;
-    const body = (await res.json()) as Claims;
+    const body = (await readJson(res)) as Claims;
     // Core §5.3.2: a userinfo response for another subject must not be used.
     return body && typeof body === 'object' && body.sub === sub ? body : null;
   } catch (err) {
@@ -372,7 +407,7 @@ export const oidc: OAuthProvider = {
       throw new Error(`the identity provider did not answer the token request: it ${describeFetchError(err, TOKEN_TIMEOUT_MS)}`);
     }
     try {
-      tok = (await res.json()) as typeof tok;
+      tok = (await readJson(res)) as typeof tok;
     } catch {
       throw new Error(`the identity provider answered the token request with ${res.status} and no JSON — try again later`);
     }

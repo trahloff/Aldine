@@ -316,7 +316,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       req.log.warn({ provider: provider.id, err: err?.message }, 'sign-in provider unavailable');
       return signInFailed(req, reply, 502, `${signInName(provider.label)} is unavailable: ${err.message}`);
     }
-    reply.header('set-cookie', `${STATE_COOKIE}=${state}.${secret}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    reply.header('set-cookie', `${STATE_COOKIE}=${provider.id}.${state}.${secret}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     return reply.redirect(url);
   });
 
@@ -324,9 +324,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     '/api/auth/oauth/:provider/callback', async (req, reply) => {
       const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
       if (!provider) return signInFailed(req, reply, 404, 'This sign-in provider is not configured');
-      const [cookieState, secret] = (auth.parseCookies(req.headers.cookie)[STATE_COOKIE] || '').split('.');
+      // The attempt names its provider, so a state minted for one provider's
+      // sign-in cannot carry another provider's code through this callback.
+      const [cookieProvider, cookieState, secret] = (auth.parseCookies(req.headers.cookie)[STATE_COOKIE] || '').split('.');
       const q = req.query;
-      if (typeof q.state !== 'string' || !q.state || !cookieState || !secret || q.state !== cookieState) {
+      if (typeof q.state !== 'string' || !q.state || !cookieState || !secret || q.state !== cookieState || cookieProvider !== provider.id) {
         return signInFailed(req, reply, 400, 'OAuth state mismatch — please try again');
       }
       // One callback per attempt: a replayed or second callback finds no cookie.

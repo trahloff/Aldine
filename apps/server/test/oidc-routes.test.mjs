@@ -64,7 +64,8 @@ async function start(persona) {
   const raw = cookiesOf(res).find((s) => s.startsWith('aldine_oauth_state='));
   check(raw, 'state cookie set');
   for (const attr of ['HttpOnly', 'SameSite=Lax', 'Path=/x;', 'Max-Age=600', 'Secure']) check(raw.includes(attr), `state cookie has ${attr} (${raw})`);
-  const [state, secret] = cookieValue(res, 'aldine_oauth_state').split('.');
+  const [cookieProvider, state, secret] = cookieValue(res, 'aldine_oauth_state').split('.');
+  eq(cookieProvider, 'oidc', 'the attempt names its provider');
   eq(loc.searchParams.get('state'), state, 'state in the URL is the cookie\'s');
   eq(loc.searchParams.get('redirect_uri'), REDIRECT, 'redirect URI carries the public URL and base path');
   check(secret && !res.headers.location.includes(secret), 'the attempt secret never goes to the IdP');
@@ -73,7 +74,7 @@ async function start(persona) {
   eq(idp.status, 302, 'IdP redirects back');
   const back = new URL(idp.headers.get('location'));
   eq(back.origin + back.pathname, REDIRECT, 'IdP returns to the redirect URI');
-  return { query: back.search, cookie: `aldine_oauth_state=${state}.${secret}`, state, secret };
+  return { query: back.search, cookie: `aldine_oauth_state=oidc.${state}.${secret}`, state, secret };
 }
 const callback = (query, cookie) => get(`/x/api/auth/oauth/oidc/callback${query}`, cookie);
 
@@ -111,9 +112,11 @@ mock.addPersona({ code: 'eve', sub: 'eve-1', claims: { name: 'Eve', email: 'eve@
   check(r.json().error.includes('state mismatch'), 'says state mismatch');
   r = await callback(s.query);
   eq(r.statusCode, 400, 'no state cookie → 400');
-  r = await callback(s.query, `aldine_oauth_state=${s.state}`);
+  r = await callback(s.query, `aldine_oauth_state=oidc.${s.state}`);
   eq(r.statusCode, 400, 'a state cookie without its attempt secret → 400');
-  r = await callback(s.query, `aldine_oauth_state=${s.state}.${'A'.repeat(43)}`);
+  r = await callback(s.query, `aldine_oauth_state=google.${s.state}.${s.secret}`);
+  eq(r.statusCode, 400, 'an attempt started at another provider → 400');
+  r = await callback(s.query, `aldine_oauth_state=oidc.${s.state}.${'A'.repeat(43)}`);
   eq(r.statusCode, 400, 'another attempt secret (wrong verifier) → 400');
   check(!cookieValue(r, 'aldine_session'), 'no session');
 }

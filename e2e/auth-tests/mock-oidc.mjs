@@ -45,6 +45,8 @@ export function createMockOidc(opts = {}) {
     jwksDown: false,
     /** Discovery requests served so far. */
     discoveryHits: 0,
+    /** Pad the discovery document with this many bytes (oversized responses). */
+    discoveryPadding: 0,
   };
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const rogue = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -80,7 +82,7 @@ export function createMockOidc(opts = {}) {
       sub: persona.sub,
       aud: t === 'wrong-aud' ? 'someone-else' : t === 'multi-aud' || t === 'wrong-azp' ? [clientId, 'someone-else'] : clientId,
       exp: t === 'expired' ? now - 600 : now + 300,
-      iat: t === 'expired' ? now - 900 : t === 'future-iat' ? now + 3600 : now,
+      iat: t === 'expired' ? now - 900 : t === 'future-iat' ? now + 3600 : t === 'no-iat' ? undefined : now,
       nonce: t === 'wrong-nonce' ? 'not-the-nonce' : t === 'no-nonce' ? undefined : grant.nonce,
       ...(t === 'wrong-azp' ? { azp: 'someone-else' } : {}),
       ...claims,
@@ -110,6 +112,7 @@ export function createMockOidc(opts = {}) {
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: state.authMethods,
         scopes_supported: ['openid', 'email', 'profile', 'groups'],
+        ...(state.discoveryPadding ? { padding: 'x'.repeat(state.discoveryPadding) } : {}),
         authorization_response_iss_parameter_supported: state.issParam,
       };
       if (state.algs) doc.id_token_signing_alg_values_supported = state.algs;

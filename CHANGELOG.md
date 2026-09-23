@@ -43,6 +43,8 @@ All notable changes to Aldine are documented here. The format follows
   the person lost access at their identity provider.
 - A single-sign-on account created without an email address takes the first
   verified address a later sign-in reports, unless another account has it.
+- A sign-in attempt is bound to the provider it started at: a state from
+  one provider's sign-in is refused at another provider's callback.
 - A failed single-sign-on attempt in the browser ends on a short page with
   the reason and a link back to sign-in, instead of raw JSON.
 
