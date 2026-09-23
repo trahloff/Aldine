@@ -7,6 +7,7 @@ dist/
 .data-e2e-prov/
 .data-auth/
 .data-base-path/
+.data-base-path-auth/
 .data-remote/
 .data-shots/
 .data-demo/
@@ -15,6 +16,7 @@ dist/
 .secrets-e2e-prov/
 .secrets-auth/
 .secrets-base-path/
+.secrets-base-path-auth/
 .secrets-remote/
 .secrets-pb/
 .secrets-shots/

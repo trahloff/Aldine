@@ -315,6 +315,10 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const isSso = !!user.provider;
+  const { providers } = useAuth();
+  // OIDC is named by the operator (OIDC_LABEL); the default label is already "Single sign-on".
+  const providerName = user.provider ? PROVIDER_NAME[user.provider] || providers.find((p) => p.id === user.provider)?.label || user.provider : '';
+  const genericSso = providerName === 'Single sign-on';
   // The footer's password action is the hero only once both fields are
   // filled; before that it would sit as a second primary under "Create token".
   const passwordReady = current.length > 0 && next.length > 0;
@@ -351,7 +355,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
         )}
         <div className="settings__row">
           <span className="settings__label">Sign-in</span>
-          <span>{isSso ? `Single sign-on (${PROVIDER_NAME[user.provider!] || user.provider})` : 'Email & password'}</span>
+          <span data-testid="account-sign-in">{isSso ? (genericSso ? 'Single sign-on' : `Single sign-on (${providerName})`) : 'Email & password'}</span>
         </div>
 
         {/* The onboarding funnel comes before the password block: a 70vh
@@ -361,7 +365,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
 
         {isSso ? (
           <p style={{ color: 'var(--text-2)', fontSize: 13, marginTop: 18 }}>
-            Your password is managed by {PROVIDER_NAME[user.provider!] || user.provider}. There's nothing to change here.
+            Your password is managed by {genericSso ? 'your identity provider' : providerName}. There's nothing to change here.
             {user.orcid && !user.email && ' Collaborators invite you by your ORCID iD, since this account has no email address.'}
           </p>
         ) : (

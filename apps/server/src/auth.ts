@@ -2,7 +2,14 @@ import crypto from 'node:crypto';
 import { db } from './db/index.js';
 import type { TokenRecord, User } from './db/types.js';
 import { config } from './config.js';
-import type { OAuthProfile } from './oauth.js';
+import { providers, type OAuthProfile } from './oauth.js';
+import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
+
+/** A provider's name for use inside a sentence ("sign in with single sign-on"). */
+const providerLabel = (id: string) => {
+  const label = providers.find((p) => p.id === id)?.label ?? id;
+  return label === OIDC_DEFAULT_LABEL ? label.toLowerCase() : label;
+};
 
 /**
  * Optional, env-gated auth (AUTH_ENABLED=1). When off, every request is
@@ -76,9 +83,18 @@ export async function register(email: string | null, password: string, name?: st
   return pub(user);
 }
 
+/**
+ * Accounts created by single sign-on have no password and can never get one:
+ * a password would let the person keep signing in after the IdP disabled
+ * them or OIDC_ALLOWED_GROUPS stopped admitting them.
+ */
+function refuseSsoAccount(user: User): void {
+  if (user.provider) throw new Error(`This account signs in with ${providerLabel(user.provider)}, which manages its password.`);
+}
+
 export async function login(email: string, password: string): Promise<PublicUser> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
-  if (!user || !user.hash || !verifyPassword(password, user)) throw new Error('Incorrect email or password');
+  if (!user || user.provider || !user.hash || !verifyPassword(password, user)) throw new Error('Incorrect email or password');
   return pub(user);
 }
 
@@ -98,13 +114,28 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   const email = profile.email ? profile.email.trim().toLowerCase() : null;
   if (profile.subject) {
     const bySubject = await db().findUserBySubject(profile.subject);
-    if (bySubject) return pub(bySubject);
+    if (bySubject) {
+      // An account created while the IdP had no verified address for the
+      // person takes the first one it reports. An address already on the
+      // account is kept: project invites and shares are matched by it.
+      if (!bySubject.email && email && !(await db().findUserByEmail(email))) {
+        bySubject.email = email;
+        await db().updateUser(bySubject).catch(() => { bySubject.email = null; });
+      }
+      return pub(bySubject);
+    }
   }
   const existing = email ? await db().findUserByEmail(email) : null;
   if (existing) {
     if (existing.provider !== provider) {
-      const how = existing.provider ? `sign in with ${existing.provider}` : 'sign in with your password';
+      const how = existing.provider ? `sign in with ${providerLabel(existing.provider)}` : 'sign in with your password';
       throw new Error(`An account with this email already exists — ${how} instead.`);
+    }
+    // An account already bound to one identity is never rebound to another
+    // that merely shares the address: at a self-hosted IdP an address can be
+    // reassigned, or (OIDC_EMAIL_VERIFIED=trust) typed in by the user.
+    if (profile.subject && existing.subject && existing.subject !== profile.subject) {
+      throw new Error(`An account with this email already belongs to a different ${providerLabel(provider)} identity — ask the administrator for help.`);
     }
     if (profile.subject && existing.subject !== profile.subject) {
       // First sign-in since the provider started reporting subjects: bind it
@@ -122,6 +153,7 @@ export async function changePassword(userId: string, current: string, next: stri
   if (next.length < 8) throw new Error('New password must be at least 8 characters');
   const user = await db().getUser(userId);
   if (!user) throw new Error('User not found');
+  refuseSsoAccount(user);
   if (user.hash && !verifyPassword(current, user)) throw new Error('Current password is incorrect');
   user.salt = crypto.randomBytes(16).toString('hex');
   user.hash = hashPassword(next, user.salt);
@@ -132,7 +164,7 @@ export async function changePassword(userId: string, current: string, next: stri
 /** Create a reset token. Returns {token} for self-host relay; caller may also email it. */
 export async function requestReset(email: string): Promise<{ token: string; user: PublicUser } | null> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
-  if (!user) return null; // do not leak which emails exist
+  if (!user || user.provider) return null; // do not leak which emails exist
   const token = crypto.randomBytes(24).toString('base64url');
   await db().createReset(token, user.id, Date.now() + RESET_TTL_MS);
   return { token, user: pub(user) };
@@ -144,6 +176,7 @@ export async function resetPassword(token: string, next: string): Promise<void> 
   if (!r || r.exp < Date.now()) throw new Error('This reset link is invalid or has expired');
   const user = await db().getUser(r.userId);
   if (!user) throw new Error('User not found');
+  refuseSsoAccount(user);
   user.salt = crypto.randomBytes(16).toString('hex');
   user.hash = hashPassword(next, user.salt);
   await db().updateUser(user);

@@ -105,7 +105,7 @@ await throws(
 );
 await throws(
   () => auth.findOrCreateOAuth({ email: 'sofia.garcia@example.org', name: 'S' }, 'github'),
-  'sign in with orcid',
+  'sign in with ORCID',
   'another provider with the same email is not merged',
 );
 

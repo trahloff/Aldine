@@ -41,7 +41,9 @@ healthy. `ALDINE_URL=http://localhost:8080 npm run test:e2e` targets a running
 compose stack instead. Two `07-features` tests need full TeX Live (BasicTeX
 lacks packages); everything else passes locally. Two checkouts side by side
 (`reuseExistingServer` would otherwise test the other tree's server):
-`E2E_PORT=3101 E2E_MOCK_PORT=4920 E2E_GITLAB_PORT=4922 E2E_GITEA_PORT=4924 E2E_AUTH_PORT=3201 COMPILER_URL=http://localhost:4021 npm run test:e2e`.
+`E2E_PORT=3101 E2E_MOCK_PORT=4920 E2E_GITLAB_PORT=4922 E2E_GITEA_PORT=4924 E2E_AUTH_PORT=3201 E2E_AUTH_MOCK_PORT=4928 E2E_AUTH_OIDC_PORT=4944 COMPILER_URL=http://localhost:4021 npm run test:e2e`.
+Every mock server runs with `reuseExistingServer`, so a port left at its
+default silently shares the other checkout's mock.
 
 ## Conventions
 

@@ -322,7 +322,7 @@ export default function Home() {
             <button className="btn btn--primary" onClick={load}>Try again</button>
           </div>
         ) : projects.length === 0 ? (
-          <div className="empty">
+          <div className="empty" data-testid="projects-empty">
             <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>

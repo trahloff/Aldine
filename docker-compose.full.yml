@@ -34,6 +34,21 @@ services:
       ORCID_CLIENT_ID: ${ORCID_CLIENT_ID:-}
       ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET:-}
       ORCID_SANDBOX: ${ORCID_SANDBOX:-}
+      # OpenID Connect login with your own IdP (Keycloak, Authentik, Authelia,
+      # Pocket ID, Dex). Redirect URI <ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback;
+      # docs/OIDC.md has every option and the setup recipes.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_LABEL: ${OIDC_LABEL:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      OIDC_ALLOWED_GROUPS: ${OIDC_ALLOWED_GROUPS:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      OIDC_EMAIL_VERIFIED: ${OIDC_EMAIL_VERIFIED:-}
+      # An IdP whose certificate comes from a private CA or is self-signed:
+      # mount the CA certificate and point Node at it, e.g.
+      #   NODE_EXTRA_CA_CERTS: /etc/aldine/ca.pem
+      # with the volume ./ca.pem:/etc/aldine/ca.pem:ro on this service.
       # GitHub sync (repo import/push/pull) — OAuth app with repo scope.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}

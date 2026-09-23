@@ -28,6 +28,15 @@ you in the fix's release notes unless you prefer otherwise.
   `docker-compose.full.yml` ships a Caddy config that gets certificates for you).
 - Session cookies are HTTP-only and revocable server-side; passwords are
   scrypt-hashed. Set `COOKIE_SECURE=1` behind HTTPS.
+- Single sign-on never signs into an existing account that merely shares an
+  email address: not a password account, not another provider's, not another
+  OIDC identity. With OpenID Connect the address is used only when the IdP
+  marks it verified; `OIDC_EMAIL_VERIFIED=trust` drops that check and is safe
+  only where users cannot edit their address at the IdP (docs/OIDC.md).
+- Single-sign-on accounts have no password and cannot be given one, so a
+  person the IdP disables (or `OIDC_ALLOWED_GROUPS` stops admitting) cannot
+  sign in again. Existing sessions end at their expiry (30 days) unless an
+  operator removes them; docs/OIDC.md shows how.
 
 ## Hall of fame
 
