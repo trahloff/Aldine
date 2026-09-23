@@ -236,38 +236,61 @@ verified address gets it at the first later sign-in that brings one.
 
 ### Authentik
 
-1. **Applications → Providers → Create → OAuth2/OpenID Provider**. Client type
-   *Confidential*, redirect URI (strict)
+Verified against Authentik 2026.8.3 on 2026-09-23 (confidential and public
+client, groups in the ID token and in userinfo only, `email_verified` false
+by default).
+
+1. **Applications → Providers → New Provider → OAuth2/OpenID Provider → Next**.
+   Name *Aldine*, *Authorization flow* one of the
+   `default-provider-authorization-…-consent` flows. Client type
+   *Confidential* (or *Public* if you will not use a secret). Under *Redirect
+   URIs/Origins*, **Add entry**: *Strict*,
    `https://aldine.example.com/api/auth/oauth/oidc/callback`.
-2. **Signing Key**: pick a certificate (for example *authentik Self-signed
-   Certificate*). Without one, Authentik signs ID tokens with HS256 and the
-   client secret, which Aldine refuses.
-3. **Applications → Create**: name *Aldine*, slug `aldine`, provider from
-   step 1.
-4. Copy the client ID and secret from the provider.
+2. **Signing Key**: *authentik Self-signed Certificate* is preselected when it
+   is the only key pair; keep it (or pick another RSA/EC certificate). Without
+   one, Authentik signs ID tokens with HS256 and the client secret, which
+   Aldine refuses.
+3. **Grant types**: Aldine needs only *Authorization Code*; you can untick the
+   others. The form ticks all but *Token exchange*, but a provider created
+   through a blueprint or the API has none unless you list them
+   (`grant_types: [authorization_code]`), and Authentik then answers every
+   sign-in with `invalid_request` ("The request is otherwise malformed"). A
+   blueprint or API call must also list the scope mappings
+   (`goauthentik.io/providers/oauth2/scope-openid`, `-email`, `-profile`) and
+   the signing key; the form fills in both.
+4. **Applications → Applications → Create**: name *Aldine*, slug `aldine`,
+   provider from step 1.
+5. Copy the client ID and secret from the provider.
 
 ```
 OIDC_ISSUER=https://auth.example.com/application/o/aldine/
 OIDC_CLIENT_ID=<client id>
-OIDC_CLIENT_SECRET=<client secret>
+OIDC_CLIENT_SECRET=<client secret>   # omit for a public client
 OIDC_LABEL=Authentik
 ```
 
 The issuer ends in the application slug and a slash; the provider page shows
-it as *OpenID Configuration Issuer*. The default *profile* scope mapping
-includes a `groups` claim. Renaming the application slug changes the issuer
-(see [Changing `OIDC_ISSUER`](#changing-oidc_issuer)).
+it as *OpenID Configuration Issuer*. Renaming the application slug changes the
+issuer (see [Changing `OIDC_ISSUER`](#changing-oidc_issuer)).
 
-Check which `email_verified` value your Authentik version sends (the
-provider's *Preview* tab shows the claims). Authentik does not verify
-addresses itself, and depending on the version its email mapping reports
-either `false` for everyone or `true` for everyone. `true` for everyone is
-the same as `OIDC_EMAIL_VERIFIED=trust`, and so is changing the mapping to
-send `true`. Both are safe only when users cannot change their own address:
-remove the email field from the user settings flow's prompt stage (or turn
-off *Allow users to change email* under **System → Settings**, where your
-version has it). If users can change it, keep `email_verified` false: people
-then sign in without an address on their Aldine account.
+The default *profile* scope mapping sends a `groups` claim with the group
+names, so `OIDC_ALLOWED_GROUPS` works without extra setup. It is in the ID
+token while *Include claims in id_token* (under *Advanced protocol settings*)
+is on, the default; with it off, Aldine reads groups, email and name from
+userinfo.
+
+The default email mapping sends `email_verified: false` for everyone
+(Authentik does not verify addresses), so with the default
+`OIDC_EMAIL_VERIFIED=require` people sign in to accounts without an email
+address. The provider's *Preview* tab shows the claims your version sends. To
+give accounts their addresses, either set `OIDC_EMAIL_VERIFIED=trust`, or
+create a scope mapping for scope `email` that returns
+`{"email": request.user.email, "email_verified": True}` and select it on the
+provider instead of the default *email* mapping; both amount to trusting
+Authentik's addresses. That is safe only while users cannot change their own
+address: keep *Allow users to change email* off under **System → Settings**
+(off by default) and do not grant `goauthentik.io/user/can-change-email` in a
+group's attributes.
 
 ### Authelia
 

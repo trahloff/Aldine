@@ -26,8 +26,9 @@ All notable changes to Aldine are documented here. The format follows
   Connect flow. Network failures name their cause (an untrusted certificate
   points at `NODE_EXTRA_CA_CERTS`), a failed hourly discovery refresh keeps
   the last good document, and a half-set configuration is reported at boot.
-  Setup recipes, checked against Keycloak 26, Authelia 4.39 and Dex 2.41:
-  `docs/OIDC.md`.
+  Setup recipes, checked against Authentik 2026.8, Keycloak 26, Authelia
+  4.39 and Dex 2.41: `docs/OIDC.md`. Authentik sends `email_verified: false`
+  by default; the recipe shows both ways to handle that.
 - AWS stack: `agent_api = true` serves the Agent API on the production
   service (`ALDINE_MCP=1`); until now only `staging_env` could enable it.
 
