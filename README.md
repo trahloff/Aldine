@@ -1,4 +1,4 @@
-# Aldine
+# [Aldine](https://aldine.dev)
 
 **Write LaTeX together. Fast, versioned, yours.**
 
@@ -13,6 +13,7 @@ editing, every project a real git repo with branches, native Zotero, ~2s warm
 recompiles. Two containers and flat files by default: no database to migrate,
 nothing to babysit.
 
+**[Homepage](https://aldine.dev)** ·
 **[Try the live demo](https://demo.aldine.dev)** (resets nightly) ·
 [Quick start](#quick-start) · [How Aldine compares](#how-aldine-compares) ·
 [Screenshots](#screenshots) · [Self-hosting](#production-deploy) ·
