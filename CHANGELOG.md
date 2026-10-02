@@ -6,6 +6,11 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `OIDC_DISCOVERY_URL` separates the discovery document address from
+  `OIDC_ISSUER`. When unset or blank, discovery uses the issuer's well-known
+  URL. The discovery document and ID tokens still validate against the issuer.
+
 ## [0.11.0] — 2026-09-23
 
 ### Added

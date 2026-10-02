@@ -16,6 +16,7 @@ import type { OAuthProfile, OAuthProvider } from './oauth.js';
 
 export interface OidcConfig {
   issuer: string;
+  discoveryUrl: string;
   clientId: string;
   clientSecret: string | null;
   label: string;
@@ -57,6 +58,7 @@ export function oidcConfig(env: NodeJS.ProcessEnv = process.env): OidcConfig | n
   scopes.add('openid');
   return {
     issuer,
+    discoveryUrl: env.OIDC_DISCOVERY_URL?.trim() || `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`,
     clientId,
     clientSecret: env.OIDC_CLIENT_SECRET || null,
     label: (env.OIDC_LABEL || '').trim().slice(0, 60) || DEFAULT_LABEL,
@@ -173,22 +175,20 @@ export function resetOidcCache(): void {
   jwksCache.clear();
 }
 
-async function fetchDiscovery(issuer: string): Promise<Discovery> {
+async function fetchDiscovery(issuer: string, discoveryUrl: string): Promise<Discovery> {
   const local = isLoopback(issuer);
   checkUrl(issuer, 'issuer URL', local);
-  // OpenID Connect Discovery §4: the well-known suffix goes after the issuer's
-  // path, so https://idp/application/o/aldine/ keeps its path.
-  const url = `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
+  const url = checkUrl(discoveryUrl, 'discovery URL', local);
   let res: Response;
   try {
     res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS), redirect: 'error' });
   } catch (err) {
-    throw new Error(`the identity provider at ${issuer} ${describeFetchError(err, DISCOVERY_TIMEOUT_MS)}`);
+    throw new Error(`the identity provider at ${url} ${describeFetchError(err, DISCOVERY_TIMEOUT_MS)}`);
   }
-  if (!res.ok) throw new Error(`the identity provider at ${issuer} answered ${res.status} for its discovery document`);
+  if (!res.ok) throw new Error(`the identity provider at ${url} answered ${res.status} for its discovery document`);
   let doc: Partial<Discovery>;
-  try { doc = (await readJson(res)) as Partial<Discovery>; } catch { throw new Error(`the identity provider at ${issuer} did not return a discovery document`); }
-  // §4.3: the document's issuer must be the one we asked. A lone trailing
+  try { doc = (await readJson(res)) as Partial<Discovery>; } catch { throw new Error(`the identity provider at ${url} did not return a discovery document`); }
+  // §4.3: the document's issuer must match OIDC_ISSUER. A lone trailing
   // slash is forgiven in the env value; ID tokens are then checked against
   // the issuer exactly as the IdP spells it.
   if (typeof doc.issuer !== 'string' || doc.issuer.replace(/\/+$/, '') !== issuer.replace(/\/+$/, '')) {
@@ -212,18 +212,19 @@ async function fetchDiscovery(issuer: string): Promise<Discovery> {
  * failed (retried every DISCOVERY_RETRY_MS), so an IdP restart around the
  * hourly refresh does not break sign-ins whose endpoints still work.
  */
-export async function discover(issuer: string): Promise<Discovery> {
+export async function discover(issuer: string, discoveryUrl = `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`): Promise<Discovery> {
   const now = Date.now();
-  let entry = cached?.key === issuer ? cached : null;
+  const key = JSON.stringify([issuer, discoveryUrl]);
+  let entry = cached?.key === key ? cached : null;
   if (entry?.value && now - entry.valueAt < DISCOVERY_TTL_MS) return entry.value;
   if (entry?.pending) return entry.value ?? entry.pending;
   if (entry?.error && now - entry.errorAt < DISCOVERY_RETRY_MS) {
     if (entry.value) return entry.value;
     throw entry.error;
   }
-  if (!entry) cached = entry = { key: issuer, valueAt: 0, errorAt: 0 };
+  if (!entry) cached = entry = { key, valueAt: 0, errorAt: 0 };
   const e = entry;
-  e.pending = fetchDiscovery(issuer).then(
+  e.pending = fetchDiscovery(issuer, discoveryUrl).then(
     (value) => { e.value = value; e.valueAt = Date.now(); e.error = undefined; e.pending = undefined; return value; },
     (error: Error) => { e.error = error; e.errorAt = Date.now(); e.pending = undefined; throw error; },
   );
@@ -365,7 +366,7 @@ export const oidc: OAuthProvider = {
   configured: () => oidcConfig() !== null,
   async authorizeUrl(state, redirectUri, attempt) {
     const c = oidcConfig()!;
-    const d = await discover(c.issuer);
+    const d = await discover(c.issuer, c.discoveryUrl);
     signingAlgs(d);
     const u = new URL(d.authorization_endpoint);
     const p = u.searchParams;
@@ -381,7 +382,7 @@ export const oidc: OAuthProvider = {
   },
   async exchange(code, redirectUri, attempt, callback) {
     const c = oidcConfig()!;
-    const d = await discover(c.issuer);
+    const d = await discover(c.issuer, c.discoveryUrl);
     // RFC 9207: an IdP that names itself in the response must name the one we sent the person to.
     const iss = callback?.get('iss');
     if (iss != null && iss !== d.issuer) throw new Error('the response came from a different identity provider');

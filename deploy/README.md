@@ -332,6 +332,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | OpenID Connect SSO with your own identity provider; redirect URI `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback`. No secret = public client (PKCE only). Setup recipes in [docs/OIDC.md](../docs/OIDC.md) |
+| `OIDC_DISCOVERY_URL` | Optional full discovery document URL; unset uses `<OIDC_ISSUER>/.well-known/openid-configuration`. The document and ID tokens must still match `OIDC_ISSUER`. |
 | `OIDC_LABEL`, `OIDC_SCOPES` | Button text (default `Single sign-on`); scopes (default `openid email profile`, `openid` always added) |
 | `OIDC_ALLOWED_GROUPS`, `OIDC_GROUPS_CLAIM` | Comma-separated groups allowed to sign in (unset = everyone the IdP authenticates); the claim holding them (default `groups`) |
 | `OIDC_EMAIL_VERIFIED` | `require` (default): use the IdP's address only when `email_verified` is true; `trust`: always (only if users cannot edit their address at the IdP) |

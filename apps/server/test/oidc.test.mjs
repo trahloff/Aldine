@@ -32,9 +32,12 @@ const auth = await import('../src/auth.ts');
 // ---- configuration ----
 check(!oauth.getProvider('oidc'), 'oidc is off without OIDC_ISSUER / OIDC_CLIENT_ID');
 eq(oidcMod.oidcConfig({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c' }), {
-  issuer: 'https://i', clientId: 'c', clientSecret: null, label: 'Single sign-on', scopes: 'openid email profile',
+  issuer: 'https://i', discoveryUrl: 'https://i/.well-known/openid-configuration', clientId: 'c', clientSecret: null, label: 'Single sign-on', scopes: 'openid email profile',
   allowedGroups: [], groupsClaim: 'groups', trustEmail: false,
 }, 'defaults');
+eq(oidcMod.oidcConfig({ OIDC_ISSUER: ' https://i/path/ ', OIDC_CLIENT_ID: 'c', OIDC_DISCOVERY_URL: ' ' }).discoveryUrl, 'https://i/path/.well-known/openid-configuration', 'blank discovery URL falls back to the issuer with its path');
+eq(oidcMod.oidcConfig({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_DISCOVERY_URL: ' https://discovery.example/metadata.json ' }).discoveryUrl, 'https://discovery.example/metadata.json', 'explicit discovery URL is trimmed');
+eq(oidcMod.oidcConfig({ OIDC_DISCOVERY_URL: 'https://discovery.example/metadata.json', OIDC_CLIENT_ID: 'c' }), null, 'discovery URL does not replace the required issuer');
 eq(oidcMod.oidcConfig({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_SCOPES: 'email groups', OIDC_ALLOWED_GROUPS: ' a, b ,', OIDC_EMAIL_VERIFIED: 'trust', OIDC_LABEL: 'Keycloak' }).scopes, 'openid email groups', 'openid is always requested, first');
 eq(oidcMod.oidcConfig({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_ALLOWED_GROUPS: ' a, b ,' }).allowedGroups, ['a', 'b'], 'group list is trimmed');
 check(oidcMod.oidcConfig({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_EMAIL_VERIFIED: 'trust' }).trustEmail, 'trust mode');
@@ -148,6 +151,28 @@ const alice = persona({ name: 'Alice Liddell', email: 'Alice@Example.org', group
 const prof = await signIn(alice);
 eq(prof, { email: 'Alice@Example.org', name: 'Alice Liddell', subject: oidcMod.oidcSubject(mock.issuer, alice.sub) }, 'verified email, name, issuer-bound subject');
 eq(mock.state.lastTokenAuth, 'client_secret_basic', 'client_secret_basic by default');
+
+// ---- discovery at a separate address preserves issuer validation and account identity ----
+const discoveryUrl = `${mock.origin.replace('localhost', '127.0.0.1')}/__discovery`;
+configure({ OIDC_DISCOVERY_URL: discoveryUrl });
+eq(await signIn(alice), prof, 'custom discovery URL completes sign-in with the same issuer-bound account');
+const hits = mock.state.discoveryHits;
+eq(await oidcMod.discover(mock.issuer, discoveryUrl), await oidcMod.discover(mock.issuer, discoveryUrl), 'custom discovery is cached');
+eq(mock.state.discoveryHits, hits, 'sign-in and repeated discovery reuse the custom document');
+await oidcMod.discover(mock.issuer);
+eq(mock.state.discoveryHits, hits + 1, 'changing only the discovery URL fetches a new document');
+await oidcMod.discover(mock.issuer, discoveryUrl);
+await throws(() => oidcMod.discover(`${mock.origin}/other/`, discoveryUrl), 'check OIDC_ISSUER', 'changing only the issuer cannot reuse cached discovery');
+configure({ OIDC_DISCOVERY_URL: discoveryUrl });
+await throws(() => signIn(persona({}, { tamper: 'wrong-iss' })), 'iss claim', 'custom discovery still rejects ID tokens for another issuer');
+mock.state.discoveryIssuer = 'https://evil.example/';
+configure({ OIDC_DISCOVERY_URL: discoveryUrl });
+await throws(() => signIn(alice), 'check OIDC_ISSUER', 'custom discovery still rejects a document naming another issuer');
+mock.state.discoveryIssuer = null;
+configure({ OIDC_DISCOVERY_URL: 'http://idp.example.test/metadata.json' });
+await throws(() => signIn(alice), 'discovery URL must use https', 'custom discovery retains transport validation');
+configure({ OIDC_DISCOVERY_URL: 'not-a-url' });
+await throws(() => signIn(alice), 'discovery URL is not a URL', 'invalid custom discovery URL is rejected');
 
 // OIDC_ISSUER without the trailing slash still discovers; tokens are checked against the IdP's spelling.
 configure({ OIDC_ISSUER: mock.issuer.replace(/\/$/, '') });

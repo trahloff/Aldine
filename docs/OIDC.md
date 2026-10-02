@@ -28,7 +28,8 @@ All configuration is environment variables. `OIDC_ISSUER` and
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OIDC_ISSUER` | — | The issuer URL, as the IdP publishes it. Aldine reads `<issuer>/.well-known/openid-configuration`. An issuer with a path works (`https://auth.example.com/application/o/aldine/`); keep the trailing slash if your IdP shows one. Must be `https`, except for `localhost`. |
+| `OIDC_ISSUER` | — | The issuer URL, as the IdP publishes it. The discovery document and ID tokens must name this issuer. An issuer with a path works (`https://auth.example.com/application/o/aldine/`); keep the trailing slash if your IdP shows one. Must be `https`, except for `localhost`. |
+| `OIDC_DISCOVERY_URL` | `<issuer>/.well-known/openid-configuration` | Optional full URL of the discovery document, including its path. Unset or blank: Aldine appends `/.well-known/openid-configuration` to `OIDC_ISSUER`, removing trailing slashes first. Set it when discovery is served at a different address, e.g. `https://auth.internal.example/metadata/openid.json`. Must use `https`; local HTTP is allowed only when both the issuer and discovery URL use loopback hosts. This does not change the expected issuer or account identities. |
 | `OIDC_CLIENT_ID` | — | The client ID you registered. |
 | `OIDC_CLIENT_SECRET` | unset | Set it for a confidential client: Aldine then authenticates with `client_secret_basic`, or with `client_secret_post` when the IdP's discovery document offers only that. Leave it unset for a public client: PKCE only, no client authentication. PKCE (S256) is used either way. |
 | `OIDC_LABEL` | `Single sign-on` | The button text (`Continue with <label>`) and the provider's name on the account page, e.g. `Keycloak` or `University login`. |
@@ -396,8 +397,8 @@ with it.
 |---|---|
 | `… is unavailable: the identity provider at … could not be reached (…)` | Aldine cannot fetch `<issuer>/.well-known/openid-configuration`: a firewall between Aldine and the IdP, a wrong port, or the IdP is down. The bracket holds the network error (`ECONNREFUSED`, `ETIMEDOUT`, …). Failed lookups are retried after 15 seconds. |
 | `… presented a TLS certificate that is not trusted (…)` | The IdP's certificate is self-signed or from an internal CA. Set [`NODE_EXTRA_CA_CERTS`](#a-private-ca-or-a-self-signed-certificate). `ERR_TLS_CERT_ALTNAME_INVALID` means the certificate is for another host name. |
-| `… could not be found (ENOTFOUND): its host name does not resolve` | The host in `OIDC_ISSUER` does not resolve from the Aldine server or container (an internal name, or a typo). |
-| `… answered with a redirect — use the final URL` | `OIDC_ISSUER` redirects (often `http` to `https`, or a missing path). Use the URL it redirects to. |
+| `… could not be found (ENOTFOUND): its host name does not resolve` | The discovery URL's host does not resolve from the Aldine server or container (an internal name, or a typo). Check `OIDC_DISCOVERY_URL`, or `OIDC_ISSUER` when it is unset. |
+| `… answered with a redirect — use the final URL` | The discovery URL redirects (often `http` to `https`, or a missing path). Set `OIDC_DISCOVERY_URL` to the final document URL. |
 | `… the discovery document names issuer "…", not … — check OIDC_ISSUER` | `OIDC_ISSUER` differs from the issuer the IdP publishes (often `http` vs `https`, or a missing path). Copy it from the IdP. |
 | `… must use https` | The issuer or an endpoint in the discovery document is plain `http` on a host other than `localhost`. |
 | `… signs ID tokens only with algorithms Aldine does not accept` | The IdP signs with HS256 (Authentik without a signing key). Give it an RSA or EC key. |

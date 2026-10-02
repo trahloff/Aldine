@@ -52,7 +52,7 @@ if (AUTH_ENABLED) {
     console.log(line);
     // Warms the discovery cache; an unreachable IdP is logged, never fatal.
     const c = oidcConfig()!;
-    discover(c.issuer).catch((err) => console.warn(`[aldine] OIDC discovery failed (sign-in will retry): ${err.message}`));
+    discover(c.issuer, c.discoveryUrl).catch((err) => console.warn(`[aldine] OIDC discovery failed (sign-in will retry): ${err.message}`));
   }
 }
 

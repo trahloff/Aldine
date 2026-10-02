@@ -3,7 +3,8 @@ import type { Page } from '@playwright/test';
 
 /**
  * Generic OIDC sign-in against mock-oidc.mjs (issuer with a path, like
- * Authentik). The auth server runs with OIDC_ALLOWED_GROUPS=aldine-users.
+ * Authentik) and a separate OIDC_DISCOVERY_URL. The auth server runs with
+ * OIDC_ALLOWED_GROUPS=aldine-users.
  * Every test registers its own persona with a fresh `sub` and address, so a
  * re-run against the kept .data-auth starts from the same situation.
  */
@@ -33,7 +34,7 @@ async function signIn(page: Page, p: Persona) {
 }
 
 test.describe('OIDC sign-in', () => {
-  test('first sign-in creates the account, the second lands in the same one', async ({ page }) => {
+  test('separate discovery URL signs in and returns to the same account', async ({ page }) => {
     const p = await persona();
     await signIn(page, p);
     await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });

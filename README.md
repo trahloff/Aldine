@@ -340,6 +340,8 @@ ORCID_CLIENT_SECRET=
 # OpenID Connect SSO (Keycloak, Authentik, Authelia, Pocket ID, …): redirect URI
 # <ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback; every option in docs/OIDC.md
 OIDC_ISSUER=
+# Optional full discovery document URL; unset uses the issuer's well-known URL.
+OIDC_DISCOVERY_URL=
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
 OIDC_LABEL=

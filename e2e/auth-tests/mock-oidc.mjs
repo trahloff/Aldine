@@ -98,7 +98,7 @@ export function createMockOidc(opts = {}) {
     const json = (code, body, headers = {}) => { res.writeHead(code, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
     const text = (code, body) => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(body); };
 
-    if (url.pathname === `${issuerPath}.well-known/openid-configuration` || url.pathname === `${issuerPath.replace(/\/$/, '')}/.well-known/openid-configuration`) {
+    if (url.pathname === '/__discovery' || url.pathname === `${issuerPath}.well-known/openid-configuration` || url.pathname === `${issuerPath.replace(/\/$/, '')}/.well-known/openid-configuration`) {
       state.discoveryHits++;
       if (state.down) return json(503, { error: 'temporarily_unavailable' });
       const doc = {
