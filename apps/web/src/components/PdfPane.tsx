@@ -70,6 +70,13 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   // re-layout instead of three full render passes.
   const [layoutZoom, setLayoutZoom] = useState(zoom);
   useEffect(() => {
+    // The click itself must show: stretch the pages already on screen to the
+    // new size at once, and let the debounced pass below redraw them sharp.
+    const ratio = zoom / layoutZoom;
+    for (const { el } of pageInfo.current) {
+      const w = Number(el.dataset.w), h = Number(el.dataset.h);
+      if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
+    }
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
     return () => clearTimeout(t);
   }, [zoom]);
@@ -154,8 +161,10 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           const canvas = document.createElement('canvas');
           canvas.className = 'pdf-page';
           canvas.dataset.page = String(i);
-          canvas.style.width = `${Math.floor(base.width * scale)}px`;
-          canvas.style.height = `${Math.floor(base.height * scale)}px`;
+          canvas.dataset.w = String(Math.floor(base.width * scale));
+          canvas.dataset.h = String(Math.floor(base.height * scale));
+          canvas.style.width = `${canvas.dataset.w}px`;
+          canvas.style.height = `${canvas.dataset.h}px`;
           canvas.style.background = '#fff';
           frag.appendChild(canvas);
           info.push({ el: canvas, scale, height: base.height });

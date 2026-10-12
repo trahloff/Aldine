@@ -6,11 +6,39 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The divider between editor and preview can be dragged with a finger or a
+  pen, moved with the arrow keys (Shift for larger steps) and reset with a
+  double-click.
+- Escape closes the branch menu and the file menu; the file menu stays
+  inside the window when opened near an edge.
+- Solid surfaces for people who ask for reduced transparency, stronger lines
+  and secondary text for increased contrast.
+
 ### Changed
+- Every control responds on press, not on release, and shows keyboard focus.
+- Menus, the command palette and notifications are translucent surfaces that
+  open from their trigger; notifications slide out the way they came in and
+  wait while the pointer is on them.
+- PDF zoom resizes the pages at once and sharpens them a moment later.
+- Switching theme cross-fades instead of jumping in brightness.
+- Reduced motion keeps the spinner and the typesetting dot running and turns
+  entrances into plain fades.
+- On touch screens: fields no longer zoom the page on focus, the delete
+  button on a project card is visible, and cards do not stay lifted after a
+  tap.
+- Labels smaller than 11 px are 11 px.
 - New app icon: the letter A with a commit line as its crossbar replaces the
   scroll emoji in the browser tab.
 - The connector hint in Account settings names Claude's current menu path
   (Customize → Connectors → Add → Add custom connector).
+
+### Fixed
+- Visual mode: math that was drawn before the math renderer had finished
+  loading stayed as raw source until the caret moved through it. It now
+  renders as soon as the renderer arrives.
+- The primary button's hover colour in the dark theme left its label under
+  the 4.5:1 contrast minimum.
 
 ## [0.11.0] — 2026-09-23
 

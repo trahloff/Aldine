@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
 import { fileIcon } from './Icons';
 
@@ -70,6 +70,27 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   };
   useEffect(() => { if (newFileRequest) { startAdding(); onNewFileHandled?.(); } }, [newFileRequest]);
   const [menu, setMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // The menu opens at the pointer; near the right or bottom edge it would
+  // hang off the window, so it is pulled back in before the first paint.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el || !menu) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(menu.x, window.innerWidth - r.width - 8));
+    const y = Math.max(8, Math.min(menu.y, window.innerHeight - r.height - 8));
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.querySelector<HTMLElement>('.menu__item')?.focus({ preventScroll: true });
+  }, [menu]);
+  useEffect(() => {
+    if (!menu) return;
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    const away = (e: PointerEvent) => { if (!menuRef.current?.contains(e.target as Element)) setMenu(null); };
+    window.addEventListener('keydown', key);
+    window.addEventListener('pointerdown', away);
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('pointerdown', away); };
+  }, [menu]);
   const [dragOver, setDragOver] = useState(false);
   const [sourceOnly, setSourceOnly] = useState(true);
   // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
@@ -188,7 +209,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       <p className="filetree__hint">Drop files here to upload</p>
 
       {menu && (
-        <div className="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()}>
+        <div ref={menuRef} className="menu" role="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()} data-testid="file-menu">
           <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as main document</button>
           <button className="menu__item" onClick={() => {
             const to = window.prompt('Rename to', menu.path);

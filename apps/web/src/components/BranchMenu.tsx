@@ -21,9 +21,11 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
   useEffect(() => { if (open) load(); }, [open, projectId]);
 
   useEffect(() => {
-    const close = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false); };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
+    const close = (e: PointerEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', key);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', key); };
   }, []);
 
   const create = async () => {
@@ -83,7 +85,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button className="branch-pill" onClick={() => setOpen(!open)} data-testid="branch-menu" title="Branches">
+      <button className="branch-pill" onClick={() => setOpen(!open)} data-testid="branch-menu" title="Branches" aria-haspopup="menu" aria-expanded={open}>
         <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Zm0 2.122a3.25 3.25 0 1 0-1.5 0v5.256a3.25 3.25 0 1 0 1.5 0V9.5a2 2 0 0 1 2-2h3a3.5 3.5 0 0 0 3.5-3.5v-.372a3.25 3.25 0 1 0-1.5 0v.372a2 2 0 0 1-2 2h-3c-.729 0-1.412.195-2 .535ZM13.25 5a1.75 1.75 0 1 1 0-3.5 1.75 1.75 0 0 1 0 3.5Zm-8.5 7.75a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Z"/></svg>
         {current}
       </button>

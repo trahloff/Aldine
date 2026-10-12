@@ -7,7 +7,12 @@ export function getTheme(): Theme {
 
 export function setTheme(t: Theme): void {
   localStorage.setItem('aldine.theme', t);
-  document.documentElement.dataset.theme = t;
+  const apply = () => { document.documentElement.dataset.theme = t; };
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+  // Only an actual change cross-fades; a view transition freezes input for
+  // its duration, and re-selecting the current theme should cost nothing.
+  if (doc.startViewTransition && document.documentElement.dataset.theme !== t) doc.startViewTransition(apply);
+  else apply();
 }
 
 export function toggleTheme(): Theme {

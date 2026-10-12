@@ -70,6 +70,10 @@ export default function Editor() {
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
   const [pdfWidth, setPdfWidth] = useState(() => Math.max(360, Math.round(window.innerWidth * 0.4)));
+  const [resizing, setResizing] = useState(false);
+  // Floor the upper bound so a narrow window can't push it below the 280
+  // minimum (which would invert the clamp and collapse the pane).
+  const clampPdfWidth = (w: number) => Math.min(Math.max(280, w), Math.max(360, window.innerWidth - 500));
   // The pane keeps an absolute width, so shrinking the window would otherwise
   // leave a preview wider than the room for it and squeeze the editor away.
   // Same bound as the resizer's.
@@ -982,7 +986,7 @@ export default function Editor() {
         <RemotePendingBanner key={id} projectId={id} namespace={project.remotePending.namespace} onProvisioned={loadProject} />
       )}
 
-      <div className="workspace">
+      <div className={`workspace${resizing ? ' workspace--resizing' : ''}`}>
         <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
@@ -1183,19 +1187,41 @@ export default function Editor() {
         </main>
 
         <div
-          className="resizer"
-          onMouseDown={(e) => {
+          className={`resizer${resizing ? ' resizer--drag' : ''}`}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize preview"
+          aria-valuenow={Math.round(pdfWidth)}
+          aria-valuemin={280}
+          aria-valuemax={Math.max(360, window.innerWidth - 500)}
+          tabIndex={0}
+          data-testid="pane-resizer"
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const el = e.currentTarget;
+            // Capture keeps the drag alive over the PDF canvas, the editor and
+            // outside the window, and it works for a finger or a pen.
+            el.setPointerCapture(e.pointerId);
             const startX = e.clientX;
             const start = pdfWidth;
-            // Floor the upper bound so a narrow window can't push it below the
-            // 280 minimum (which would invert the clamp and collapse the pane).
-            const move = (ev: MouseEvent) => {
-              const maxW = Math.max(360, window.innerWidth - 500);
-              setPdfWidth(Math.min(Math.max(280, start + (startX - ev.clientX)), maxW));
+            setResizing(true);
+            const move = (ev: PointerEvent) => setPdfWidth(clampPdfWidth(start + (startX - ev.clientX)));
+            const up = () => {
+              setResizing(false);
+              el.removeEventListener('pointermove', move);
+              el.removeEventListener('pointerup', up);
+              el.removeEventListener('pointercancel', up);
             };
-            const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-            window.addEventListener('mousemove', move);
-            window.addEventListener('mouseup', up);
+            el.addEventListener('pointermove', move);
+            el.addEventListener('pointerup', up);
+            el.addEventListener('pointercancel', up);
+          }}
+          onDoubleClick={() => setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4)))}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 80 : 16;
+            if (e.key === 'ArrowLeft') { e.preventDefault(); setPdfWidth((w) => clampPdfWidth(w + step)); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); setPdfWidth((w) => clampPdfWidth(w - step)); }
           }}
         />
 

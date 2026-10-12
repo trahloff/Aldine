@@ -69,7 +69,7 @@ export default function CommandPalette({ open, commands, onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onClick={onClose} data-testid="command-palette">
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           className="palette__input"
