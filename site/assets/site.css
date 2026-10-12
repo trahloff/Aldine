@@ -10,11 +10,22 @@
     --hairline: rgba(255, 255, 255, 0.1);
     --hairline-strong: rgba(255, 255, 255, 0.18);
     --accent: #5b8cff;
-    --accent-fill: #3d74f6;
-    --accent-fill-hover: #4f81f8;
+    --accent-fill: #3568ee;
+    --accent-fill-hover: #2c5ce0;
     --paper: #faf8f2;
     --selection: rgba(91, 140, 255, 0.3);
     --hover-wash: rgba(255, 255, 255, 0.06);
+    --press-wash: rgba(255, 255, 255, 0.11);
+    --on-accent: #ffffff;
+    --header-bg: rgba(28, 28, 30, 0.82);
+    --term-bg: #141416;
+    --term-text: #f5f5f7;
+    --term-dim: #8e8e96;
+    --term-accent: #5b8cff;
+    --shadow-frame: 0 10px 40px rgba(0, 0, 0, 0.4);
+    --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.55);
+    --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
     --serif:
         "Iowan Old Style", Palatino, "Palatino Linotype", "Book Antiqua",
         Georgia, serif;
@@ -37,6 +48,8 @@ body {
     color: var(--text);
     font-family: var(--serif);
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
 }
 ::selection {
     background: var(--selection);
@@ -64,9 +77,9 @@ header {
     position: sticky;
     top: 0;
     z-index: 10;
-    background: rgba(28, 28, 30, 0.82);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
+    background: var(--header-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
     border-bottom: 1px solid var(--hairline);
 }
 .bar {
@@ -78,7 +91,7 @@ header {
 .brand {
     font-family: var(--sans);
     font-weight: 700;
-    font-size: 17px;
+    font-size: 1.0625rem;
     letter-spacing: -0.02em;
     color: var(--text);
 }
@@ -94,7 +107,7 @@ nav {
     gap: 18px;
     align-items: center;
     font-family: var(--sans);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
 }
 nav a {
     color: var(--text-2);
@@ -115,7 +128,7 @@ nav a[aria-current="page"] {
 }
 .btn {
     font-family: var(--sans);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     font-weight: 600;
     padding: 7px 14px;
     border-radius: 8px;
@@ -124,18 +137,30 @@ nav a[aria-current="page"] {
     background: transparent;
     cursor: pointer;
     display: inline-block;
+    transition:
+        background 150ms var(--ease),
+        transform 120ms var(--ease-out);
 }
 .btn:hover {
     background: var(--hover-wash);
     text-decoration: none;
 }
+/* the press answers on pointer-down; only the release is eased */
+.btn:active {
+    background: var(--press-wash);
+    transform: scale(0.97);
+    transition-duration: 0ms;
+}
 .btn--primary,
 nav a.btn--primary {
     background: var(--accent-fill);
     border-color: transparent;
-    color: var(--paper);
+    color: var(--on-accent);
 }
 .btn--primary:hover {
+    background: var(--accent-fill-hover);
+}
+.btn--primary:active {
     background: var(--accent-fill-hover);
 }
 @media (max-width: 560px) {
@@ -144,11 +169,11 @@ nav a.btn--primary {
     }
     nav {
         gap: 12px;
-        font-size: 12.5px;
+        font-size: 0.7812rem;
     }
     nav .btn {
         padding: 6px 10px;
-        font-size: 12.5px;
+        font-size: 0.7812rem;
     }
 }
 @media (max-width: 400px) {
@@ -163,31 +188,31 @@ nav a.btn--primary {
 }
 .crumbs {
     font-family: var(--sans);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--text-3);
 }
 .crumbs a {
     color: var(--text-2);
 }
 .doc h1 {
-    font-size: clamp(30px, 5vw, 42px);
+    font-size: clamp(1.875rem, 5vw, 2.625rem);
     font-weight: 600;
-    letter-spacing: -0.015em;
-    line-height: 1.15;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
     margin: 14px 0 14px;
 }
 .lede {
-    font-size: 18px;
+    font-size: 1.125rem;
     color: var(--text-2);
 }
 .checked {
     font-family: var(--sans);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--text-3);
     margin-top: 14px;
 }
 .doc h2 {
-    font-size: 26px;
+    font-size: 1.625rem;
     font-weight: 600;
     letter-spacing: -0.01em;
     line-height: 1.25;
@@ -196,13 +221,13 @@ nav a.btn--primary {
 }
 .doc h3 {
     font-family: var(--sans);
-    font-size: 15.5px;
+    font-size: 0.9688rem;
     font-weight: 600;
     margin: 28px 0 6px;
 }
 .doc p,
 .doc li {
-    font-size: 16px;
+    font-size: 1rem;
     color: var(--text-2);
 }
 .doc p {
@@ -229,7 +254,7 @@ nav a.btn--primary {
 }
 .src {
     font-family: var(--sans);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--text-3);
 }
 code {
@@ -242,15 +267,15 @@ code {
     overflow-wrap: anywhere;
 }
 pre {
-    background: #141416;
+    background: var(--term-bg);
     border: 1px solid var(--hairline);
     border-radius: 10px;
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.6;
     padding: 16px 18px;
     overflow-x: auto;
-    color: var(--text);
+    color: var(--term-text);
     margin-bottom: 14px;
 }
 pre code {
@@ -268,7 +293,7 @@ table {
     border-collapse: collapse;
     width: 100%;
     font-family: var(--sans);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     line-height: 1.45;
 }
 th,
@@ -306,7 +331,7 @@ tbody th {
     border-radius: 10px;
     overflow: hidden;
     border: 1px solid var(--hairline);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-frame);
     background: var(--panel);
     margin: 20px 0 8px;
 }
@@ -317,7 +342,7 @@ tbody th {
     height: auto;
 }
 .demo-caption {
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--text-2);
     text-align: center;
     margin-bottom: 14px;
@@ -341,7 +366,7 @@ footer {
 }
 .colophon {
     text-align: center;
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--text-3);
     max-width: 44em;
     margin: 0 auto;
@@ -363,6 +388,82 @@ footer {
     flex-wrap: wrap;
     row-gap: 6px;
     margin-top: 14px;
+}
+/* headings break into even lines, paragraphs avoid a last line of one word */
+h1,
+h2,
+h3 {
+    text-wrap: balance;
+}
+p,
+li {
+    text-wrap: pretty;
+}
+
+/* The bar has no edge while the page is at the top; the hairline arrives
+   as content starts to scroll under it. */
+@supports (animation-timeline: scroll()) {
+    header {
+        border-bottom-color: transparent;
+        animation: header-edge linear both;
+        animation-timeline: scroll(root);
+        animation-range: 0 48px;
+    }
+    @keyframes header-edge {
+        to {
+            border-bottom-color: var(--hairline);
+        }
+    }
+}
+
+/* a 13px link is a 20px target; fingers get 44 */
+@media (pointer: coarse) {
+    nav a:not(.btn) {
+        /* padding, not display: the hidden nav links must stay hidden */
+        padding-block: 13px;
+    }
+    .colophon nav {
+        row-gap: 0;
+    }
+    .btn {
+        padding-top: 11px;
+        padding-bottom: 11px;
+    }
+    header nav .btn {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --header-bg: var(--bg);
+    }
+    header {
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+}
+@media (prefers-contrast: more) {
+    :root {
+        --hairline: rgba(255, 255, 255, 0.34);
+        --hairline-strong: rgba(255, 255, 255, 0.52);
+        --text-2: #c2c2c8;
+        --text-3: #b0b0b8;
+        --header-bg: var(--bg);
+    }
+    header {
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .btn {
+        transition: none;
+    }
+    .btn:active {
+        transform: none;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
     html {

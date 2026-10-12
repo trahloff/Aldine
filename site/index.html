@@ -169,14 +169,25 @@
                 --hairline: rgba(255, 255, 255, 0.1);
                 --hairline-strong: rgba(255, 255, 255, 0.18);
                 --accent: #5b8cff;
-                --accent-fill: #3d74f6;
-                --accent-fill-hover: #4f81f8;
+                --accent-fill: #3568ee;
+                --accent-fill-hover: #2c5ce0;
                 --paper: #faf8f2;
                 --paper-ink: #1b1b1d;
                 --paper-ink-2: #55555c;
                 --ok: #32d74b;
                 --selection: rgba(91, 140, 255, 0.3);
                 --hover-wash: rgba(255, 255, 255, 0.06);
+                --press-wash: rgba(255, 255, 255, 0.11);
+                --on-accent: #ffffff;
+                --header-bg: rgba(28, 28, 30, 0.82);
+                --term-bg: #141416;
+                --term-text: #f5f5f7;
+                --term-dim: #8e8e96;
+                --term-accent: #5b8cff;
+                --shadow-frame: 0 10px 40px rgba(0, 0, 0, 0.4);
+                --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.55);
+                --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+                --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
                 --serif:
                     "Iowan Old Style", Palatino, "Palatino Linotype",
                     "Book Antiqua", Georgia, serif;
@@ -200,6 +211,8 @@
                 color: var(--text);
                 font-family: var(--serif);
                 line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+                -webkit-tap-highlight-color: transparent;
             }
             ::selection {
                 background: var(--selection);
@@ -228,9 +241,9 @@
                 position: sticky;
                 top: 0;
                 z-index: 10;
-                background: rgba(28, 28, 30, 0.82);
-                backdrop-filter: blur(14px);
-                -webkit-backdrop-filter: blur(14px);
+                background: var(--header-bg);
+                backdrop-filter: blur(20px) saturate(180%);
+                -webkit-backdrop-filter: blur(20px) saturate(180%);
                 border-bottom: 1px solid var(--hairline);
             }
             .bar {
@@ -242,7 +255,7 @@
             .brand {
                 font-family: var(--sans);
                 font-weight: 700;
-                font-size: 17px;
+                font-size: 1.0625rem;
                 letter-spacing: -0.02em;
                 color: var(--text);
             }
@@ -255,7 +268,7 @@
                 gap: 18px;
                 align-items: center;
                 font-family: var(--sans);
-                font-size: 13.5px;
+                font-size: 0.8438rem;
             }
             nav a {
                 color: var(--text-2);
@@ -279,11 +292,11 @@
                 }
                 nav {
                     gap: 12px;
-                    font-size: 12.5px;
+                    font-size: 0.7812rem;
                 }
                 nav .btn {
                     padding: 6px 10px;
-                    font-size: 12.5px;
+                    font-size: 0.7812rem;
                 }
             }
             /* in-page anchors go first: they stay reachable by scrolling */
@@ -299,7 +312,7 @@
             }
             .btn {
                 font-family: var(--sans);
-                font-size: 13.5px;
+                font-size: 0.8438rem;
                 font-weight: 600;
                 padding: 7px 14px;
                 border-radius: 8px;
@@ -308,42 +321,56 @@
                 background: transparent;
                 cursor: pointer;
                 display: inline-block;
+                transition:
+                    background 150ms var(--ease),
+                    transform 120ms var(--ease-out);
             }
             .btn:hover {
                 background: var(--hover-wash);
                 text-decoration: none;
             }
+            /* the press answers on pointer-down; only the release is eased */
+            .btn:active {
+                background: var(--press-wash);
+                transform: scale(0.97);
+                transition-duration: 0ms;
+            }
             .btn--primary {
                 background: var(--accent-fill);
                 border-color: transparent;
-                color: var(--paper);
+                color: var(--on-accent);
             }
             .btn--primary:hover {
+                background: var(--accent-fill-hover);
+            }
+            .btn--primary:active {
                 background: var(--accent-fill-hover);
             }
 
             /* hero, centred over the centred paper (deliberate: the page has one spine) */
             .hero {
                 text-align: center;
-                padding: 72px 0 24px;
+                /* .wrap's side gutter has to survive this shorthand, or the
+                   copy runs to the screen edge on a phone */
+                padding: 72px 24px 24px;
             }
             .eyebrow {
                 font-family: var(--sans);
-                font-size: 11.5px;
+                font-size: 0.7188rem;
                 font-weight: 600;
                 letter-spacing: 0.14em;
                 text-transform: uppercase;
                 color: var(--text-3);
             }
             .hero h1 {
-                font-size: clamp(34px, 6vw, 54px);
+                font-size: clamp(2.125rem, 6vw, 3.375rem);
                 font-weight: 600;
-                letter-spacing: -0.015em;
-                line-height: 1.12;
+                letter-spacing: -0.02em;
+                line-height: 1.08;
                 margin: 14px 0 10px;
             }
             .hero .sub {
-                font-size: 18px;
+                font-size: 1.125rem;
                 color: var(--text-2);
                 max-width: 34em;
                 margin: 0 auto;
@@ -351,7 +378,7 @@
 
             /* the signature: the pitch, typeset as a paper */
             .paper-stage {
-                padding: 44px 0 8px;
+                padding: 44px 24px 8px;
             }
             .paper {
                 background: var(--paper);
@@ -363,17 +390,17 @@
                 position: relative;
                 box-shadow:
                     0 0 0 1px var(--hairline),
-                    0 24px 70px rgba(0, 0, 0, 0.55);
+                    var(--shadow-paper);
                 text-align: center;
             }
             .paper .paper-title {
                 font-weight: 600;
-                font-size: 24px;
+                font-size: 1.5rem;
                 letter-spacing: 0.005em;
                 line-height: 1.25;
             }
             .paper .authors {
-                font-size: 14.5px;
+                font-size: 0.9062rem;
                 margin-top: 12px;
                 color: var(--paper-ink);
             }
@@ -381,12 +408,12 @@
                 white-space: nowrap;
             }
             .paper .abstract-head {
-                font-size: 12.5px;
+                font-size: 0.7812rem;
                 font-weight: 700;
                 margin: 26px 0 6px;
             }
             .paper .abstract {
-                font-size: 13.8px;
+                font-size: 0.8625rem;
                 line-height: 1.55;
                 text-align: justify;
                 hyphens: auto;
@@ -399,7 +426,7 @@
             }
             .paper .pageno {
                 margin-top: 34px;
-                font-size: 12px;
+                font-size: 0.75rem;
                 color: var(--paper-ink-2);
             }
             .typeset-chip {
@@ -407,7 +434,7 @@
                 top: 14px;
                 right: 14px;
                 font-family: var(--sans);
-                font-size: 11.5px;
+                font-size: 0.7188rem;
                 font-weight: 600;
                 color: var(--paper-ink-2);
                 display: inline-flex;
@@ -429,7 +456,7 @@
             }
             .paper-caption {
                 text-align: center;
-                font-size: 13px;
+                font-size: 0.8125rem;
                 color: var(--text-3);
                 margin-top: 14px;
                 font-style: italic;
@@ -444,8 +471,12 @@
                 }
             }
             @media (max-width: 560px) {
+                .paper-stage {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                }
                 .paper {
-                    padding: 34px 26px 30px;
+                    padding: 34px 22px 30px;
                 }
             }
 
@@ -459,7 +490,7 @@
             .cta-note {
                 text-align: center;
                 font-family: var(--sans);
-                font-size: 12.5px;
+                font-size: 0.7812rem;
                 color: var(--text-3);
             }
 
@@ -474,7 +505,7 @@
             }
             h2.sec {
                 font-family: var(--sans);
-                font-size: 13px;
+                font-size: 0.8125rem;
                 font-weight: 600;
                 letter-spacing: 0.12em;
                 text-transform: uppercase;
@@ -484,7 +515,7 @@
             /* real headlines for the sections that argue, kickers for the ones that show */
             h2.sec-title {
                 font-family: var(--serif);
-                font-size: 26px;
+                font-size: 1.625rem;
                 font-weight: 600;
                 letter-spacing: -0.01em;
                 line-height: 1.25;
@@ -492,7 +523,7 @@
             }
             h2.sec-title .note {
                 font-family: var(--sans);
-                font-size: 13px;
+                font-size: 0.8125rem;
                 font-weight: 400;
                 color: var(--text-3);
                 letter-spacing: 0;
@@ -504,7 +535,7 @@
                 border-radius: 10px;
                 overflow: hidden;
                 border: 1px solid var(--hairline);
-                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+                box-shadow: var(--shadow-frame);
                 background: var(--panel);
             }
             .demo-frame img,
@@ -514,7 +545,7 @@
                 height: auto;
             }
             .demo-caption {
-                font-size: 14px;
+                font-size: 0.875rem;
                 color: var(--text-2);
                 text-align: center;
                 margin-top: 12px;
@@ -544,12 +575,12 @@
             }
             .cell h3 {
                 font-family: var(--sans);
-                font-size: 14.5px;
+                font-size: 0.9062rem;
                 font-weight: 600;
                 margin-bottom: 6px;
             }
             .cell p {
-                font-size: 14.5px;
+                font-size: 0.9062rem;
                 color: var(--text-2);
                 line-height: 1.5;
             }
@@ -573,7 +604,7 @@
             /* honesty */
             .honest p {
                 color: var(--text-2);
-                font-size: 16px;
+                font-size: 1rem;
                 margin-bottom: 14px;
             }
             .honest strong {
@@ -587,13 +618,13 @@
 
             .faq h3 {
                 font-family: var(--sans);
-                font-size: 15.5px;
+                font-size: 0.9688rem;
                 font-weight: 600;
                 margin: 24px 0 6px;
             }
             .faq p {
                 color: var(--text-2);
-                font-size: 16px;
+                font-size: 1rem;
             }
             .faq code,
             .start-note code {
@@ -603,26 +634,26 @@
 
             /* quick start */
             .term {
-                background: #141416;
+                background: var(--term-bg);
                 border: 1px solid var(--hairline);
                 border-radius: 10px;
                 font-family: var(--mono);
-                font-size: 13.5px;
+                font-size: 0.8438rem;
                 line-height: 1.9;
                 padding: 18px 20px;
                 overflow-x: auto;
-                color: var(--text);
+                color: var(--term-text);
             }
             .term .c {
-                color: var(--text-3);
+                color: var(--term-dim);
             }
             .term .p {
-                color: var(--accent);
+                color: var(--term-accent);
                 user-select: none;
             }
             .start-note {
                 font-family: var(--sans);
-                font-size: 13px;
+                font-size: 0.8125rem;
                 color: var(--text-3);
                 margin-top: 10px;
             }
@@ -635,7 +666,7 @@
             }
             .colophon {
                 text-align: center;
-                font-size: 14px;
+                font-size: 0.875rem;
                 color: var(--text-3);
                 max-width: 44em;
                 margin: 0 auto;
@@ -657,6 +688,83 @@
                 flex-wrap: wrap;
                 row-gap: 6px;
                 margin-top: 14px;
+            }
+
+            /* headings break into even lines, paragraphs avoid a last line of one word */
+            h1,
+            h2,
+            h3 {
+                text-wrap: balance;
+            }
+            p,
+            li {
+                text-wrap: pretty;
+            }
+
+            /* The bar has no edge while the page is at the top; the hairline arrives
+               as content starts to scroll under it. */
+            @supports (animation-timeline: scroll()) {
+                header {
+                    border-bottom-color: transparent;
+                    animation: header-edge linear both;
+                    animation-timeline: scroll(root);
+                    animation-range: 0 48px;
+                }
+                @keyframes header-edge {
+                    to {
+                        border-bottom-color: var(--hairline);
+                    }
+                }
+            }
+
+            /* a 13px link is a 20px target; fingers get 44 */
+            @media (pointer: coarse) {
+                nav a:not(.btn) {
+                    /* padding, not display: the hidden nav links must stay hidden */
+                    padding-block: 13px;
+                }
+                .colophon nav {
+                    row-gap: 0;
+                }
+                .btn {
+                    padding-top: 11px;
+                    padding-bottom: 11px;
+                }
+                header nav .btn {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                }
+            }
+
+            @media (prefers-reduced-transparency: reduce) {
+                :root {
+                    --header-bg: var(--bg);
+                }
+                header {
+                    backdrop-filter: none;
+                    -webkit-backdrop-filter: none;
+                }
+            }
+            @media (prefers-contrast: more) {
+                :root {
+                    --hairline: rgba(255, 255, 255, 0.34);
+                    --hairline-strong: rgba(255, 255, 255, 0.52);
+                    --text-2: #c2c2c8;
+                    --text-3: #b0b0b8;
+                    --header-bg: var(--bg);
+                }
+                header {
+                    backdrop-filter: none;
+                    -webkit-backdrop-filter: none;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .btn {
+                    transition: none;
+                }
+                .btn:active {
+                    transform: none;
+                }
             }
         </style>
     </head>
@@ -1197,5 +1305,15 @@
                 </nav>
             </div>
         </footer>
+        <script>
+            // Reduced motion: the recording waits for a click instead of looping on its own.
+            if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+                for (const v of document.querySelectorAll("video[autoplay]")) {
+                    v.removeAttribute("autoplay");
+                    v.pause();
+                    v.controls = true;
+                }
+            }
+        </script>
     </body>
 </html>
