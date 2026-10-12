@@ -159,7 +159,7 @@
         </script>
         <style>
             :root {
-                color-scheme: dark;
+                color-scheme: dark light;
                 --bg: #1c1c1e;
                 --panel: #232326;
                 --panel-raised: #28282c;
@@ -690,6 +690,33 @@
                 margin-top: 14px;
             }
 
+            /* Light appearance for readers whose system asks for it. The screenshots,
+               the recordings and the terminal stay dark: they show the app as it ships. */
+            @media (prefers-color-scheme: light) {
+                :root {
+                    color-scheme: light;
+                    --bg: #f5f5f7;
+                    --panel: #ffffff;
+                    --panel-raised: #e9e9ee;
+                    --text: #1d1d1f;
+                    --text-2: #5f5f65;
+                    --text-3: #6e6e73;
+                    --hairline: rgba(0, 0, 0, 0.1);
+                    --hairline-strong: rgba(0, 0, 0, 0.18);
+                    --accent: #2e62e9;
+                    --accent-fill: #2e62e9;
+                    --accent-fill-hover: #2554cf;
+                    --paper: #fffdf8;
+                    --selection: rgba(46, 98, 233, 0.22);
+                    --hover-wash: rgba(0, 0, 0, 0.045);
+                    --press-wash: rgba(0, 0, 0, 0.08);
+                    --header-bg: rgba(245, 245, 247, 0.82);
+                    --term-bg: #1c1c1e;
+                    --shadow-frame: 0 10px 40px rgba(0, 0, 0, 0.14);
+                    --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.16);
+                }
+            }
+
             /* headings break into even lines, paragraphs avoid a last line of one word */
             h1,
             h2,
@@ -756,6 +783,14 @@
                 header {
                     backdrop-filter: none;
                     -webkit-backdrop-filter: none;
+                }
+            }
+            @media (prefers-contrast: more) and (prefers-color-scheme: light) {
+                :root {
+                    --hairline: rgba(0, 0, 0, 0.32);
+                    --hairline-strong: rgba(0, 0, 0, 0.5);
+                    --text-2: #48484d;
+                    --text-3: #55555a;
                 }
             }
             @media (prefers-reduced-motion: reduce) {
