@@ -1,20 +1,39 @@
 # Aldine
 
-> Aldine is a slim, open-source, self-hosted LaTeX collaboration platform, an
-> Overleaf alternative: real-time collaborative editing (Yjs CRDT), git-native
-> branches per project, Zotero and GitHub sync, citation search (OpenAlex),
-> sandboxed TeX Live compiles, and a byte-stable visual editing mode. AGPL-3.0.
+> Aldine is an open-source, self-hosted collaborative LaTeX editor and an
+> Overleaf alternative: real-time collaborative editing (Yjs CRDT), a real git
+> repository with branches per project, push and pull to GitHub, GitLab, Gitea
+> and Forgejo, Zotero sync, citation search (OpenAlex), sandboxed TeX Live
+> compiles, a built-in MCP server for Claude, and a byte-stable visual editing
+> mode. AGPL-3.0.
+
+Status: v0.11.0 (September 2026), AGPL-3.0. There is no paid plan and no
+hosted service today; you run it yourself.
 
 Key facts:
 
-- Self-hosting is two Docker containers (app + compiler) via `docker compose up -d`;
-  a 4 GB VPS is enough. No external services required.
-- Migrating from Overleaf: ZIP import preserves the project; GitHub sync works both ways.
+- Self-hosting is two Docker containers (app + compiler) via `docker compose up -d`.
+  No external services required. The first pull is about 1.1 GB compressed,
+  4.3 GB on disk.
+- Git: every project is a real git repository. Branches are created, edited
+  and merged from the UI. Push and pull to GitHub, GitLab (gitlab.com or
+  self-hosted), Gitea and Forgejo (Codeberg included), and open a pull or
+  merge request from the editor.
+- Sign-in (optional, `AUTH_ENABLED=1`): email and password, Google, GitHub,
+  ORCID, or your own OpenID Connect provider (Keycloak, Authentik, Authelia,
+  Pocket ID). `ALDINE_SSO_ONLY=1` disables passwords.
+- Zotero: link My Library or a group library, whole or a single collection;
+  the project's `.bib`
+  stays in sync with a version-aware refresh; cite from a search panel or
+  `\cite{` autocomplete.
+- Migrating from Overleaf: download the project as a ZIP and drop it on the
+  home screen; the root file is detected and the first typeset runs
+  automatically.
 - The compiler runs latexmk in a sandbox: no network egress, dropped capabilities,
   restricted shell-escape.
 - Storage is plain files plus per-project git repos; Postgres is optional
   (`DATABASE_URL`). Your data stays greppable on disk.
-- Claude as a collaborator (Agent API, optional, `ALDINE_MCP=1`): the instance
+- MCP server for Claude (the Agent API; optional, `ALDINE_MCP=1`): the instance
   serves plain MCP at `/mcp`; Claude edits the live document, typesets, and
   shows the PDF in the chat (inline on claude.ai, Claude Desktop and Cowork; a
   signed link in Claude Code and other MCP clients). Every change is a git
@@ -25,6 +44,71 @@ Key facts:
 - Live demo: https://demo.aldine.dev (world-writable, wiped nightly).
 - Source: https://github.com/trahloff/Aldine
 
+## Limits
+
+- Young: v0.x. Before 1.0 a minor version may change behaviour or on-disk layout.
+- Review is by comments with suggested edits. There are no keystroke-level
+  track changes.
+- Single-node by design: one app node is the supported topology, scaled vertically.
+- CJK scripts need the `-full` compiler image (`ALDINE_TEXLIVE=-full`).
+
+## Compared with Overleaf
+
+Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
+
+- Overleaf is open source under AGPL-3.0; Community Edition is the
+  self-hosted build from that repository and Server Pro the officially
+  supported version with more features.
+  Source: https://github.com/overleaf/overleaf
+- Overleaf's comparison lists commenting, real-time track changes, git
+  integration, single sign-on (SAML 2 and LDAP) and sandboxed compiles as
+  Server Pro features that Community Edition does not include.
+  Source: https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition
+- On overleaf.com, git integration and GitHub synchronization are premium
+  features, and the Overleaf git system does not support branching.
+  Source: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization
+  Source: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration
+- Overleaf's Zotero integration is a premium feature. Its linked .bib
+  import takes a whole library or group library, not a single folder; its
+  Zotero Sync keeps an account-level Library up to date with collections you
+  choose.
+  Source: https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero
+- Where Overleaf is the better choice: it dates from 2011, hosts a public
+  template gallery, and Server Pro has real-time track changes, SAML and
+  LDAP, and vendor support.
+  Sources: https://www.overleaf.com/about ,
+  https://www.overleaf.com/latex/templates ,
+  https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition
+
+## Common questions
+
+- Is there an open-source alternative to Overleaf I can host myself? Yes.
+  Aldine is an open-source (AGPL-3.0) collaborative LaTeX editor that runs on
+  your own server as two Docker containers. Overleaf also publishes its own
+  Community Edition.
+- Does it work with git and GitHub or GitLab? Every Aldine project is a real
+  git repository with branches you create and merge from the UI. It pushes
+  and pulls to GitHub, GitLab, Gitea or Forgejo, and a co-author can clone the
+  repository and keep using VS Code.
+- Is it free, and how many collaborators can a project have? It is free to
+  self-host under AGPL-3.0 and the number of collaborators is not limited.
+  There is no paid plan and no hosted service today.
+- Can I import my Overleaf projects? Yes, from the ZIP that Overleaf lets you
+  download.
+- Does it have track changes? Not at keystroke level. It has review comments
+  with suggested edits that the author accepts with one click.
+- Does it support single sign-on? Yes: Google, GitHub, ORCID or your own
+  OpenID Connect provider, with `AUTH_ENABLED=1`.
+
+## Pages
+
+- [Overleaf alternatives you can self-host, compared](https://aldine.dev/overleaf-alternatives/): Overleaf Community Edition, Server Pro, Aldine, TeXlyre, CoCalc and git with VS Code, sourced and dated
+- [Self-hosting Overleaf: what Community Edition includes, and an alternative](https://aldine.dev/self-hosted-overleaf/): Community Edition vs Server Pro vs Aldine, single sign-on, moving a project across
+- [Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like](https://aldine.dev/overleaf-git/): Overleaf's git integration and GitHub sync, and git in Aldine
+- [Connect Claude to a LaTeX project over MCP](https://aldine.dev/latex-mcp/): the MCP server, setup in three steps, the tools, the demo connector
+- [Self-hosting Aldine with Docker Compose](https://aldine.dev/self-hosting/): install, upgrade, TeX packages, logins and SSO, reverse proxy, backups, limits
+- [Using Zotero with LaTeX: three ways to keep references in sync](https://aldine.dev/zotero-latex/): Overleaf's integration, Better BibTeX auto-export, Zotero in Aldine
+
 ## Documentation
 
 - [README](https://raw.githubusercontent.com/trahloff/Aldine/main/README.md): features, quick start, single-VPS runbook, backup and upgrade recipes
@@ -32,7 +116,8 @@ Key facts:
 - [Scaling notes](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/SCALING.md): architecture, what scales and what is single-node by design
 - [Security policy](https://raw.githubusercontent.com/trahloff/Aldine/main/SECURITY.md): threat model, sandbox details, reporting
 - [Contributing](https://raw.githubusercontent.com/trahloff/Aldine/main/CONTRIBUTING.md): dev setup, workspace layout, test commands
-- [Agent API](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/AGENT_API.md): connecting Claude over MCP, the tools, reachability, attribution and review, security model
+- [MCP server / Agent API](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/AGENT_API.md): connecting Claude over MCP, the tools, reachability, attribution and review, security model
+- [OIDC sign-in](https://raw.githubusercontent.com/trahloff/Aldine/main/docs/OIDC.md): OpenID Connect setup with Keycloak, Authentik, Authelia, Dex; settings, access control, troubleshooting
 - [Agent guide](https://raw.githubusercontent.com/trahloff/Aldine/main/AGENTS.md): repo conventions for AI coding agents
 
 ## Optional

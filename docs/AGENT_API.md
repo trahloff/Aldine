@@ -1,4 +1,4 @@
-# Agent API: Claude as a collaborator in your Aldine
+# Aldine MCP server: Claude as a collaborator (Agent API)
 
 The Aldine Agent API serves the [Model Context Protocol](https://modelcontextprotocol.io)
 at `/mcp`. Add your instance as a connector in claude.ai, Claude Desktop, Cowork
@@ -8,7 +8,8 @@ chat. Every edit lands as a git commit authored "Claude", so the session is one
 diff to review and one click to revert.
 
 The endpoint is off by default. This page is the setup guide for the person
-who runs the instance.
+who runs the instance. A shorter overview is at
+[aldine.dev/latex-mcp](https://aldine.dev/latex-mcp/).
 
 ## Enable it
 
@@ -105,7 +106,10 @@ skip the Connect button and use the static-token path below.
 
 ## Connect from claude.ai
 
-1. In Claude: **Settings → Connectors → Add custom connector**. Name it,
+1. In Claude: **Customize → Connectors → Add → Add custom connector**
+   ([Anthropic's guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
+   as of October 2026; on Team and Enterprise plans an owner adds it under
+   Organization settings first). Name it,
    paste the connector URL `https://<host>/mcp` (with auth on, the Agent
    access card in Aldine shows and copies it; with auth off there is no
    card — the URL is `ALDINE_PUBLIC_URL` plus `/mcp`, and the boot log
@@ -133,7 +137,7 @@ without asking.
 
 Without `AUTH_ENABLED` there is no Connect flow, but claude.ai's connector
 dialog can send a fixed header with every call. In **Add custom connector**,
-open the advanced settings (the additional request headers) and add
+find the Request headers section and add
 `X-Aldine-Token: <ALDINE_MCP_TOKEN>`; leave the OAuth fields empty and save
 without clicking Connect. claude.ai keeps `Authorization` for its own OAuth
 bearer, which is why the header has its own name. This path skips the consent
@@ -159,7 +163,7 @@ applies to the demo box — the token is required, it is merely known.
 
 In claude.ai (Claude Desktop and Cowork alike) follow
 ["With a static token"](#with-a-static-token-auth-off) above: add the custom
-connector with that URL, put the header in the additional request headers,
+connector with that URL, put the header under Request headers,
 and save without clicking Connect — the demo has no accounts, so there is
 nothing for Connect to sign you in to. In Claude Code:
 
@@ -297,7 +301,7 @@ dist/mcp/stdio.js`). Notes on the stdio transport:
 
 ## Claude Desktop and Cowork
 
-Both use the same custom connectors as claude.ai (Settings → Connectors), so
+Both use the same custom connectors as claude.ai (Customize → Connectors), so
 the claude.ai steps apply; the PDF viewer renders in both. Like claude.ai,
 they call your server from Anthropic's cloud, not from the desktop machine,
 so a private instance is not reachable this way even though the app runs

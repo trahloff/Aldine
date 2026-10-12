@@ -3,55 +3,169 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Aldine: open-source Overleaf alternative, self-hosted LaTeX collaboration</title>
+        <title>Aldine: open-source, self-hosted Overleaf alternative</title>
         <link rel="canonical" href="https://aldine.dev/" />
         <meta
             name="description"
-            content="Aldine is a slim, open-source Overleaf alternative: real-time LaTeX collaboration, git-native branches, Zotero built in, sandboxed compiles. Two containers, AGPL, runs on your own box."
+            content="Open-source, self-hosted Overleaf alternative. Real-time LaTeX editing, real git branches, Zotero, MCP server for Claude. Two Docker containers, AGPL."
         />
-        <link
-            rel="icon"
-            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128220;</text></svg>"
-        />
+        <link rel="icon" href="/favicon.ico" sizes="48x48" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta
             property="og:title"
-            content="Aldine: open-source Overleaf alternative, self-hosted LaTeX collaboration"
+            content="Aldine: open-source, self-hosted Overleaf alternative"
         />
         <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="Aldine" />
         <meta
             property="og:description"
-            content="Write LaTeX together. Fast, versioned, yours. Open-source Overleaf alternative: live collaboration, git branches, Zotero, sandboxed compiles. AGPL."
+            content="Open-source, self-hosted Overleaf alternative. Real-time LaTeX editing, real git branches, Zotero, MCP server for Claude. Two Docker containers, AGPL."
         />
         <meta
             property="og:image"
             content="https://aldine.dev/assets/social.png"
         />
+        <meta property="og:image:width" content="1280" />
+        <meta property="og:image:height" content="640" />
+        <meta
+            property="og:image:alt"
+            content="Aldine: write LaTeX together. Fast, versioned, yours."
+        />
         <meta property="og:url" content="https://aldine.dev/" />
         <meta name="twitter:card" content="summary_large_image" />
+        <meta
+            name="twitter:title"
+            content="Aldine: open-source, self-hosted Overleaf alternative"
+        />
+        <meta
+            name="twitter:description"
+            content="Open-source, self-hosted Overleaf alternative. Real-time LaTeX editing, real git branches, Zotero, MCP server for Claude. Two Docker containers, AGPL."
+        />
+        <meta
+            name="twitter:image"
+            content="https://aldine.dev/assets/social.png"
+        />
         <script type="application/ld+json">
             {
                 "@context": "https://schema.org",
-                "@type": "SoftwareApplication",
-                "name": "Aldine",
-                "url": "https://aldine.dev/",
-                "description": "Slim, open-source, self-hosted LaTeX collaboration platform and Overleaf alternative: real-time editing, git-native branches, Zotero and GitHub sync, sandboxed compiles.",
-                "applicationCategory": "Productivity",
-                "operatingSystem": "Linux (Docker)",
-                "license": "https://www.gnu.org/licenses/agpl-3.0.html",
-                "isAccessibleForFree": true,
-                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
-                "screenshot": "https://aldine.dev/assets/visual-dark.png",
-                "sameAs": ["https://github.com/trahloff/Aldine"]
+                "@graph": [
+                    {
+                        "@type": "WebSite",
+                        "@id": "https://aldine.dev/#website",
+                        "url": "https://aldine.dev/",
+                        "name": "Aldine",
+                        "inLanguage": "en"
+                    },
+                    {
+                        "@type": "SoftwareApplication",
+                        "@id": "https://aldine.dev/#software",
+                        "name": "Aldine",
+                        "url": "https://aldine.dev/",
+                        "description": "Open-source, self-hosted collaborative LaTeX editor and Overleaf alternative: real-time editing, a git repository with branches per project, sync with GitHub, GitLab, Gitea and Forgejo, Zotero, sandboxed TeX Live compiles and an MCP server for Claude.",
+                        "applicationCategory": "DeveloperApplication",
+                        "applicationSubCategory": "Collaborative LaTeX editor",
+                        "operatingSystem": "Linux (Docker)",
+                        "softwareVersion": "0.11.0",
+                        "dateModified": "2026-10-12",
+                        "releaseNotes": "https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md",
+                        "downloadUrl": "https://github.com/trahloff/Aldine",
+                        "softwareHelp": {
+                            "@type": "CreativeWork",
+                            "url": "https://aldine.dev/self-hosting/"
+                        },
+                        "author": {
+                            "@type": "Person",
+                            "name": "Tobias Rahloff",
+                            "url": "https://github.com/trahloff"
+                        },
+                        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+                        "isAccessibleForFree": true,
+                        "offers": {
+                            "@type": "Offer",
+                            "price": "0",
+                            "priceCurrency": "EUR"
+                        },
+                        "featureList": [
+                            "Real-time collaboration",
+                            "A git repository with branches per project",
+                            "GitHub, GitLab, Gitea and Forgejo sync",
+                            "Zotero sync",
+                            "Sandboxed TeX Live compiles",
+                            "Sign-in with OIDC, ORCID, Google or GitHub",
+                            "MCP server for Claude"
+                        ],
+                        "screenshot": "https://aldine.dev/assets/visual-dark.png",
+                        "sameAs": [
+                            "https://github.com/trahloff/Aldine"
+                        ]
+                    },
+                    {
+                        "@type": "FAQPage",
+                        "@id": "https://aldine.dev/#faq",
+                        "mainEntity": [
+                            {
+                                "@type": "Question",
+                                "name": "Is there an open-source alternative to Overleaf I can host myself?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Yes. Aldine is an open-source (AGPL-3.0) collaborative LaTeX editor that you run on your own server as two Docker containers. Overleaf also publishes its own Community Edition; self-hosting Overleaf (Community Edition, Server Pro) compared with Aldine has the details."
+                                }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Does it work with git and GitHub or GitLab?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Every Aldine project is a real git repository with branches you create and merge from the UI. You can push and pull to GitHub, GitLab, Gitea or Forgejo and open a pull or merge request from the editor, and a co-author can clone the repository and keep using VS Code. See git with Overleaf and a git-native alternative."
+                                }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Is it free, and how many collaborators can a project have?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Aldine is free to self-host under AGPL-3.0, and the number of collaborators is not limited. There is no paid plan and no hosted service today. The self-hosting guide lists what it needs to run."
+                                }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Can I import my Overleaf projects?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Yes. Download the project from Overleaf as a ZIP and drop it on the Aldine home screen. The root file is detected and the first typeset runs automatically."
+                                }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Does it have track changes?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Not at keystroke level. Aldine has review comments with suggested edits: select text, leave a threaded comment and optionally attach a replacement that the author accepts with one click."
+                                }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Does it support single sign-on?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Yes. With AUTH_ENABLED=1, people sign in with Google, GitHub, ORCID or your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID), or with email and password. ALDINE_SSO_ONLY=1 disables passwords. Setup is in the OIDC guide."
+                                }
+                            }
+                        ]
+                    }
+                ]
             }
         </script>
         <style>
             :root {
+                color-scheme: dark;
                 --bg: #1c1c1e;
                 --panel: #232326;
                 --panel-raised: #28282c;
                 --text: #f5f5f7;
                 --text-2: #98989d;
-                --text-3: #7c7c85;
+                --text-3: #8e8e96;
                 --hairline: rgba(255, 255, 255, 0.1);
                 --hairline-strong: rgba(255, 255, 255, 0.18);
                 --accent: #5b8cff;
@@ -172,10 +286,16 @@
                     font-size: 12.5px;
                 }
             }
-            @media (max-width: 359px) {
-                header nav a[href="#start"] {
+            /* in-page anchors go first: they stay reachable by scrolling */
+            @media (max-width: 640px) {
+                header nav .nav-opt {
                     display: none;
-                } /* still reachable by scrolling */
+                }
+            }
+            @media (max-width: 400px) {
+                header nav .nav-opt2 {
+                    display: none;
+                }
             }
             .btn {
                 font-family: var(--sans);
@@ -246,7 +366,7 @@
                     0 24px 70px rgba(0, 0, 0, 0.55);
                 text-align: center;
             }
-            .paper h2 {
+            .paper .paper-title {
                 font-weight: 600;
                 font-size: 24px;
                 letter-spacing: 0.005em;
@@ -352,7 +472,7 @@
                 margin: 64px auto 0;
                 max-width: 880px;
             }
-            h3.sec {
+            h2.sec {
                 font-family: var(--sans);
                 font-size: 13px;
                 font-weight: 600;
@@ -362,7 +482,7 @@
                 margin-bottom: 22px;
             }
             /* real headlines for the sections that argue, kickers for the ones that show */
-            h3.sec-title {
+            h2.sec-title {
                 font-family: var(--serif);
                 font-size: 26px;
                 font-weight: 600;
@@ -370,7 +490,7 @@
                 line-height: 1.25;
                 margin-bottom: 18px;
             }
-            h3.sec-title .note {
+            h2.sec-title .note {
                 font-family: var(--sans);
                 font-size: 13px;
                 font-weight: 400;
@@ -422,7 +542,7 @@
                 background: var(--panel);
                 padding: 22px 20px;
             }
-            .cell h4 {
+            .cell h3 {
                 font-family: var(--sans);
                 font-size: 14.5px;
                 font-weight: 600;
@@ -432,6 +552,22 @@
                 font-size: 14.5px;
                 color: var(--text-2);
                 line-height: 1.5;
+            }
+            .cell--wide {
+                grid-column: span 2;
+            }
+            @media (max-width: 720px) {
+                .cell--wide {
+                    grid-column: auto;
+                }
+            }
+            .cell p a,
+            .honest p a,
+            .faq p a,
+            .start-note a,
+            .colophon p a {
+                text-decoration: underline;
+                text-underline-offset: 2px;
             }
 
             /* honesty */
@@ -447,6 +583,22 @@
 
             .visual-grid {
                 margin-top: 16px;
+            }
+
+            .faq h3 {
+                font-family: var(--sans);
+                font-size: 15.5px;
+                font-weight: 600;
+                margin: 24px 0 6px;
+            }
+            .faq p {
+                color: var(--text-2);
+                font-size: 16px;
+            }
+            .faq code,
+            .start-note code {
+                font-family: var(--mono);
+                font-size: 0.9em;
             }
 
             /* quick start */
@@ -502,6 +654,8 @@
             }
             .colophon nav {
                 justify-content: center;
+                flex-wrap: wrap;
+                row-gap: 6px;
                 margin-top: 14px;
             }
         </style>
@@ -511,8 +665,10 @@
             <div class="wrap bar">
                 <span class="brand">aldine<em>.</em></span>
                 <nav aria-label="Site">
-                    <a href="#features">Features</a>
-                    <a href="#start">Quick start</a>
+                    <a class="nav-opt" href="#features">Features</a>
+                    <a class="nav-opt" href="#start">Quick start</a>
+                    <a href="/overleaf-alternatives/">Compare</a>
+                    <a class="nav-opt2" href="/self-hosting/">Self-hosting</a>
                     <a
                         class="nav-icon"
                         href="https://github.com/trahloff/Aldine"
@@ -540,8 +696,9 @@
                 <p class="eyebrow">Open source · Self-hosted · AGPL</p>
                 <h1>Write LaTeX together.<br />Fast, versioned, yours.</h1>
                 <p class="sub">
-                    A slim, self-hosted alternative to Overleaf: live
-                    collaboration, real git branches, Zotero built in. Two
+                    Aldine is an open-source, self-hosted Overleaf
+                    alternative: a collaborative LaTeX editor with live
+                    co-editing, real git branches and Zotero built in. Two
                     containers, nothing to babysit.
                 </p>
             </div>
@@ -554,7 +711,7 @@
                     <span class="typeset-chip" aria-hidden="true"
                         ><span class="dot"></span>Typeset in ~2s</span
                     >
-                    <h2>On Writing LaTeX Together</h2>
+                    <p class="paper-title">On Writing LaTeX Together</p>
                     <p class="authors">
                         <span>You</span> · <span>your co-authors</span> ·
                         <span>the advisor who hates installing TeX</span>
@@ -594,10 +751,13 @@
 
             <hr class="rule" />
             <section class="wrap" id="demo">
-                <h3 class="sec-title">Aldine in Action</h3>
+                <h2 class="sec-title">Aldine in action</h2>
                 <div class="demo-frame">
                     <video
                         src="assets/demo.mp4"
+                        poster="assets/editor-dark.png"
+                        width="1440"
+                        height="900"
                         autoplay
                         muted
                         loop
@@ -613,11 +773,15 @@
             </section>
 
             <section class="wrap" id="agent">
-                <h3 class="sec-title">Claude as a collaborator</h3>
+                <h2 class="sec-title">Claude as a collaborator</h2>
                 <div class="demo-frame">
                     <video
                         src="assets/agent-demo.mp4"
-                        autoplay
+                        poster="assets/editor-dark.png"
+                        width="1440"
+                        height="900"
+                        preload="none"
+                        controls
                         muted
                         loop
                         playsinline
@@ -631,25 +795,25 @@
                 </p>
                 <div class="grid visual-grid">
                     <div class="cell">
-                        <h4>Writes into the live document</h4>
+                        <h3>Writes into the live document</h3>
                         <p>
                             Edits arrive in the open editor as an attributed
-                            collaborator: a violet presence chip, the changed
-                            range tinted, your cursor left where it was.
+                            collaborator, with a violet presence chip, and your
+                            cursor stays where it was.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Typesets and shows the PDF</h4>
+                        <h3>Typesets and shows the PDF</h3>
                         <p>
                             Claude runs the compile, reads the errors back
                             with file and line, and shows the PDF in the chat
                             on claude.ai, Claude Desktop and Cowork (a signed
-                            link elsewhere) &mdash; the same run your preview
+                            link elsewhere). It is the same run your preview
                             adopts.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Every edit a reviewable commit</h4>
+                        <h3>Every edit a reviewable commit</h3>
                         <p>
                             Each change is a git commit authored
                             &ldquo;Claude&rdquo;, marked in History; when the
@@ -663,10 +827,7 @@
                     endpoint is plain MCP: claude.ai, Claude Desktop, Cowork,
                     Claude Code and any other MCP client get the tools; the
                     PDF renders inline where the host supports MCP Apps.
-                    <a
-                        href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md"
-                        >Setup guide</a
-                    >
+                    <a href="/latex-mcp/">Setup guide</a>
                     &middot;
                     <a
                         href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md#try-it-on-the-demo"
@@ -676,10 +837,10 @@
             </section>
 
             <section class="wrap" id="features">
-                <h3 class="sec">Features</h3>
+                <h2 class="sec">Features</h2>
                 <div class="grid">
                     <div class="cell">
-                        <h4>Real-time collaboration</h4>
+                        <h3>Real-time collaboration</h3>
                         <p>
                             CRDT-based (Yjs): multi-cursor, live presence,
                             conflict-free by construction. Unlimited
@@ -687,23 +848,29 @@
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Git-native branches</h4>
+                        <h3>Git-native branches</h3>
                         <p>
                             Every project is a real git repository. Branch,
                             merge, and inspect history from the UI, or publish
-                            to GitHub and keep using VS Code.
+                            the project and keep using VS Code.
+                            <a href="/overleaf-git/"
+                                >How this differs from git with Overleaf</a
+                            >.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Citations, solved</h4>
+                        <h3>Citations, solved</h3>
                         <p>
                             Zotero library sync, paper search by title
-                            (OpenAlex), or paste a DOI — BibTeX appended and
+                            (OpenAlex), or paste a DOI: BibTeX appended and
                             <code>\cite</code> inserted in one click.
+                            <a href="/zotero-latex/"
+                                >Zotero with LaTeX, three ways</a
+                            >.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Review mode</h4>
+                        <h3>Review mode</h3>
                         <p>
                             Anchored comment threads on text selections, with
                             suggested replacements the author accepts in one
@@ -711,7 +878,7 @@
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Sandboxed compiles</h4>
+                        <h3>Sandboxed compiles</h3>
                         <p>
                             TeX Live in a no-egress container: dropped
                             capabilities, restricted shell-escape, ~2s warm
@@ -719,44 +886,65 @@
                             classes out of the box; any package in one
                             <code>tlmgr install</code> line, all of CTAN one
                             flag away.
+                            <a href="/self-hosting/"
+                                >Self-hosting with Docker Compose</a
+                            >.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>GitHub sync &amp; AI fix</h4>
+                        <h3>GitHub, GitLab, Gitea and Forgejo sync</h3>
                         <p>
-                            Import a repo, push and pull, open PRs from the
-                            editor. Optional AI error diagnosis with your own
-                            key, or leave it 100% AI-free.
+                            Import a repository or publish a project to a new
+                            one, push and pull, and open a pull or merge
+                            request from the editor. Works with GitHub,
+                            GitLab (gitlab.com or self-hosted), Gitea and
+                            Forgejo, Codeberg included.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Bring your Overleaf projects</h4>
+                        <h3>Bring your Overleaf projects</h3>
                         <p>
                             Download any Overleaf project as a ZIP and drop it
-                            on the home screen — root file detected, first
+                            on the home screen: root file detected, first
                             typeset automatic.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Made for real papers</h4>
+                        <h3>Made for real papers</h3>
                         <p>
                             SyncTeX both ways, whole-document word count,
                             plain-English compile errors that jump to the
-                            offending line, one-click PDF download.
+                            offending line, one-click PDF download. Optional AI
+                            error diagnosis with your own key, or leave it
+                            100% AI-free.
                         </p>
                     </div>
                     <div class="cell">
-                        <h4>Your files stay yours</h4>
+                        <h3>Your files stay yours</h3>
                         <p>
                             Projects are plain .tex files in plain git repos on
-                            your disk — readable without Aldine running, and
+                            your disk, readable without Aldine running, and
                             yours to take anywhere. AGPL-3.0, self-hosted,
-                            nothing phones home.
+                            nothing phones home. Flat files by default;
+                            Postgres is the optional datastore.
                         </p>
                     </div>
-                    <!-- a tenth cell: spans the row, or three columns leave two empty slots -->
-                    <div class="cell" style="grid-column: 1 / -1">
-                        <h4>Claude as a collaborator</h4>
+                    <div class="cell">
+                        <h3>Sign-in with your identity provider</h3>
+                        <p>
+                            Off by default for single use. Turn it on for
+                            email and password, Google, GitHub, ORCID, or
+                            your own OpenID Connect provider: Keycloak,
+                            Authentik, Authelia, Pocket ID.
+                            <a
+                                href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md"
+                                >OIDC setup</a
+                            >.
+                        </p>
+                    </div>
+                    <!-- ten cells leave one in the last row; this one takes the other two columns -->
+                    <div class="cell cell--wide">
+                        <h3>Claude as a collaborator</h3>
                         <p>
                             Connect your instance to Claude over MCP: Claude
                             writes into the live document, typesets, and shows
@@ -764,63 +952,102 @@
                             Cowork (a signed link in Claude Code and other MCP
                             clients). Every edit is a commit authored
                             &ldquo;Claude&rdquo;, with a review-and-revert
-                            prompt. Optional, off by default &mdash;
-                            <a href="#agent">see it in action</a>.
+                            prompt. Optional, off by default.
+                            <a href="#agent">See it in action</a> or read
+                            <a href="/latex-mcp/"
+                                >how the LaTeX MCP server works</a
+                            >.
                         </p>
                     </div>
                 </div>
             </section>
 
-            <section class="wrap">
-                <h3 class="sec-title">The honest comparison</h3>
+            <section class="wrap" id="compare">
+                <h2 class="sec-title">
+                    Aldine compared with Overleaf Community Edition
+                </h2>
                 <div class="honest">
                     <p>
-                        Overleaf CE is good software, but its free self-hosted
-                        tier excludes
-                        <strong>track changes, git, and Zotero</strong>, and the
-                        deployment is a Toolkit-managed monolith with Mongo and
-                        Redis. In Aldine nothing is behind a paid tier, and the
-                        whole thing is two containers.
+                        Overleaf Community Edition is good software, and it is
+                        open source too. Overleaf's own
+                        <a
+                            href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition"
+                            >comparison of Server Pro and Community Edition</a
+                        >
+                        lists
+                        <strong
+                            >commenting, real-time track changes, git
+                            integration and single sign-on</strong
+                        >
+                        as Server Pro features that Community Edition does not
+                        include, and its
+                        <a
+                            href="https://docs.overleaf.com/on-premises/getting-started/requirements/software-requirements"
+                            >software requirements</a
+                        >
+                        show it running next to MongoDB and Redis (both as of
+                        October 2026). In Aldine, review comments with
+                        suggested edits, git and Zotero are included at no cost
+                        (there is no paid tier), and the whole thing is two
+                        containers.
                     </p>
                     <p>
-                        Where Overleaf still wins: a huge template gallery and a
-                        decade of production maturity. We say so in the
-                        <a
-                            href="https://github.com/trahloff/Aldine#how-aldine-compares"
-                            >README table</a
+                        Where Overleaf is the better choice: it
+                        <a href="https://www.overleaf.com/about"
+                            >dates from 2011</a
                         >
-                        too. On the visual editor, though, Aldine goes further.
+                        and hosts a
+                        <a href="https://www.overleaf.com/latex/templates"
+                            >public template gallery</a
+                        >
+                        (both as of October 2026), and Server Pro has
+                        <a
+                            href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition"
+                            >real-time track changes</a
+                        >
+                        (as of October 2026).
+                        Aldine is young (v0.x) and has review comments with
+                        suggested edits, not keystroke-level tracking. The
+                        full table, with its sources, is on
+                        <a href="/self-hosted-overleaf/"
+                            >self-hosting Overleaf (Community Edition, Server
+                            Pro) compared with Aldine</a
+                        >. For more options, see
+                        <a href="/overleaf-alternatives/"
+                            >Overleaf alternatives you can self-host</a
+                        >.
                     </p>
                 </div>
             </section>
 
-            <section class="wrap">
-                <h3 class="sec-title">
+            <section class="wrap" id="visual">
+                <h2 class="sec-title">
                     Visual editing, done right<span class="note"
                         >(experimental)</span
                     >
-                </h3>
+                </h2>
                 <div class="honest">
                     <p>
-                        Overleaf’s visual editor is infamous for one thing: it
-                        rewrites your LaTeX in arbitrary ways, so collaborators
-                        tell each other not to use it. Aldine’s is a pure
-                        rendering layer over the same source:
+                        Aldine's visual mode is a rendering layer over the
+                        same LaTeX source. The source stays authoritative and
+                        byte-stable:
                         <strong
-                            >it never changes a byte you didn’t deliberately
+                            >it never changes a byte you didn't deliberately
                             edit</strong
-                        >. And it does more:
+                        >. What it renders and edits in place:
                     </p>
                     <div class="demo-frame visual-shot">
                         <img
                             src="assets/visual-dark.png"
                             alt="Aldine’s visual editing mode: the paper rendered as formatted text with typeset math, next to the live PDF"
+                            width="1440"
+                            height="900"
                             loading="lazy"
                         />
                     </div>
                     <div class="grid visual-grid">
                         <div class="cell">
-                            <h4>WYSIWYG math</h4>
+                            <h3>WYSIWYG math</h3>
                             <p>
                                 Click an equation to edit it in a real math
                                 editor; your changes write back as precise
@@ -828,7 +1055,7 @@
                             </p>
                         </div>
                         <div class="cell">
-                            <h4>Editable tables</h4>
+                            <h3>Editable tables</h3>
                             <p>
                                 Tables render as a grid. Edit cells, add rows
                                 and columns; each change is an exact source
@@ -836,21 +1063,21 @@
                             </p>
                         </div>
                         <div class="cell">
-                            <h4>Tracked changes</h4>
+                            <h3>Suggestions shown inline</h3>
                             <p>
                                 Review suggestions show inline as strikethrough
                                 + proposed text, accepted or dismissed in place.
                             </p>
                         </div>
                         <div class="cell">
-                            <h4>Paste to LaTeX</h4>
+                            <h3>Paste to LaTeX</h3>
                             <p>
                                 Paste rich text from Word or Docs and it
                                 converts to clean LaTeX on the way in.
                             </p>
                         </div>
                         <div class="cell">
-                            <h4>Live &amp; collab-safe</h4>
+                            <h3>Live &amp; collab-safe</h3>
                             <p>
                                 The construct under your caret (or a
                                 co-author’s) reveals its source; everything else
@@ -858,7 +1085,7 @@
                             </p>
                         </div>
                         <div class="cell">
-                            <h4>One keystroke away</h4>
+                            <h3>One keystroke away</h3>
                             <p>
                                 Toggle Source / Visual instantly, no reload. Off
                                 by default; enable it from the command palette.
@@ -869,7 +1096,7 @@
             </section>
 
             <section class="wrap" id="start">
-                <h3 class="sec">Quick start</h3>
+                <h2 class="sec">Quick start</h2>
                 <div
                     class="term"
                     role="img"
@@ -884,14 +1111,46 @@
                         <span class="p">$</span> open http://localhost:8080
                     </div>
                     <div class="c">
-                        # prebuilt images; the first pull is ~2.5 GB (TeX Live),
-                        one coffee. Later starts take seconds.
+                        # prebuilt images; the first pull is about 1.1 GB
+                        compressed (TeX Live). Later starts take seconds.
                     </div>
                 </div>
                 <p class="start-note">
                     Auth off by default for single use; one env var turns on
-                    logins, SSO, and sharing. Postgres and Redis are opt-in when
-                    one box stops being enough.
+                    logins, SSO, and sharing. Storage is flat files by
+                    default, with Postgres as the optional datastore.
+                    <a href="/self-hosting/"
+                        >Full guide: self-hosting Aldine with Docker
+                        Compose</a
+                    >
+                </p>
+            </section>
+
+            <section class="wrap faq" id="faq">
+                <h2 class="sec-title">Common questions</h2>
+                <h3>Is there an open-source alternative to Overleaf I can host myself?</h3>
+                <p>
+                    Yes. Aldine is an open-source (AGPL-3.0) collaborative LaTeX editor that you run on your own server as two Docker containers. Overleaf also publishes its own Community Edition; <a href="/self-hosted-overleaf/">self-hosting Overleaf (Community Edition, Server Pro) compared with Aldine</a> has the details.
+                </p>
+                <h3>Does it work with git and GitHub or GitLab?</h3>
+                <p>
+                    Every Aldine project is a real git repository with branches you create and merge from the UI. You can push and pull to GitHub, GitLab, Gitea or Forgejo and open a pull or merge request from the editor, and a co-author can clone the repository and keep using VS Code. See <a href="/overleaf-git/">git with Overleaf and a git-native alternative</a>.
+                </p>
+                <h3>Is it free, and how many collaborators can a project have?</h3>
+                <p>
+                    Aldine is free to self-host under AGPL-3.0, and the number of collaborators is not limited. There is no paid plan and no hosted service today. The <a href="/self-hosting/">self-hosting guide</a> lists what it needs to run.
+                </p>
+                <h3>Can I import my Overleaf projects?</h3>
+                <p>
+                    Yes. Download the project from Overleaf as a ZIP and drop it on the Aldine home screen. The root file is detected and the first typeset runs automatically.
+                </p>
+                <h3>Does it have track changes?</h3>
+                <p>
+                    Not at keystroke level. Aldine has review comments with suggested edits: select text, leave a threaded comment and optionally attach a replacement that the author accepts with one click.
+                </p>
+                <h3>Does it support single sign-on?</h3>
+                <p>
+                    Yes. With <code>AUTH_ENABLED=1</code>, people sign in with Google, GitHub, ORCID or your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID), or with email and password. <code>ALDINE_SSO_ONLY=1</code> disables passwords. Setup is in the <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md">OIDC guide</a>.
                 </p>
             </section>
         </main>
@@ -903,6 +1162,20 @@
                     Aldus Manutius, Venice 1494, where scholarly publishing
                     became portable. <span class="motto">Festina lente.</span>
                 </p>
+                <p>
+                    Overleaf is a trademark of its owner. Claude, Zotero,
+                    GitHub, GitLab and other names are trademarks of their
+                    respective owners. Aldine is an independent project, not
+                    affiliated with or endorsed by any of them.
+                </p>
+                <nav aria-label="Guides">
+                    <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+                    <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+                    <a href="/overleaf-git/">Git with Overleaf</a>
+                    <a href="/latex-mcp/">LaTeX MCP server</a>
+                    <a href="/self-hosting/">Self-hosting guide</a>
+                    <a href="/zotero-latex/">Zotero with LaTeX</a>
+                </nav>
                 <nav aria-label="Footer">
                     <a href="https://github.com/trahloff/Aldine">GitHub</a>
                     <a href="https://demo.aldine.dev">Demo</a>

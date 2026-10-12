@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A LaTeX MCP server: let Claude edit and compile your paper</title>
+<link rel="canonical" href="https://aldine.dev/latex-mcp/" />
+<meta name="description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="A LaTeX MCP server: let Claude edit and compile your paper" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine: write LaTeX together. Fast, versioned, yours." />
+<meta property="og:url" content="https://aldine.dev/latex-mcp/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="A LaTeX MCP server: let Claude edit and compile your paper" />
+<meta name="twitter:description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/latex-mcp/#article",
+      "headline": "Connect Claude to a LaTeX project over MCP",
+      "description": "We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git.",
+      "url": "https://aldine.dev/latex-mcp/",
+      "mainEntityOfPage": "https://aldine.dev/latex-mcp/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "LaTeX MCP server",
+          "item": "https://aldine.dev/latex-mcp/"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / LaTeX MCP server</p>
+<h1>Connect Claude to a LaTeX project over MCP</h1>
+<p class="lede">We found no official Overleaf MCP server (checked 12 October 2026; <a href="#overleaf">details below</a>), so this page shows what a LaTeX MCP server does and how to connect Claude to one. An MCP server for LaTeX gives an assistant such as Claude a set of tools on your project: read the files, edit them, typeset, read the errors back and show the PDF. Aldine, an open-source self-hosted LaTeX editor, has one built in. This page explains what it does, how to connect it, and how you review what Claude changed.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Every statement about another product links to that product's own documentation. Checked on 12 October 2026.</p>
+
+<div class="demo-frame">
+<video src="/assets/agent-demo.mp4" poster="/assets/editor-dark.png" width="1440" height="900" controls muted loop playsinline preload="none" aria-label="Screen recording: Claude, connected over MCP, edits a paragraph in the open document, adds a section file, typesets the paper, shows the PDF in its viewer, and the History panel and review dialog list its commits"></video>
+</div>
+<p class="demo-caption">Claude, connected over MCP, tightens the abstract, adds a section, typesets, and shows the PDF. Every edit lands as a commit you can review or revert.</p>
+
+<h2 id="what">What a LaTeX MCP server does</h2>
+<p>The <a href="https://modelcontextprotocol.io">Model Context Protocol</a> (MCP) is a standard way for an AI application to call tools on another system. For a LaTeX project the useful tools are few:</p>
+<ul>
+<li><strong>Read</strong> the file tree and the source as the editor shows it now.</li>
+<li><strong>Edit</strong> by replacing exact quoted text, or write whole files.</li>
+<li><strong>Compile</strong> with latexmk and get errors back with file and line.</li>
+<li><strong>Show the PDF</strong> in the chat.</li>
+<li><strong>Handle citations</strong>: resolve a DOI or arXiv id to BibTeX, list the citation keys and labels that exist.</li>
+</ul>
+<p>In Aldine the server is the editor's own backend, so Claude works on the same documents your co-authors have open. Its edits arrive in the live document as those of an attributed collaborator, and your cursor stays where it was.</p>
+
+<h2 id="overleaf">Is there an Overleaf MCP server?</h2>
+<p>Not an official one that we could find. On 12 October 2026, a search of Overleaf's GitHub organization for "mcp" returned no repositories, and the index of Overleaf's documentation lists AI features (an AI assistant, Error Assist, an AI table generator) but no MCP page. <span class="src">(<a href="https://github.com/orgs/overleaf/repositories?q=mcp">Overleaf on GitHub, search for mcp</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/llms.txt">Overleaf documentation index</a>, as of October 2026)</span></p>
+<p>Third-party projects exist. One example is a community Overleaf MCP server by M-H-Amini, listed on mcp.so, whose README asks for a project id and an Overleaf token. <span class="src">(<a href="https://mcp.so/server/overleaf-mcp-server/M-H-Amini">mcp.so listing</a>, <a href="https://github.com/M-H-Amini/Overleaf-MCP-Server">repository</a>, as of October 2026)</span> It does not claim an affiliation with Overleaf. We have not tested it or any other, so check who maintains a server and how it reaches your projects before you give it credentials.</p>
+<p>Aldine takes the other route: the MCP server is part of the editor you host, so there is no separate bridge to trust.</p>
+<p>If your papers live on Overleaf and you want its built-in AI features, that is the simpler path. The rest of this page is about Aldine.</p>
+
+<h2 id="connect">Connect in three steps</h2>
+<p>This is the short version of the <a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md">full setup guide on GitHub</a>. You need a running Aldine instance: see <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
+<h3>1. Turn the endpoint on</h3>
+<p>The MCP endpoint is off by default. Set <code>ALDINE_MCP=1</code> and <code>ALDINE_PUBLIC_URL</code>, and choose how Claude authenticates. With multi-user mode (<code>AUTH_ENABLED=1</code>) Claude connects with a Connect button and each user picks the projects it may touch. With auth off, set a static token. The shortest local setup is a <code>.env</code> file next to the compose files:</p>
+<pre><code>ALDINE_MCP=1
+ALDINE_MCP_TOKEN=&lt;openssl rand -hex 32&gt;
+# the origin you will type into the connector; the PDF links are absolute against it
+ALDINE_PUBLIC_URL=http://localhost:8080</code></pre>
+<p>The minimal <code>docker-compose.yml</code> has no <code>environment:</code> block, so there are two ways to pass these variables. To keep the prebuilt release images, add an <code>environment:</code> block with the three variables to the <code>app</code> service of the minimal file. Or, from a clone of the repository, use <code>docker-compose.full.yml</code>, which passes them through and builds from source:</p>
+<pre><code>docker compose -f docker-compose.full.yml up -d --build</code></pre>
+<p>The first build installs TeX Live into the compiler image and takes 20 to 60 minutes; later starts take seconds. <code>ALDINE_MCP=1</code> with neither <code>AUTH_ENABLED</code> nor <code>ALDINE_MCP_TOKEN</code> answers 401 to everything: there is no mode without a credential.</p>
+<h3>2. Find the connector URL</h3>
+<p>The connector URL is <code>&lt;ALDINE_PUBLIC_URL&gt;/mcp</code>, for example <code>https://aldine.example.com/mcp</code>. The boot log prints it as "MCP connector at …", and with auth on the Agent access card in your account settings shows and copies it. To check that it is reachable:</p>
+<pre><code>curl -si -X POST https://&lt;host&gt;/mcp -H 'content-type: application/json' -d '{}'</code></pre>
+<p>This should answer <code>HTTP/1.1 401</code> with the body <code>{"error":"A valid access token is required"}</code>.</p>
+<h3>3. Add it to Claude</h3>
+<p><strong>claude.ai, Claude Desktop and Cowork:</strong> open Customize, Connectors, Add, then "Add custom connector", and paste the connector URL. On Team and Enterprise plans an owner adds the connector under Organization settings first. <span class="src">(<a href="https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp">Anthropic: custom connectors using remote MCP</a>, as of October 2026)</span> Then click Connect: Aldine shows a consent page where you choose "All projects, now and later" or "Only these projects". With a static token, add <code>X-Aldine-Token: &lt;ALDINE_MCP_TOKEN&gt;</code> under Request headers, which Anthropic documents for fixed credentials that Claude sends on every request, and save without clicking Connect (as tested in October 2026).</p>
+<p><strong>Claude Code:</strong></p>
+<pre><code>claude mcp add --transport http aldine https://&lt;host&gt;/mcp
+claude mcp login aldine        # or type /mcp in a session and pick Aldine</code></pre>
+<p>Anthropic states that with a custom connector "Claude connects to your remote MCP server from Anthropic's cloud infrastructure, rather than from your local device", in every client including claude.ai, Claude Desktop and Cowork, so the server "must be reachable over the public internet". <span class="src">(<a href="https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp">Anthropic: custom connectors using remote MCP</a>, as of October 2026)</span> For Aldine that means HTTPS on a public address. Claude Code runs on your machine and, as tested in October 2026, reaches an instance on <code>localhost</code> or your LAN over plain HTTP.</p>
+
+<h2 id="tools">What the tools do</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Read-only</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>ping</code></th><td>Confirms the connector is reachable and who the token belongs to.</td><td>yes</td></tr>
+<tr><th scope="row"><code>list_projects</code></th><td>Projects the credential can reach, with branches, root file and engine.</td><td>yes</td></tr>
+<tr><th scope="row"><code>project_structure</code></th><td>File tree of a branch.</td><td>yes</td></tr>
+<tr><th scope="row"><code>read_file</code></th><td>A text file as the editor shows it now, windowable by line.</td><td>yes</td></tr>
+<tr><th scope="row"><code>edit_file</code></th><td>Replaces exact quoted text; merges with live typing as a CRDT edit.</td><td>no</td></tr>
+<tr><th scope="row"><code>write_file</code></th><td>Creates or replaces a whole file.</td><td>no</td></tr>
+<tr><th scope="row"><code>batch_write</code></th><td>A multi-file change as one named commit; all-or-nothing.</td><td>no</td></tr>
+<tr><th scope="row"><code>compile</code></th><td>Typesets with latexmk and returns errors and warnings with file and line, the page count and a signed PDF link.</td><td>no</td></tr>
+<tr><th scope="row"><code>get_pdf_url</code></th><td>A fresh signed link to the last typeset PDF without recompiling.</td><td>yes</td></tr>
+<tr><th scope="row"><code>commit</code></th><td>Commits any agent work still waiting on the branch as one named commit.</td><td>no</td></tr>
+<tr><th scope="row"><code>references_add</code></th><td>Resolves a DOI, arXiv or OpenAlex id to BibTeX and appends it to the project's <code>.bib</code>.</td><td>no</td></tr>
+<tr><th scope="row"><code>list_citations</code></th><td>Citation keys in the project's <code>.bib</code> files, with title, author, year.</td><td>yes</td></tr>
+<tr><th scope="row"><code>list_labels</code></th><td><code>\label</code> targets across the project's <code>.tex</code> files.</td><td>yes</td></tr>
+<tr><th scope="row"><code>wordcount</code></th><td>Words in the root file and the files it includes.</td><td>yes</td></tr>
+<tr><th scope="row"><code>create_project</code></th><td>A new project, blank or from a template.</td><td>no</td></tr>
+<tr><th scope="row"><code>trash_project</code></th><td>Moves a project that the agent created to the workspace trash. It never purges.</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<p>No tool purges a project, changes sharing, pushes to a git remote or manages tokens. The full descriptions, including how conflicting writes are refused, are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md#what-the-tools-do">the tool reference</a>.</p>
+
+<h2 id="demo">Try it on the demo</h2>
+<p>The public demo at <a href="https://demo.aldine.dev">demo.aldine.dev</a> runs the MCP server with a token that is public on purpose, so you can try the loop before you install anything.</p>
+<div class="table-scroll">
+<table>
+<tbody>
+<tr><th scope="row">Connector URL</th><td><code>https://demo.aldine.dev/mcp</code></td></tr>
+<tr><th scope="row">Header</th><td><code>X-Aldine-Token: aldine-demo</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>In claude.ai, Claude Desktop or Cowork, add a custom connector with that URL, put the header under Request headers, and save without clicking Connect. In Claude Code:</p>
+<pre><code>claude mcp add --transport http aldine-demo https://demo.aldine.dev/mcp \
+  --header "X-Aldine-Token: aldine-demo"</code></pre>
+<p>Then ask Claude to list the projects, create one and typeset it. The demo is a shared sandbox: every project is writable by anyone, it is wiped nightly at 04:00 UTC, and typesets are capped at 6 per minute per address. Put nothing there that you would mind losing or having read.</p>
+
+<h2 id="review">How you review what Claude did</h2>
+<ul>
+<li><strong>Every edit is a git commit.</strong> Each write tool commits as author "Claude" before it answers. A Claude commit's diff is exactly Claude's change: what a person typed in the meantime reaches history separately.</li>
+<li><strong>Review and revert.</strong> When a session goes quiet, the editor shows "Claude edited N files" with a Review action that opens the diff and a "Revert these changes" button. Revert creates one new commit; history is never rewritten.</li>
+<li><strong>Visible while it happens.</strong> Claude appears in the presence strip while it edits a document someone has open, and the History panel marks its commits.</li>
+<li><strong>Sandboxed compiles.</strong> Typesets run in the same compiler container as yours: no network egress, dropped capabilities, restricted shell-escape.</li>
+<li><strong>Scoped credentials.</strong> A token or connection can be limited to chosen projects and revoked from the Agent access card.</li>
+</ul>
+<p>Because projects are git repositories, the same history is what you push to GitHub or GitLab: see <a href="/overleaf-git/">git with Overleaf and a git-native alternative</a>.</p>
+
+<h2 id="limits">Limits</h2>
+<ul>
+<li>The MCP server is optional and off by default.</li>
+<li>It needs your own Aldine instance, or the public demo for a trial. There is no hosted service today.</li>
+<li>claude.ai, Claude Desktop and Cowork cannot reach an instance behind a VPN or on a private network <span class="src">(<a href="https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp">Anthropic: custom connectors using remote MCP</a>, as of October 2026)</span>. Claude Code can.</li>
+<li>As tested in October 2026, the PDF renders inside the chat on claude.ai, Claude Desktop and Cowork; other clients get a signed link that is valid for 15 minutes.</li>
+<li>Aldine itself is young (v0.x) and has no keystroke-level track changes; review is by comments with suggested edits and by git diffs.</li>
+</ul>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</a></li>
+<li><a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md">Full MCP server guide on GitHub (docs/AGENT_API.md)</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/latex-mcp/" aria-current="page">LaTeX MCP server</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

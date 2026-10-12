@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zotero with LaTeX and Overleaf: keeping your .bib in sync</title>
+<link rel="canonical" href="https://aldine.dev/zotero-latex/" />
+<meta name="description" content="Three ways to keep a .bib file in sync with Zotero: Overleaf's integration, Better BibTeX auto-export, and Zotero library or collection sync in Aldine." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Zotero with LaTeX and Overleaf: keeping your .bib in sync" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Three ways to keep a .bib file in sync with Zotero: Overleaf's integration, Better BibTeX auto-export, and Zotero library or collection sync in Aldine." />
+<meta property="og:image" content="https://aldine.dev/assets/zotero-dark.png" />
+<meta property="og:image:width" content="1440" />
+<meta property="og:image:height" content="900" />
+<meta property="og:image:alt" content="The Zotero panel in Aldine" />
+<meta property="og:url" content="https://aldine.dev/zotero-latex/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Zotero with LaTeX and Overleaf: keeping your .bib in sync" />
+<meta name="twitter:description" content="Three ways to keep a .bib file in sync with Zotero: Overleaf's integration, Better BibTeX auto-export, and Zotero library or collection sync in Aldine." />
+<meta name="twitter:image" content="https://aldine.dev/assets/zotero-dark.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/zotero-latex/#article",
+      "headline": "Using Zotero with LaTeX: three ways to keep references in sync",
+      "description": "Three ways to keep a .bib file in sync with Zotero: Overleaf's integration, Better BibTeX auto-export, and Zotero library or collection sync in Aldine.",
+      "url": "https://aldine.dev/zotero-latex/",
+      "mainEntityOfPage": "https://aldine.dev/zotero-latex/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/zotero-dark.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Zotero with LaTeX",
+          "item": "https://aldine.dev/zotero-latex/"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Zotero with LaTeX</p>
+<h1>Using Zotero with LaTeX: three ways to keep references in sync</h1>
+<p class="lede">LaTeX reads references from a <code>.bib</code> file; Zotero keeps them in a library. The work is keeping the two in step. There are three common ways: Overleaf's Zotero integration, automatic export with Better BibTeX, and an editor that syncs with Zotero directly, such as Aldine.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 12 October 2026.</p>
+
+<h2 id="overleaf">1. Overleaf's Zotero integration</h2>
+<p>Overleaf documents two Zotero methods. Its documentation says: "Overleaf's Zotero integration is a premium feature." Premium features are available to owners of individual subscriptions, members of group subscriptions and participants in Overleaf Commons. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">Overleaf docs: Zotero</a>, as of October 2026)</span> The details, from the same page:</p>
+<ul>
+<li><strong>Zotero Sync</strong> keeps your account-level Overleaf Library up to date with the Zotero collections you choose: "Sync is scoped to exactly the collections you select". It is one-way, from Zotero into the Library, and it updates automatically, "on its own sync schedule or when triggered from the Library."</li>
+<li><strong>The Zotero-linked <code>.bib</code> file</strong> imports a whole library or group library into a project: "you cannot select a specific folder within a library." The file is read-only in the project, and changes in Zotero reach it when you select Refresh.</li>
+</ul>
+<p>This is the least effort if you already write on Overleaf with a paid plan or through your institution.</p>
+
+<h2 id="better-bibtex">2. The free route: Better BibTeX auto-export</h2>
+<p>Better BibTeX is a Zotero plugin that can keep an exported <code>.bib</code> file up to date. Export a library, a group or a single collection and check "Keep updated": after that, "any changes to the collection or library will trigger an automatic re-export to update the file." <span class="src">(<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">Better BibTeX docs: automatic export</a>, as of October 2026)</span></p>
+<p>The exported file then has to reach your LaTeX project:</p>
+<ul>
+<li><strong>Local writing.</strong> Export straight into the project folder and build with your local tools.</li>
+<li><strong>Through git.</strong> Better BibTeX can push for you. Run <code>git config zotero.betterbibtex.push true</code> in a clone, point the auto-export at that directory, and "at each update, BBT will now also push your library to the git service." Its documentation notes that this needs some technical expertise to set up, and that other files you have staged are committed along with the library.</li>
+<li><strong>Into a browser editor.</strong> Any editor that can pull from a git repository, or that lets you upload the file, can take it from there.</li>
+</ul>
+<p>What it does well: it is free, it works per collection, and the export runs on your own machine. What to plan for: Better BibTeX is a plugin that runs inside the Zotero desktop app, and its automatic exports run "on change" or when "Zotero goes idle" <span class="src">(<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">Better BibTeX docs</a>, as of October 2026)</span>, so Zotero has to be open for an export to happen. Each co-author who adds references needs the same setup or has to send entries to the person who has it.</p>
+
+<h2 id="aldine">3. Zotero sync in Aldine</h2>
+<p><a href="/">Aldine</a> is an open-source, self-hosted collaborative LaTeX editor with Zotero built in. There is no premium tier involved.</p>
+<div class="demo-frame">
+<img src="/assets/zotero-dark.png" width="1440" height="900" loading="lazy" alt="The Zotero panel in Aldine next to the LaTeX source: a search field over the linked library and a list of references to insert as citations" />
+</div>
+<p class="demo-caption">The Zotero panel in Aldine: search your library and insert citations.</p>
+<ul>
+<li><strong>Whole library or one collection.</strong> Link My Library or one of your group libraries to a project, either whole or as a single collection.</li>
+<li><strong>Version-aware refresh.</strong> Aldine keeps a <code>.bib</code> file in the project in sync and uses Zotero's version numbers to make a refresh cheap.</li>
+<li><strong>Cite from a search panel.</strong> Search the linked library in the sidebar and insert the citation at the cursor.</li>
+<li><strong><code>\cite{</code> autocomplete.</strong> Typing <code>\cite{</code> offers the keys.</li>
+<li><strong>Without Zotero.</strong> Search the literature by title or author through OpenAlex, or paste a DOI or arXiv id: one click appends the BibTeX and inserts the <code>\cite</code>.</li>
+</ul>
+<p>What to plan for: you have to run Aldine yourself (<a href="/self-hosting/">two containers with Docker Compose</a>); there is no hosted service today. Aldine is young (v0.x).</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="compare">Side by side</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col"></th><th scope="col">Overleaf integration</th><th scope="col">Better BibTeX auto-export</th><th scope="col">Aldine</th></tr></thead>
+<tbody>
+<tr><th scope="row">Cost</th><td>Premium feature (<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">source</a>)</td><td>Free, MIT-licensed plugin (<a href="https://github.com/retorquere/zotero-better-bibtex">source</a>)</td><td>Free, self-hosted</td></tr>
+<tr><th scope="row">Scope</th><td>Zotero Sync: selected collections into your Overleaf Library; linked <code>.bib</code>: whole library or group library (<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">source</a>)</td><td>Library, group or collection (<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">source</a>)</td><td>My Library or a group library, whole or one collection</td></tr>
+<tr><th scope="row">Update</th><td>Zotero Sync: automatic, one-way; linked <code>.bib</code>: manual Refresh (<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">source</a>)</td><td>Automatic on change or on idle, while Zotero runs (<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">source</a>)</td><td>Version-aware refresh of the project's <code>.bib</code></td></tr>
+<tr><th scope="row">Where it runs</th><td>overleaf.com</td><td>Your machine</td><td>Your server</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src">External sources as of October 2026.</p>
+
+<h2 id="problems">Common problems</h2>
+<h3>Citation keys change after a refresh</h3>
+<p>Overleaf's documentation warns: "Updates to the Zotero platform sometimes cause citation keys to change." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">Overleaf docs: Zotero</a>, as of October 2026)</span> When that happens, compile once and fix the undefined citations the log reports. Whatever route you use, changing an entry's author or year can change a key that is generated from them, so agree with co-authors on who edits entries.</p>
+<h3>The library is large</h3>
+<p>A whole library in one <code>.bib</code> is slow to export and hard to scan. Better BibTeX's documentation advises exporting "only targeted selections" for performance. <span class="src">(<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">Better BibTeX docs</a>, as of October 2026)</span> A per-paper collection in Zotero keeps the file small, and Better BibTeX and Aldine can both work from a single collection. On Overleaf, Zotero Sync is scoped to the collections you select, while the linked <code>.bib</code> file imports a whole library. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">Overleaf docs: Zotero</a>, as of October 2026)</span></p>
+<h3>Group libraries</h3>
+<p>Overleaf's linked <code>.bib</code> file imports individual group libraries, and Better BibTeX exports them. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">Overleaf docs: Zotero</a>, as of October 2026)</span> <span class="src">(<a href="https://retorque.re/zotero-better-bibtex/exporting/auto/">Better BibTeX docs</a>, as of October 2026)</span> In Aldine, the library picker lists My Library and each of your Zotero groups.</p>
+<h3>The import asks for permission again</h3>
+<p>If Overleaf reports a permission error, its documentation says to select "Re-link your account". <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/reference-manager-integrations/zotero">Overleaf docs: Zotero</a>, as of October 2026)</span></p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/" aria-current="page">Zotero with LaTeX</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

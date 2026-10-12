@@ -7,8 +7,8 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/trahloff)
 
-Aldine is a slim, self-hosted, open-source LaTeX collaboration platform, an
-Overleaf alternative built for speed and simplicity. Real-time multi-cursor
+Aldine is a self-hosted, open-source collaborative LaTeX editor and an
+Overleaf alternative. It is slim and built for speed: real-time multi-cursor
 editing, every project a real git repo with branches, native Zotero, ~2s warm
 recompiles. Two containers and flat files by default: no database to migrate,
 nothing to babysit.
@@ -18,6 +18,11 @@ nothing to babysit.
 [Quick start](#quick-start) · [How Aldine compares](#how-aldine-compares) ·
 [Screenshots](#screenshots) · [Self-hosting](#production-deploy) ·
 [Contributing](CONTRIBUTING.md)
+
+Guides on aldine.dev:
+[Self-hosting Overleaf (Community Edition, Server Pro) compared with Aldine](https://aldine.dev/self-hosted-overleaf/) ·
+[Git with Overleaf and a git-native alternative](https://aldine.dev/overleaf-git/) ·
+[A LaTeX MCP server for Claude](https://aldine.dev/latex-mcp/)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="e2e/shots/editor-dark.png">
@@ -57,10 +62,12 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   every new project in a GitLab group automatically and push every autosave
   from the server.
 - **Native Zotero integration**: link your whole Zotero library *or a single
-  collection*, no premium tier required; keep a `.bib` in sync with cheap
+  collection*, from My Library or any of your group libraries, no premium
+  tier required; keep a `.bib` in sync with cheap
   version-aware refresh, insert citations from a search panel or via `\cite{`
   autocomplete.
-- **Claude as a collaborator** (optional, `ALDINE_MCP=1`): connect your
+- **Claude as a collaborator** (optional, `ALDINE_MCP=1`): Aldine has a
+  built-in MCP server. Connect your
   instance to claude.ai, Claude Desktop, Cowork or Claude Code over MCP and
   Claude edits, typesets and shows the PDF in the chat (inline on claude.ai,
   Claude Desktop and Cowork; a signed link elsewhere); every change is a git
@@ -110,6 +117,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   (single-tenant); the collab socket is access-checked.
   `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
   users (7 / 30 days, editing now), projects, compile time. Metadata only.
+  No compose file passes this variable through; add it under `environment:`
+  of the `app` service.
 - **Scales when you need it**: flat-file storage by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
@@ -165,8 +174,8 @@ Open http://localhost:8080. That's it. Projects live in the `aldine-data`
 volume, and everything else (auth, SSO, AI fix, email) is opt-in via
 environment variables when you want it.
 
-That is the repo-root `docker-compose.yml` verbatim, so a clone works
-identically: `git clone https://github.com/trahloff/Aldine && cd Aldine &&
+That is equivalent to the repo-root `docker-compose.yml` (same services,
+images and sandbox settings), so a clone works identically: `git clone https://github.com/trahloff/Aldine && cd Aldine &&
 docker compose up -d`. Keep the `name: aldine` line wherever you save it: it
 fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
@@ -176,7 +185,7 @@ what `deploy/backup.sh` looks for.
   nothing under a running install changes on its own. To upgrade, read the
   [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
 
-      ALDINE_VERSION=0.4.0 docker compose pull && docker compose up -d
+      ALDINE_VERSION=<new version> docker compose pull && docker compose up -d
 
   To roll back, set `ALDINE_VERSION` to the previous release and run the same
   command. Your projects live in the `aldine-data` and `aldine-secrets`
@@ -235,22 +244,38 @@ what `deploy/backup.sh` looks for.
 
 | | Aldine | Overleaf CE (self-hosted) | git + VS Code + LaTeX Workshop |
 |---|---|---|---|
-| Deploy | 2 containers, `docker compose up` | Toolkit-managed monolith + Mongo + Redis | n/a (local) |
-| Real-time collaboration | ✅ CRDT, unlimited collaborators | ✅ | ❌ (async via git) |
-| Review comments / suggested edits | ✅ free | Server Pro (paid) | PR reviews |
-| Git branches from the UI | ✅ projects *are* git repos | ❌ (git bridge is a paid feature) | ✅ (it *is* git) |
-| GitHub/GitLab/Gitea sync + PRs/MRs from the editor | ✅ | Paid tiers | ✅ natively |
-| Zotero | Whole library **or one collection**, free | Premium, whole library | Via Better BibTeX, manual |
-| Warm recompile | ~2s (persistent latexmk cache) | Comparable | Fastest (local) |
-| Templates gallery | 4 built-in | Huge community gallery | CTAN / your own |
-| Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (~4.3 GB); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | All of TeX Live | Whatever you install |
-| Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, tracked changes | ✅ (rewrites your source) | ❌ |
-| Maturity | Young (v0.x, 2026) | A decade in production | Very mature |
-| License | AGPL-3.0 | AGPL | MIT/varies |
+| Deploy | 2 containers, `docker compose up` | Overleaf Toolkit; `sharelatex`, `mongo` and `redis` containers ([source][ol-req]) | n/a (local) |
+| Real-time collaboration | ✅ CRDT, unlimited collaborators | ✅ ([source][ol-repo]) | ❌ (async via git) |
+| Review comments / suggested edits | ✅ | ❌ commenting and track changes are Server Pro only ([source][ol-cmp]) | PR reviews |
+| Git branches from the UI | ✅ projects *are* git repos | ❌ git integration is Server Pro only ([source][ol-cmp]) | ✅ (it *is* git) |
+| GitHub/GitLab/Gitea sync + PRs/MRs from the editor | ✅ | Overleaf documents GitHub synchronization as "a premium feature for Overleaf Cloud users" ([source][ol-gitdocs]); absent from its on-premises comparison ([source][ol-cmp]) | ✅ natively |
+| Zotero | Whole library **or one collection** | Overleaf lists Zotero among the third-party integrations of its cloud platform ([source][ol-onprem]); absent from its on-premises comparison ([source][ol-cmp]) | Via Better BibTeX auto-export |
+| Warm recompile | ~2s (persistent latexmk cache) | Not measured | Local |
+| Templates gallery | 4 built-in, plus your own from git repositories | ❌ private template management is Server Pro only ([source][ol-cmp]) | CTAN / your own |
+| Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (~4.3 GB); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | Minimal TeX Live in the image; full with `tlmgr install scheme-full` ([source][ol-tl]) | Whatever you install |
+| Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, review suggestions shown inline (accept/dismiss) | ✅ Visual Editor; its code is in the open-source repository ([source][ol-visual]) | ❌ |
+| Maturity | Young (v0.x, 2026) | Overleaf dates from 2011 ([source][ol-about]) | Very mature |
+| License | AGPL-3.0 | AGPL-3.0 ([source][ol-repo]) | MIT/varies |
+
+[ol-cmp]: https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition
+[ol-req]: https://docs.overleaf.com/on-premises/getting-started/requirements/software-requirements
+[ol-tl]: https://docs.overleaf.com/on-premises/installation/upgrading-tex-live
+[ol-repo]: https://github.com/overleaf/overleaf
+[ol-about]: https://www.overleaf.com/about
+[ol-gitdocs]: https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization
+[ol-onprem]: https://www.overleaf.com/for/enterprises/when-to-use-overleaf-on-premises-vs-in-the-cloud
+[ol-visual]: https://github.com/overleaf/overleaf/tree/main/services/web/frontend/js/features/source-editor/extensions/visual
 
 If Overleaf CE fits you, use it; it's good software. Aldine exists for people
-who want track changes, git, and Zotero without paid tiers, in a deployment
-they can hold in their head.
+who want review comments with suggested edits, git and Zotero without paid
+tiers, in a deployment they can hold in their head.
+
+Every Overleaf CE cell except "Not measured" links to the Overleaf page it
+was checked against on 2026-10-12. For GitHub synchronization and Zotero we
+found no Overleaf page that states them for the on-premises editions, so
+those cells quote what Overleaf does say. A longer, dated version of this
+comparison is at
+[aldine.dev/self-hosted-overleaf](https://aldine.dev/self-hosted-overleaf/).
 
 ## Screenshots
 
@@ -484,8 +509,9 @@ tile): the generic templates are MIT, and `templates/iac-paper` is LPPL-1.3c,
 the customary license for a LaTeX class file. Venue templates are generated
 from the classes installed in the compiler image, with the license `tlmgr`
 reports; no publisher file is stored in this repository. Overleaf is a
-trademark of its owners; Aldine is an independent project, not affiliated with
-or endorsed by Overleaf.
+trademark of its owner. Claude, Zotero, GitHub, GitLab and other names are
+trademarks of their respective owners. Aldine is an independent project, not
+affiliated with or endorsed by any of them.
 
 Two things stated plainly, because finding them out later feels like a
 bait-and-switch. **A hosted Aldine service is planned**, and contributions are

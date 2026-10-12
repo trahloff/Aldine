@@ -73,4 +73,9 @@ ENV PORT=4020 \
     openout_any=p
 
 EXPOSE 4020
+
+LABEL org.opencontainers.image.source="https://github.com/trahloff/Aldine" \
+      org.opencontainers.image.url="https://aldine.dev" \
+      org.opencontainers.image.description="Aldine compiler: sandboxed TeX Live and latexmk compile service" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 CMD ["node", "server.js"]

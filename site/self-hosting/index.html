@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Self-host a collaborative LaTeX editor with Docker Compose</title>
+<link rel="canonical" href="https://aldine.dev/self-hosting/" />
+<meta name="description" content="Install Aldine with Docker Compose: the compose file, upgrades and rollback, TeX packages, logins and SSO, reverse proxy, backups and compile limits." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Self-host a collaborative LaTeX editor with Docker Compose" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Install Aldine with Docker Compose: the compose file, upgrades and rollback, TeX packages, logins and SSO, reverse proxy, backups and compile limits." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine: write LaTeX together. Fast, versioned, yours." />
+<meta property="og:url" content="https://aldine.dev/self-hosting/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Self-host a collaborative LaTeX editor with Docker Compose" />
+<meta name="twitter:description" content="Install Aldine with Docker Compose: the compose file, upgrades and rollback, TeX packages, logins and SSO, reverse proxy, backups and compile limits." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/self-hosting/#article",
+      "headline": "Self-hosting Aldine with Docker Compose",
+      "description": "Install Aldine with Docker Compose: the compose file, upgrades and rollback, TeX packages, logins and SSO, reverse proxy, backups and compile limits.",
+      "url": "https://aldine.dev/self-hosting/",
+      "mainEntityOfPage": "https://aldine.dev/self-hosting/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Self-hosting guide",
+          "item": "https://aldine.dev/self-hosting/"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/" aria-current="page">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Self-hosting guide</p>
+<h1>Self-hosting Aldine with Docker Compose</h1>
+<p class="lede">Aldine is an open-source, self-hosted collaborative LaTeX editor. It runs as two containers: the app and a sandboxed TeX Live compiler. This guide covers the install and what comes after it: upgrades, TeX packages, logins, TLS, backups and limits.</p>
+<p class="checked">Applies to Aldine 0.11.0. Updated on 12 October 2026. The reference is the <a href="https://github.com/trahloff/Aldine#quick-start">README</a> and the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md">single-VPS runbook</a>.</p>
+
+<h2 id="requirements">What it needs to run</h2>
+<ul>
+<li>Docker Engine with the compose plugin.</li>
+<li>Disk for the compiler image: the first pull is about 1.1 GB compressed and 4.3 GB on disk, because TeX Live lives in that image.</li>
+<li>For a shared production instance, the runbook recommends a VPS with 2 or more dedicated vCPUs, at least 8 GB of RAM and at least 40 GB of disk. LaTeX compiles are CPU and RAM bursts of about 2 GB each, so size for the compiles you expect to run at once.</li>
+<li>No database and no external services. Projects are git repositories on disk and metadata is stored in flat files by default.</li>
+</ul>
+
+<h2 id="install">Install</h2>
+<p>No clone, no build: save this as <code>docker-compose.yml</code> and run <code>docker compose up -d</code>.</p>
+<pre><code>name: aldine
+
+services:
+  app:
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.11.0}
+    ports:
+      - &quot;8080:3000&quot;
+    volumes:
+      - aldine-data:/data
+      - aldine-secrets:/secrets
+    networks: [frontend, backend]
+    init: true
+    restart: unless-stopped
+
+  compiler:
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.11.0}${ALDINE_TEXLIVE:-}
+    volumes:
+      - aldine-data:/data
+    # The compiler runs untrusted LaTeX. Keep this block.
+    networks: [backend]
+    mem_limit: 2g
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    init: true
+    restart: unless-stopped
+
+networks:
+  frontend: {}
+  backend:
+    internal: true # no route to the internet
+
+volumes:
+  aldine-data:
+  aldine-secrets:</code></pre>
+<p>Open <code>http://localhost:8080</code>. Projects live in the <code>aldine-data</code> volume. Keep the <code>name: aldine</code> line wherever you save the file: it fixes the volume names, which is what lets you switch compose files later and what <code>deploy/backup.sh</code> looks for.</p>
+<p>The file is equivalent to the repository's <code>docker-compose.yml</code> (same services, images and sandbox settings), so a clone works the same way:</p>
+<pre><code>git clone https://github.com/trahloff/Aldine &amp;&amp; cd Aldine &amp;&amp; docker compose up -d</code></pre>
+<p>If port 8080 is taken, change the left side of <code>ports:</code>.</p>
+
+<h2 id="health">Check that it is up</h2>
+<p>After the first pull, starts take seconds. The instance is ready when</p>
+<pre><code>curl localhost:8080/api/health</code></pre>
+<p>returns <code>{"ok":true,"name":"aldine"}</code>.</p>
+
+<h2 id="upgrade">Version pinning, upgrade and rollback</h2>
+<p>The compose file says <code>${ALDINE_VERSION:-0.11.0}</code>, so you are pinned to a release and nothing changes under a running install on its own. To upgrade, read the <a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">changelog</a>, back up, then:</p>
+<pre><code>ALDINE_VERSION=&lt;new version&gt; docker compose pull &amp;&amp; docker compose up -d</code></pre>
+<p>To roll back, set <code>ALDINE_VERSION</code> to the previous release and run the same command. Your projects live in the <code>aldine-data</code> and <code>aldine-secrets</code> volumes, and an image swap does not touch them.</p>
+<p>Versions follow SemVer with one caveat: before 1.0 a minor bump (0.3 to 0.4) may change behaviour or the on-disk layout, and a patch bump will not. Upgrades across a minor version are not yet tested against existing data, so back up first. Only the latest release gets security fixes.</p>
+
+<h2 id="tex-packages">TeX packages and the full image</h2>
+<p>The default compiler image carries TeX Live's medium scheme plus the pictures, latexextra and bibtexextra collections (pgfplots, tikz-cd, cleveref, todonotes, minted, biblatex and more), the publisher classes, and the Arabic, Persian, Cyrillic and Greek scripts. The one family it leaves out is CJK. When a package is missing, the error in the editor names it. There are two ways to get it.</p>
+<h3>Add one package</h3>
+<p>Put a <code>docker-compose.override.yml</code> next to <code>docker-compose.yml</code> that builds a derived compiler image, then run <code>docker compose up -d --build</code>:</p>
+<pre><code>services:
+  compiler:
+    image: aldine-compiler-local
+    build:
+      dockerfile_inline: |
+        FROM ghcr.io/trahloff/aldine-compiler:0.11.0
+        RUN tlmgr install pgfplots tikz-cd</code></pre>
+<p>Bump the <code>FROM</code> tag when you bump <code>ALDINE_VERSION</code>.</p>
+<h3>Get all of TeX Live, including CJK</h3>
+<p>Every release from 0.4.0 also ships all of TeX Live as a <code>-full</code> image: about 2.8 GB compressed and 9 GB on disk. CJK is only in this image. Add <code>ALDINE_TEXLIVE=-full</code> next to <code>ALDINE_VERSION</code> and pull again.</p>
+
+<h2 id="auth">Logins and single sign-on</h2>
+<p>Out of the box Aldine is single-tenant with no login. Everything beyond the minimum is configured with environment variables, and those are wired up in <a href="https://github.com/trahloff/Aldine/blob/main/docker-compose.full.yml"><code>docker-compose.full.yml</code></a>, which carries the same compiler sandbox and the same volumes, so you can switch without losing data. That file has no <code>image:</code> lines: it needs a clone of the repository, builds from source (20 to 60 minutes the first time) and runs the commit you have checked out, not the pinned release image. Start it with <code>docker compose -f docker-compose.full.yml up -d --build</code>. To stay on the release images instead, add an <code>environment:</code> block with the variables you need to the <code>app</code> service of the minimal file. Settings go in a <code>.env</code> file next to the compose files:</p>
+<pre><code># multi-user login, ownership and sharing (unset = single-tenant)
+AUTH_ENABLED=1
+# Google SSO
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+# GitHub SSO
+GITHUB_LOGIN_CLIENT_ID=
+GITHUB_LOGIN_CLIENT_SECRET=
+# ORCID SSO
+ORCID_CLIENT_ID=
+ORCID_CLIENT_SECRET=
+# OpenID Connect SSO (Keycloak, Authentik, Authelia, Pocket ID, …): redirect URI
+# &lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/oidc/callback; every option in docs/OIDC.md
+OIDC_ISSUER=
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_LABEL=
+OIDC_ALLOWED_GROUPS=</code></pre>
+<p>Give each comment its own line: anything after a value becomes part of the value.</p>
+<ul>
+<li><code>AUTH_ENABLED=1</code> turns on login, per-project ownership and sharing (invite-only or by link).</li>
+<li>Each provider is independent. Email and password works without any of them; <code>ALDINE_SSO_ONLY=1</code> disables passwords entirely.</li>
+<li><code>ALDINE_ADMIN_EMAILS=you@example.org</code> opens <code>/admin</code>: accounts, active users, projects and compile time. Metadata only. Neither compose file passes this variable through, so add <code>ALDINE_ADMIN_EMAILS: ${ALDINE_ADMIN_EMAILS:-}</code> under <code>environment:</code> of the <code>app</code> service.</li>
+<li>Recipes for Authentik, Keycloak, Authelia and Dex are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md">docs/OIDC.md</a>.</li>
+</ul>
+
+<h2 id="proxy">Reverse proxy and TLS</h2>
+<p>Set the public URL and bind the app to loopback in <code>.env</code>:</p>
+<pre><code>ALDINE_APP_BIND=127.0.0.1
+ALDINE_PUBLIC_URL=https://aldine.example.com</code></pre>
+<p>Then start the stack with the production overlay, which trusts proxy headers, sets secure cookies and rotates logs, and point your proxy at <code>127.0.0.1:8080</code>:</p>
+<pre><code>docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
+  up -d --build</code></pre>
+<p>Both files are in the repository, so this runs from a clone. Building from source installs TeX Live into the compiler image; expect 20 to 60 minutes for the first build.</p>
+<ul>
+<li><strong>nginx:</strong> use the sample vhost in <a href="https://github.com/trahloff/Aldine/blob/main/deploy/nginx.conf"><code>deploy/nginx.conf</code></a>. The lines that matter are <code>client_max_body_size 81m</code> (nginx's 1 MB default breaks ZIP import) and the <code>Upgrade</code> and <code>Connection</code> headers on <code>/collab</code> (without them the editor loads but live cursors never appear).</li>
+<li><strong>Traefik:</strong> route by labels to port 3000 of the app; the runbook has the overlay.</li>
+<li><strong>No proxy yet:</strong> append <code>--profile tls</code> and set <code>ALDINE_DOMAIN</code> in <code>.env</code>. The bundled Caddy provisions and renews the certificate.</li>
+</ul>
+
+<h2 id="backup">Backup and restore</h2>
+<p>Two volumes hold everything: <code>aldine-data</code> (projects and their git history) and <code>aldine-secrets</code> (users, sessions, keys, comments, usage). The repository ships scripts for both directions. They live in <code>deploy/</code> of a clone, which the install above does not create, so clone the repository first:</p>
+<pre><code>deploy/backup.sh aldine-backup.tar.gz
+# Restore, after stopping the stack with `docker compose down`:
+deploy/restore.sh aldine-backup.tar.gz</code></pre>
+<p>For daily backups there is a systemd timer:</p>
+<pre><code>sudo cp deploy/aldine-backup.service deploy/aldine-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aldine-backup.timer</code></pre>
+<p>Snapshots land in <code>/var/backups/aldine</code> and 14 are kept. The service file expects the checkout at <code>/opt/aldine</code>. If your compose project name is not <code>aldine</code>, set <code>ALDINE_PROJECT</code> for both scripts.</p>
+
+<h2 id="limits">Compile isolation and limits</h2>
+<p>The compiler runs on an internal-only Docker network with no internet egress, drops all Linux capabilities and is bounded on memory and PIDs. LaTeX compiles with restricted shell-escape (whitelist only).</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Variable</th><th scope="col">What it limits</th><th scope="col">Default</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>COMPILE_TIMEOUT_MS</code></th><td>Time per compile, in the compiler container</td><td>120000 ms</td></tr>
+<tr><th scope="row"><code>MAX_CONCURRENT_COMPILES</code></th><td>Compiles in flight in the compiler container</td><td>2</td></tr>
+<tr><th scope="row"><code>RL_COMPILE_CONCURRENCY</code></th><td>Concurrent compiles the app forwards</td><td>2</td></tr>
+<tr><th scope="row"><code>ALDINE_COMPILE_QUOTA_MIN</code></th><td>Compile minutes per user per month; over-quota compiles return HTTP 402</td><td>uncapped</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>docker-compose.full.yml</code> passes <code>COMPILE_TIMEOUT_MS</code> and <code>MAX_CONCURRENT_COMPILES</code> through from <code>.env</code>. <code>ALDINE_COMPILE_QUOTA_MIN</code> is passed through by the <code>deploy/docker-compose.prod.yml</code> overlay. <code>RL_COMPILE_CONCURRENCY</code> is in neither file: add it under <code>environment:</code> of the <code>app</code> service yourself. Every variable Aldine reads is listed in the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">configuration table</a>.</p>
+
+<h2 id="storage">Storage: flat files, Postgres optional</h2>
+<p>Project files are real git repositories with worktrees on disk; that is what gives you branches and history. Users, sessions, project metadata, review comments and usage go through a datastore with two backends: JSON files (the default) or Postgres. The switch is configuration:</p>
+<pre><code># in .env
+DATABASE_URL=postgres://aldine:aldine@db:5432/aldine
+# bring up with the bundled Postgres (or point at a managed one)
+docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
+  --profile postgres up -d</code></pre>
+
+<h2 id="single-node">What is single-node by design</h2>
+<p>The supported production topology is one app node, scaled vertically. Live collaboration state is held in the app process, and routing each project's collaboration socket to a consistent node is not built, so two app nodes behind a load balancer are not supported even with Postgres and Redis configured. When one box is not enough, the first step is to move the compiler container to its own machine against the shared data volume and set <code>COMPILER_URL</code>. <a href="https://github.com/trahloff/Aldine/blob/main/docs/SCALING.md">docs/SCALING.md</a> lists what exists and what does not.</p>
+
+<h2 id="import">Importing an Overleaf project</h2>
+<p>Download the project from Overleaf as a ZIP and drop it on the Aldine home screen. The root file is detected and the first typeset runs automatically. You can also import a repository from GitHub, GitLab, Gitea or Forgejo as a project. Aldine exports a project as a ZIP too, so the way out is the same as the way in.</p>
+
+<h2 id="other-limits">Limits to know before you rely on it</h2>
+<ul>
+<li><strong>Young.</strong> Aldine is at v0.x (0.11.0, September 2026). Before 1.0 a minor version may change behaviour or the on-disk layout, so back up before upgrading.</li>
+<li><strong>No keystroke-level track changes.</strong> Aldine has review comments with suggested edits.</li>
+<li><strong>Single node.</strong> One app node is the supported topology; you scale it vertically. <a href="https://github.com/trahloff/Aldine/blob/main/docs/SCALING.md">docs/SCALING.md</a> says what is and is not built.</li>
+<li><strong>CJK needs the full image.</strong> The default compiler image leaves out the CJK scripts; they are in the <code>-full</code> image (about 2.8 GB compressed, 9 GB on disk).</li>
+<li><strong>You run it.</strong> There is no paid plan and no hosted service today.</li>
+</ul>
+<p>If you are deciding between this and Overleaf's own self-hosted editions, <a href="/self-hosted-overleaf/">self-hosting Overleaf (Community Edition, Server Pro) compared with Aldine</a> has the comparison, including where Overleaf is the better choice.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="faq">Common questions</h2>
+<h3>What does Aldine need to run?</h3>
+<p>Docker with the compose plugin and room for the compiler image (about 4.3 GB on disk). No database is required.</p>
+<h3>How do I upgrade?</h3>
+<p>Back up, then run <code>docker compose pull</code> and <code>docker compose up -d</code> with <code>ALDINE_VERSION</code> set to the new release. Rolling back is the same command with the previous version.</p>
+<h3>How do I back up?</h3>
+<p>From a clone of the repository, run <code>deploy/backup.sh aldine-backup.tar.gz</code>, or install the systemd timer for daily snapshots of both volumes.</p>
+<h3>Does it support single sign-on?</h3>
+<p>Yes: Google, GitHub, ORCID and any OpenID Connect provider, with <code>AUTH_ENABLED=1</code>.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/latex-mcp/">Connect Claude to a LaTeX project over MCP</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</a></li>
+<li><a href="/zotero-latex/">Using Zotero with LaTeX: three ways to keep references in sync</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/self-hosting/" aria-current="page">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

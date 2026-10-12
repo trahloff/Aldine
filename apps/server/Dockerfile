@@ -43,5 +43,10 @@ ENV PORT=3000 \
     WEB_DIST=/srv/apps/web/dist
 
 EXPOSE 3000
+
+LABEL org.opencontainers.image.source="https://github.com/trahloff/Aldine" \
+      org.opencontainers.image.url="https://aldine.dev" \
+      org.opencontainers.image.description="Aldine app: self-hosted collaborative LaTeX editor (API, real-time collaboration, web UI)" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 WORKDIR /srv/apps/server
 CMD ["node", "dist/index.js"]

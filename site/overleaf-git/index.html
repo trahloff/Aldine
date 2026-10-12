@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Git with Overleaf: what works and a git-native alternative</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-git/" />
+<meta name="description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Git with Overleaf: what works and a git-native alternative" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<meta property="og:image" content="https://aldine.dev/assets/branches-dark.png" />
+<meta property="og:image:width" content="1440" />
+<meta property="og:image:height" content="900" />
+<meta property="og:image:alt" content="The branch menu in Aldine" />
+<meta property="og:url" content="https://aldine.dev/overleaf-git/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Git with Overleaf: what works and a git-native alternative" />
+<meta name="twitter:description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<meta name="twitter:image" content="https://aldine.dev/assets/branches-dark.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-git/#article",
+      "headline": "Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like",
+      "description": "How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs.",
+      "url": "https://aldine.dev/overleaf-git/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-git/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/branches-dark.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Git with Overleaf",
+          "item": "https://aldine.dev/overleaf-git/"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Git with Overleaf</p>
+<h1>Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</h1>
+<p class="lede">Yes, you can use git with Overleaf. On overleaf.com, git integration and GitHub synchronization are premium features; on a self-hosted install, git integration needs Server Pro. This page covers how both work, what to plan for, and how an editor in which every project is a real git repository differs.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 12 October 2026.</p>
+
+<h2 id="git-integration">How Overleaf's git integration works</h2>
+<p>Each Overleaf project can be cloned over HTTPS, for example <code>git clone https://git.overleaf.com/1234567</code> with your project's id. Overleaf's documentation states: "For Overleaf cloud, Git integration is a premium feature, so it will only be available if the project owner has a paid subscription to Overleaf or has been granted access to the feature". <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of October 2026)</span></p>
+<p>You sign in with an authentication token, not your password. You create tokens in your Overleaf account settings, enter <code>git</code> as the username and the token as the password. A token works for all your projects, expires one year after it is created, and you can hold up to 10 at once. Password authentication for git is no longer available. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: authentication tokens</a>, as of October 2026)</span></p>
+<p>Overleaf keeps its own project history, which is not git. The documentation describes the integration as "essentially a translation" from that history to git: commits are created when you pull, fetch or push. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of October 2026)</span></p>
+<p>On a self-hosted Overleaf, git integration is documented under Server Pro only configuration, available since Server Pro 4.0.1 and switched on with <code>GIT_BRIDGE_ENABLED=true</code>. Overleaf's comparison table lists git integration as not included in Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/git-integration">Overleaf docs: Server Pro git integration</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of October 2026)</span></p>
+
+<h2 id="github-sync">How Overleaf's GitHub synchronization works</h2>
+<p>GitHub synchronization links one Overleaf project to one GitHub repository. It is also a premium feature. The points below are from Overleaf's documentation. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span></p>
+<ul>
+<li>Synchronization is manual: "Synchronization between GitHub and Overleaf does not happen automatically." You push and pull from a menu in the editor.</li>
+<li>"Only the project owner can initialize GitHub sync for a project; collaborators cannot set up the initial link."</li>
+<li>"It is not possible to synchronize an existing Overleaf project with an existing GitHub repository."</li>
+<li>"GitHub Synchronization can only be used on Github.com."</li>
+<li>When a pull cannot be merged cleanly, Overleaf pushes a new branch to your repository, and you merge it into your default branch, locally or with a pull request on GitHub.</li>
+<li>There are size limits: sync does not run when the editable content of a project exceeds 7 MB, and Overleaf recommends commits of under 100 files.</li>
+</ul>
+
+<h2 id="plan-for">What to plan for</h2>
+<p>These follow from the design above, in which Overleaf translates its own history to git on request.</p>
+<ul>
+<li><strong>One line of history.</strong> "The Overleaf Git system does not support branching." You can branch in your own clone or on GitHub, but the Overleaf project follows one branch. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span></li>
+<li><strong>Some git features are not carried.</strong> Overleaf projects do not support Git LFS, tags or symlinks, do not preserve execute permissions, and cannot contain submodules. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of October 2026)</span></li>
+<li><strong>Tokens need renewing.</strong> They expire after one year. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: authentication tokens</a>, as of October 2026)</span></li>
+<li><strong>The paid plan is the project owner's.</strong> Git integration depends on the owner's subscription, and only the owner can set up the GitHub link. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span></li>
+</ul>
+
+<h2 id="free-routes">Free routes and their limits</h2>
+<h3>Download the source and commit it yourself</h3>
+<p>In the editor, choose File, then Download, then "Download as source (.zip)". Overleaf's page on downloading a project names no plan requirement. <span class="src">(<a href="https://docs.overleaf.com/managing-projects-and-files/downloading-a-project">Overleaf docs: downloading a project</a>, as of October 2026)</span> Unpack the ZIP into a repository and commit. The limit is that this is a manual, one-way snapshot: changes you make in git do not flow back to Overleaf.</p>
+<h3>Keep the paper in git and write locally</h3>
+<p>Authors who are comfortable with git can skip the browser: a shared repository plus VS Code with the LaTeX Workshop extension, which builds on save, previews the PDF and supports SyncTeX in both directions. <span class="src">(<a href="https://github.com/James-Yu/LaTeX-Workshop">LaTeX Workshop README</a>, as of October 2026)</span> You get all of git, including branches and pull request reviews. The limit is collaboration: there is no live co-editing, and every author needs a working LaTeX setup and has to use git.</p>
+
+<h2 id="aldine">How git works in Aldine</h2>
+<p>Aldine is an open-source, self-hosted collaborative LaTeX editor. Its starting point is the reverse of a translation layer: every project is a real git repository on your server, with plain <code>.tex</code> files in it.</p>
+<div class="demo-frame">
+<img src="/assets/branches-dark.png" width="1440" height="900" loading="lazy" alt="The branch menu in Aldine: the current branch, the list of branches of the project, and the actions to create, switch and merge" />
+</div>
+<p class="demo-caption">Branches in Aldine: create, switch and merge from the UI.</p>
+<ul>
+<li><strong>Branches in the browser.</strong> Create a branch, edit it independently, and merge it back from the UI. Branches are git worktrees, so every branch can be edited at the same time.</li>
+<li><strong>Push and pull to GitHub, GitLab, Gitea and Forgejo.</strong> Import a repository as a project or publish a local project to a new repository. Push and pull show ahead and behind counts, conflicts can be resolved in the editor, and you can open a pull or merge request from there. gitlab.com, self-hosted GitLab and any Gitea or Forgejo instance (Codeberg included) work; a personal access token is enough, without an OAuth app.</li>
+<li><strong>Co-authors choose their tool.</strong> One author writes in the browser with live cursors. Another clones the repository and keeps using VS Code; their commits come back with one Pull.</li>
+<li><strong>History is git history.</strong> Edits are written to the repository and committed automatically; the History view shows checkpoints and diffs.</li>
+<li><strong>Server-side autopush.</strong> A team instance can create every new project in a GitLab group and push every autosave from the server.</li>
+</ul>
+<p>The limits are different ones. Aldine is self-hosted only, still at v0.x, and tracks review as comments and git diffs, not as keystroke-level changes. The full list is in the <a href="/self-hosting/#other-limits">self-hosting guide</a>.</p>
+<p>Setup is two containers: see <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-overleaf">When Overleaf's integration is the better choice</h2>
+<ul>
+<li><strong>You do not want to run a server.</strong> overleaf.com is hosted, so there is no server for you to install or operate. <span class="src">(<a href="https://github.com/overleaf/overleaf">Overleaf repository README</a>, as of October 2026)</span></li>
+<li><strong>Your co-authors already work on Overleaf</strong> and you want a git copy of the project for backup or for your own editor.</li>
+<li><strong>You need track changes.</strong> Overleaf has them as a premium feature. <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of October 2026)</span> Aldine has review comments with suggested edits and no keystroke-level tracking.</li>
+<li><strong>You want an established product.</strong> Overleaf dates from 2011 <span class="src">(<a href="https://www.overleaf.com/about">Overleaf: about</a>, as of October 2026)</span>; Aldine's first release was in July 2026.</li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>Can I use git with Overleaf?</h3>
+<p>Yes. A project can be cloned, pulled and pushed over HTTPS with an authentication token, and it can be linked to a GitHub repository. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span></p>
+<h3>Is Overleaf's git integration paid?</h3>
+<p>On overleaf.com both git integration and GitHub synchronization are premium features. Overleaf's plans page lists them under integrations on its paid plans and not on the free plan. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of October 2026)</span></p>
+<h3>Does Overleaf Community Edition have git?</h3>
+<p>No. Overleaf's comparison table lists git integration for Server Pro and not for Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of October 2026)</span> More on that in <a href="/self-hosted-overleaf/">self-hosting Overleaf: what Community Edition includes</a>.</p>
+<h3>Can I use GitLab?</h3>
+<p>Overleaf's GitHub synchronization works with GitHub.com only. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span> With the git integration you have an ordinary clone, which you can push to any other remote yourself. Aldine pushes and pulls to GitLab, Gitea and Forgejo as well as GitHub.</p>
+<h3>How do I use git with LaTeX co-authors who write in the browser?</h3>
+<p>Either add git to a browser editor (Overleaf's premium git integration or GitHub synchronization) or use a browser editor that stores projects as git repositories, which is what Aldine does: co-authors edit live in the browser while others clone, branch and push.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/" aria-current="page">Git with Overleaf</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>
