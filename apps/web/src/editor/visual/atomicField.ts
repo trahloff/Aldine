@@ -3,6 +3,7 @@ import { EditorView } from '@codemirror/view';
 import type { DecorationSet } from '@codemirror/view';
 import { revealField, RevealState } from './reveal';
 import { buildAtomic } from './decorations';
+import { resourceArrived } from './refresh';
 
 interface AtomicValue { deco: DecorationSet; forReveal: RevealState }
 
@@ -19,7 +20,7 @@ export const atomicField = StateField.define<AtomicValue>({
   },
   update(value, tr) {
     const rv = tr.state.field(revealField);
-    if (!tr.docChanged && rv === value.forReveal) return value;
+    if (!tr.docChanged && rv === value.forReveal && !tr.effects.some((e) => e.is(resourceArrived))) return value;
     return { deco: buildAtomic(tr.state, rv.ranges), forReveal: rv };
   },
   provide: (f) => [

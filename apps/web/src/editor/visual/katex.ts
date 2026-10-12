@@ -17,9 +17,14 @@ export function ensureKatex(): void {
   loading = Promise.all([import('katex'), import('katex/dist/katex.min.css')])
     .then(([mod]) => {
       katex = mod.default;
-      pokeViews(); // widgets compare by source; a redraw makes toDOM rerun
+      pokeViews(); // the widgets drawn so far are raw source; this redraws them
     })
     .catch(() => { loading = null; });
+}
+
+/** False until the chunk has arrived: a math widget drawn before that shows raw source. */
+export function katexReady(): boolean {
+  return katex !== null;
 }
 
 const cache = new Map<string, string>();

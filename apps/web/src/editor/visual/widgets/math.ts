@@ -1,17 +1,21 @@
 import { WidgetType } from '@codemirror/view';
-import { renderMath } from '../katex';
+import { katexReady, renderMath } from '../katex';
 
 /**
  * Rendered math. Clicking places the caret inside the construct (the widget's
  * host extension handles the mousedown), which reveals the raw source.
  */
 export class MathWidget extends WidgetType {
+  /** Whether KaTeX was there when this widget was made. A widget made before
+   *  it arrived drew raw source and must not count as equal to one made after. */
+  readonly ready = katexReady();
+
   constructor(readonly source: string, readonly display: boolean, readonly pos: number, readonly innerFrom: number, readonly innerTo: number) {
     super();
   }
 
   eq(other: MathWidget): boolean {
-    return other.source === this.source && other.display === this.display;
+    return other.source === this.source && other.display === this.display && other.ready === this.ready;
   }
 
   toDOM(): HTMLElement {
