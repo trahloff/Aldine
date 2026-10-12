@@ -171,7 +171,7 @@ function AgentAccess() {
           <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>
             {cloudBlocked
               ? 'Run this once in Claude Code, then type /mcp in a session and pick Aldine. It asks which projects Claude may touch.'
-              : 'In Claude: Settings → Connectors → Add custom connector → Connect. You pick which projects Claude may touch when it asks.'}
+              : 'In Claude: Customize → Connectors → Add → Add custom connector. You pick which projects Claude may touch when it asks.'}
           </p>
           {/* The address appears once: on its own with a copy button where
               claude.ai can use it, inside the runnable command where only

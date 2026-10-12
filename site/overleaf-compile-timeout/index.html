@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overleaf compile timeout: plan limits and how to fix it</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-compile-timeout/" />
+<meta name="description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Overleaf compile timeout: the limit on each plan and how to fix it" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine: write LaTeX together. Fast, versioned, yours." />
+<meta property="og:url" content="https://aldine.dev/overleaf-compile-timeout/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Overleaf compile timeout: the limit on each plan and how to fix it" />
+<meta name="twitter:description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-compile-timeout/#article",
+      "headline": "Overleaf compile timeout: the limit on each plan and how to fix a timed-out compile",
+      "description": "Overleaf's compile timeout on each plan, why compiles time out, the fixes from Overleaf's own documentation, and how self-hosted editors set the limit.",
+      "url": "https://aldine.dev/overleaf-compile-timeout/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-compile-timeout/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Overleaf compile timeout",
+          "item": "https://aldine.dev/overleaf-compile-timeout/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-compile-timeout/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is the Overleaf compile timeout?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf's plan limits page gives 10 seconds on the free plan and 240 seconds on premium plans. (Overleaf docs: plan limits, as of October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is the compile time limit on the Overleaf free plan?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "10 seconds. The plans page calls this the \"Basic compile timeout\" and lists the paid plans at 24 times that. (Overleaf docs: plan limits, as of October 2026) (Overleaf: plans and pricing, as of October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I get a longer compile timeout without paying?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "On overleaf.com the longer limit is a premium feature, but it is tied to the project: if the project owner has a subscription, collaborators on the free plan get the longer limit in that project. (Overleaf docs: premium features, as of October 2026) Otherwise you can reduce the compile time with the fixes above, or compile the downloaded source on your own computer."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does my Overleaf project time out when it compiled before?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf's guide says a small change can cause it. It suggests Recompile from scratch, checking recent changes in History, and turning on Stop on first error to find an error introduced by accident. (Overleaf docs: fixing and preventing compile timeouts, as of October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Fast [draft] mode fix a timeout?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It tells you whether images are the cause. Fast [draft] replaces graphics with boxes; if the document compiles that way and not in Normal mode, large or many image files are the likely reason. Overleaf also notes that some large projects compile in two stages, first in Fast [draft] mode and then in Normal mode. (Overleaf docs: fixing and preventing compile timeouts, as of October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is the compile timeout on a self-hosted Overleaf?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "180 seconds by default. You change it with the COMPILE_TIMEOUT environment variable, in seconds, in config/variables.env. (Overleaf docs: on-premises project management, as of October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is the compile timeout in Aldine?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "120 seconds by default. The person running the server changes it with COMPILE_TIMEOUT_MS on the compiler container, in milliseconds."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Overleaf compile timeout</p>
+<h1>Overleaf compile timeout: the limit on each plan and how to fix a timed-out compile</h1>
+<p class="lede">Overleaf's documentation gives the compile timeout as 10 seconds on the free plan and 240 seconds on premium plans. A timeout means the compile did not finish within that limit. Overleaf's own guide says timeouts "can often be fixed or prevented", and this page walks through those fixes before it gets to the other options. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 12 October 2026.</p>
+
+<h2 id="limits">The compile timeout on each Overleaf plan</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Where</th><th scope="col">Compile timeout</th><th scope="col">Source</th></tr></thead>
+<tbody>
+<tr><th scope="row">overleaf.com, free plan</th><td>10 seconds</td><td><a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Plan limits</a></td></tr>
+<tr><th scope="row">overleaf.com, premium plans (Standard, Pro, Student)</th><td>240 seconds</td><td><a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Plan limits</a></td></tr>
+<tr><th scope="row">Self-hosted Overleaf (Community Edition and Server Pro)</th><td>180 seconds by default, set with <code>COMPILE_TIMEOUT</code></td><td><a href="https://docs.overleaf.com/on-premises/user-and-project-management/project-management">On-premises project management</a></td></tr>
+</tbody>
+</table>
+</div>
+<p class="src">Values as stated on the linked Overleaf pages on 12 October 2026. Overleaf can change them; the linked pages are authoritative.</p>
+<p>The plans page does not give seconds. It lists a "Basic compile timeout" for the free plan and "24x Basic compile timeout" for the Student, Standard and Pro plans, which matches 10 and 240 seconds. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf: plans and pricing</a>, as of October 2026)</span></p>
+<p>The limit follows the project, not the person compiling. Overleaf describes compile time as a project-level feature that is "based on the project owner's subscription", so someone on the free plan who is invited to a project owned by a subscriber gets the longer limit in that project. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/premium-features">Overleaf docs: premium features</a>, as of October 2026)</span></p>
+
+<h2 id="why">Why a compile times out</h2>
+<p>Overleaf builds your PDF with latexmk, and the timeout is the time allowed for that build. Overleaf's guide names these causes: <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<ul>
+<li><strong>Compile errors.</strong> "Some compile errors, or the build-up of several errors, can completely block the latexmk build process and lead to a compile timeout."</li>
+<li><strong>Images.</strong> "Including many or large image files in your project can significantly add to the time required to compile your project."</li>
+<li><strong>Slow practices and packages.</strong> Complex TikZ or pgfplots drawings, EPS or SVG images that must be converted on every build, and some packages (the guide lists <code>mhchem</code>, <code>acro</code> version 3 and <code>tabularray</code>).</li>
+<li><strong>Infinite loops.</strong> For example a recursive definition such as <code>\newcommand{\foo}{\foo}</code>, or too many <code>[H]</code> floats.</li>
+<li><strong>A document that needs more time than the plan gives.</strong> The guide says it is "possible that some projects are too large or complex to produce a PDF in the time provided".</li>
+</ul>
+
+<h2 id="fixes">Fixes that work inside Overleaf</h2>
+<p>These are the steps from Overleaf's guide, in its order. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<h3>1. Find and fix errors with stop on first error</h3>
+<p>Open the menu next to the Recompile button and turn on <strong>Stop on first error</strong>. The compile then stops at the first error, shows the message, and produces no PDF. Fix each error until the project is clean. Overleaf recommends this mode "when errors are encountered, or if you encounter a compile timeout". <span class="src">(<a href="https://docs.overleaf.com/getting-started/recompiling-your-project">Overleaf docs: recompiling your project</a>, as of October 2026)</span></p>
+<h3>2. Compile in Fast [draft] mode to test the images</h3>
+<p>Choose <strong>Fast [draft]</strong> from the same menu. Overleaf says this "replaces all of your graphics with boxes and makes the PDF compile much faster". If the document compiles in Fast [draft] mode and not in Normal mode, "the cause may be large or many image files". <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<h3>3. Make the images cheaper to process</h3>
+<ul>
+<li>"Use PDF files instead of PNG files for diagrams and plots."</li>
+<li>"Reserve the use of JPEGs for photographs."</li>
+<li>Replace EPS and SVG files with PDF versions. With pdfLaTeX, EPS files are converted through <code>epstopdf</code> and Ghostscript, and SVG files through the <code>svg</code> package and Inkscape, and each conversion adds compile time.</li>
+</ul>
+<p class="src">All three points are from <a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf's timeout guide</a> (as of October 2026).</p>
+<h3>4. Externalize TikZ and pgfplots drawings</h3>
+<p>The TikZ <code>external</code> library stores each drawing as a PDF, so LaTeX does not redraw it on every compile. On Overleaf, <code>\tikzexternalize</code> must be in the project's main <code>.tex</code> file, and the folder named in <code>prefix</code> has to exist and contain at least one file before TikZ can write to it. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts/reducing-the-compile-time-for-diagrams">Overleaf docs: reducing the compile time for diagrams</a>, as of October 2026)</span></p>
+<pre><code>\usepackage{tikz}
+\usetikzlibrary{external}
+\tikzexternalize[prefix=tikz/]</code></pre>
+<p>If the first compile with externalization itself times out, Overleaf lists three workarounds: build incrementally by commenting out parts of the project, compile once on your own computer and upload the generated files from the <code>tikz</code> folder, or keep the drawings in a separate project (with the <code>standalone</code> or <code>preview</code> package) and include the resulting PDF page by page with <code>\includegraphics[page=1]{tikzpics.pdf}</code>. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts/reducing-the-compile-time-for-diagrams">Overleaf docs: reducing the compile time for diagrams</a>, as of October 2026)</span></p>
+<h3>5. Check the known slow packages and fatal errors</h3>
+<p>Overleaf's guide lists specific cases. The ones that are quick to check: <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<ul>
+<li>Remove <code>\tracingall</code>; it writes a large amount of data to the log.</li>
+<li>Blank lines inside <code>\title</code>, <code>\author</code> or <code>\date</code>.</li>
+<li><code>\caption</code> placed inside a <code>tabular</code> environment, or nested <code>tabular</code> environments.</li>
+<li>Many floats with the <code>[H]</code> placement from the <code>float</code> package. Overleaf suggests <code>[hbt!]</code> and an occasional <code>\clearpage</code>.</li>
+<li>The <code>dmath</code> environment of <code>breqn</code>, which "may run into infinite loops".</li>
+<li>For <code>mhchem</code>, <code>acro</code> version 3 and <code>tabularray</code>, the guide describes replacements or workarounds.</li>
+</ul>
+<h3>6. If it compiled before and now does not</h3>
+<p>Use <strong>Recompile from scratch</strong> to clear outdated generated files, then look at your recent changes in the History panel. If the project came from your own computer or is a copy of an older project, set the project's TeX Live version to the one that last compiled it, because new projects and copies use the latest version by default. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+
+<h2 id="latex">Two standard LaTeX techniques for long documents</h2>
+<p>These are features of LaTeX itself, so they work in Overleaf and anywhere else.</p>
+<h3>Compile one chapter at a time with <code>\includeonly</code></h3>
+<p>If the document pulls in its chapters with <code>\include</code>, a line such as <code>\includeonly{chapters/results}</code> in the preamble makes LaTeX read only the listed files. The LaTeX reference manual notes that the auxiliary information of the omitted files "is still there", so page numbers and cross references to the skipped chapters keep working from their last full compile. <span class="src">(<a href="https://latexref.xyz/_005cinclude-_0026-_005cincludeonly.html">LaTeX2e reference manual: \include and \includeonly</a>, as of October 2026)</span></p>
+<pre><code>\includeonly{chapters/results}
+
+\begin{document}
+\include{chapters/intro}
+\include{chapters/results}
+\include{chapters/discussion}
+\end{document}</code></pre>
+<p>Remove the <code>\includeonly</code> line for the final build.</p>
+<h3>Skip image processing with the <code>draft</code> option of graphicx</h3>
+<p><code>\usepackage[draft]{graphicx}</code> does in the source what a draft compile mode does in the editor. In the reference manual's words, each graphic "is not shown but instead its file name is printed in a box of the correct size". The <code>final</code> option is the default and switches it back. <span class="src">(<a href="https://latexref.xyz/Graphics-package-options.html">LaTeX2e reference manual: graphics package options</a>, as of October 2026)</span></p>
+
+<h2 id="options">When the document needs more time than the plan gives</h2>
+<p>Some documents are simply long or heavy. Overleaf says so itself: large or complex documents "may require the extended compile time that is available on our paid plans", and "some projects may even need a longer compile time than is available on our paid plans. In those cases, you may need to download your project and compile it locally." <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span> The options, with what each costs you:</p>
+<ul>
+<li><strong>A premium Overleaf plan.</strong> 240 seconds instead of 10, and nothing else about your workflow changes. Only the project owner needs the subscription. Plans and what they include are on <a href="/overleaf-free-plan/">Overleaf's free plan and pricing, summarized</a>.</li>
+<li><strong>Compile on your own computer.</strong> Download the source with File, then Download, then "Download as source (.zip)" and build it with a local TeX Live. <span class="src">(<a href="https://docs.overleaf.com/managing-projects-and-files/downloading-a-project">Overleaf docs: downloading a project</a>, as of October 2026)</span> No time limit, but you leave the shared editor for that build.</li>
+<li><strong>Self-host Overleaf.</strong> On Community Edition or Server Pro the default is 180 seconds and you set it yourself with <code>COMPILE_TIMEOUT</code> in <code>config/variables.env</code>. Overleaf adds that the variable applies to new users only, that existing users need a database update, and that "it's not worth pushing the timeout past 10 minutes". <span class="src">(<a href="https://docs.overleaf.com/on-premises/user-and-project-management/project-management">Overleaf docs: on-premises project management</a>, as of October 2026)</span> What Community Edition includes is on <a href="/self-hosted-overleaf/">self-hosting Overleaf compared</a>.</li>
+<li><strong>Self-host another editor.</strong> Any editor that runs on your own server leaves the limit to you. Aldine is one; the next section says exactly how it handles the timeout. Other self-hosted editors are on <a href="/overleaf-alternatives/">Overleaf alternatives you can self-host</a>.</li>
+</ul>
+
+<h2 id="aldine">How Aldine handles the compile timeout</h2>
+<p>Aldine is an open-source, self-hosted collaborative LaTeX editor. It also has a compile timeout, because a runaway compile should not hold a server forever. The difference is that the person running the server sets it.</p>
+<ul>
+<li><strong>The setting.</strong> The compiler container reads <code>COMPILE_TIMEOUT_MS</code>, in milliseconds. The default is <code>120000</code>, which is 120 seconds.</li>
+<li><strong>What it measures.</strong> It is a wall-clock limit on the latexmk run, which covers all passes of one typeset. When it expires, the whole process group is stopped and the editor reports that typesetting timed out.</li>
+<li><strong>Related limits.</strong> <code>MAX_CONCURRENT_COMPILES</code> (default 2) caps how many compiles run at once, and <code>ALDINE_COMPILE_QUOTA_MIN</code> can add a per-user quota if you host for a group.</li>
+<li><strong>Incremental builds.</strong> latexmk's auxiliary files are kept between compiles, so a small edit does not start from an empty build directory.</li>
+</ul>
+<p>With <code>docker-compose.full.yml</code>, which builds the images from source, put the value in <code>.env</code>:</p>
+<pre><code>COMPILE_TIMEOUT_MS=300000</code></pre>
+<p>With the default <code>docker-compose.yml</code>, which runs the prebuilt images, add the variable to the compiler service, for example in a <code>docker-compose.override.yml</code> next to it:</p>
+<pre><code>services:
+  compiler:
+    environment:
+      COMPILE_TIMEOUT_MS: "300000"</code></pre>
+<p>Then run <code>docker compose up -d</code>. The configuration table in <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">deploy/README.md</a> lists every variable.</p>
+<p>Three things to keep in proportion. A longer timeout does not fix an error or an infinite loop; it only makes you wait longer for the same failure, so the fixes above still apply. Aldine's default of 120 seconds is shorter than the 240 seconds of Overleaf's premium plans until you raise it. And Aldine is self-hosted only: you need a server, it is at v0.x, and it has no keystroke-level track changes. The list is in the <a href="/self-hosting/#other-limits">self-hosting guide</a>, and the install steps are on <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="faq">Common questions</h2>
+<h3>What is the Overleaf compile timeout?</h3>
+<p>Overleaf's plan limits page gives 10 seconds on the free plan and 240 seconds on premium plans. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of October 2026)</span></p>
+<h3>What is the compile time limit on the Overleaf free plan?</h3>
+<p>10 seconds. The plans page calls this the "Basic compile timeout" and lists the paid plans at 24 times that. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of October 2026)</span> <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf: plans and pricing</a>, as of October 2026)</span></p>
+<h3>Can I get a longer compile timeout without paying?</h3>
+<p>On overleaf.com the longer limit is a premium feature, but it is tied to the project: if the project owner has a subscription, collaborators on the free plan get the longer limit in that project. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/premium-features">Overleaf docs: premium features</a>, as of October 2026)</span> Otherwise you can reduce the compile time with the fixes above, or compile the downloaded source on your own computer.</p>
+<h3>Why does my Overleaf project time out when it compiled before?</h3>
+<p>Overleaf's guide says a small change can cause it. It suggests Recompile from scratch, checking recent changes in History, and turning on Stop on first error to find an error introduced by accident. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<h3>Does Fast [draft] mode fix a timeout?</h3>
+<p>It tells you whether images are the cause. Fast [draft] replaces graphics with boxes; if the document compiles that way and not in Normal mode, large or many image files are the likely reason. Overleaf also notes that some large projects compile in two stages, first in Fast [draft] mode and then in Normal mode. <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
+<h3>What is the compile timeout on a self-hosted Overleaf?</h3>
+<p>180 seconds by default. You change it with the <code>COMPILE_TIMEOUT</code> environment variable, in seconds, in <code>config/variables.env</code>. <span class="src">(<a href="https://docs.overleaf.com/on-premises/user-and-project-management/project-management">Overleaf docs: on-premises project management</a>, as of October 2026)</span></p>
+<h3>What is the compile timeout in Aldine?</h3>
+<p>120 seconds by default. The person running the server changes it with <code>COMPILE_TIMEOUT_MS</code> on the compiler container, in milliseconds.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/overleaf-free-plan/">Is Overleaf free? What the free plan includes and what is paid</a></li>
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-compile-timeout/" aria-current="page">Overleaf compile timeout</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

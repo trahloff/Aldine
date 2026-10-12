@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Single sign-on for a self-hosted LaTeX editor: OIDC setup</title>
+<link rel="canonical" href="https://aldine.dev/sso/" />
+<meta name="description" content="Set up sign-in for Aldine: OpenID Connect, Google, GitHub, ORCID or passwords. Every variable, the redirect URI, provider recipes, and SSO on Overleaf." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Single sign-on for a self-hosted LaTeX editor: OIDC setup" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Set up sign-in for Aldine: OpenID Connect, Google, GitHub, ORCID or passwords. Every variable, the redirect URI, provider recipes, and SSO on Overleaf." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine: write LaTeX together. Fast, versioned, yours." />
+<meta property="og:url" content="https://aldine.dev/sso/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Single sign-on for a self-hosted LaTeX editor: OIDC setup" />
+<meta name="twitter:description" content="Set up sign-in for Aldine: OpenID Connect, Google, GitHub, ORCID or passwords. Every variable, the redirect URI, provider recipes, and SSO on Overleaf." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/sso/#article",
+      "headline": "Single sign-on for a self-hosted LaTeX editor",
+      "description": "Set up sign-in for Aldine: OpenID Connect, Google, GitHub, ORCID or passwords. Every variable, the redirect URI, provider recipes, and SSO on Overleaf.",
+      "url": "https://aldine.dev/sso/",
+      "mainEntityOfPage": "https://aldine.dev/sso/",
+      "inLanguage": "en",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Documentation",
+          "item": "https://aldine.dev/docs/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Single sign-on",
+          "item": "https://aldine.dev/sso/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/sso/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does Overleaf Community Edition support single sign-on?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Overleaf's comparison table lists \"Single sign-on (SSO) via SAML 2 and LDAP\" for Server Pro and not for Community Edition. (Server Pro vs. Community Edition, checked 12 October 2026)"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which redirect URI do I register for Aldine?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "<ALDINE_PUBLIC_URL>/api/auth/oauth/<provider>/callback, where the provider is oidc, google, github or orcid. For OpenID Connect on aldine.example.com that is https://aldine.example.com/api/auth/oauth/oidc/callback."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I turn passwords off and use only single sign-on?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Set ALDINE_SSO_ONLY=1. Registration, password sign-in, password reset and password change are then refused, and sign-in goes through the configured providers only."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Aldine support SAML or LDAP?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Aldine signs people in with OpenID Connect, Google, GitHub, ORCID or email and password. An identity provider that speaks both SAML and OpenID Connect, such as Keycloak or Authentik, can be connected over OpenID Connect."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home">aldine<em>.</em></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / <a href="/docs/">Documentation</a> / Single sign-on</p>
+<h1>Single sign-on for a self-hosted LaTeX editor</h1>
+<p class="lede">Aldine is an open-source, self-hosted collaborative LaTeX editor. It signs people in with your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID, Dex), with Google, GitHub or ORCID, or with email and password. This page has every setting, the redirect URI and a recipe per provider. It also covers single sign-on on a self-hosted Overleaf, where it is part of Server Pro.</p>
+<p class="checked">Applies to Aldine 0.11.0. Written by the Aldine project, so read it with that in mind. Statements about Overleaf are taken from the linked pages of Overleaf's own documentation. Checked on 12 October 2026.</p>
+
+<h2 id="methods">Sign-in methods</h2>
+<p>Sign-in is off by default. Without <code>AUTH_ENABLED</code> an instance is single-tenant: there is no login, and everyone who can reach it has full access. <code>AUTH_ENABLED=1</code> turns on accounts, per-project ownership and sharing (by invitation or by link).</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Method</th><th scope="col">Turned on by</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><th scope="row">Email and password</th><td><code>AUTH_ENABLED=1</code></td><td>Available as soon as sign-in is on. Passwords are at least 8 characters and stored as scrypt hashes. <code>ALDINE_SSO_ONLY=1</code> switches it off.</td></tr>
+<tr><th scope="row">OpenID Connect</th><td><code>OIDC_ISSUER</code> and <code>OIDC_CLIENT_ID</code></td><td>One provider per instance. Authorization code flow with PKCE; the client secret is optional.</td></tr>
+<tr><th scope="row">Google</th><td><code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code></td><td>Needs a verified email on the Google account.</td></tr>
+<tr><th scope="row">GitHub</th><td><code>GITHUB_LOGIN_CLIENT_ID</code> and <code>GITHUB_LOGIN_CLIENT_SECRET</code></td><td>Needs a verified email on the GitHub account. Separate from the OAuth app used for repository sync.</td></tr>
+<tr><th scope="row">ORCID</th><td><code>ORCID_CLIENT_ID</code> and <code>ORCID_CLIENT_SECRET</code></td><td>The account is keyed by the ORCID iD, so it works when the researcher's email is private.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each provider is independent, and each one that is configured adds a button to the sign-in page. A session lasts 30 days.</p>
+
+<h2 id="pass-variables">Where the variables go</h2>
+<p>All configuration is environment variables on the <code>app</code> container. How they get there depends on which compose file you run (the <a href="/self-hosting/">self-hosting guide</a> explains both):</p>
+<ul>
+<li><strong>The minimal <code>docker-compose.yml</code></strong> (release images) has no <code>environment:</code> block. Put a <code>docker-compose.override.yml</code> next to it with the variables you need, then run <code>docker compose up -d</code>.</li>
+<li><strong><code>docker-compose.full.yml</code></strong> (from a clone of the repository) passes the sign-in and mail variables on this page through from a <code>.env</code> file next to it. Two are not in it, so add them under <code>environment:</code> of the <code>app</code> service yourself when you need them: <code>ALDINE_ADMIN_EMAILS</code> and <code>NODE_EXTRA_CA_CERTS</code>.</li>
+</ul>
+<p>An override file for the minimal install, with OpenID Connect as the example:</p>
+<pre><code>services:
+  app:
+    environment:
+      AUTH_ENABLED: &quot;1&quot;
+      ALDINE_PUBLIC_URL: https://aldine.example.com
+      OIDC_ISSUER: https://auth.example.com/application/o/aldine/
+      OIDC_CLIENT_ID: &lt;client id&gt;
+      OIDC_CLIENT_SECRET: &lt;client secret&gt;
+      OIDC_LABEL: University login
+      ALDINE_ADMIN_EMAILS: you@example.org</code></pre>
+<p>The same settings in <code>.env</code> for <code>docker-compose.full.yml</code>:</p>
+<pre><code>AUTH_ENABLED=1
+ALDINE_PUBLIC_URL=https://aldine.example.com
+OIDC_ISSUER=https://auth.example.com/application/o/aldine/
+OIDC_CLIENT_ID=&lt;client id&gt;
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_LABEL=University login</code></pre>
+<p>In <code>.env</code>, give each comment its own line. Anything after a value becomes part of the value, so <code>AUTH_ENABLED=1  multi-user login</code> is not <code>1</code> and sign-in stays off without an error.</p>
+
+<h2 id="redirect-uri">The redirect URI</h2>
+<p>Register exactly this redirect (callback) URI at the provider:</p>
+<pre><code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/&lt;provider&gt;/callback</code></pre>
+<p><code>&lt;provider&gt;</code> is <code>oidc</code>, <code>google</code>, <code>github</code> or <code>orcid</code>. For OpenID Connect on <code>aldine.example.com</code>:</p>
+<pre><code>https://aldine.example.com/api/auth/oauth/oidc/callback</code></pre>
+<p>When Aldine is served under a path prefix, <code>ALDINE_PUBLIC_URL</code> carries the prefix and so does the URI, for example <code>https://server.example.com/internal/aldine/api/auth/oauth/oidc/callback</code>. Without <code>ALDINE_PUBLIC_URL</code>, Aldine derives the URI from the host of the request, which behind a proxy is often not what the provider has on file. Set it.</p>
+
+<h2 id="general-settings">General settings</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>AUTH_ENABLED</code></th><td>unset</td><td><code>1</code> or <code>true</code> turns on login, ownership and sharing. Unset: single-tenant, no login.</td></tr>
+<tr><th scope="row"><code>ALDINE_PUBLIC_URL</code></th><td>unset</td><td>The public URL of the instance, with the path prefix if there is one. Used for the redirect URI and for password-reset links. When it starts with <code>https</code>, session cookies get the Secure flag.</td></tr>
+<tr><th scope="row"><code>ALDINE_SSO_ONLY</code></th><td>unset</td><td><code>1</code> or <code>true</code> disables registration, password sign-in, password reset and password change. Sign-in goes through the configured providers only.</td></tr>
+<tr><th scope="row"><code>ALDINE_ADMIN_EMAILS</code></th><td>unset</td><td>Comma-separated addresses that may open <code>/admin</code>. Compared without regard to case. See <a href="#admins">administrators</a>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="oidc">OpenID Connect with your own identity provider</h2>
+<p>OpenID Connect needs <code>AUTH_ENABLED=1</code> and <code>ALDINE_PUBLIC_URL</code>. <code>OIDC_ISSUER</code> and <code>OIDC_CLIENT_ID</code> turn it on. It appears on the sign-in page as one more button, labelled "Continue with" and the value of <code>OIDC_LABEL</code>.</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>OIDC_ISSUER</code></th><td>none, required</td><td>The issuer URL as the provider publishes it. Aldine reads <code>&lt;issuer&gt;/.well-known/openid-configuration</code>. An issuer with a path works; keep the trailing slash if the provider shows one. Must be <code>https</code>, except for <code>localhost</code>.</td></tr>
+<tr><th scope="row"><code>OIDC_CLIENT_ID</code></th><td>none, required</td><td>The client ID you registered.</td></tr>
+<tr><th scope="row"><code>OIDC_CLIENT_SECRET</code></th><td>unset</td><td>Set it for a confidential client: Aldine authenticates with <code>client_secret_basic</code>, or with <code>client_secret_post</code> when the discovery document offers only that. Leave it unset for a public client, which uses PKCE only. PKCE (S256) is used either way.</td></tr>
+<tr><th scope="row"><code>OIDC_LABEL</code></th><td><code>Single sign-on</code></td><td>The button text and the provider's name on the account page, for example <code>Keycloak</code> or <code>University login</code>.</td></tr>
+<tr><th scope="row"><code>OIDC_SCOPES</code></th><td><code>openid email profile</code></td><td>Scopes to request, separated by spaces or commas. <code>openid</code> is always added. Add <code>groups</code> for providers that send groups only when asked (Authelia, Pocket ID).</td></tr>
+<tr><th scope="row"><code>OIDC_ALLOWED_GROUPS</code></th><td>unset</td><td>Comma-separated group names. When set, only members of at least one of them may sign in with OpenID Connect. Unset: everyone the provider authenticates gets in. It does not affect password accounts; see <a href="#access">access control</a>.</td></tr>
+<tr><th scope="row"><code>OIDC_GROUPS_CLAIM</code></th><td><code>groups</code></td><td>The claim that lists the groups. Read from the ID token, or from the userinfo endpoint when the ID token has none. A single string counts as one group.</td></tr>
+<tr><th scope="row"><code>OIDC_EMAIL_VERIFIED</code></th><td><code>require</code></td><td><code>require</code>: Aldine uses the address only when the provider says <code>email_verified: true</code>. <code>trust</code>: it uses whatever address the provider sends. Read <a href="#accounts">accounts and email addresses</a> before choosing <code>trust</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>At start, the log names the issuer, the client ID and whether the client is public or confidential. The secret is never printed:</p>
+<pre><code>[aldine] OIDC sign-in: issuer=https://auth.example.com/application/o/aldine/ client=aldine (confidential)</code></pre>
+<p>When some <code>OIDC_*</code> variables are set but <code>OIDC_ISSUER</code> or <code>OIDC_CLIENT_ID</code> is missing (a typo such as <code>OIDC_CLIENTID</code>), the log says which one and the feature stays off. A value of <code>OIDC_EMAIL_VERIFIED</code> other than <code>require</code> or <code>trust</code> is logged and treated as <code>require</code>.</p>
+<p>The discovery document is fetched when Aldine starts and cached for an hour. When the hourly refresh fails, Aldine keeps the last good document and retries every 15 seconds. A provider that is down does not stop Aldine or the other sign-in methods.</p>
+
+<h3 id="private-ca">A private CA or a self-signed certificate</h3>
+<p>Aldine checks the provider's TLS certificate against Node's built-in CA list. If the provider uses an internal CA, mount the CA certificate into the <code>app</code> container and point <code>NODE_EXTRA_CA_CERTS</code> at it:</p>
+<pre><code>services:
+  app:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/aldine/ca.pem
+    volumes:
+      - ./ca.pem:/etc/aldine/ca.pem:ro</code></pre>
+
+<h3 id="checks">What Aldine checks</h3>
+<ul>
+<li>Authorization code flow with PKCE (S256), <code>state</code> and <code>nonce</code>, bound to one attempt by a cookie that lasts 10 minutes.</li>
+<li>The ID token's signature against the issuer's JWKS, with asymmetric algorithms only. Unsigned tokens and HMAC-signed tokens (<code>HS256</code>) are refused, so the provider must sign with a key pair.</li>
+<li><code>iss</code>, <code>aud</code>, <code>azp</code> when there are several audiences, <code>exp</code>, <code>iat</code> (at most 10 minutes old, with 60 seconds of clock skew tolerated) and the <code>nonce</code>.</li>
+<li>The <code>iss</code> parameter on the callback (RFC 9207) when the provider advertises it.</li>
+<li>Userinfo is consulted only for claims the ID token lacks, and only when its <code>sub</code> matches.</li>
+</ul>
+
+<h2 id="recipes">Provider recipes</h2>
+<p>Replace <code>aldine.example.com</code> with your <code>ALDINE_PUBLIC_URL</code>. A recipe that was checked against a running copy of the provider says so; the others follow the provider's documentation.</p>
+
+<h3 id="keycloak">Keycloak</h3>
+<p>Verified against Keycloak 26.0 on 23 September 2026 (confidential client).</p>
+<ol>
+<li>In your realm: <strong>Clients → Create client</strong>. Client type <em>OpenID Connect</em>, Client ID <code>aldine</code>.</li>
+<li><strong>Capability config</strong>: <em>Client authentication</em> on (confidential) and <em>Standard flow</em> on; everything else off.</li>
+<li><strong>Login settings</strong>: <em>Valid redirect URIs</em> <code>https://aldine.example.com/api/auth/oauth/oidc/callback</code>, <em>Web origins</em> <code>https://aldine.example.com</code>.</li>
+<li><strong>Credentials</strong> tab: copy the client secret.</li>
+<li>Optional, for <code>OIDC_ALLOWED_GROUPS</code>: <strong>Clients → aldine → Client scopes tab → aldine-dedicated → Add mapper → By configuration → Group Membership</strong>. Token claim name <code>groups</code>, <em>Full group path</em> off (otherwise the claim holds <code>/aldine-users</code> and nobody matches), <em>Add to ID token</em> on. With <em>Add to ID token</em> off and <em>Add to userinfo</em> on, Aldine reads the groups from userinfo.</li>
+</ol>
+<pre><code>OIDC_ISSUER=https://keycloak.example.com/realms/&lt;realm&gt;
+OIDC_CLIENT_ID=aldine
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_LABEL=Keycloak</code></pre>
+<p>Keycloak sends <code>email_verified</code> from the user's <em>Email verified</em> switch, and users created by an admin start unverified. Turn the switch on before they first sign in to Aldine, or give them the <em>Verify Email</em> required action.</p>
+
+<h3 id="authentik">Authentik</h3>
+<p>Verified against Authentik 2026.8.3 on 23 September 2026 (confidential and public client).</p>
+<ol>
+<li><strong>Applications → Providers → New Provider → OAuth2/OpenID Provider → Next</strong>. Name <em>Aldine</em>, <em>Authorization flow</em> one of the <code>default-provider-authorization-…-consent</code> flows. Client type <em>Confidential</em>, or <em>Public</em> if you will not use a secret. Under <em>Redirect URIs/Origins</em>, <strong>Add entry</strong>: <em>Strict</em>, <code>https://aldine.example.com/api/auth/oauth/oidc/callback</code>.</li>
+<li><strong>Signing Key</strong>: keep <em>authentik Self-signed Certificate</em>, or pick another RSA or EC certificate. Without a signing key, Authentik signs ID tokens with HS256 and the client secret, which Aldine refuses.</li>
+<li><strong>Grant types</strong>: Aldine needs only <em>Authorization Code</em>. A provider created through a blueprint or the API has no grant types unless you list them (<code>grant_types: [authorization_code]</code>), and Authentik then answers every sign-in with <code>invalid_request</code>. A blueprint or API call must also list the scope mappings (<code>goauthentik.io/providers/oauth2/scope-openid</code>, <code>-email</code>, <code>-profile</code>) and the signing key; the form fills in both.</li>
+<li><strong>Applications → Applications → Create</strong>: name <em>Aldine</em>, slug <code>aldine</code>, provider from step 1.</li>
+<li>Copy the client ID and secret from the provider.</li>
+</ol>
+<pre><code>OIDC_ISSUER=https://auth.example.com/application/o/aldine/
+OIDC_CLIENT_ID=&lt;client id&gt;
+# leave the secret out for a public client
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_LABEL=Authentik</code></pre>
+<p>The issuer ends in the application slug and a slash; the provider page shows it as <em>OpenID Configuration Issuer</em>. Renaming the slug changes the issuer (see <a href="#issuer-change">changing the issuer</a>). The default <em>profile</em> scope mapping sends a <code>groups</code> claim with the group names, so <code>OIDC_ALLOWED_GROUPS</code> works without extra setup.</p>
+<p>The default email mapping sends <code>email_verified: false</code> for everyone, so with the default <code>OIDC_EMAIL_VERIFIED=require</code> people sign in to accounts without an email address. To give accounts their addresses, either set <code>OIDC_EMAIL_VERIFIED=trust</code>, or create a scope mapping for scope <code>email</code> that returns <code>{"email": request.user.email, "email_verified": True}</code> and select it on the provider in place of the default <em>email</em> mapping. Both amount to trusting Authentik's addresses. That is safe only while users cannot change their own address: keep <em>Allow users to change email</em> off under <strong>System → Settings</strong> (off by default) and do not grant <code>goauthentik.io/user/can-change-email</code> in a group's attributes.</p>
+
+<h3 id="authelia">Authelia</h3>
+<p>Verified against Authelia 4.39.28 on 23 September 2026 (confidential client; email, name and groups came from userinfo).</p>
+<p>In <code>configuration.yml</code> (Authelia 4.38 or later), with the secret stored as a digest (<code>authelia crypto hash generate pbkdf2 --variant sha512</code>):</p>
+<pre><code>identity_providers:
+  oidc:
+    clients:
+      - client_id: 'aldine'
+        client_name: 'Aldine'
+        client_secret: '$pbkdf2-sha512$310000$...'
+        public: false
+        authorization_policy: 'two_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://aldine.example.com/api/auth/oauth/oidc/callback'
+        scopes: ['openid', 'email', 'profile', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        token_endpoint_auth_method: 'client_secret_basic'</code></pre>
+<pre><code>OIDC_ISSUER=https://auth.example.com
+OIDC_CLIENT_ID=aldine
+# the secret itself, not the digest
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_SCOPES=openid email profile groups
+OIDC_LABEL=Authelia</code></pre>
+<p>Authelia 4.39 and later keep email, name and groups out of the ID token and serve them from the userinfo endpoint; Aldine reads them from there. <code>two_factor</code> stops everyone who has not registered a second factor at Authelia; use <code>one_factor</code> to try the setup first. Authelia only serves https, so an Authelia with a self-signed or internal certificate also needs <a href="#private-ca"><code>NODE_EXTRA_CA_CERTS</code></a>.</p>
+
+<h3 id="pocket-id">Pocket ID</h3>
+<ol>
+<li><strong>Administration → OIDC Clients → Add OIDC client</strong>. Name <em>Aldine</em>, callback URL <code>https://aldine.example.com/api/auth/oauth/oidc/callback</code>. Turn on <em>PKCE</em>. Turn on <em>Public client</em> only if you will not use a secret.</li>
+<li>Copy the client ID and, for a confidential client, the secret (shown once).</li>
+<li>Optional: restrict the client to user groups in Pocket ID itself, or list them in <code>OIDC_ALLOWED_GROUPS</code>.</li>
+</ol>
+<pre><code>OIDC_ISSUER=https://id.example.com
+OIDC_CLIENT_ID=&lt;client id&gt;
+# leave the secret out for a public client
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_SCOPES=openid email profile groups
+OIDC_LABEL=Pocket ID</code></pre>
+<p>The issuer is Pocket ID's public URL (<code>APP_URL</code>) with no path. Pocket ID reports addresses as verified, including ones users set on their own account page. Before relying on the address for invites or <code>ALDINE_ADMIN_EMAILS</code>, turn off self-service account editing in Pocket ID's <strong>Application Configuration</strong>.</p>
+
+<h3 id="dex">Dex</h3>
+<p>Verified against Dex v2.41.1 on 23 September 2026 (public and confidential client, static password connector).</p>
+<p>In Dex's <code>config.yaml</code>:</p>
+<pre><code>staticClients:
+  - id: aldine
+    name: Aldine
+    # leave the secret out and set `public: true` for a public client
+    secret: &lt;client secret&gt;
+    redirectURIs:
+      - 'https://aldine.example.com/api/auth/oauth/oidc/callback'</code></pre>
+<pre><code>OIDC_ISSUER=https://dex.example.com/dex
+OIDC_CLIENT_ID=aldine
+# leave the secret out for a public client
+OIDC_CLIENT_SECRET=&lt;client secret&gt;
+OIDC_LABEL=Dex</code></pre>
+<p>The issuer is Dex's <code>issuer</code> setting, usually with no trailing slash. Groups come only from connectors that provide them (LDAP, GitHub and others) and only with the <code>groups</code> scope (<code>OIDC_SCOPES=openid email profile groups</code>). The static password connector sends none, so <code>OIDC_ALLOWED_GROUPS</code> turns everyone away with it.</p>
+
+<h2 id="oauth-providers">Google, GitHub and ORCID</h2>
+<p>Each of the three needs both its client ID and its client secret; with only one of them set, the button does not appear. Register the redirect URI from <a href="#redirect-uri">above</a> with the provider's name in it.</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Provider</th><th scope="col">Variables</th><th scope="col">Redirect URI</th><th scope="col">Where to create the client</th></tr></thead>
+<tbody>
+<tr><th scope="row">Google</th><td><code>GOOGLE_OAUTH_CLIENT_ID</code><br /><code>GOOGLE_OAUTH_CLIENT_SECRET</code></td><td><code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/google/callback</code></td><td>Google Cloud console, APIs and services, Credentials: an OAuth client of type "Web"</td></tr>
+<tr><th scope="row">GitHub</th><td><code>GITHUB_LOGIN_CLIENT_ID</code><br /><code>GITHUB_LOGIN_CLIENT_SECRET</code></td><td><code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/github/callback</code></td><td>GitHub, Settings, Developer settings: an OAuth app</td></tr>
+<tr><th scope="row">ORCID</th><td><code>ORCID_CLIENT_ID</code><br /><code>ORCID_CLIENT_SECRET</code><br /><code>ORCID_SANDBOX</code> (optional)</td><td><code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/orcid/callback</code></td><td>ORCID developer tools: a Public API client. The callback must be HTTPS.</td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li><strong>Google.</strong> Aldine requests the scopes <code>openid email profile</code> and accepts the sign-in only when Google reports the address as verified.</li>
+<li><strong>GitHub.</strong> Aldine requests <code>read:user user:email</code> and uses a verified address of the GitHub account. The GitHub app for sign-in is separate from the one for repository sync, which has its own variables (<code>GITHUB_CLIENT_ID</code>, <code>GITHUB_CLIENT_SECRET</code>) and its own callback.</li>
+<li><strong>ORCID.</strong> The account is keyed by the ORCID iD. Researchers whose ORCID email is private get an account without an email address; collaborators invite them by ORCID iD. <code>ORCID_SANDBOX=1</code> points sign-in at <code>sandbox.orcid.org</code> for testing.</li>
+</ul>
+
+<h2 id="passwords">Email and password</h2>
+<p>With <code>AUTH_ENABLED=1</code> and nothing else, people register with an email address and a password of at least 8 characters. Registration does not verify the address.</p>
+<p>Password-reset links are sent by email when a mail transport is configured: <code>SMTP_HOST</code>, <code>SMTP_PORT</code> (default 587), <code>SMTP_USER</code>, <code>SMTP_PASS</code> and <code>SMTP_FROM</code>, with <code>SMTP_SECURE=1</code> for implicit TLS, or <code>SES_FROM</code> with <code>AWS_REGION</code> for AWS SES. The link is built from <code>ALDINE_PUBLIC_URL</code> and expires after one hour. Without a transport, the reset token is written to the server log for the administrator to pass on.</p>
+<p><code>ALDINE_SSO_ONLY=1</code> disables all of this. No mail transport is needed then.</p>
+
+<h2 id="accounts">Accounts and email addresses</h2>
+<p>An OpenID Connect account is keyed by the issuer and the provider's <code>sub</code>, not by the email address. Signing in again finds the same account even after the address changes at the provider.</p>
+<ul>
+<li>With a verified address (or <code>OIDC_EMAIL_VERIFIED=trust</code>), the account gets that address and collaborators can invite it by email.</li>
+<li>Without one, the account has no email address. It cannot be invited by email. The first later sign-in that brings a verified address gives the account that address, unless another account already has it.</li>
+<li>After that, the address stays as it is. Aldine does not follow a change of address at the provider, because project invites and shares are matched by the address on the account.</li>
+<li>A single-sign-on login never takes over an account that already exists with the same address: not a password account, not an account from another provider, and not another OpenID Connect identity that shares the address.</li>
+</ul>
+<p>Choose <code>OIDC_EMAIL_VERIFIED=trust</code> only when users cannot set or change their own email address at the provider. Otherwise anyone who can edit their profile there can pick any address. The same applies to a provider that reports <code>email_verified: true</code> for every address, including ones users typed in themselves.</p>
+
+<h3 id="issuer-change">Changing the issuer</h3>
+<p>Because the account is keyed by the issuer URL exactly as the provider spells it, any change of that URL gives everyone new identities: a new host name, a renamed Authentik application slug, or a Keycloak upgrade that dropped the <code>/auth</code> prefix. If you can, keep the old issuer URL. The procedure for moving accounts onto a new issuer is in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md#changing-oidc_issuer">docs/OIDC.md</a>.</p>
+
+<h2 id="access">Access control</h2>
+<ul>
+<li>Accounts created by single sign-on never have a password. Aldine refuses to set one, sends no reset link for them and refuses password sign-in, so every sign-in goes through the provider.</li>
+<li><code>OIDC_ALLOWED_GROUPS</code> gates OpenID Connect sign-in only. Anyone can still register a password account unless <code>ALDINE_SSO_ONLY=1</code> is set. If the group is meant to decide who uses the instance, set both.</li>
+<li>Group membership is checked at sign-in. Removing someone from the group, or disabling them at the provider, takes effect at their next sign-in. Until then their Aldine session (up to 30 days) and any access tokens they created keep working. Cutting access at once means removing the person's sessions and tokens; the commands are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md#access-control">docs/OIDC.md</a>.</li>
+</ul>
+
+<h2 id="admins">Administrators</h2>
+<p><code>ALDINE_ADMIN_EMAILS</code> is a comma-separated list of addresses. A signed-in account whose email is on the list can open <code>/admin</code>: accounts, active users, projects and compile time. It shows metadata only. There is no role stored in the database; the list in the environment is the whole configuration.</p>
+<ul>
+<li>No compose file in the repository passes this variable through. Add it under <code>environment:</code> of the <code>app</code> service, as in the override file <a href="#pass-variables">above</a>.</li>
+<li>An account without an email address cannot be an administrator, because the match is by address.</li>
+<li>A verified address from the provider decides who is an administrator. Create the administrator accounts (sign in once as each address on the list) before you open OpenID Connect sign-in to everyone.</li>
+<li>Making someone an administrator through a group is not supported yet.</li>
+</ul>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p>Every sign-in failure ends on a short Aldine page titled "Sign-in failed" with the reason and a "Back to sign-in" link. The messages below are the start or the middle of that reason.</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Message</th><th scope="col">Cause</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>This sign-in provider is not configured</code></th><td><code>AUTH_ENABLED</code> is off, or the variables of that provider are not all set.</td></tr>
+<tr><th scope="row"><code>is unavailable: the identity provider at … could not be reached (…)</code></th><td>Aldine cannot fetch <code>&lt;issuer&gt;/.well-known/openid-configuration</code>: a firewall between Aldine and the provider, a wrong port, or the provider is down. The bracket holds the network error (<code>ECONNREFUSED</code>, <code>ETIMEDOUT</code>). Failed lookups are retried after 15 seconds.</td></tr>
+<tr><th scope="row"><code>presented a TLS certificate that is not trusted (…)</code></th><td>The provider's certificate is self-signed or from an internal CA. Set <a href="#private-ca"><code>NODE_EXTRA_CA_CERTS</code></a>. <code>ERR_TLS_CERT_ALTNAME_INVALID</code> means the certificate is for another host name.</td></tr>
+<tr><th scope="row"><code>could not be found (ENOTFOUND): its host name does not resolve</code></th><td>The host in <code>OIDC_ISSUER</code> does not resolve from the Aldine server or container (an internal name, or a typo).</td></tr>
+<tr><th scope="row"><code>answered with a redirect</code></th><td><code>OIDC_ISSUER</code> redirects, often from <code>http</code> to <code>https</code> or because of a missing path. Use the URL it redirects to.</td></tr>
+<tr><th scope="row"><code>the discovery document names issuer "…", not …</code></th><td><code>OIDC_ISSUER</code> differs from the issuer the provider publishes. Copy it from the provider.</td></tr>
+<tr><th scope="row"><code>must use https</code></th><td>The issuer or an endpoint in the discovery document is plain <code>http</code> on a host other than <code>localhost</code>.</td></tr>
+<tr><th scope="row"><code>signs ID tokens only with algorithms Aldine does not accept</code></th><td>The provider signs with HS256 (Authentik without a signing key). Give it an RSA or EC key.</td></tr>
+<tr><th scope="row"><code>the ID token signature could not be verified</code></th><td>The token is signed with a key or algorithm that is not in the provider's JWKS or discovery document.</td></tr>
+<tr><th scope="row"><code>the identity provider's signing keys could not be fetched from …</code></th><td>Discovery worked, but the JWKS URL did not answer, answered with an error or a redirect, or timed out. Check that Aldine can reach that URL.</td></tr>
+<tr><th scope="row"><code>the ID token is dated in the future (iat claim)</code></th><td>The provider's clock is more than a minute ahead of Aldine's. Sync both with NTP.</td></tr>
+<tr><th scope="row"><code>the ID token has expired (… claim)</code></th><td>The token is past its <code>exp</code>, or more than 10 minutes old by Aldine's clock: Aldine's clock runs ahead of the provider's, or the sign-in took very long.</td></tr>
+<tr><th scope="row"><code>the response did not name its identity provider (iss parameter missing)</code></th><td>The provider advertises the RFC 9207 <code>iss</code> parameter but the callback had none; something between the provider and Aldine rewrote the redirect.</td></tr>
+<tr><th scope="row"><code>the ID token was rejected (aud claim)</code></th><td><code>OIDC_CLIENT_ID</code> is not the client the token was issued to.</td></tr>
+<tr><th scope="row"><code>the identity provider refused the sign-in (invalid_client …)</code></th><td>Wrong <code>OIDC_CLIENT_SECRET</code>, or a secret set for a public client (or the other way round).</td></tr>
+<tr><th scope="row"><code>your account is not in a group that may use this Aldine instance</code></th><td><code>OIDC_ALLOWED_GROUPS</code> is set and the person's groups claim names none of them. Check <code>OIDC_GROUPS_CLAIM</code>, and that the provider sends groups (Keycloak needs a mapper; Authelia and Pocket ID need the <code>groups</code> scope).</td></tr>
+<tr><th scope="row"><code>OAuth state mismatch</code></th><td>The sign-in took more than 10 minutes, cookies are blocked, or the callback was opened in another browser.</td></tr>
+<tr><th scope="row"><code>An account with this email already exists</code></th><td>The address belongs to a password account or to an account from another provider. Single sign-on never takes it over; the message names the method to use.</td></tr>
+<tr><th scope="row"><code>An account with this email already belongs to a different single sign-on identity</code></th><td>Usually <code>OIDC_ISSUER</code> changed. See <a href="#issuer-change">changing the issuer</a>.</td></tr>
+<tr><th scope="row"><code>no verified email on the Google account</code> or <code>no verified email on the GitHub account</code></th><td>The provider did not report a verified address. Verify the address there and sign in again.</td></tr>
+<tr><th scope="row"><code>Password sign-in is disabled</code></th><td><code>ALDINE_SSO_ONLY</code> is set, so the password endpoints answer 403.</td></tr>
+<tr><th scope="row"><code>[aldine] OIDC sign-in is off: OIDC_CLIENT_ID is not set</code> in the boot log</th><td>Some <code>OIDC_*</code> variables are set but not both required ones. Check the spelling.</td></tr>
+<tr><th scope="row">The provider reports a <code>redirect_uri</code> mismatch</th><td>The redirect URI at the provider differs from <code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/oidc/callback</code>. Check the path prefix and trailing slashes.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="overleaf">Single sign-on on Overleaf: Community Edition and Server Pro</h2>
+<p>If you came here looking for SSO on a self-hosted Overleaf, this is what Overleaf's documentation says.</p>
+<ul>
+<li><strong>It is a Server Pro feature.</strong> Overleaf's comparison table lists "Single sign-on (SSO) via SAML 2 and LDAP" and "Automatic user registration" for Server Pro and not for Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, checked 12 October 2026)</span></li>
+<li><strong>The protocols are SAML 2.0 and LDAP.</strong> The Server Pro configuration section has a page for each. Both are configured in the Toolkit's <code>config/variables.env</code>, by setting <code>EXTERNAL_AUTH</code> to <code>saml</code> or to <code>ldap</code>. The LDAP page says the integration "is compatible with Active Directory systems". <span class="src">(<a href="https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/saml-2.0">Overleaf docs: SAML 2.0</a>, <a href="https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/ldap">Overleaf docs: LDAP</a>, checked 12 October 2026)</span></li>
+<li><strong>One method at a time.</strong> Overleaf states: "In Server Pro, we only support using a single method of authentication at any one time." With SAML 2.0 or LDAP, accounts are created when a person first logs in, and from Server Pro 5.2.1 the admin role can be granted or revoked through the SSO login. <span class="src">(<a href="https://docs.overleaf.com/on-premises/user-and-project-management/user-management">Overleaf docs: user management</a>, checked 12 October 2026)</span></li>
+<li><strong>On overleaf.com</strong>, Group SSO is described as "a standard SAML-based SSO integration" that the administrator of a group subscription sets up. <span class="src">(<a href="https://docs.overleaf.com/groups/overleaf-group-single-sign-on/group-sso-faqs">Overleaf docs: Group SSO FAQs</a>, checked 12 October 2026)</span></li>
+</ul>
+<p class="src">The SAML 2.0 and LDAP pages do not mention OpenID Connect, and we found no Overleaf page that documents it for either on-premises edition (checked 12 October 2026).</p>
+<p>The two products cover different protocols. Aldine documents OpenID Connect and the OAuth providers on this page, not SAML or LDAP. If your institution offers only SAML or LDAP, Server Pro is the documented fit. If it runs Keycloak, Authentik or another provider that speaks OpenID Connect, the recipes above apply. The wider comparison is on <a href="/self-hosted-overleaf/">self-hosting Overleaf (Community Edition, Server Pro) compared with Aldine</a>.</p>
+
+<h2 id="not-supported">What is not supported</h2>
+<ul>
+<li>SAML and LDAP.</li>
+<li>Several OpenID Connect providers at once. There is one per instance, next to Google, GitHub and ORCID.</li>
+<li>Making someone an administrator through a group.</li>
+<li>Signing out of the identity provider when signing out of Aldine.</li>
+</ul>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox without sign-in and resets every night.</p>
+
+<h2 id="faq">Common questions</h2>
+<h3>Does Overleaf Community Edition support single sign-on?</h3>
+<p>No. Overleaf's comparison table lists "Single sign-on (SSO) via SAML 2 and LDAP" for Server Pro and not for Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, checked 12 October 2026)</span></p>
+<h3>Which redirect URI do I register for Aldine?</h3>
+<p><code>&lt;ALDINE_PUBLIC_URL&gt;/api/auth/oauth/&lt;provider&gt;/callback</code>, where the provider is <code>oidc</code>, <code>google</code>, <code>github</code> or <code>orcid</code>. For OpenID Connect on <code>aldine.example.com</code> that is <code>https://aldine.example.com/api/auth/oauth/oidc/callback</code>.</p>
+<h3>Can I turn passwords off and use only single sign-on?</h3>
+<p>Yes. Set <code>ALDINE_SSO_ONLY=1</code>. Registration, password sign-in, password reset and password change are then refused, and sign-in goes through the configured providers only.</p>
+<h3>Does Aldine support SAML or LDAP?</h3>
+<p>No. Aldine signs people in with OpenID Connect, Google, GitHub, ORCID or email and password. An identity provider that speaks both SAML and OpenID Connect, such as Keycloak or Authentik, can be connected over OpenID Connect.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/docs/">Aldine documentation: every guide and reference</a></li>
+<li><a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md">OpenID Connect reference on GitHub (docs/OIDC.md)</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/docs/">Documentation</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/sso/" aria-current="page">Single sign-on</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

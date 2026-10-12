@@ -196,7 +196,7 @@ OIDC_ALLOWED_GROUPS=</code></pre>
 <li><code>AUTH_ENABLED=1</code> turns on login, per-project ownership and sharing (invite-only or by link).</li>
 <li>Each provider is independent. Email and password works without any of them; <code>ALDINE_SSO_ONLY=1</code> disables passwords entirely.</li>
 <li><code>ALDINE_ADMIN_EMAILS=you@example.org</code> opens <code>/admin</code>: accounts, active users, projects and compile time. Metadata only. Neither compose file passes this variable through, so add <code>ALDINE_ADMIN_EMAILS: ${ALDINE_ADMIN_EMAILS:-}</code> under <code>environment:</code> of the <code>app</code> service.</li>
-<li>Recipes for Authentik, Keycloak, Authelia and Dex are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md">docs/OIDC.md</a>.</li>
+<li>Every sign-in variable, the redirect URIs and recipes for Keycloak, Authentik, Authelia, Pocket ID and Dex are in the <a href="/sso/">single sign-on guide</a>.</li>
 </ul>
 
 <h2 id="proxy">Reverse proxy and TLS</h2>
@@ -308,6 +308,10 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
             <a href="/latex-mcp/">LaTeX MCP server</a>
             <a href="/self-hosting/" aria-current="page">Self-hosting guide</a>
             <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
         </nav>
         <nav aria-label="Footer">
             <a href="https://github.com/trahloff/Aldine">GitHub</a>

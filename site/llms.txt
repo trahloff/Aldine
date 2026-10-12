@@ -108,6 +108,10 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
 - [Connect Claude to a LaTeX project over MCP](https://aldine.dev/latex-mcp/): the MCP server, setup in three steps, the tools, the demo connector
 - [Self-hosting Aldine with Docker Compose](https://aldine.dev/self-hosting/): install, upgrade, TeX packages, logins and SSO, reverse proxy, backups, limits
 - [Using Zotero with LaTeX: three ways to keep references in sync](https://aldine.dev/zotero-latex/): Overleaf's integration, Better BibTeX auto-export, Zotero in Aldine
+- [Overleaf compile timeout: plan limits and how to fix it](https://aldine.dev/overleaf-compile-timeout/): the limit on each Overleaf plan, the fixes from Overleaf's documentation, and how a self-hosted editor sets the limit
+- [Is Overleaf free? Free plan limits and pricing](https://aldine.dev/overleaf-free-plan/): what Overleaf's free plan includes and what is paid, as of 12 October 2026, and when a self-hosted editor fits
+- [Single sign-on for a self-hosted LaTeX editor](https://aldine.dev/sso/): sign-in methods, OpenID Connect settings, provider notes
+- [Documentation](https://aldine.dev/docs/): every guide on aldine.dev and the reference documents on GitHub
 
 ## Documentation
 

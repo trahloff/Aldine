@@ -72,7 +72,7 @@ point `NODE_EXTRA_CA_CERTS` at it:
 
 ```yaml
 services:
-  aldine:
+  app:
     environment:
       NODE_EXTRA_CA_CERTS: /etc/aldine/ca.pem
     volumes:

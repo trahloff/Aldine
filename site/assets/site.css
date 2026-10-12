@@ -239,6 +239,7 @@ code {
     border-radius: 4px;
     padding: 1px 5px;
     color: var(--text);
+    overflow-wrap: anywhere;
 }
 pre {
     background: #141416;

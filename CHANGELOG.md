@@ -6,6 +6,12 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- New app icon: the letter A with a commit line as its crossbar replaces the
+  scroll emoji in the browser tab.
+- The connector hint in Account settings names Claude's current menu path
+  (Customize → Connectors → Add → Add custom connector).
+
 ## [0.11.0] — 2026-09-23
 
 ### Added
