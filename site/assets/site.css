@@ -1,4 +1,4 @@
-/* Shared by every page except the homepage, which inlines the same tokens. */
+/* Shared by every page. The homepage adds its own rules inline on top. */
 :root {
     color-scheme: dark light;
     --bg: #1c1c1e;

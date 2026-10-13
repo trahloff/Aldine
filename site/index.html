@@ -157,147 +157,13 @@
                 ]
             }
         </script>
+        <link rel="stylesheet" href="/assets/site.css" />
         <style>
+            /* Homepage only. Everything shared with the guides is in /assets/site.css. */
             :root {
-                color-scheme: dark light;
-                --bg: #1c1c1e;
-                --panel: #232326;
-                --panel-raised: #28282c;
-                --text: #f5f5f7;
-                --text-2: #98989d;
-                --text-3: #8e8e96;
-                --hairline: rgba(255, 255, 255, 0.1);
-                --hairline-strong: rgba(255, 255, 255, 0.18);
-                --accent: #5b8cff;
-                --accent-fill: #3568ee;
-                --accent-fill-hover: #2c5ce0;
-                --paper: #faf8f2;
                 --paper-ink: #1b1b1d;
                 --paper-ink-2: #55555c;
                 --ok: #32d74b;
-                --selection: rgba(91, 140, 255, 0.3);
-                --hover-wash: rgba(255, 255, 255, 0.06);
-                --press-wash: rgba(255, 255, 255, 0.11);
-                --on-accent: #ffffff;
-                --header-bg: rgba(28, 28, 30, 0.82);
-                --term-bg: #141416;
-                --term-text: #f5f5f7;
-                --term-dim: #8e8e96;
-                --term-accent: #5b8cff;
-                --shadow-frame: 0 10px 40px rgba(0, 0, 0, 0.4);
-                --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.55);
-                --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
-                --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-                --serif:
-                    "Iowan Old Style", Palatino, "Palatino Linotype",
-                    "Book Antiqua", Georgia, serif;
-                --sans:
-                    -apple-system, BlinkMacSystemFont, "SF Pro Text",
-                    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                --mono:
-                    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
-                    monospace;
-            }
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            html {
-                scroll-behavior: smooth;
-            }
-            body {
-                background: var(--bg);
-                color: var(--text);
-                font-family: var(--serif);
-                line-height: 1.6;
-                -webkit-font-smoothing: antialiased;
-                -webkit-tap-highlight-color: transparent;
-            }
-            ::selection {
-                background: var(--selection);
-            }
-            a {
-                color: var(--accent);
-                text-decoration: none;
-            }
-            a:hover {
-                text-decoration: underline;
-            }
-            :focus-visible {
-                outline: 2px solid var(--accent);
-                outline-offset: 2px;
-                border-radius: 2px;
-            }
-
-            .wrap {
-                max-width: 880px;
-                margin: 0 auto;
-                padding: 0 24px;
-            }
-
-            /* top bar: the app’s toolbar, faithfully */
-            header {
-                position: sticky;
-                top: 0;
-                z-index: 10;
-                background: var(--header-bg);
-                backdrop-filter: blur(20px) saturate(180%);
-                -webkit-backdrop-filter: blur(20px) saturate(180%);
-                border-bottom: 1px solid var(--hairline);
-            }
-            .bar {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                height: 52px;
-            }
-            .brand {
-                font-family: var(--sans);
-                font-weight: 700;
-                font-size: 1.0625rem;
-                letter-spacing: -0.02em;
-                color: var(--text);
-            }
-            .brand em {
-                font-style: normal;
-                color: var(--accent);
-            }
-            nav {
-                display: flex;
-                gap: 18px;
-                align-items: center;
-                font-family: var(--sans);
-                font-size: 0.8438rem;
-            }
-            nav a {
-                color: var(--text-2);
-                white-space: nowrap;
-            }
-            nav a:hover {
-                color: var(--text);
-                text-decoration: none;
-            }
-            .nav-icon {
-                display: inline-flex;
-                align-items: center;
-            }
-            .nav-icon svg {
-                display: block;
-                fill: currentColor;
-            }
-            @media (max-width: 560px) {
-                .bar {
-                    padding: 0 16px;
-                }
-                nav {
-                    gap: 12px;
-                    font-size: 0.7812rem;
-                }
-                nav .btn {
-                    padding: 6px 10px;
-                    font-size: 0.7812rem;
-                }
             }
             /* in-page anchors go first: they stay reachable by scrolling */
             @media (max-width: 640px) {
@@ -309,42 +175,6 @@
                 header nav .nav-opt2 {
                     display: none;
                 }
-            }
-            .btn {
-                font-family: var(--sans);
-                font-size: 0.8438rem;
-                font-weight: 600;
-                padding: 7px 14px;
-                border-radius: 8px;
-                border: 1px solid var(--hairline-strong);
-                color: var(--text);
-                background: transparent;
-                cursor: pointer;
-                display: inline-block;
-                transition:
-                    background 150ms var(--ease),
-                    transform 120ms var(--ease-out);
-            }
-            .btn:hover {
-                background: var(--hover-wash);
-                text-decoration: none;
-            }
-            /* the press answers on pointer-down; only the release is eased */
-            .btn:active {
-                background: var(--press-wash);
-                transform: scale(0.97);
-                transition-duration: 0ms;
-            }
-            .btn--primary {
-                background: var(--accent-fill);
-                border-color: transparent;
-                color: var(--on-accent);
-            }
-            .btn--primary:hover {
-                background: var(--accent-fill-hover);
-            }
-            .btn--primary:active {
-                background: var(--accent-fill-hover);
             }
 
             /* hero, centred over the centred paper (deliberate: the page has one spine) */
@@ -482,6 +312,7 @@
             }
 
             .cta-row {
+                margin: 0;
                 display: flex;
                 gap: 12px;
                 justify-content: center;
@@ -522,7 +353,7 @@
                 line-height: 1.25;
                 margin-bottom: 18px;
             }
-            h2.sec-title .note {
+            h2.sec-title .sec-note {
                 font-family: var(--sans);
                 font-size: 0.8125rem;
                 font-weight: 400;
@@ -533,23 +364,18 @@
 
             /* demo */
             .demo-frame {
+                margin: 0;
                 border-radius: 10px;
                 overflow: hidden;
                 border: 1px solid var(--hairline);
                 box-shadow: var(--shadow-frame);
                 background: var(--panel);
             }
-            .demo-frame img,
-            .demo-frame video {
-                display: block;
-                width: 100%;
-                height: auto;
-            }
             .demo-caption {
                 font-size: 0.875rem;
                 color: var(--text-2);
                 text-align: center;
-                margin-top: 12px;
+                margin: 12px 0 0;
             }
             .visual-shot {
                 margin-top: 16px;
@@ -584,6 +410,18 @@
                 font-size: 0.9062rem;
                 color: var(--text-2);
                 line-height: 1.5;
+            }
+            /* the three things the headline promises lead the grid; the rest support them */
+            #features .cell:nth-child(-n + 3) {
+                padding-top: 28px;
+                padding-bottom: 28px;
+            }
+            #features .cell:nth-child(-n + 3) h3 {
+                font-family: var(--serif);
+                font-size: 1.3125rem;
+                letter-spacing: -0.01em;
+                line-height: 1.25;
+                margin-bottom: 8px;
             }
             .cell--wide {
                 grid-column: span 2;
@@ -627,11 +465,6 @@
                 color: var(--text-2);
                 font-size: 1rem;
             }
-            .faq code,
-            .start-note code {
-                font-family: var(--mono);
-                font-size: 0.9em;
-            }
 
             /* quick start */
             .term {
@@ -657,150 +490,6 @@
                 font-size: 0.8125rem;
                 color: var(--text-3);
                 margin-top: 10px;
-            }
-
-            /* colophon */
-            footer {
-                margin-top: 80px;
-                border-top: 1px solid var(--hairline);
-                padding: 36px 0 48px;
-            }
-            .colophon {
-                text-align: center;
-                font-size: 0.875rem;
-                color: var(--text-3);
-                max-width: 44em;
-                margin: 0 auto;
-            }
-            .colophon .mark {
-                font-family: var(--sans);
-                font-weight: 700;
-                color: var(--text-2);
-                letter-spacing: 0.02em;
-            }
-            .colophon .motto {
-                font-style: italic;
-            }
-            .colophon p {
-                margin-bottom: 10px;
-            }
-            .colophon nav {
-                justify-content: center;
-                flex-wrap: wrap;
-                row-gap: 6px;
-                margin-top: 14px;
-            }
-
-            /* Light appearance for readers whose system asks for it. The screenshots,
-               the recordings and the terminal stay dark: they show the app as it ships. */
-            @media (prefers-color-scheme: light) {
-                :root {
-                    color-scheme: light;
-                    --bg: #f5f5f7;
-                    --panel: #ffffff;
-                    --panel-raised: #e9e9ee;
-                    --text: #1d1d1f;
-                    --text-2: #5f5f65;
-                    --text-3: #6e6e73;
-                    --hairline: rgba(0, 0, 0, 0.1);
-                    --hairline-strong: rgba(0, 0, 0, 0.18);
-                    --accent: #2e62e9;
-                    --accent-fill: #2e62e9;
-                    --accent-fill-hover: #2554cf;
-                    --paper: #fffdf8;
-                    --selection: rgba(46, 98, 233, 0.22);
-                    --hover-wash: rgba(0, 0, 0, 0.045);
-                    --press-wash: rgba(0, 0, 0, 0.08);
-                    --header-bg: rgba(245, 245, 247, 0.82);
-                    --term-bg: #1c1c1e;
-                    --shadow-frame: 0 10px 40px rgba(0, 0, 0, 0.14);
-                    --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.16);
-                }
-            }
-
-            /* headings break into even lines, paragraphs avoid a last line of one word */
-            h1,
-            h2,
-            h3 {
-                text-wrap: balance;
-            }
-            p,
-            li {
-                text-wrap: pretty;
-            }
-
-            /* The bar has no edge while the page is at the top; the hairline arrives
-               as content starts to scroll under it. */
-            @supports (animation-timeline: scroll()) {
-                header {
-                    border-bottom-color: transparent;
-                    animation: header-edge linear both;
-                    animation-timeline: scroll(root);
-                    animation-range: 0 48px;
-                }
-                @keyframes header-edge {
-                    to {
-                        border-bottom-color: var(--hairline);
-                    }
-                }
-            }
-
-            /* a 13px link is a 20px target; fingers get 44 */
-            @media (pointer: coarse) {
-                nav a:not(.btn) {
-                    /* padding, not display: the hidden nav links must stay hidden */
-                    padding-block: 13px;
-                }
-                .colophon nav {
-                    row-gap: 0;
-                }
-                .btn {
-                    padding-top: 11px;
-                    padding-bottom: 11px;
-                }
-                header nav .btn {
-                    padding-top: 8px;
-                    padding-bottom: 8px;
-                }
-            }
-
-            @media (prefers-reduced-transparency: reduce) {
-                :root {
-                    --header-bg: var(--bg);
-                }
-                header {
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-            }
-            @media (prefers-contrast: more) {
-                :root {
-                    --hairline: rgba(255, 255, 255, 0.34);
-                    --hairline-strong: rgba(255, 255, 255, 0.52);
-                    --text-2: #c2c2c8;
-                    --text-3: #b0b0b8;
-                    --header-bg: var(--bg);
-                }
-                header {
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-            }
-            @media (prefers-contrast: more) and (prefers-color-scheme: light) {
-                :root {
-                    --hairline: rgba(0, 0, 0, 0.32);
-                    --hairline-strong: rgba(0, 0, 0, 0.5);
-                    --text-2: #48484d;
-                    --text-3: #55555a;
-                }
-            }
-            @media (prefers-reduced-motion: reduce) {
-                .btn {
-                    transition: none;
-                }
-                .btn:active {
-                    transform: none;
-                }
             }
         </style>
     </head>
@@ -1166,7 +855,7 @@
 
             <section class="wrap" id="visual">
                 <h2 class="sec-title">
-                    Visual editing, done right<span class="note"
+                    Visual editing, done right<span class="sec-note"
                         >(experimental)</span
                     >
                 </h2>
