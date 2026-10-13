@@ -50,9 +50,22 @@
   --agent: #6d4fd8;
   --bg-panel-raised: #ffffff;
 
+  --radius-xs: 4px;
   --radius-s: 6px;
   --radius-m: 8px;
   --radius-l: 12px;
+
+  /* The type scale: five steps for the interface, two for display. In rem,
+     so the reader's browser text size applies. --text-code is the editor's
+     own size and not a step of the scale. */
+  --text-xs: 0.6875rem;   /* 11px: captions, badges, uppercase labels */
+  --text-s: 0.75rem;      /* 12px: secondary rows, hints */
+  --text-m: 0.8125rem;    /* 13px: body, controls */
+  --text-l: 0.9375rem;    /* 15px: dialog titles, the palette field */
+  --text-xl: 1.0625rem;   /* 17px */
+  --text-2xl: 1.375rem;   /* 22px */
+  --text-3xl: 1.75rem;    /* 28px: the wordmark, big numbers */
+  --text-code: 0.84375rem; /* 13.5px */
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 6px rgba(0, 0, 0, 0.05);
   --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.07), 0 6px 20px rgba(0, 0, 0, 0.09);
@@ -132,7 +145,7 @@ html { -webkit-tap-highlight-color: transparent; }
 
 body {
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-m);
   line-height: 1.45;
   color: var(--text);
   background: var(--bg-app);

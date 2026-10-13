@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
 import { fileIcon } from './Icons';
+import { useDialogs } from './Dialogs';
+import { useExitGhost } from '../exitGhost';
 
 interface Props {
   files: TreeEntry[];
@@ -58,7 +60,15 @@ const FolderIcon = () => (
   </svg>
 );
 
+/** Where a path's extension starts: a rename selects the name, not the `.tex`. */
+export function stemEnd(path: string): number {
+  const dot = path.lastIndexOf('.');
+  return dot > path.lastIndexOf('/') + 1 ? dot : path.length;
+}
+
 export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
+  const dialogs = useDialogs();
+  const leave = useExitGhost();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   // A project with no files of the user's own (the .gitignore every project
@@ -140,7 +150,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64', { createOnly: true });
       } catch (err) {
         if (!(err instanceof ApiError) || err.status !== 409) throw err;
-        if (!window.confirm(`${f.name} already exists in this project. Replace it with the uploaded file?`)) continue;
+        if (!(await dialogs.confirm({ title: `Replace ${f.name}?`, body: `${f.name} already exists in this project. The uploaded file takes its place.`, confirmLabel: 'Replace file' }))) continue;
         await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64');
       }
       done.push(f.name);
@@ -209,15 +219,20 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       <p className="filetree__hint">Drop files here to upload</p>
 
       {menu && (
-        <div ref={menuRef} className="menu" role="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()} data-testid="file-menu">
+        <div ref={(el) => { menuRef.current = el; leave(el); }} className="menu" role="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()} data-testid="file-menu">
           <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as main document</button>
-          <button className="menu__item" onClick={() => {
-            const to = window.prompt('Rename to', menu.path);
-            if (to && to !== menu.path) onRename(menu.path, to);
+          <button className="menu__item" data-testid="file-menu-rename" onClick={async () => {
+            const from = menu.path;
             setMenu(null);
+            const to = (await dialogs.prompt({ title: `Rename ${from}`, value: from, confirmLabel: 'Rename', selectTo: stemEnd(from) }))?.trim();
+            if (to && to !== from) onRename(from, to);
           }}>Rename…</button>
           <div className="menu__sep" />
-          <button className="menu__item" onClick={() => { if (window.confirm(`Delete ${menu.path}?`)) onDelete(menu.path); setMenu(null); }}>Delete</button>
+          <button className="menu__item" data-testid="file-menu-delete" onClick={async () => {
+            const path = menu.path;
+            setMenu(null);
+            if (await dialogs.confirm({ title: `Delete ${path}?`, confirmLabel: 'Delete file', danger: true })) onDelete(path);
+          }}>Delete</button>
         </div>
       )}
     </div>

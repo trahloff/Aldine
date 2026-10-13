@@ -3,10 +3,11 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser, accountIdentity } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast } from '../components/Toast';
+import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
 import About from '../components/About';
-import FileTree from '../components/FileTree';
+import FileTree, { stemEnd } from '../components/FileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import BranchMenu from '../components/BranchMenu';
@@ -59,6 +60,7 @@ export default function Editor() {
   // panel can say where the compiler choice came from.
   const imported = (useLocation().state as { import?: ImportedProject['import'] } | null)?.import;
   const toast = useToast();
+  const dialogs = useDialogs();
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [files, setFiles] = useState<TreeEntry[]>([]);
@@ -859,7 +861,7 @@ export default function Editor() {
     if (activeFile) {
       cmds.push({
         id: 'rename-file', group: 'File', title: `Rename ${activeFile}…`, run: async () => {
-          const to = window.prompt('Rename file to', activeFile);
+          const to = (await dialogs.prompt({ title: `Rename ${activeFile}`, value: activeFile, confirmLabel: 'Rename', selectTo: stemEnd(activeFile) }))?.trim();
           if (to && to !== activeFile) {
             try {
               await api.renameFile(id, branch, activeFile, to);
@@ -875,7 +877,7 @@ export default function Editor() {
       });
       cmds.push({
         id: 'delete-file', group: 'File', title: `Delete ${activeFile}…`, run: async () => {
-          if (window.confirm(`Delete ${activeFile}?`)) {
+          if (await dialogs.confirm({ title: `Delete ${activeFile}?`, confirmLabel: 'Delete file', danger: true })) {
             await api.deleteFile(id, branch, activeFile);
             await loadFiles();
             setActiveFile(null);
@@ -1060,7 +1062,7 @@ export default function Editor() {
                 activeFile={activeFile}
                 onReveal={revealComment}
                 onResolve={async (c, resolved) => { await api.resolveComment(id, c.id, resolved); await loadComments(); bumpComments(); }}
-                onDelete={async (c) => { if (!window.confirm('Delete this comment thread?')) return; await api.deleteComment(id, c.id); await loadComments(); bumpComments(); }}
+                onDelete={async (c) => { if (!(await dialogs.confirm({ title: 'Delete this comment thread?', confirmLabel: 'Delete thread', danger: true }))) return; await api.deleteComment(id, c.id); await loadComments(); bumpComments(); }}
                 onReply={async (c, body) => { await api.replyComment(id, c.id, body, identity.name); await loadComments(); bumpComments(); }}
                 onAccept={acceptSuggestion}
               />
@@ -1375,7 +1377,7 @@ export default function Editor() {
               </>);
             })()}</pre>
             <div className="modal__row">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 12.5 }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 'var(--text-s)' }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
                 <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} />
                 Stop on first error
               </label>

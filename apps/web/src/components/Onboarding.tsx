@@ -15,7 +15,7 @@ export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onCl
   return (
     <Modal onClose={onClose} label="Welcome to Aldine" testId="onboarding" wide>
       <div className="onboard">
-        <h1 className="home__brand" style={{ fontSize: 30, marginBottom: 2 }}>aldine<em>.</em></h1>
+        <h1 className="home__brand" style={{ fontSize: 'var(--text-3xl)', marginBottom: 2 }}>aldine<em>.</em></h1>
         <p className="home__tag" style={{ marginBottom: 20 }}>Write LaTeX together — fast, versioned, yours.</p>
 
         <div className="onboard__tiles">

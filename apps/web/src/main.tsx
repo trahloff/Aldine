@@ -17,6 +17,7 @@ function NotFound() {
   );
 }
 import { ToastProvider } from './components/Toast';
+import { DialogProvider } from './components/Dialogs';
 import { AuthProvider } from './components/Auth';
 import './theme.css';
 import './app.css';
@@ -24,6 +25,7 @@ import './app.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ToastProvider>
+     <DialogProvider>
       <AuthProvider>
         <BrowserRouter basename={BASE_PATH} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Routes>
@@ -35,6 +37,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           </Routes>
         </BrowserRouter>
       </AuthProvider>
+     </DialogProvider>
     </ToastProvider>
   </React.StrictMode>,
 );

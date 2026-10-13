@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
 import { useToast } from '../components/Toast';
+import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
 import ShareModal from '../components/ShareModal';
@@ -107,6 +108,7 @@ export default function Home() {
   const dismissOnboarding = () => { localStorage.setItem('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
   const toast = useToast();
+  const dialogs = useDialogs();
   const { authEnabled, user, admin, setUser } = useAuth();
 
   const load = () => {
@@ -232,10 +234,11 @@ export default function Home() {
 
   const remove = async (e: React.MouseEvent, p: ProjectSummary) => {
     e.stopPropagation();
-    if (!window.confirm(`Move “${p.name}” to the trash? You can restore it for 30 days.`)) return;
+    // No question first: the trash keeps the project for 30 days, and the
+    // notification carries the way back.
     try {
       await api.deleteProject(p.id);
-      toast(`Moved ${p.name} to the trash`, 'ok');
+      toast(`Moved ${p.name} to the trash`, 'ok', { label: 'Undo', testId: 'undo-trash', onClick: () => restore(p.id, p.name) });
       load();
     } catch (err: any) {
       toast(`Could not delete ${p.name}: ${err.message}`, 'error');
@@ -244,7 +247,7 @@ export default function Home() {
 
   const claim = async (e: React.MouseEvent, p: ProjectSummary) => {
     e.stopPropagation();
-    if (!window.confirm(`Claim “${p.name}”? You become its owner and other users lose access.`)) return;
+    if (!(await dialogs.confirm({ title: `Claim “${p.name}”?`, body: 'You become its owner and other users lose access.', confirmLabel: 'Claim project' }))) return;
     try { await api.claimProject(p.id); toast(`You now own ${p.name}`, 'ok'); }
     catch (err: any) { toast(err.message, 'error'); } // e.g. someone claimed it first
     load(); // winner sees owner controls; a loser sees the project disappear
@@ -256,7 +259,7 @@ export default function Home() {
   };
 
   const purge = async (id: string, name: string) => {
-    if (!window.confirm(`Permanently delete “${name}”? This cannot be undone.`)) return;
+    if (!(await dialogs.confirm({ title: `Delete “${name}” forever?`, body: 'This cannot be undone.', confirmLabel: 'Delete forever', danger: true }))) return;
     try { await api.deleteProject(id, true); toast(`Deleted ${name} forever`, 'ok'); load(); }
     catch (err: any) { toast(err.message, 'error'); }
   };
@@ -401,7 +404,7 @@ export default function Home() {
               <div key={t.id} className="settings__row" style={{ alignItems: 'center', gap: 10 }} data-testid={`trash-${t.id}`}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                  <span style={{ color: 'var(--text-3)', fontSize: 11.5 }}>{friendlyDate(t.deletedAt)}</span>
+                  <span style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)' }}>{friendlyDate(t.deletedAt)}</span>
                   <button className="btn btn--small" onClick={() => restore(t.id, t.name)} data-testid={`restore-${t.id}`}>Restore</button>
                   <button className="btn btn--ghost btn--small" onClick={() => purge(t.id, t.name)} data-testid={`purge-${t.id}`}>Delete forever</button>
                 </span>

@@ -120,10 +120,15 @@ test.describe('deepened features', () => {
     const id = await createProject(request, 'Palette Rename');
     try {
       await openProject(page, id);
-      page.on('dialog', (d) => d.accept('renamed.tex'));
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
       await page.getByTestId('palette-input').fill('rename');
       await page.getByTestId('palette-item-rename-file').click();
+      // the name is selected up to the extension, ready to be typed over
+      const input = page.getByTestId('dialog-input');
+      await expect(input).toHaveValue('main.tex');
+      expect(await input.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd])).toEqual([0, 4]);
+      await input.fill('renamed.tex');
+      await page.getByTestId('dialog-confirm').click();
       await expect(page.getByTestId('file-renamed.tex')).toBeVisible({ timeout: 10_000 });
     } finally {
       await cleanup(request, id);

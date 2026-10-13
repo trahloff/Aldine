@@ -31,14 +31,15 @@ test.describe('guards against losing work', () => {
     try {
       await openProject(page, id);
       const before = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
-      page.once('dialog', (d) => { expect(d.message()).toContain('main.tex already exists'); d.dismiss(); });
       await page.getByTestId('upload-input').setInputFiles({ name: 'main.tex', mimeType: 'text/plain', buffer: Buffer.from('REPLACED') });
+      await expect(page.getByTestId('dialog-message')).toContainText('main.tex already exists');
+      await page.getByTestId('dialog-cancel').click();
       await page.waitForTimeout(800);
       const after = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
       expect(after).toBe(before);
 
-      page.once('dialog', (d) => d.accept());
       await page.getByTestId('upload-input').setInputFiles({ name: 'main.tex', mimeType: 'text/plain', buffer: Buffer.from('REPLACED') });
+      await page.getByTestId('dialog-confirm').click();
       await expect.poll(async () => (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text(), { timeout: 10_000 }).toBe('REPLACED');
     } finally {
       await cleanup(request, id);
@@ -92,11 +93,11 @@ test.describe('guards against losing work', () => {
 
       await openProject(page, id);
       await page.getByTestId('branch-menu').click();
-      let question = '';
-      page.once('dialog', (d) => { question = d.message(); d.dismiss(); });
       await page.getByTestId('delete-draft').click();
-      await expect.poll(() => question).toContain('Three hours of work');
-      expect(question).toMatch(/checkpoint/);
+      await expect(page.getByTestId('dialog-message')).toContainText('Three hours of work');
+      await expect(page.getByTestId('dialog-message')).toContainText('checkpoint');
+      await page.getByTestId('dialog-cancel').click();
+      await expect(page.getByTestId('app-dialog')).toHaveCount(0);
       const branches = (await (await request.get(`/api/projects/${id}/branches`)).json()) as { name: string }[];
       expect(branches.some((b) => b.name === 'draft'), 'Cancel kept the branch').toBe(true);
     } finally {

@@ -39,7 +39,7 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
         </>
       )}
       {d.selfHosted && !d.baseUrlRequired && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px', fontSize: 12.5, color: 'var(--text-2)', cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px', fontSize: 'var(--text-s)', color: 'var(--text-2)', cursor: 'pointer' }}>
           <input type="checkbox" checked={selfHosted} data-testid={`${provider}-selfhosted-toggle`} onChange={(e) => setSelfHosted(e.target.checked)} />
           Using a self-hosted {d.label}?
         </label>
@@ -59,7 +59,7 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
       <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center' }} onClick={connect} disabled={busy} data-testid={`${provider}-connect`}>
         {busy ? 'Connecting…' : 'Connect'}
       </button>
-      <p style={{ color: 'var(--text-3)', fontSize: 11.5, marginTop: 8 }}>{d.tokenHelp}</p>
+      <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>{d.tokenHelp}</p>
     </div>
   );
 }

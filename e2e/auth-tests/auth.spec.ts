@@ -493,8 +493,9 @@ test.describe('ownerless legacy projects', () => {
     await expect(card).toBeVisible();
     await expect(page.getByTestId(`claim-${id}`)).toBeVisible();
     await expect(page.getByTestId(`share-${id}`)).toHaveCount(0); // no owner controls pre-claim
-    page.on('dialog', (d) => d.accept());
     await page.getByTestId(`claim-${id}`).click();
+    await expect(page.getByTestId('dialog-message')).toContainText('You become its owner');
+    await page.getByTestId('dialog-confirm').click();
     await expect(page.getByTestId(`share-${id}`)).toBeVisible(); // owner controls appear
     await expect(page.getByTestId(`claim-${id}`)).toHaveCount(0);
     await ctx.close();

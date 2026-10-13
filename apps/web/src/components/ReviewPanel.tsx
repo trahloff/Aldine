@@ -60,7 +60,7 @@ export default function ReviewPanel({ comments, activeFile, onReveal, onResolve,
   return (
     <div className="panel-list" data-testid="review-panel">
       {comments.length === 0 && (
-        <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 12.5 }}>
+        <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }}>
           Select text in the editor and click <strong>Comment</strong> to start a review thread.
         </p>
       )}

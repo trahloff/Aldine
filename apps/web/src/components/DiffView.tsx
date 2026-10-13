@@ -2,7 +2,7 @@
  *  lines of each file (diff --git, index, ---, +++) collapse into one row
  *  naming the file: the reader is a researcher, not a git user. */
 export default function DiffView({ patch }: { patch: string }) {
-  if (!patch.trim()) return <p style={{ color: 'var(--text-2)', fontSize: 13, padding: 8 }}>No changes in this commit.</p>;
+  if (!patch.trim()) return <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', padding: 8 }}>No changes in this commit.</p>;
   const lines = patch.split('\n');
   return (
     <pre className="diff" data-testid="diff-view">

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useExitGhost } from '../exitGhost';
 
 export interface Command {
   id: string;
@@ -37,6 +38,7 @@ export default function CommandPalette({ open, commands, onClose }: Props) {
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const leave = useExitGhost();
 
   useEffect(() => {
     if (open) {
@@ -68,7 +70,7 @@ export default function CommandPalette({ open, commands, onClose }: Props) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} data-testid="command-palette">
+    <div ref={leave} className="modal-backdrop" onClick={onClose} data-testid="command-palette">
       <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}

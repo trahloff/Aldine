@@ -14,6 +14,8 @@ All notable changes to Aldine are documented here. The format follows
   inside the window when opened near an edge.
 - Solid surfaces for people who ask for reduced transparency, stronger lines
   and secondary text for increased contrast.
+- Moving a project to the trash no longer asks first; the notification has
+  an Undo button.
 
 ### Changed
 - Every control responds on press, not on release, and shows keyboard focus.
@@ -27,7 +29,15 @@ All notable changes to Aldine are documented here. The format follows
 - On touch screens: fields no longer zoom the page on focus, the delete
   button on a project card is visible, and cards do not stay lifted after a
   tap.
-- Labels smaller than 11 px are 11 px.
+- Questions and renames use Aldine's own dialogs in place of the browser's:
+  the confirming button names the action ("Delete branch", "Delete forever"),
+  destructive ones are red, and a rename has the name selected up to the
+  extension.
+- Dialogs, menus and the command palette fade out on close instead of
+  vanishing.
+- The Source/Visual switch slides its thumb to the selected side.
+- Text sizes follow one scale of seven steps and the browser's text-size
+  setting; the smallest label is 11 px.
 - New app icon: the letter A with a commit line as its crossbar replaces the
   scroll emoji in the browser tab.
 - The connector hint in Account settings names Claude's current menu path

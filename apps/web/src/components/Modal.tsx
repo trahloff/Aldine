@@ -1,4 +1,5 @@
 import { useEffect, useRef, ReactNode } from 'react';
+import { useExitGhost } from '../exitGhost';
 
 interface Props {
   onClose: () => void;
@@ -21,6 +22,7 @@ const openStack: symbol[] = [];
 
 export default function Modal({ onClose, children, label, wide, width, testId }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const leave = useExitGhost();
   const self = useRef(Symbol('modal'));
   const returnFocus = useRef<HTMLElement | null>(null);
   // Callers pass an inline arrow, so onClose has a new identity on every parent
@@ -63,7 +65,7 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
   }, []);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div ref={leave} className="modal-backdrop" onClick={onClose}>
       <div
         ref={panelRef}
         className={`modal${wide ? ' modal--wide' : ''}`}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, RemoteLink } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
+import { useExitGhost } from '../exitGhost';
 
 /** Toolbar control for a project linked to a git host: branch switch/create
  *  + change request, ahead/behind, push (with a commit message), pull (with
@@ -32,6 +33,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
   const [crTitle, setCrTitle] = useState('');
   const [showCr, setShowCr] = useState(false);
   const toast = useToast();
+  const leave = useExitGhost();
 
   const refresh = useCallback(async () => {
     try { const s = await api.projectRemoteStatus(projectId); setStatus({ ahead: s.ahead, behind: s.behind }); }
@@ -108,7 +110,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
             {busy === 'branch' ? '…' : branchInfo.current}
           </button>
           {menu && (
-            <div className="gh-branch__menu" data-testid={`${p}-branch-menu`}>
+            <div ref={leave} className="gh-branch__menu" data-testid={`${p}-branch-menu`}>
               <div className="gh-branch__label">Switch branch</div>
               {branchInfo.branches.map((b) => (
                 <button key={b} className={`gh-branch__item ${b === branchInfo.current ? 'is-current' : ''}`} onClick={() => switchTo(b)} data-testid={`${p}-branch-${b}`}>
@@ -180,7 +182,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
             <h2 style={{ marginBottom: 8 }}>Merge conflict</h2>
             <p className="modal__sub">Your changes and {d.label}'s have diverged{conflicts.length ? ' in:' : '.'}</p>
             {conflicts.length > 0 && <ul className="conflict__list">{conflicts.map((f) => <li key={f}>{f}</li>)}</ul>}
-            <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 'var(--text-s)', color: 'var(--text-2)', lineHeight: 1.5 }}>
               Aldine kept your local version. You can discard your local changes and take {d.label}'s version, or cancel and reconcile manually.
             </p>
             <div className="modal__row" style={{ marginTop: 12 }}>

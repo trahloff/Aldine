@@ -227,7 +227,6 @@ test.describe('GitLab auto-provisioning', () => {
     await page.goto('/');
     const card = page.getByTestId(`project-card-${teamPaperId}`);
     await expect(card).toBeVisible();
-    page.on('dialog', (d) => d.accept());
     await card.locator('.project-card__del').click();
     await expect(card).not.toBeVisible();
     // delayed deletion on the mock: marked, then purged by path — both by the server

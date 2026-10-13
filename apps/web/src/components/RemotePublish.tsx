@@ -93,9 +93,9 @@ export default function RemotePublish({ projectId, projectName, onClose, onLinke
 
         {provider && status?.connected && (
           <>
-            <label style={{ display: 'block', margin: '10px 0 4px', color: 'var(--text-2)', fontSize: 12.5 }}>Repository name</label>
+            <label style={{ display: 'block', margin: '10px 0 4px', color: 'var(--text-2)', fontSize: 'var(--text-s)' }}>Repository name</label>
             <input className="input" style={{ width: '100%' }} value={name} data-testid="publish-repo-name" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && publish()} autoFocus />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '10px 0 0', fontSize: 13, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '10px 0 0', fontSize: 'var(--text-m)', cursor: 'pointer' }}>
               <input type="checkbox" checked={priv} data-testid="publish-private" onChange={(e) => setPriv(e.target.checked)} />
               Private repository
             </label>

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, BranchInfo } from '../api';
 import { useToast } from './Toast';
+import { useDialogs } from './Dialogs';
+import { useExitGhost } from '../exitGhost';
 
 interface Props {
   projectId: string;
@@ -16,6 +18,8 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
   const [name, setName] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
+  const dialogs = useDialogs();
+  const leave = useExitGhost();
 
   const load = () => api.branches(projectId).then(setBranches).catch(() => {});
   useEffect(() => { if (open) load(); }, [open, projectId]);
@@ -63,15 +67,15 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
   const remove = async (n: string) => {
     // Deleting is permanent (git branch -D, no reflog surfaced anywhere), so
     // the question names what goes with the branch.
-    let question = `Delete branch ${n}?`;
+    let body: string | undefined;
     try {
       const { count, newest } = await api.unmergedCommits(projectId, n);
       if (count > 0) {
         const newestPart = newest ? ` (newest: "${newest}")` : '';
-        question = `Branch ${n} has ${count} checkpoint${count === 1 ? '' : 's'} that main does not have${newestPart}. Deleting the branch discards ${count === 1 ? 'it' : 'them'} for good. Delete anyway?`;
+        body = `It has ${count} checkpoint${count === 1 ? '' : 's'} that main does not have${newestPart}. Deleting the branch discards ${count === 1 ? 'it' : 'them'} for good.`;
       }
     } catch { /* the plain question still stands */ }
-    if (!window.confirm(question)) return;
+    if (!(await dialogs.confirm({ title: `Delete branch ${n}?`, body, confirmLabel: 'Delete branch', danger: true }))) return;
     try {
       await api.deleteBranch(projectId, n);
     } catch (err: any) {
@@ -90,7 +94,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged }: 
         {current}
       </button>
       {open && (
-        <div className="menu" style={{ top: 32, left: 0 }} data-testid="branch-list">
+        <div ref={leave} className="menu" style={{ top: 32, left: 0 }} data-testid="branch-list">
           <div className="menu__label">Branches</div>
           {branches.map((b) => (
             <div key={b.name} style={{ display: 'flex', alignItems: 'center' }}>

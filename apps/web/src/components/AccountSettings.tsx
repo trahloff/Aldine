@@ -147,7 +147,7 @@ function AgentAccess() {
         )}
         <button className="btn btn--ghost btn--small" style={{ flexShrink: 0 }} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`} data-testid="agent-token-revoke">Revoke</button>
       </span>
-      <span style={{ display: 'flex', gap: 10, flexWrap: 'wrap', color: 'var(--text-3)', fontSize: 11.5 }}>
+      <span style={{ display: 'flex', gap: 10, flexWrap: 'wrap', color: 'var(--text-3)', fontSize: 'var(--text-s)' }}>
         <span title={scopeNames(t)} data-testid="agent-token-scope">{scopeLabel(t)}</span>
         <span>Created {friendlyDate(t.createdAt)}</span>
         <span>{t.lastUsedAt ? `Used ${friendlyDate(t.lastUsedAt)}` : 'Never used'}</span>
@@ -163,12 +163,12 @@ function AgentAccess() {
     <>
       <div className="menu__label" style={{ margin: '18px 0 6px' }}>Agent access</div>
       {!mcpEnabled ? (
-        <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 12px' }} data-testid="agent-connector-off">
+        <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 12px' }} data-testid="agent-connector-off">
           The Claude connector is not enabled on this server. Whoever runs it sets <code>ALDINE_MCP=1</code> (docs/AGENT_API.md); the tokens below then work at <code>{connectorUrl}</code>.
         </p>
       ) : (
         <>
-          <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>
+          <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 6px' }}>
             {cloudBlocked
               ? 'Run this once in Claude Code, then type /mcp in a session and pick Aldine. It asks which projects Claude may touch.'
               : 'In Claude: Customize → Connectors → Add → Add custom connector. You pick which projects Claude may touch when it asks.'}
@@ -188,7 +188,7 @@ function AgentAccess() {
             </div>
           )}
           {cloudBlocked && (
-            <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 12px' }} data-testid="agent-connector-unreachable">
+            <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '0 0 12px' }} data-testid="agent-connector-unreachable">
               claude.ai, Claude Desktop and Cowork call this address from Anthropic's cloud and cannot reach it — use Claude Code on this machine, or expose the instance over public HTTPS (docs/AGENT_API.md, “Reachability”).
             </p>
           )}
@@ -206,13 +206,13 @@ function AgentAccess() {
       )}
 
       <div className="menu__label" style={{ margin: '14px 0 6px' }}>Access tokens for scripts</div>
-      <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 10px' }}>
+      <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 10px' }}>
         For scripts and anything without a Connect button: send a token as the Authorization bearer or the X-Aldine-Token header.
       </p>
 
       {minted && (
         <div ref={mintedRef} style={{ marginBottom: 12 }} role="status" aria-live="polite">
-          <p style={{ color: 'var(--text-2)', fontSize: 13, margin: '0 0 6px' }}>You won't see this again — copy the token now.</p>
+          <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 6px' }}>You won't see this again — copy the token now.</p>
           <code
             ref={tokenRef}
             className="agent-token"
@@ -228,13 +228,13 @@ function AgentAccess() {
             <button className="btn btn--primary btn--small" onClick={() => copy(minted, 'Token', 'token')} data-testid="agent-token-copy">Copy token</button>
             <button className="btn btn--small" onClick={() => setMinted(null)} data-testid="agent-token-done">Done</button>
           </div>
-          <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: 0 }}>Send it as <code>Authorization: Bearer …</code> or in an <code>X-Aldine-Token</code> header to {connectorUrl}. Claude connectors don’t need a token — use Connect.</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: 0 }}>Send it as <code>Authorization: Bearer …</code> or in an <code>X-Aldine-Token</code> header to {connectorUrl}. Claude connectors don’t need a token — use Connect.</p>
         </div>
       )}
 
       {showForm ? (
         <div ref={formRef} style={{ marginBottom: 12 }}>
-          <label htmlFor="agent-token-name" style={{ display: 'block', fontSize: 12, color: 'var(--text-2)', marginBottom: 4 }}>Token name</label>
+          <label htmlFor="agent-token-name" style={{ display: 'block', fontSize: 'var(--text-s)', color: 'var(--text-2)', marginBottom: 4 }}>Token name</label>
           <input
             id="agent-token-name"
             ref={nameRef}
@@ -252,10 +252,10 @@ function AgentAccess() {
           {nameError && <p id="agent-token-name-error" className="field__error" data-testid="agent-token-name-error">{nameError}</p>}
           {projects !== null && projects.length > 0 && (
             <>
-              <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '0 0 4px' }}>Limit to specific projects — none checked means all your projects.</p>
+              <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '0 0 4px' }}>Limit to specific projects — none checked means all your projects.</p>
               <div style={{ maxHeight: 110, overflowY: 'auto', border: '1px solid var(--hairline)', borderRadius: 'var(--radius-m)', padding: '4px 8px', marginBottom: 8 }}>
                 {projects.map((p) => (
-                  <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0', fontSize: 13 }}>
+                  <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0', fontSize: 'var(--text-m)' }}>
                     <input
                       type="checkbox"
                       checked={scopeIds.includes(p.id)}
@@ -281,7 +281,7 @@ function AgentAccess() {
       )}
 
       {tokens !== null && scripted.length === 0 && !showForm && !minted && (
-        <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '6px 0 0' }}>No access tokens yet.</p>
+        <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '6px 0 0' }}>No access tokens yet.</p>
       )}
       {scripted.map(row)}
 
@@ -292,7 +292,7 @@ function AgentAccess() {
             <p className="modal__sub">
               {scopeLabel(revoking)} · {revoking.lastUsedAt ? `last used ${friendlyDate(revoking.lastUsedAt)}` : 'never used'}
             </p>
-            <p style={{ color: 'var(--text-2)', fontSize: 13, margin: 0 }}>
+            <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }}>
               Anything connected with it loses access at its next request{revoking.clientName !== null ? ' and Claude will ask you to connect again' : ''}.
             </p>
             <div className="modal__row">
@@ -364,7 +364,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
         <AgentAccess />
 
         {isSso ? (
-          <p style={{ color: 'var(--text-2)', fontSize: 13, marginTop: 18 }}>
+          <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', marginTop: 18 }}>
             Your password is managed by {genericSso ? 'your identity provider' : providerName}. There's nothing to change here.
             {user.orcid && !user.email && ' Collaborators invite you by your ORCID iD, since this account has no email address.'}
           </p>
@@ -373,7 +373,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
             <div className="menu__label" style={{ margin: '18px 0 6px' }}>Change password</div>
             <input className="input login__input" type="password" placeholder="Current password" aria-label="Current password" value={current} data-testid="current-password" onChange={(e) => setCurrent(e.target.value)} />
             <input className="input login__input" type="password" placeholder="New password (min 8)" aria-label="New password" value={next} data-testid="new-password" onChange={(e) => setNext(e.target.value)} />
-            <p style={{ color: 'var(--text-3)', fontSize: 11.5, margin: '4px 0 0' }}>Changing your password signs out your other sessions.</p>
+            <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '4px 0 0' }}>Changing your password signs out your other sessions.</p>
           </>
         )}
 
