@@ -44,6 +44,8 @@ All notable changes to Aldine are documented here. The format follows
   (Customize → Connectors → Add → Add custom connector).
 
 ### Fixed
+- The server could exit with an unhandled `write EPIPE` when a git command
+  finished before reading its input (seen during agent commits under load).
 - Visual mode: math that was drawn before the math renderer had finished
   loading stayed as raw source until the caret moved through it. It now
   renders as soon as the renderer arrives.

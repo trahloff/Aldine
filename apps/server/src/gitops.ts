@@ -250,6 +250,11 @@ function gitPlumb(dir: string, args: string[], opts: { input?: string | Buffer; 
       if (err) reject(new Error(`git ${args[0]} failed: ${String(stderr || err.message).trim()}`));
       else resolve(stdout);
     });
+    // git may exit before it has read its input (most of the plumbing here
+    // reads none). The write then fails with EPIPE on the pipe itself, and an
+    // 'error' event with no listener takes the whole process down. The exit
+    // status above already reports whether the command worked.
+    child.stdin?.on('error', () => {});
     child.stdin?.end(opts.input ?? '');
   });
 }
