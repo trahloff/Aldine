@@ -44,6 +44,10 @@ All notable changes to Aldine are documented here. The format follows
   (Customize → Connectors → Add → Add custom connector).
 
 ### Fixed
+- The PDF preview rendered every CJK character as blank space (Latin text and
+  math were unaffected): pdf.js was not given `cMapUrl`/`cMapPacked`, so it
+  could not map the glyphs of Identity-H CID fonts such as XeLaTeX's Fandol.
+  The build now ships the pdfjs-dist CMaps and the dev server serves them.
 - The server could exit with an unhandled `write EPIPE` when a git command
   finished before reading its input (seen during agent commits under load).
 - Visual mode: math that was drawn before the math renderer had finished
