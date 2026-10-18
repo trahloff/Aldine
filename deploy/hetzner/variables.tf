@@ -7,6 +7,13 @@ variable "name" {
 variable "ssh_public_keys" {
   description = "Paths to the SSH public keys allowed to log in as root (a person's key, and the deploy key CI uses)."
   type        = list(string)
+  default     = []
+}
+
+variable "existing_ssh_keys" {
+  description = "Names of SSH keys already in the Hetzner project to allow as well. Hetzner rejects a second copy of the same public key."
+  type        = list(string)
+  default     = []
 }
 
 variable "server_type" {

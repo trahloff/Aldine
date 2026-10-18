@@ -28,6 +28,13 @@ resource "hcloud_ssh_key" "keys" {
   public_key = file(pathexpand(each.value))
 }
 
+# A public key can exist once per Hetzner project; one registered elsewhere
+# (by deploy/demo, say) is referenced by name instead.
+data "hcloud_ssh_key" "existing" {
+  for_each = toset(var.existing_ssh_keys)
+  name     = each.value
+}
+
 resource "hcloud_firewall" "box" {
   name = var.name
   rule {
@@ -55,7 +62,7 @@ resource "hcloud_server" "box" {
   delete_protection  = true
   rebuild_protection = true
   labels             = { "managed-by" = "terraform" }
-  ssh_keys           = [for k in hcloud_ssh_key.keys : k.id]
+  ssh_keys           = concat([for k in hcloud_ssh_key.keys : k.id], [for k in data.hcloud_ssh_key.existing : k.id])
   firewall_ids       = [hcloud_firewall.box.id]
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     compose   = base64encode(file("${path.module}/compose.yml"))
