@@ -5,17 +5,17 @@ output "app_url" {
 
 output "alb_dns_name" {
   description = "ALB hostname (the app A/AAAA records alias to this)."
-  value       = aws_lb.main.dns_name
+  value       = try(aws_lb.main[0].dns_name, null)
 }
 
 output "ecr_server_repo" {
   description = "Push the server image here (see push-images.sh)."
-  value       = aws_ecr_repository.repos["papyr-server"].repository_url
+  value       = try(aws_ecr_repository.repos["papyr-server"].repository_url, null)
 }
 
 output "ecr_compiler_repo" {
   description = "Push the compiler image here."
-  value       = aws_ecr_repository.repos["papyr-compiler"].repository_url
+  value       = try(aws_ecr_repository.repos["papyr-compiler"].repository_url, null)
 }
 
 output "ecs_cluster" {
@@ -23,7 +23,7 @@ output "ecs_cluster" {
 }
 
 output "ecs_service" {
-  value = aws_ecs_service.app.name
+  value = try(aws_ecs_service.app[0].name, null)
 }
 
 output "github_infra_role_arn" {

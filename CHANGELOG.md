@@ -12,6 +12,8 @@ All notable changes to Aldine are documented here. The format follows
   backups kept on the box and copied to an S3-compatible bucket.
 - `deploy/aws` can point the app domain at a box outside AWS (`app_ipv4`)
   and create a send-mail and backup key for it (`offbox_access`).
+  `fargate = false` then removes the Fargate service, ALB, EFS, ECR and
+  staging, and keeps DNS, SES and the CI role.
 - The divider between editor and preview can be dragged with a finger or a
   pen, moved with the arrow keys (Shift for larger steps) and reset with a
   double-click.

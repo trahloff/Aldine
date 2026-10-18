@@ -14,11 +14,18 @@ resource "aws_route53_record" "app" {
   ttl     = var.app_ipv4 != "" ? 300 : null
   records = var.app_ipv4 != "" ? [var.app_ipv4] : null
 
+  lifecycle {
+    precondition {
+      condition     = var.fargate || var.app_ipv4 != ""
+      error_message = "Without Fargate there is no ALB to point at: set app_ipv4."
+    }
+  }
+
   dynamic "alias" {
     for_each = var.app_ipv4 == "" ? [1] : []
     content {
-      name                   = aws_lb.main.dns_name
-      zone_id                = aws_lb.main.zone_id
+      name                   = aws_lb.main[0].dns_name
+      zone_id                = aws_lb.main[0].zone_id
       evaluate_target_health = true
     }
   }
