@@ -7,6 +7,11 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `deploy/hetzner`: a production stack on one Hetzner Cloud box (about €7 a
+  month), with the released images, Caddy, security updates, and nightly
+  backups kept on the box and copied to an S3-compatible bucket.
+- `deploy/aws` can point the app domain at a box outside AWS (`app_ipv4`)
+  and create a send-mail and backup key for it (`offbox_access`).
 - The divider between editor and preview can be dragged with a finger or a
   pen, moved with the arrow keys (Shift for larger steps) and reset with a
   double-click.

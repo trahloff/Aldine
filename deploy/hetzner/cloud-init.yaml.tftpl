@@ -1,0 +1,56 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+
+write_files:
+  - path: /opt/aldine/compose.yml
+    encoding: b64
+    content: ${compose}
+  - path: /opt/aldine/Caddyfile
+    encoding: b64
+    content: ${caddyfile}
+  - path: /opt/aldine/backup.sh
+    encoding: b64
+    permissions: "0755"
+    content: ${backup}
+  - path: /opt/aldine/offbox-backup.sh
+    encoding: b64
+    permissions: "0755"
+    content: ${offbox}
+
+  # Security updates install nightly; a kernel update reboots the box at 04:30
+  # UTC, and the stack comes back by itself (restart: unless-stopped).
+  - path: /etc/apt/apt.conf.d/52aldine-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+
+  - path: /etc/systemd/system/aldine-backup.service
+    content: |
+      [Unit]
+      Description=Aldine volume backup (local + off-box)
+      After=docker.service
+      Requires=docker.service
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/aldine/offbox-backup.sh
+  - path: /etc/systemd/system/aldine-backup.timer
+    content: |
+      [Unit]
+      Description=Nightly Aldine backup
+      [Timer]
+      OnCalendar=*-*-* 03:30:00 UTC
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - fallocate -l ${swap_gb}G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - systemctl enable --now docker
+  - systemctl daemon-reload
+  - systemctl enable --now aldine-backup.timer

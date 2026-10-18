@@ -5,16 +5,22 @@ data "aws_route53_zone" "main" {
   private_zone = false
 }
 
-# Point the app domain at the ALB (free alias record, no CloudFront needed).
+# Point the app domain at the ALB (free alias record, no CloudFront needed),
+# or at a box outside AWS when app_ipv4 is set (deploy/hetzner).
 resource "aws_route53_record" "app" {
   zone_id = data.aws_route53_zone.main.zone_id
   name    = var.domain_name
   type    = "A"
+  ttl     = var.app_ipv4 != "" ? 300 : null
+  records = var.app_ipv4 != "" ? [var.app_ipv4] : null
 
-  alias {
-    name                   = aws_lb.main.dns_name
-    zone_id                = aws_lb.main.zone_id
-    evaluate_target_health = true
+  dynamic "alias" {
+    for_each = var.app_ipv4 == "" ? [1] : []
+    content {
+      name                   = aws_lb.main.dns_name
+      zone_id                = aws_lb.main.zone_id
+      evaluate_target_health = true
+    }
   }
 }
 

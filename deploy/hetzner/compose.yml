@@ -1,0 +1,88 @@
+# The production box's stack: released images, Caddy in front, nothing
+# published but 80/443. Lives at /opt/aldine/compose.yml next to .env, which
+# holds ALDINE_VERSION, ALDINE_DOMAIN and every app setting (deploy/README.md
+# lists them). The compiler hardening matches docker-compose.yml; keep the two
+# in step.
+name: aldine
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
+services:
+  app:
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:?set ALDINE_VERSION in .env}
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      COMPILER_URL: http://compiler:4020
+      COOKIE_SECURE: "1"
+      TRUST_PROXY: "1" # req.ip comes from Caddy's X-Forwarded-For
+    volumes:
+      - aldine-data:/data
+      - aldine-secrets:/secrets
+    depends_on:
+      compiler:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # the shutdown hook flushes open Yjs docs and autosave-commits them
+    stop_grace_period: 120s
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [frontend, backend]
+
+  compiler:
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION}${ALDINE_TEXLIVE:-}
+    environment:
+      COMPILE_TIMEOUT_MS: ${COMPILE_TIMEOUT_MS:-120000}
+      MAX_CONCURRENT_COMPILES: ${MAX_CONCURRENT_COMPILES:-2}
+    volumes:
+      - aldine-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4020/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    # LaTeX processes untrusted input: no egress, no caps, bounded memory/PIDs.
+    networks: [backend]
+    mem_limit: ${ALDINE_COMPILER_MEM:-2g}
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    init: true
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ALDINE_DOMAIN: ${ALDINE_DOMAIN:?set ALDINE_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [app]
+    restart: unless-stopped
+    logging: *logging
+    networks: [frontend]
+
+networks:
+  frontend: {}
+  backend:
+    internal: true # the compiler has no route to the internet
+
+volumes:
+  aldine-data:
+  aldine-secrets:
+  caddy-data:
+  caddy-config:
