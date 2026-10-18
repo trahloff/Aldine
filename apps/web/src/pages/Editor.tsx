@@ -17,7 +17,7 @@ import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
-import CommandPalette, { Command } from '../components/CommandPalette';
+import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
@@ -938,6 +938,7 @@ export default function Editor() {
           </div>
         )}
         <div className="toolbar__spacer" />
+        <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
         {project.remote ? (

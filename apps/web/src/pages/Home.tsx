@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
 import { useToast } from '../components/Toast';
@@ -14,6 +14,7 @@ import { isRemoteProviderId, RemoteProviderId } from '../remotes';
 import Onboarding from '../components/Onboarding';
 import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
+import CommandPalette, { Command, PaletteTrigger, usePaletteHotkey } from '../components/CommandPalette';
 import { friendlyDate } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
 import { pickTemplate, templateToPost } from '../util/templates';
@@ -110,6 +111,8 @@ export default function Home() {
   const toast = useToast();
   const dialogs = useDialogs();
   const { authEnabled, user, admin, setUser } = useAuth();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
 
   const load = () => {
     api.listTrash().then(setTrash).catch(() => setTrash([]));
@@ -266,6 +269,18 @@ export default function Home() {
 
   const [dragOver, setDragOver] = useState(false);
 
+  const paletteCommands: Command[] = useMemo(() => [
+    { id: 'new-project', group: 'Action', title: 'New project…', run: () => setCreating(true) },
+    { id: 'import-zip', group: 'Action', title: 'Import a ZIP…', run: () => zipInput.current?.click() },
+    ...remotes.map((r) => ({ id: `new-from-${r.id}`, group: 'Action', title: `New project from ${r.label}…`, run: () => setImportFrom(r.id) })),
+    { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => setThemeChoice(toggleTheme()) },
+    ...(authEnabled && user ? [{ id: 'account', group: 'View', title: 'Account settings', run: () => setShowAccount(true) }] : []),
+    ...(admin && authEnabled ? [{ id: 'admin', group: 'View', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
+    ...(trash.length ? [{ id: 'trash', group: 'View', title: `Trash (${trash.length})`, run: () => setShowTrash(true) }] : []),
+    { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
+    ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Open', title: p.name, run: () => navigate(`/p/${p.id}`) })),
+  ], [remotes, authEnabled, user, admin, trash.length, projects, navigate]);
+
   return (
     <div
       className={`home ${dragOver ? 'home--drag' : ''}`}
@@ -285,6 +300,7 @@ export default function Home() {
             <p className="home__tag">Write LaTeX together. Fast, versioned, yours.</p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <PaletteTrigger label="Search projects and commands" onOpen={() => setPaletteOpen(true)} />
             <button
               className="btn"
               data-testid="theme-toggle"
@@ -393,6 +409,7 @@ export default function Home() {
       </div>
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" />
 
       {showTrash && (
         <Modal onClose={() => setShowTrash(false)} label="Trash" testId="trash-modal">
