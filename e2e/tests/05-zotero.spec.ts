@@ -33,7 +33,9 @@ test.describe('Zotero integration (via plugin system)', () => {
       // citation insert via panel
       await page.getByTestId('tab-plugin:zotero').click();
       await page.getByTestId('zotero-search').click();
-      await page.getByTestId('zotero-search').fill('turing');
+      // key by key: each keystroke redraws the list, the field keeps focus
+      await page.keyboard.type('turing');
+      await expect(page.getByTestId('zotero-search')).toHaveValue('turing');
       await page.getByTestId('cite-turing1950').click();
       await expect(page.locator('.cm-content')).toContainText('\\cite{turing1950}');
 

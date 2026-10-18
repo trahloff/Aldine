@@ -38,8 +38,17 @@ export default {
           bibEntries: [],
         };
 
+        // build() makes fresh inputs; hand focus and the caret to the new copy
+        // of whichever field the user was typing in.
         const rerender = () => {
+          const active = document.activeElement;
+          const testid = root.contains(active) ? active.dataset.testid : null;
+          const caret = testid ? active.selectionStart : null;
           root.replaceChildren(build());
+          const next = testid && root.querySelector(`[data-testid="${testid}"]`);
+          if (!next) return;
+          next.focus();
+          if (caret != null) next.setSelectionRange(caret, caret);
         };
 
         const jfetch = async (url, init) => {
