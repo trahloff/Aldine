@@ -6,7 +6,9 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.12.1] — 2026-10-18
+## [0.12.2] — 2026-10-18
+
+(0.12.1 was tagged on a commit outside main and never built.)
 
 ### Changed
 - When a document typesets with warnings only, the Problems panel folds to

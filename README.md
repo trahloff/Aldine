@@ -137,7 +137,7 @@ name: aldine
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.12.1}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.12.2}
     ports:
       - "8080:3000"
     volumes:
@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.12.1}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.12.2}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -181,7 +181,7 @@ fixes the volume names, which is what lets you switch compose files later and
 what `deploy/backup.sh` looks for.
 
 - **You are pinned to a version.** The block above says
-  `${ALDINE_VERSION:-0.12.1}`, so a fresh copy installs the current release and
+  `${ALDINE_VERSION:-0.12.2}`, so a fresh copy installs the current release and
   nothing under a running install changes on its own. To upgrade, read the
   [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
 
@@ -221,7 +221,7 @@ what `deploy/backup.sh` looks for.
         image: aldine-compiler-local
         build:
           dockerfile_inline: |
-            FROM ghcr.io/trahloff/aldine-compiler:0.12.1
+            FROM ghcr.io/trahloff/aldine-compiler:0.12.2
             RUN tlmgr install pgfplots tikz-cd
     ```
     Bump the `FROM` tag when you bump `ALDINE_VERSION`. Compose builds the
