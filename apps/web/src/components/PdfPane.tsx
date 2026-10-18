@@ -7,9 +7,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.m
 // Resolved from workerSrc, not document.baseURI: on a project route like
 // /p/<id> the document URL would point cmaps at /p/cmaps/, which the SPA
 // fallback answers with 200 + index.html and pdf.js silently renders blanks.
-// workerSrc is pinned to the asset directory at build time, so this holds on
-// every route and under ALDINE_BASE_PATH.
-const cMapUrl = new URL('cmaps/', pdfjs.GlobalWorkerOptions.workerSrc).toString();
+// One level up from the worker is right in both modes: the build emits the
+// cmaps at <base>/cmaps/ (vite.config.ts) next to the worker's assets/, and
+// dev's workerSrc is the package's own build/ dir under /@fs, so ../cmaps/
+// is the shipped pdfjs-dist cmaps — no dev middleware needed.
+const cMapUrl = new URL('../cmaps/', pdfjs.GlobalWorkerOptions.workerSrc).toString();
 
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */

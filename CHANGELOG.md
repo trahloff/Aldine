@@ -47,7 +47,8 @@ All notable changes to Aldine are documented here. The format follows
 - The PDF preview rendered every CJK character as blank space (Latin text and
   math were unaffected): pdf.js was not given `cMapUrl`/`cMapPacked`, so it
   could not map the glyphs of Identity-H CID fonts such as XeLaTeX's Fandol.
-  The build now ships the pdfjs-dist CMaps and the dev server serves them.
+  The build ships the pdfjs-dist CMaps at `<base>/cmaps/`; in dev they
+  resolve from the installed package itself, so no dev middleware is needed.
 - The server could exit with an unhandled `write EPIPE` when a git command
   finished before reading its input (seen during agent commits under load).
 - Visual mode: math that was drawn before the math renderer had finished

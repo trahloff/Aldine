@@ -21,49 +21,27 @@ function gitRev(): string {
 }
 
 // pdf.js loads CMaps at runtime to map CJK CID-font glyphs (PdfPane passes
-// cMapUrl/cMapPacked). Without these files reachable at <base>/cmaps/, every
-// CJK character in the preview renders as blank space while Latin and math
-// still work. Dev must serve them too, or the dev preview lies about CJK
-// output that renders fine in a real PDF viewer.
-function pdfjsCmaps(): Plugin[] {
+// cMapUrl/cMapPacked). Without these files reachable, every CJK character in
+// the preview renders as blank space while Latin and math still work. The
+// build ships them at <base>/cmaps/ — one level above the worker's assets/,
+// which is where PdfPane derives cMapUrl from. Dev needs nothing: Vite's
+// workerSrc is the package's own build/ dir under /@fs, so ../cmaps/ lands
+// on the shipped pdfjs-dist cmaps directly.
+function pdfjsCmaps(): Plugin {
   const cmapsDir = join(
     dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
     'cmaps',
   );
-  return [
-    {
-      name: 'pdfjs-cmaps-build',
-      apply: 'build',
-      generateBundle() {
-        for (const f of readdirSync(cmapsDir)) {
-          if (!f.endsWith('.bcmap')) continue;
-          // assets/, where the worker lives: PdfPane derives cMapUrl from
-          // workerSrc, so both must share a directory on every route.
-          this.emitFile({ type: 'asset', fileName: `assets/cmaps/${f}`, source: readFileSync(join(cmapsDir, f)) });
-        }
-      },
+  return {
+    name: 'pdfjs-cmaps-build',
+    apply: 'build',
+    generateBundle() {
+      for (const f of readdirSync(cmapsDir)) {
+        if (!f.endsWith('.bcmap')) continue;
+        this.emitFile({ type: 'asset', fileName: `cmaps/${f}`, source: readFileSync(join(cmapsDir, f)) });
+      }
     },
-    {
-      name: 'pdfjs-cmaps-serve',
-      apply: 'serve',
-      configureServer(server) {
-        server.middlewares.use((req, res, next) => {
-          if (!req.url?.startsWith('/cmaps/')) return next();
-          // Only ever a bare <name>.bcmap requested by pdf.js; resolve inside
-          // cmapsDir only.
-          const file = join(cmapsDir, req.url.slice('/cmaps/'.length));
-          if (!file.startsWith(cmapsDir) || !file.endsWith('.bcmap')) return next();
-          try {
-            res.setHeader('content-type', 'application/octet-stream');
-            res.end(readFileSync(file));
-          } catch {
-            res.statusCode = 404;
-            res.end();
-          }
-        });
-      },
-    },
-  ];
+  };
 }
 
 export default defineConfig({
@@ -75,7 +53,7 @@ export default defineConfig({
     __ALDINE_VERSION__: JSON.stringify(pkg.version),
     __ALDINE_REV__: JSON.stringify(gitRev()),
   },
-  plugins: [react(), ...pdfjsCmaps()],
+  plugins: [react(), pdfjsCmaps()],
   server: {
     port: 5173,
     proxy: {
