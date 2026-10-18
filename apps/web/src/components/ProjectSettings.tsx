@@ -19,6 +19,7 @@ interface Props {
   onSetEngine(engine: string): Promise<void>;
   onSetStopOnFirstError(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
+  onConnectClaude(): void;
 }
 
 /**
@@ -26,7 +27,7 @@ interface Props {
  * engine picker and the log dialog's stop-on-error box are shortcuts to the
  * same state). Every change saves on its own; there is no Save button.
  */
-export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset }: Props) {
+export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset, onConnectClaude }: Props) {
   const [name, setName] = useState(project.name);
   const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -171,6 +172,17 @@ export default function ProjectSettings({ project, branch, files, autoTypeset, i
             <span className="settings__control settings__control--check">
               <a className="btn" href={api.archiveUrl(project.id, branch)} download data-testid="settings-download-zip">Download as ZIP</a>
               <span className="settings__hint">Every file on {branch}; imports back into Aldine, or into Overleaf</span>
+            </span>
+          </div>
+        </section>
+
+        <section data-testid="claude-settings">
+          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Claude</div>
+          <div className="settings__row">
+            <span className="settings__label">Connector</span>
+            <span className="settings__control settings__control--check">
+              <button className="btn" onClick={() => { close(); onConnectClaude(); }} data-testid="settings-connect-claude">Connect Claude…</button>
+              <span className="settings__hint">Let Claude read, edit and typeset projects on this server</span>
             </span>
           </div>
         </section>

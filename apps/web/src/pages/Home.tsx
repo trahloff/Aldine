@@ -15,6 +15,7 @@ import Onboarding from '../components/Onboarding';
 import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
 import CommandPalette, { Command, PaletteTrigger, usePaletteHotkey } from '../components/CommandPalette';
+import ConnectClaudeModal from '../components/ClaudeConnect';
 import { friendlyDate } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
 import { pickTemplate, templateToPost } from '../util/templates';
@@ -112,6 +113,7 @@ export default function Home() {
   const dialogs = useDialogs();
   const { authEnabled, user, admin, setUser } = useAuth();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
 
   const load = () => {
@@ -278,6 +280,7 @@ export default function Home() {
     ...(admin && authEnabled ? [{ id: 'admin', group: 'View', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
     ...(trash.length ? [{ id: 'trash', group: 'View', title: `Trash (${trash.length})`, run: () => setShowTrash(true) }] : []),
     { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
+    { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
     ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Open', title: p.name, run: () => navigate(`/p/${p.id}`) })),
   ], [remotes, authEnabled, user, admin, trash.length, projects, navigate]);
 
@@ -402,6 +405,9 @@ export default function Home() {
 
         {/* AGPL section 13: a network instance must offer its users the source. */}
         <p className="home__legal">
+          <button className="btn btn--ghost btn--small" onClick={() => setConnectOpen(true)} data-testid="open-connect-claude">
+            Connect Claude
+          </button>
           <button className="btn btn--ghost btn--small" onClick={() => setAboutOpen(true)} data-testid="open-about">
             About &amp; source
           </button>
@@ -409,6 +415,7 @@ export default function Home() {
       </div>
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+      {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} onManage={authEnabled && user ? () => setShowAccount(true) : undefined} />}
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" />
 
       {showTrash && (

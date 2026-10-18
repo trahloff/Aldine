@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, AccessToken, ApiError, AuthUser, ProjectSummary } from '../api';
-import { withBase } from '../basePath';
 import { useToast } from './Toast';
 import { useAuth } from './Auth';
 import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
+import { ClaudeConnectSteps, useConnectorUrl } from './ClaudeConnect';
 
 const EXPIRY_CHOICES = [
   { value: '', label: 'Never expires' },
@@ -13,22 +13,9 @@ const EXPIRY_CHOICES = [
   { value: '90', label: 'Expires in 90 days' },
 ];
 
-/** claude.ai calls the instance from Anthropic's cloud: plain http, loopback,
- *  RFC 1918 ranges and .local names never resolve from there. Claude Code
- *  (on the user's machine) reaches them fine. */
-export function unreachableFromCloud(url: string): boolean {
-  try {
-    const u = new URL(url);
-    if (u.protocol !== 'https:') return true;
-    const h = u.hostname;
-    return h === 'localhost' || /\.local$/i.test(h) || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h === '::1' || h === '[::1]';
-  } catch { return true; }
-}
-
 /** Access tokens for agents (Claude connector onboarding lives here). Only
  *  mounted when auth is on — token routes 404 without users. */
 function AgentAccess() {
-  const { mcpEnabled } = useAuth();
   const [tokens, setTokens] = useState<AccessToken[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -44,9 +31,7 @@ function AgentAccess() {
   const mintedRef = useRef<HTMLDivElement>(null);
   const tokenRef = useRef<HTMLElement>(null);
   const toast = useToast();
-  const connectorUrl = `${location.origin}${withBase('/mcp')}`;
-  const cloudBlocked = unreachableFromCloud(connectorUrl);
-  const claudeCodeCommand = `claude mcp add --transport http aldine ${connectorUrl}`;
+  const connectorUrl = useConnectorUrl();
 
   useEffect(() => { api.listTokens().then(setTokens).catch(() => setTokens([])); }, []);
   // Project names are needed for the form's scope picker and for the scope
@@ -162,38 +147,7 @@ function AgentAccess() {
   return (
     <>
       <div className="menu__label" style={{ margin: '18px 0 6px' }}>Agent access</div>
-      {!mcpEnabled ? (
-        <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 12px' }} data-testid="agent-connector-off">
-          The Claude connector is not enabled on this server. Whoever runs it sets <code>ALDINE_MCP=1</code> (docs/AGENT_API.md); the tokens below then work at <code>{connectorUrl}</code>.
-        </p>
-      ) : (
-        <>
-          <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 6px' }}>
-            {cloudBlocked
-              ? 'Run this once in Claude Code, then type /mcp in a session and pick Aldine. It asks which projects Claude may touch.'
-              : 'In Claude: Customize → Connectors → Add → Add custom connector. You pick which projects Claude may touch when it asks.'}
-          </p>
-          {/* The address appears once: on its own with a copy button where
-              claude.ai can use it, inside the runnable command where only
-              Claude Code can. Either way it is the agent-connector-url. */}
-          {cloudBlocked ? (
-            <div className="agent-command">
-              <code data-testid="agent-claude-code-command">claude mcp add --transport http aldine <span data-testid="agent-connector-url">{connectorUrl}</span></code>
-              <button className="btn btn--small" onClick={() => copy(claudeCodeCommand, 'Command', 'command')} data-testid="agent-claude-code-copy">Copy command</button>
-            </div>
-          ) : (
-            <div className="agent-connector" style={{ marginBottom: 12 }}>
-              <code data-testid="agent-connector-url">{connectorUrl}</code>
-              <button className="btn btn--small" onClick={() => copy(connectorUrl, 'Connector URL', 'connector URL')} data-testid="agent-connector-copy">Copy connector URL</button>
-            </div>
-          )}
-          {cloudBlocked && (
-            <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '0 0 12px' }} data-testid="agent-connector-unreachable">
-              claude.ai, Claude Desktop and Cowork call this address from Anthropic's cloud and cannot reach it — use Claude Code on this machine, or expose the instance over public HTTPS (docs/AGENT_API.md, “Reachability”).
-            </p>
-          )}
-        </>
-      )}
+      <ClaudeConnectSteps compact />
 
       {/* Listed before the token funnel so a person looking for "my Claude
           connection" finds it without scrolling; absent rather than empty

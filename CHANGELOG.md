@@ -7,6 +7,11 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Connect Claude**: the connector setup for this server, from the command
+  palette, Project settings and the project list. It gives the claude.ai,
+  Desktop and Cowork steps or the Claude Code command, including the token
+  header on a server without accounts, and says when claude.ai cannot reach
+  the server. The connector URL follows `ALDINE_PUBLIC_URL` when it is set.
 - A project synced with GitHub, GitLab or Gitea notices new commits by
   itself: it checks every 90 seconds while the tab is open and again when you
   come back to it, highlights Pull, and offers a Pull button in a

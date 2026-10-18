@@ -18,6 +18,7 @@ import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
+import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
@@ -109,6 +110,7 @@ export default function Editor() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
   // Who collaborators and comment threads see: the account when there is one;
@@ -838,6 +840,7 @@ export default function Editor() {
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
+      { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
@@ -1307,6 +1310,7 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+      {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} />}
 
       {agentReview && (
         <Modal onClose={() => setAgentReview(null)} label="Review Claude’s edits" wide testId="agent-review-modal">
@@ -1349,6 +1353,7 @@ export default function Editor() {
           onSetEngine={setEngine}
           onSetStopOnFirstError={setStopOnFirstError}
           onToggleAutoTypeset={toggleAuto}
+          onConnectClaude={() => setConnectOpen(true)}
         />
       )}
 
