@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-18
+
 ### Added
 - **Connect Claude**: the connector setup for this server, from the command
   palette, Project settings and the project list. It gives the claude.ai,
