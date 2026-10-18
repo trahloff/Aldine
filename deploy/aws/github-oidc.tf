@@ -23,7 +23,7 @@ locals {
   # prod: the workflow picks the role by target, and IAM refuses the other.
   github_roles = { for k, v in {
     infra          = { repo = var.github_infra_repo, branches = ["main"] }
-    deploy         = { repo = var.github_deploy_repo, branches = ["main"] }
+    deploy         = { repo = var.fargate ? var.github_deploy_repo : "", branches = ["main"] }
     deploy_staging = { repo = local.staging_enabled ? var.github_deploy_repo : "", branches = distinct(concat(["main"], var.github_deploy_branches)) }
   } : k => v if v.repo != "" }
 
@@ -31,8 +31,8 @@ locals {
   # execution role, nothing of the other's.
   github_deploy_scopes = { for k, v in {
     deploy = {
-      repos      = [aws_ecr_repository.repos["papyr-server"].arn, aws_ecr_repository.repos["papyr-compiler"].arn]
-      service    = aws_ecs_service.app.id
+      repos      = try([aws_ecr_repository.repos["papyr-server"].arn, aws_ecr_repository.repos["papyr-compiler"].arn], [])
+      service    = try(aws_ecs_service.app[0].id, "")
       pass_roles = [aws_iam_role.task.arn, aws_iam_role.execution.arn]
     }
     deploy_staging = {

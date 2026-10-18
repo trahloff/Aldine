@@ -41,7 +41,7 @@ locals {
   # env, secrets and log destination. Anything else that diverges here is a
   # drift bug. Repositories and secrets are per deployment on purpose: a
   # staging task must not be able to read a prod secret or run a prod tag.
-  deployments = merge(
+  deployments = !var.fargate ? {} : merge(
     {
       prod = {
         image_tag = var.image_tag
@@ -120,6 +120,7 @@ locals {
 }
 
 resource "aws_ecs_task_definition" "app" {
+  count                    = var.fargate ? 1 : 0
   family                   = "papyr"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -137,10 +138,10 @@ resource "aws_ecs_task_definition" "app" {
   volume {
     name = "data"
     efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.main.id
+      file_system_id     = aws_efs_file_system.main[0].id
       transit_encryption = "ENABLED"
       authorization_config {
-        access_point_id = aws_efs_access_point.data.id
+        access_point_id = aws_efs_access_point.data[0].id
         iam             = "DISABLED"
       }
     }
@@ -150,10 +151,10 @@ resource "aws_ecs_task_definition" "app" {
   volume {
     name = "secrets"
     efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.main.id
+      file_system_id     = aws_efs_file_system.main[0].id
       transit_encryption = "ENABLED"
       authorization_config {
-        access_point_id = aws_efs_access_point.secrets.id
+        access_point_id = aws_efs_access_point.secrets[0].id
         iam             = "DISABLED"
       }
     }
@@ -163,9 +164,10 @@ resource "aws_ecs_task_definition" "app" {
 }
 
 resource "aws_ecs_service" "app" {
+  count           = var.fargate ? 1 : 0
   name            = "papyr"
   cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.app.arn
+  task_definition = aws_ecs_task_definition.app[0].arn
   desired_count   = var.desired_count
 
   # Takes effect for tasks started after the change: a running task keeps
@@ -184,7 +186,7 @@ resource "aws_ecs_service" "app" {
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.app.arn
+    target_group_arn = aws_lb_target_group.app[0].arn
     container_name   = "server"
     container_port   = 3000
   }

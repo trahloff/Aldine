@@ -10,17 +10,17 @@ variable "alb_access_logs" {
 }
 
 data "aws_elb_service_account" "main" {
-  count = var.alb_access_logs ? 1 : 0
+  count = var.alb_access_logs && var.fargate ? 1 : 0
 }
 
 resource "aws_s3_bucket" "alb_logs" {
-  count         = var.alb_access_logs ? 1 : 0
+  count         = var.alb_access_logs && var.fargate ? 1 : 0
   bucket        = "papyr-alb-logs-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
 }
 
 resource "aws_s3_bucket_public_access_block" "alb_logs" {
-  count                   = var.alb_access_logs ? 1 : 0
+  count                   = var.alb_access_logs && var.fargate ? 1 : 0
   bucket                  = aws_s3_bucket.alb_logs[0].id
   block_public_acls       = true
   block_public_policy     = true
@@ -29,7 +29,7 @@ resource "aws_s3_bucket_public_access_block" "alb_logs" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
-  count  = var.alb_access_logs ? 1 : 0
+  count  = var.alb_access_logs && var.fargate ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
   rule {
     id     = "expire"
@@ -40,7 +40,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
 }
 
 resource "aws_s3_bucket_policy" "alb_logs" {
-  count  = var.alb_access_logs ? 1 : 0
+  count  = var.alb_access_logs && var.fargate ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
   policy = jsonencode({
     Version = "2012-10-17"

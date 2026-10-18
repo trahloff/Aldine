@@ -1,4 +1,5 @@
 resource "aws_lb" "main" {
+  count              = var.fargate ? 1 : 0
   name               = "papyr"
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -23,6 +24,7 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "app" {
+  count       = var.fargate ? 1 : 0
   name        = "papyr-app"
   port        = 3000
   protocol    = "HTTP"
@@ -51,7 +53,8 @@ resource "aws_lb_target_group" "app" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.main.arn
+  count             = var.fargate ? 1 : 0
+  load_balancer_arn = aws_lb.main[0].arn
   port              = 80
   protocol          = "HTTP"
 
@@ -66,7 +69,8 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  load_balancer_arn = aws_lb.main.arn
+  count             = var.fargate ? 1 : 0
+  load_balancer_arn = aws_lb.main[0].arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -74,6 +78,6 @@ resource "aws_lb_listener" "https" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
+    target_group_arn = aws_lb_target_group.app[0].arn
   }
 }
