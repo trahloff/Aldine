@@ -1,9 +1,11 @@
 {
   "id": "references",
   "name": "Cite",
-  "description": "Search 250M+ papers (OpenAlex) or add by DOI/arXiv — fetches BibTeX, appends it, inserts the \\cite.",
+  "description": "Your project's .bib entries, one click to cite; search 250M+ papers (OpenAlex) or add by DOI/arXiv: fetches BibTeX, appends it, inserts the \\cite.",
   "version": "0.1.0",
   "entry": "index.js",
   "icon": "＋",
-  "slots": ["sidebarPanel"]
+  "slots": [
+    "sidebarPanel"
+  ]
 }

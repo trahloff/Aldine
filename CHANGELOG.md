@@ -7,6 +7,8 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The Cite tab lists the entries of the project's .bib files, with a filter
+  once there are more than a few; clicking one inserts its `\cite`.
 - `deploy/hetzner`: a production stack on one Hetzner Cloud box (about €7 a
   month), with the released images, Caddy, security updates, and nightly
   backups kept on the box and copied to an S3-compatible bucket.
@@ -51,6 +53,8 @@ All notable changes to Aldine are documented here. The format follows
   (Customize → Connectors → Add → Add custom connector).
 
 ### Fixed
+- Typing in the Cite tab's paper search or the Zotero citation search no
+  longer loses focus after the first keystroke or when results arrive.
 - The server could exit with an unhandled `write EPIPE` when a git command
   finished before reading its input (seen during agent commits under load).
 - Visual mode: math that was drawn before the math renderer had finished
