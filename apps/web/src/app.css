@@ -376,6 +376,13 @@
 .settings__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: var(--text-m); }
 
 /* agent access card (account settings) */
+/* Connect Claude: the client switch, then numbered steps or one command. */
+.connect { display: flex; flex-direction: column; gap: 10px; }
+.connect__clients { align-self: flex-start; }
+.connect__text { color: var(--text-2); font-size: var(--text-m); line-height: 1.5; margin: 0; }
+.connect__text--quiet { color: var(--text-3); font-size: var(--text-s); }
+.connect__steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); font-size: var(--text-m); line-height: 1.5; }
+.connect__steps .agent-connector { margin: 6px 0 0; }
 .agent-connector { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .agent-connector code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-s); }
 .agent-connector .btn { flex-shrink: 0; margin-left: auto; }
