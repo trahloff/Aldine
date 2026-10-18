@@ -51,6 +51,13 @@ export const IconFile = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="m10.5 10.5 3.25 3.25" />
+  </svg>
+);
+
 export const IconChevronLeft = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={15} height={15}>
     <path d="M10 2.5 4.8 8 10 13.5" />

@@ -7,6 +7,9 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- A search field in the editor toolbar and on the project list opens the
+  command palette and shows its shortcut (⌘K / Ctrl+K). The project list has
+  its own palette: new project, import, open a project by name, settings.
 - The Cite tab lists the entries of the project's .bib files, with a filter
   once there are more than a few; clicking one inserts its `\cite`.
 - `deploy/hetzner`: a production stack on one Hetzner Cloud box (about €7 a
