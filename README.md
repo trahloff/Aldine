@@ -221,7 +221,7 @@ what `deploy/backup.sh` looks for.
         image: aldine-compiler-local
         build:
           dockerfile_inline: |
-            FROM ghcr.io/trahloff/aldine-compiler:0.11.0
+            FROM ghcr.io/trahloff/aldine-compiler:0.12.0
             RUN tlmgr install pgfplots tikz-cd
     ```
     Bump the `FROM` tag when you bump `ALDINE_VERSION`. Compose builds the
