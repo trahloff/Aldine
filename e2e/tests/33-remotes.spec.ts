@@ -248,6 +248,8 @@ test.describe('GitLab sync', () => {
   });
 
   test('push carries an edit to the bare repo, pull brings an external commit back', async ({ page }) => {
+    // poll every second instead of every 90 (the server's fetch TTL is 1 s under e2e)
+    await page.addInitScript(() => localStorage.setItem('aldine.remotePollMs', '1000'));
     await page.goto(`/p/${projectId}`);
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     await openFile(page, 'main.tex');
@@ -279,8 +281,14 @@ test.describe('GitLab sync', () => {
       git(['push', '-q', 'origin', 'main'], `${work}/clone`);
     } finally { fs.rmSync(work, { recursive: true, force: true }); }
 
-    await page.getByTestId('gitlab-pull-btn').click();
+    // nobody clicks anything: the open editor notices the new commit by itself
+    await expect(page.getByTestId('gitlab-counts')).toContainText('↓1', { timeout: 15_000 });
+    await expect(page.getByTestId('gitlab-pull-btn')).toHaveClass(/btn--primary/);
+    await expect(page.locator('.toast').filter({ hasText: '1 new commit on GitLab' })).toBeVisible();
+    await page.getByTestId('gitlab-pull-toast').click();
     await expect(page.locator('.toast').filter({ hasText: 'Pulled from GitLab' })).toBeVisible();
+    await expect(page.getByTestId('gitlab-counts')).toHaveCount(0);
+    await expect(page.getByTestId('gitlab-pull-btn')).not.toHaveClass(/btn--primary/);
     await expect(content).toContainText(external);
     await expect(content).toContainText(marker);
   });

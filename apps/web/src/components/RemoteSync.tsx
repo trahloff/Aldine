@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, RemoteLink } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
@@ -10,6 +10,9 @@ import { useExitGhost } from '../exitGhost';
  *  job (it pushes after autosave commits on main) and the owner's setting:
  *  members see its state but cannot flip it. The provider comes from the
  *  link; the server never takes it from the request for these routes. */
+// e2e shortens the interval through localStorage; nothing else sets it.
+const REMOTE_POLL_MS = Number(localStorage.getItem('aldine.remotePollMs')) || 90_000;
+
 export default function RemoteSync({ projectId, link, autopush, isOwner, onPulled, onAutopushChange }: {
   projectId: string;
   link: RemoteLink;
@@ -43,6 +46,21 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     try { setBranchInfo(await api.remoteBranches(projectId)); } catch { /* offline */ }
   }, [projectId]);
   useEffect(() => { refresh(); loadBranches(); }, [refresh, loadBranches]);
+
+  // Co-authors push from elsewhere: look again while the tab is in view, and
+  // the moment it comes back into view. The server fetches at most once per
+  // 30 s per project, so every open editor polling costs one fetch.
+  useEffect(() => {
+    const tick = () => { if (!document.hidden) refresh(); };
+    const timer = window.setInterval(tick, REMOTE_POLL_MS);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, [refresh]);
 
   const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
@@ -99,6 +117,20 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     } catch (err: any) { toast(err.message, 'error'); }
   };
 
+  // Say so once when commits arrive during the session; what was waiting at
+  // load time is already on the Pull button.
+  const lastBehind = useRef<number | null>(null);
+  const pullRef = useRef(pull);
+  pullRef.current = pull;
+  useEffect(() => {
+    if (!status) return;
+    const before = lastBehind.current;
+    lastBehind.current = status.behind;
+    if (before == null || status.behind <= before) return;
+    const n = status.behind - before;
+    toast(`${n} new ${n === 1 ? 'commit' : 'commits'} on ${d.label}`, 'info', { label: 'Pull', testId: `${p}-pull-toast`, key: `${p}-behind`, onClick: () => pullRef.current() });
+  }, [status, d.label, p, toast]);
+
   const onDefault = branchInfo && branchInfo.current === branchInfo.default;
 
   return (
@@ -144,7 +176,15 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
       >
         {autopush ? 'Autopush on' : 'Autopush off'}
       </button>
-      <button className="btn btn--small" onClick={pull} disabled={!!busy} data-testid={`${p}-pull-btn`} title={`Pull from ${d.label}`}>{busy === 'pull' ? '…' : 'Pull'}</button>
+      <button
+        className={`btn btn--small ${status?.behind ? 'btn--primary' : ''}`}
+        onClick={pull}
+        disabled={!!busy}
+        data-testid={`${p}-pull-btn`}
+        title={status?.behind ? `Pull ${status.behind} new ${status.behind === 1 ? 'commit' : 'commits'} from ${d.label}` : `Pull from ${d.label}`}
+      >
+        {busy === 'pull' ? '…' : 'Pull'}
+      </button>
       <button className="btn btn--small" onClick={() => { setMessage('Update from Aldine'); setShowPush(true); }} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Push to ${d.label}`}>{busy === 'push' ? '…' : 'Push'}</button>
 
       {showPush && (
