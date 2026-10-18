@@ -7,6 +7,10 @@ All notable changes to Aldine are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- A project synced with GitHub, GitLab or Gitea notices new commits by
+  itself: it checks every 90 seconds while the tab is open and again when you
+  come back to it, highlights Pull, and offers a Pull button in a
+  notification when commits arrive.
 - A search field in the editor toolbar and on the project list opens the
   command palette and shows its shortcut (⌘K / Ctrl+K). The project list has
   its own palette: new project, import, open a project by name, settings.
@@ -30,6 +34,9 @@ All notable changes to Aldine are documented here. The format follows
   an Undo button.
 
 ### Changed
+- The remote status check fetches into a ref of its own and at most once
+  per 30 seconds per project (`REMOTE_STATUS_TTL_MS`), so polling editors
+  cost one fetch and never race a pull.
 - Every control responds on press, not on release, and shows keyboard focus.
 - Menus, the command palette and notifications are translucent surfaces that
   open from their trigger; notifications slide out the way they came in and
