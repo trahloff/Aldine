@@ -6,6 +6,17 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- When a document typesets with warnings only, the Problems panel folds to
+  one line ("3 warnings"); click it to see the list, and it stays the way you
+  left it. Errors still open it in full.
+
+### Added
+- An Ignore button on each warning hides that kind of warning in the
+  project (the same citation or reference on any line). The panel shows how
+  many are ignored, with a button to show them again; so does the command
+  palette.
+
 ## [0.12.0] — 2026-10-18
 
 ### Added
