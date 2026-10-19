@@ -4,6 +4,15 @@ import { shortcut } from '../platform';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
+// Resolved from workerSrc, not document.baseURI: on a project route like
+// /p/<id> the document URL would point cmaps at /p/cmaps/, which the SPA
+// fallback answers with 200 + index.html and pdf.js silently renders blanks.
+// One level up from the worker is right in both modes: the build emits the
+// cmaps at <base>/cmaps/ (vite.config.ts) next to the worker's assets/, and
+// dev's workerSrc is the package's own build/ dir under /@fs, so ../cmaps/
+// is the shipped pdfjs-dist cmaps — no dev middleware needed.
+const cMapUrl = new URL('../cmaps/', pdfjs.GlobalWorkerOptions.workerSrc).toString();
+
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */
   showForward(page: number, y: number, h?: number): void;
@@ -148,7 +157,15 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
 
     (async () => {
       try {
-        doc = await pdfjs.getDocument(pdfUrl).promise;
+        // CJK PDFs embed Identity-H CID fonts; pdf.js needs the packed CMaps
+        // to map their glyphs or every CJK character renders as blank space
+        // (Latin text and math are unaffected). cMapUrl above says where they
+        // are served from.
+        doc = await pdfjs.getDocument({
+          url: pdfUrl,
+          cMapUrl,
+          cMapPacked: true,
+        }).promise;
         if (my !== renderTask.current) { try { doc.destroy(); } catch { /* noop */ } return; }
         const width = Math.max(320, scroller.clientWidth - 36) * layoutZoom;
         const frag = document.createDocumentFragment();
