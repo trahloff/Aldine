@@ -1025,7 +1025,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // ---------- compile ----------
   // `reason` only decides whether the branch's other clients are told about
   // this run; it grants nothing and is not trusted for anything else.
-  app.post<{ Params: { id: string }; Body: { branch?: string; reason?: string } }>('/api/projects/:id/compile', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { branch?: string; reason?: string; mode?: string } }>('/api/projects/:id/compile', async (req, reply) => {
     const branch = req.body?.branch || 'main';
     const agent = req.body?.reason === 'agent';
     const user = reqUser(req);
@@ -1043,7 +1043,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return reply.code(429).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Too many typesets in flight — let the current ones finish' });
     }
     try {
-      const result = await compileProject(req.params.id, branch, { agent });
+      const result = await compileProject(req.params.id, branch, { agent, draft: req.body?.mode === 'draft' });
       if (user) await usage.recordCompile(user.id, result.durationMs || 0);
       return result;
     } catch (err: any) {

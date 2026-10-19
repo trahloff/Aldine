@@ -82,6 +82,10 @@ export interface CompileResult {
   errors: CompileError[];
   durationMs: number;
   error?: string;
+  /** One engine pass without the bibliography step. */
+  draft?: boolean;
+  /** That draft left references or the bibliography behind the source. */
+  needsFullRun?: boolean;
 }
 export interface CompileStatus {
   /** A typeset for this branch is in flight on the server. */
@@ -301,8 +305,8 @@ export const api = {
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
-  compile: (id: string, branch: string, reason?: 'agent') =>
-    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}) }) }),
+  compile: (id: string, branch: string, reason?: 'agent', mode?: 'draft') =>
+    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) }) }),
   compileStatus: (id: string, branch: string) =>
     req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>

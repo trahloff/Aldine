@@ -26,6 +26,9 @@ const TIMEOUT_MS = Number(process.env.COMPILE_TIMEOUT_MS || 120_000);
 // Aux/PDF output lives inside the project tree (relative path) so TeX path
 // restrictions (openout_any=p) never apply and incremental caches persist.
 const OUT_SUBDIR = '.aldine-out';
+// What TeX and the bibliography packages print when a pass left references,
+// citations or the bibliography behind the source: a draft run then owes a full one.
+const DRAFT_RERUN_HINT = /Rerun to get|Label\(s\) may have changed|Please \(?re\)?run (Biber|BibTeX)|rerun LaTeX/i;
 // The Dockerfile writes the build arg TEXLIVE_SCHEME here; a checkout running
 // server.js directly has no such file and reports "unknown".
 const SCHEME_FILE = process.env.TEXLIVE_SCHEME_FILE || path.join(__dirname, 'texlive-scheme');
@@ -242,7 +245,7 @@ function invalidRootFile(rootFile) {
 }
 
 async function compileInner(body) {
-  const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false } = body;
+  const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false, draft = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
   if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
   const absDir = path.resolve(DATA_DIR, projectDir);
@@ -260,6 +263,10 @@ async function compileInner(body) {
   const mkArgs = (force) => [
     engineFlag,
     ...(force ? ['-g'] : []), // -g: run even if latexmk thinks it's up-to-date
+    // Draft: one engine pass on the previous run's .aux/.bbl, no biber/bibtex.
+    // latexmk's fdb still records what is out of date, so the next full run
+    // picks up the reruns and the bibliography this one skipped.
+    ...(draft ? ['-e', '$max_repeat=1; $bibtex_use=0;'] : []),
     '-interaction=nonstopmode',
     // Without -halt-on-error TeX runs to the end of the document and latexmk
     // still exits non-zero when errors occurred, so the caller gets a complete
@@ -300,8 +307,12 @@ async function compileInner(body) {
   const sentinel = path.join(outAbs, '.aldine-run');
   fs.writeFileSync(sentinel, '');
   const freshSince = fs.statSync(sentinel).mtimeMs;
+  // A draft's single pass leaves latexmk's fdb believing the files settled, so
+  // the full run after one must force the cycle or it keeps the draft's ??.
+  const draftMark = path.join(outAbs, '.aldine-draft');
+  const afterDraft = !draft && fs.existsSync(draftMark);
   const t0 = Date.now();
-  let { code, out, timedOut } = await run('latexmk', mkArgs(false), runOpts, TIMEOUT_MS);
+  let { code, out, timedOut } = await run('latexmk', mkArgs(afterDraft), runOpts, TIMEOUT_MS);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {
     // latexmk believed everything was current but the PDF is gone (cleaned
     // output dir / stale state) — force a real rebuild.
@@ -373,7 +384,13 @@ async function compileInner(body) {
   });
   errors.length = 0;
   errors.push(...deduped);
-  const ok = code === 0 && fs.existsSync(pdfPath);
+  // A draft that stopped at its one pass exits non-zero with "Maximum runs"
+  // although TeX itself succeeded; that is the draft working, not an error.
+  const draftCapped = draft && /Maximum runs of \S+ reached/i.test(out) && !errors.some((e) => e.type === 'error');
+  const ok = (code === 0 || draftCapped) && fs.existsSync(pdfPath);
+  const needsFullRun = draft && ok && (draftCapped || (isFresh(logPath) && DRAFT_RERUN_HINT.test(log)));
+  if (needsFullRun) fs.writeFileSync(draftMark, '');
+  else if (!draft && ok) fs.rmSync(draftMark, { force: true });
   // Never report a failure the user cannot read: a run that fails with nothing
   // in either log falls back to latexmk's own summary.
   if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
@@ -391,6 +408,7 @@ async function compileInner(body) {
     latexmkOutput: out.length > 20_000 ? out.slice(-20_000) : out,
     errors,
     durationMs,
+    ...(draft ? { draft: true, needsFullRun } : {}),
   };
 }
 

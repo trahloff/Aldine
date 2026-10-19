@@ -6,12 +6,21 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Auto-typeset runs a quick draft while you type: one engine pass, no
+  bibliography step. When that leaves a new reference, citation or the
+  bibliography behind, the full typeset follows by itself four seconds after
+  you stop typing; Typeset and ⌘S / Ctrl+S always run the full cycle. The
+  palette switches drafts off.
+
 ### Fixed
 - The PDF preview rendered every CJK character as blank space (Latin text and
   math were unaffected): pdf.js was not given `cMapUrl`/`cMapPacked`, so it
   could not map the glyphs of Identity-H CID fonts such as XeLaTeX's Fandol.
   The build ships the pdfjs-dist CMaps at `<base>/cmaps/`; in dev they
   resolve from the installed package itself, so no dev middleware is needed.
+- Pressing Typeset within two seconds of typing ran a second, empty typeset
+  afterwards, which replaced the real duration in the status line.
 
 ## [0.12.2] — 2026-10-18
 
