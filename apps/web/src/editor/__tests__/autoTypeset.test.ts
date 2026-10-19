@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  autoTypesetDelay, electTypesetter, shouldAdoptRun,
+  autoTypesetDelay, electTypesetter, shouldAdoptRun, cancelsArmedTypeset,
   LOCAL_AUTO_TYPESET_MS, AGENT_AUTO_TYPESET_MS, type TypesetPeer,
 } from '../autoTypeset';
 
@@ -82,5 +82,14 @@ describe('shouldAdoptRun', () => {
     expect(shouldAdoptRun(5, 6, false)).toBe(true);
     expect(shouldAdoptRun(5, 5, false)).toBe(false);
     expect(shouldAdoptRun(5, 4, false)).toBe(false);
+  });
+});
+
+describe('cancelsArmedTypeset', () => {
+  it('cancels the timer for edits the run already contains', () => {
+    expect(cancelsArmedTypeset(1_000, 3_000)).toBe(true);
+  });
+  it('keeps it when the last keystroke may not have reached the server yet', () => {
+    expect(cancelsArmedTypeset(2_900, 3_000)).toBe(false);
   });
 });

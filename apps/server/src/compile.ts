@@ -41,6 +41,11 @@ export interface CompileResult {
   errors: CompileError[];
   durationMs: number;
   error?: string;
+  /** One engine pass without the bibliography step (auto-typeset). */
+  draft?: boolean;
+  /** The draft left references, citations or the bibliography behind the
+   *  source; a full typeset settles them. */
+  needsFullRun?: boolean;
 }
 
 /** The engine's "Output written on x.pdf (N pages, …)" line — the last one
@@ -190,10 +195,10 @@ export function compilerInfo(): Promise<CompilerInfo> {
   return compilerInfoInflight;
 }
 
-export function compileProject(projectId: string, branch: string, opts: { agent?: boolean } = {}): Promise<CompileResult> {
+export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean } = {}): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   const prev = compileChain.get(key) || Promise.resolve();
-  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent));
+  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft));
   // The chain tail must never reject (would surface as an unhandled rejection);
   // the caller gets `result` (which may reject and is awaited/handled by the route).
   const tail = result.catch(() => undefined).then(() => {
@@ -228,11 +233,11 @@ export function compileStatus(projectId: string, branch: string): CompileStatus 
   };
 }
 
-async function runCompile(projectId: string, branch: string, agent: boolean): Promise<CompileResult> {
+async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   running.set(key, (running.get(key) ?? 0) + 1);
   try {
-    const result = await runCompileInner(projectId, branch, agent);
+    const result = await runCompileInner(projectId, branch, agent, draft);
     lastRun.set(key, { result, finishedAt: Date.now(), agent });
     return result;
   } finally {
@@ -244,7 +249,7 @@ async function runCompile(projectId: string, branch: string, agent: boolean): Pr
   }
 }
 
-async function runCompileInner(projectId: string, branch: string, agent: boolean): Promise<CompileResult> {
+async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean): Promise<CompileResult> {
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
@@ -270,6 +275,7 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
       rootFile: meta.rootFile,
       engine: meta.engine,
       haltOnError: !!meta.stopOnFirstError,
+      ...(draft ? { draft: true } : {}),
     }),
   });
   const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
@@ -285,6 +291,7 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
     errors: Array.isArray(raw.errors) ? raw.errors : [],
     durationMs: raw.durationMs ?? 0,
     error: raw.error,
+    ...(raw.draft ? { draft: true, needsFullRun: !!raw.needsFullRun } : {}),
   };
   const key = `${projectId}::${branch}`;
   const compileId = nextCompileId();

@@ -22,7 +22,7 @@ import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
-import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, type TypesetSource } from '../editor/autoTypeset';
+import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
 import RemotePendingBanner from '../components/RemotePendingBanner';
@@ -89,6 +89,10 @@ export default function Editor() {
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [auto, setAuto] = useState(() => localStorage.getItem('aldine.autoTypeset') !== '0');
+  // Auto-typeset runs one engine pass while you type; Typeset and Mod-s run the full cycle.
+  const [draftTypeset, setDraftTypeset] = useState(() => localStorage.getItem('aldine.draftTypeset') !== '0');
+  const draftRef = useRef(draftTypeset);
+  draftRef.current = draftTypeset;
   const [stats, setStats] = useState<{ words: number; selWords: number | null }>({ words: 0, selWords: null });
   const [zoom, setZoomState] = useState(() => {
     const z = Number(localStorage.getItem('aldine.pdfZoom'));
@@ -148,6 +152,11 @@ export default function Editor() {
   const pdfRef = useRef<PdfPaneHandle>(null);
   const compilingRef = useRef(false);
   const pendingRef = useRef(false);
+  /** A queued typeset owes a full run (someone asked for one while a draft ran). */
+  const pendingFullRef = useRef(false);
+  /** The full typeset a draft owes, armed when it reports needsFullRun. */
+  const fullTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocalEditAt = useRef(0);
   /** The branch on screen, for a typeset that finishes after a switch. */
   const branchRef = useRef(branch);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -279,9 +288,22 @@ export default function Editor() {
     })();
   }, [id, branch]);
 
-  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent' }) => {
-    if (compilingRef.current) { pendingRef.current = true; return; }
+  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean }) => {
+    const draft = !!opts?.draft;
+    if (compilingRef.current) {
+      pendingRef.current = true;
+      if (!draft) pendingFullRef.current = true;
+      return;
+    }
     compilingRef.current = true;
+    // The server flushes every edit it has when this run starts, so a local
+    // auto-typeset still armed for them would only queue a second, no-op run.
+    if (autoTimer.current && pendingSource.current === 'local' && cancelsArmedTypeset(lastLocalEditAt.current, Date.now())) {
+      clearTimeout(autoTimer.current);
+      autoTimer.current = null;
+      pendingSource.current = null;
+    }
+    if (fullTimer.current) { clearTimeout(fullTimer.current); fullTimer.current = null; }
     // A typeset is where freshly typed \label/\cite content becomes relevant —
     // drop the client index caches so the next autocomplete/hover refetches
     // (cheap now: the server caches per content version).
@@ -290,12 +312,15 @@ export default function Editor() {
     setCompile((c) => ({ ...c, status: 'compiling' }));
     const t0 = Date.now();
     try {
-      const result = await api.compile(id, branch, opts?.reason);
+      const result = await api.compile(id, branch, opts?.reason, draft ? 'draft' : undefined);
       // The user may have switched branch while this ran: the result belongs
       // to the branch it was asked for, not to whatever is on screen now.
       if (branchRef.current !== branch) return;
       shownRunIdRef.current = result.runId;
       setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
+      if (result.needsFullRun) {
+        fullTimer.current = setTimeout(() => { fullTimer.current = null; doCompile(); }, FULL_AFTER_DRAFT_MS);
+      }
     } catch (err: any) {
       if (branchRef.current !== branch) return;
       // A capacity rejection is the server being busy, not a broken document —
@@ -311,7 +336,9 @@ export default function Editor() {
       compilingRef.current = false;
       if (pendingRef.current) {
         pendingRef.current = false;
-        setTimeout(() => doCompile(), 400);
+        const full = pendingFullRef.current;
+        pendingFullRef.current = false;
+        setTimeout(() => doCompile(0, full ? undefined : { draft: draftRef.current }), 400);
       }
     }
   }, [id, branch]);
@@ -329,6 +356,8 @@ export default function Editor() {
     if (delay == null) return;
     if (autoTimer.current) clearTimeout(autoTimer.current);
     clearAgentWatchdog();
+    // Still typing: the full run waits until the next draft says it is owed.
+    if (source === 'local' && fullTimer.current) { clearTimeout(fullTimer.current); fullTimer.current = null; }
     pendingSource.current = source;
     autoTimer.current = setTimeout(() => {
       autoTimer.current = null;
@@ -338,7 +367,7 @@ export default function Editor() {
       // the edit must not keep the branch's typeset to itself.
       if (src === 'agent' && signal.current && !signal.current.electedTypesetter()) return;
       if (src === 'agent') ownAgentRun.current = true;
-      doCompile(0, src === 'agent' ? { reason: 'agent' } : undefined);
+      doCompile(0, src === 'agent' ? { reason: 'agent' } : { draft: draftRef.current });
     }, delay);
   }, [doCompile, clearAgentWatchdog]);
 
@@ -352,11 +381,13 @@ export default function Editor() {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
     if (!local) return;
+    lastLocalEditAt.current = Date.now();
     armAutoTypeset('local');
   }, [armAutoTypeset, refreshDocWords]);
 
   useEffect(() => () => {
     if (autoTimer.current) clearTimeout(autoTimer.current);
+    if (fullTimer.current) clearTimeout(fullTimer.current);
     if (agentWatchdog.current) clearTimeout(agentWatchdog.current);
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
   }, []);
@@ -842,6 +873,11 @@ export default function Editor() {
     const cmds: Command[] = [
       { id: 'typeset', group: 'Action', title: 'Typeset document', hint: shortcut('S'), run: doCompile },
       { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
+      {
+        id: 'draft-typeset', group: 'Action',
+        title: draftTypeset ? 'Auto-typeset: run the full cycle every time (slower)' : 'Auto-typeset: quick draft while typing',
+        run: () => setDraftTypeset((d) => { localStorage.setItem('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
+      },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
@@ -912,7 +948,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1289,7 +1325,9 @@ export default function Editor() {
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
               ) : (<>
                 {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
-                {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s</>}
+                {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
+                  <span className="pdf-status__draft" data-testid="draft-pending" title="A quick single pass while you type. References and the bibliography settle in a full typeset a few seconds after you stop, or when you press Typeset."> · draft, references next</span>
+                )}</>}
                 {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
               </>)}
             </span>

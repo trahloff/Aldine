@@ -894,7 +894,7 @@
   font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
 }
 .errors__toggle:hover { color: var(--text); }
-.errors__chev { font-size: 10px; width: 10px; }
+.errors__chev { font-size: 13px; line-height: 1; width: 12px; }
 .errors__row--warning { cursor: default; padding-top: 4px; padding-bottom: 4px; align-items: center; }
 .errors__row--warning:active { background: var(--bg-hover); }
 .errors__jump {

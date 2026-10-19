@@ -10,6 +10,18 @@ export const AGENT_AUTO_TYPESET_MS = 6000;
 /** An agent typeset that never reports back (node gone, compile killed) must
  *  not leave the preview frozen; longer than the compiler's 120 s cap. */
 export const AGENT_RUN_WATCHDOG_MS = 150_000;
+/** Quiet time after a draft that left references or the bibliography behind
+ *  before the full typeset runs; any keystroke restarts the wait. */
+export const FULL_AFTER_DRAFT_MS = 4000;
+/** A keystroke this recent may still be on its way to the server when a
+ *  typeset starts, so the run might not contain it. */
+const EDIT_IN_FLIGHT_MS = 500;
+
+/** A typeset starting now covers the edits behind an armed local timer (and
+ *  may cancel it) unless the last one could still be in flight. */
+export function cancelsArmedTypeset(lastLocalEditAt: number, now: number): boolean {
+  return now - lastLocalEditAt >= EDIT_IN_FLIGHT_MS;
+}
 
 export type TypesetSource = 'local' | 'agent';
 
