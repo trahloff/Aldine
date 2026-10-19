@@ -110,10 +110,12 @@ skip the Connect button and use the static-token path below.
    ([Anthropic's guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
    as of October 2026; on Team and Enterprise plans an owner adds it under
    Organization settings first). Name it,
-   paste the connector URL `https://<host>/mcp` (with auth on, the Agent
-   access card in Aldine shows and copies it; with auth off there is no
-   card — the URL is `ALDINE_PUBLIC_URL` plus `/mcp`, and the boot log
-   prints it as "MCP connector at …"), leave authentication at its default.
+   paste the connector URL `https://<host>/mcp` (**Connect Claude** in
+   Aldine shows and copies it, with the steps for your server: in the
+   command palette, in Project settings, and at the foot of the project
+   list; with auth on, the Agent access card shows it too. It is
+   `ALDINE_PUBLIC_URL` plus `/mcp`, and the boot log prints it as "MCP
+   connector at …"), leave authentication at its default.
 2. Click **Connect**. Aldine opens `/oauth/authorize`; sign in if you are not
    (the sign-in form appears in place, SSO included, and comes back to the
    consent page).

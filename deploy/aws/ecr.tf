@@ -4,7 +4,7 @@ locals {
   # resolves, and staging churn never evicts the SHA-tagged images older prod
   # revisions roll back to. `keep` is the lifecycle window: prod revisions are
   # rollback targets, staging ones are disposable.
-  ecr_repos = merge(
+  ecr_repos = !var.fargate ? {} : merge(
     { "papyr-server" = { keep = 30 }, "papyr-compiler" = { keep = 30 } },
     local.staging_enabled ? { "papyr-staging-server" = { keep = 10 }, "papyr-staging-compiler" = { keep = 10 } } : {},
   )

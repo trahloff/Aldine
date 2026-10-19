@@ -159,8 +159,8 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       try {
         // CJK PDFs embed Identity-H CID fonts; pdf.js needs the packed CMaps
         // to map their glyphs or every CJK character renders as blank space
-        // (Latin text and math are unaffected). vite.config.ts ships the
-        // pdfjs-dist cmaps/ under assets/, next to the worker.
+        // (Latin text and math are unaffected). cMapUrl above says where they
+        // are served from.
         doc = await pdfjs.getDocument({
           url: pdfUrl,
           cMapUrl,

@@ -166,3 +166,15 @@ variable "github_deploy_branches" {
   type        = list(string)
   default     = []
 }
+
+variable "app_ipv4" {
+  description = "Serve domain_name from this IPv4 address instead of the ALB (a box outside AWS, see deploy/hetzner). Empty keeps the ALB."
+  type        = string
+  default     = ""
+}
+
+variable "offbox_access" {
+  description = "Create an IAM user for a box outside AWS: SES sending as the app domain, and a private backup bucket with 35-day expiry. The key is in the outputs (sensitive)."
+  type        = bool
+  default     = false
+}

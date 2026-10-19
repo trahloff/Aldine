@@ -681,6 +681,7 @@ export async function cloneRepo(id: string, tokenUrl: string): Promise<{ remoteB
 export async function pushToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   await scrubbed(() => git(repoDir(id)).raw(['push', tokenUrl, `refs/heads/main:refs/heads/${remoteBranch}`]));
+  forgetRemoteStatus(id);
 }
 
 /** Current HEAD commit hash of the project's main branch (cheap, local). */
@@ -688,19 +689,41 @@ export async function headCommit(id: string): Promise<string> {
   return (await git(repoDir(id)).revparse(['HEAD'])).trim();
 }
 
-/** How many commits local `main` is ahead/behind the remote branch (fetches first). */
+// remoteStatus fetches into a ref of its own, never FETCH_HEAD, so a status
+// poll needs no repo lock and cannot change what a concurrent pull or reset
+// merges. Editors poll it, so one fetch per project, branch and credential
+// serves everyone for REMOTE_STATUS_TTL_MS; the counts are recomputed locally
+// on every call, so a local commit shows at once.
+const STATUS_REF = 'refs/aldine/remote-status';
+const REMOTE_STATUS_TTL_MS = Number(process.env.REMOTE_STATUS_TTL_MS ?? 30_000);
+const statusFetches = new Map<string, { at: number; done: Promise<void> }>();
+
+/** Drop cached fetches for a project: its remote moved under us (push, pull, reset). */
+export function forgetRemoteStatus(id: string): void {
+  for (const k of statusFetches.keys()) if (k.startsWith(`${id}\0`)) statusFetches.delete(k);
+}
+
+/** How many commits local `main` is ahead/behind the remote branch (fetches at most once per TTL). */
 export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: string): Promise<{ ahead: number; behind: number }> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   const g = git(repoDir(id));
-  await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
-  const ahead = Number((await g.raw(['rev-list', '--count', 'FETCH_HEAD..refs/heads/main'])).trim()) || 0;
-  const behind = Number((await g.raw(['rev-list', '--count', 'refs/heads/main..FETCH_HEAD'])).trim()) || 0;
+  const key = `${id}\0${remoteBranch}\0${tokenUrl}`;
+  let f = statusFetches.get(key);
+  if (!f || Date.now() - f.at > REMOTE_STATUS_TTL_MS) {
+    f = { at: Date.now(), done: scrubbed(() => g.raw(['fetch', '--no-write-fetch-head', tokenUrl, `+refs/heads/${remoteBranch}:${STATUS_REF}`])).then(() => {}) };
+    statusFetches.set(key, f);
+    f.done.catch(() => { if (statusFetches.get(key) === f) statusFetches.delete(key); });
+  }
+  await f.done;
+  const ahead = Number((await g.raw(['rev-list', '--count', `${STATUS_REF}..refs/heads/main`])).trim()) || 0;
+  const behind = Number((await g.raw(['rev-list', '--count', `refs/heads/main..${STATUS_REF}`])).trim()) || 0;
   return { ahead, behind };
 }
 
 /** Discard all local changes and hard-reset local `main` to the remote branch. */
 export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
+  forgetRemoteStatus(id);
   return withRepoLock(id, async () => {
     const g = git(repoDir(id));
     await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
@@ -711,6 +734,7 @@ export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: 
 /** Pull (fetch + merge) the remote branch into local `main`. Reports conflicts. */
 export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<MergeResult> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
+  forgetRemoteStatus(id);
   return withRepoLock(id, async () => {
     const g = git(repoDir(id));
     await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));

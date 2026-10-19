@@ -17,7 +17,8 @@ import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
 import { IconChevronLeft } from '../components/Icons';
-import CommandPalette, { Command } from '../components/CommandPalette';
+import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
+import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
@@ -36,6 +37,7 @@ import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
+import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
@@ -100,6 +102,15 @@ export default function Editor() {
     });
   }, []);
   const [showLog, setShowLog] = useState(false);
+  // Warnings alone fold to the panel's header line; errors always open it.
+  const [problemsOpen, setProblemsOpen] = useState(() => localStorage.getItem('aldine.problemsOpen') === '1');
+  const toggleProblems = useCallback(() => setProblemsOpen((o) => {
+    localStorage.setItem('aldine.problemsOpen', o ? '0' : '1');
+    return !o;
+  }), []);
+  const [ignored, setIgnoredState] = useState<string[]>(() => loadIgnored(id));
+  useEffect(() => { setIgnoredState(loadIgnored(id)); }, [id]);
+  const setIgnored = useCallback((keys: string[]) => { saveIgnored(id, keys); setIgnoredState(keys); }, [id]);
   // Scroll the log to its first error once the dialog has rendered.
   const logHit = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -109,6 +120,7 @@ export default function Editor() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
   // Who collaborators and comment threads see: the account when there is one;
@@ -838,6 +850,7 @@ export default function Editor() {
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
+      { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
       ...(visualEnabled
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
@@ -847,6 +860,9 @@ export default function Editor() {
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
+    if (ignored.length > 0) {
+      cmds.push({ id: 'unignore-warnings', group: 'View', title: `Show ignored warnings again (${ignored.length} kind${ignored.length === 1 ? '' : 's'})`, run: () => setIgnored([]) });
+    }
     if (project?.remote) {
       const d = remoteDescriptor(project.remote.provider);
       const click = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.click();
@@ -896,11 +912,22 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored]);
 
-  const errors = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
+  const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
+  const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
+  const ignoredHere = allProblems.length - errors.length;
   const errCount = errors.filter((e) => e.type === 'error').length;
+  const warnCount = errors.length - errCount;
   const showErrors = compile.result != null && (errors.length > 0 || !compile.result.ok);
+  const problemsFoldable = errCount === 0 && compile.result?.ok === true;
+  const problemsExpanded = !problemsFoldable || problemsOpen;
+  const ignoreWarning = (message: string) => {
+    const key = warningKey(message);
+    const before = ignored;
+    setIgnored([...before.filter((k) => k !== key), key]);
+    toast('Warnings like this are hidden in this project', 'ok', { label: 'Undo', testId: 'undo-ignore-warning', onClick: () => setIgnored(before) });
+  };
   // a PDF is already on screen when the last compile produced one (recompiles keep it visible)
   const hasPdf = compile.result?.pdfUrl != null;
 
@@ -938,6 +965,7 @@ export default function Editor() {
           </div>
         )}
         <div className="toolbar__spacer" />
+        <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
         {project.remote ? (
@@ -1132,12 +1160,28 @@ export default function Editor() {
             <div className="pdf-empty"><p>Select a file to start writing.</p></div>
           )}
           {showErrors && (
-            <div className="errors" data-testid="errors-panel">
+            <div className={`errors${problemsExpanded ? '' : ' errors--folded'}`} data-testid="errors-panel" data-open={problemsExpanded ? 'true' : 'false'}>
               <div className="errors__head">
-                <span>{errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Problems'}</span>
-                <button className="btn btn--ghost btn--small" onClick={() => setShowLog(true)} data-testid="view-log">View log</button>
+                {(() => {
+                  const label = errCount > 0
+                    ? `${errCount} error${errCount === 1 ? '' : 's'}`
+                    : warnCount > 0 ? `${warnCount} warning${warnCount === 1 ? '' : 's'}` : 'Problems';
+                  return problemsFoldable && warnCount > 0 ? (
+                    <button className="errors__toggle" onClick={toggleProblems} aria-expanded={problemsExpanded} data-testid="problems-toggle">
+                      <span className="errors__chev" aria-hidden>{problemsExpanded ? '▾' : '▸'}</span>{label}
+                    </button>
+                  ) : <span>{label}</span>;
+                })()}
+                <span className="errors__actions">
+                  {ignoredHere > 0 && (
+                    <button className="btn btn--ghost btn--small" onClick={() => setIgnored([])} title="Show the warnings you ignored in this project again" data-testid="problems-unignore">
+                      {ignoredHere} ignored · Show
+                    </button>
+                  )}
+                  <button className="btn btn--ghost btn--small" onClick={() => setShowLog(true)} data-testid="view-log">View log</button>
+                </span>
               </div>
-              {(() => {
+              {problemsExpanded && (() => {
                 // Errors render before warnings: a failing biblatex run emits
                 // 100+ citation warnings and the one actionable error must
                 // never sit past the row cap.
@@ -1161,6 +1205,16 @@ export default function Editor() {
                           </span>
                         </>
                       );
+                      if (e.type === 'warning') {
+                        return (
+                          <div key={i} className="errors__row errors__row--warning" data-testid="problem-warning">
+                            {clickable
+                              ? <button className="errors__jump" onClick={() => jumpToLine(e.line, file)}>{body}</button>
+                              : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
+                            <button className="btn btn--ghost btn--small errors__ignore" onClick={() => ignoreWarning(e.message)} title="Hide warnings like this one in this project" data-testid="problem-ignore">Ignore</button>
+                          </div>
+                        );
+                      }
                       return clickable ? (
                         <button key={i} className="errors__row" onClick={() => jumpToLine(e.line, file)}>{body}</button>
                       ) : (
@@ -1306,6 +1360,7 @@ export default function Editor() {
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
+      {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} />}
 
       {agentReview && (
         <Modal onClose={() => setAgentReview(null)} label="Review Claude’s edits" wide testId="agent-review-modal">
@@ -1348,6 +1403,7 @@ export default function Editor() {
           onSetEngine={setEngine}
           onSetStopOnFirstError={setStopOnFirstError}
           onToggleAutoTypeset={toggleAuto}
+          onConnectClaude={() => setConnectOpen(true)}
         />
       )}
 

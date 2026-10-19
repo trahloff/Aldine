@@ -18,7 +18,7 @@
 # never inherited from prod.
 
 locals {
-  staging_enabled = var.staging_domain_name != ""
+  staging_enabled = var.fargate && var.staging_domain_name != ""
 
   staging_server_env = merge(
     { for k, v in local.server_env : k => v if k != "ALDINE_SSO_ONLY" },
@@ -149,7 +149,7 @@ resource "aws_acm_certificate_validation" "staging" {
 
 resource "aws_lb_listener_certificate" "staging" {
   count           = local.staging_enabled ? 1 : 0
-  listener_arn    = aws_lb_listener.https.arn
+  listener_arn    = aws_lb_listener.https[0].arn
   certificate_arn = aws_acm_certificate_validation.staging[0].certificate_arn
 }
 
@@ -160,8 +160,8 @@ resource "aws_route53_record" "staging" {
   type    = "A"
 
   alias {
-    name                   = aws_lb.main.dns_name
-    zone_id                = aws_lb.main.zone_id
+    name                   = aws_lb.main[0].dns_name
+    zone_id                = aws_lb.main[0].zone_id
     evaluate_target_health = true
   }
 }
@@ -196,7 +196,7 @@ resource "aws_lb_target_group" "staging" {
 
 resource "aws_lb_listener_rule" "staging" {
   count        = local.staging_enabled ? 1 : 0
-  listener_arn = aws_lb_listener.https.arn
+  listener_arn = aws_lb_listener.https[0].arn
   priority     = 10
 
   action {

@@ -6,7 +6,52 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The PDF preview rendered every CJK character as blank space (Latin text and
+  math were unaffected): pdf.js was not given `cMapUrl`/`cMapPacked`, so it
+  could not map the glyphs of Identity-H CID fonts such as XeLaTeX's Fandol.
+  The build ships the pdfjs-dist CMaps at `<base>/cmaps/`; in dev they
+  resolve from the installed package itself, so no dev middleware is needed.
+
+## [0.12.2] — 2026-10-18
+
+(0.12.1 was tagged on a commit outside main and never built.)
+
+### Changed
+- When a document typesets with warnings only, the Problems panel folds to
+  one line ("3 warnings"); click it to see the list, and it stays the way you
+  left it. Errors still open it in full.
+
 ### Added
+- An Ignore button on each warning hides that kind of warning in the
+  project (the same citation or reference on any line). The panel shows how
+  many are ignored, with a button to show them again; so does the command
+  palette.
+
+## [0.12.0] — 2026-10-18
+
+### Added
+- **Connect Claude**: the connector setup for this server, from the command
+  palette, Project settings and the project list. It gives the claude.ai,
+  Desktop and Cowork steps or the Claude Code command, including the token
+  header on a server without accounts, and says when claude.ai cannot reach
+  the server. The connector URL follows `ALDINE_PUBLIC_URL` when it is set.
+- A project synced with GitHub, GitLab or Gitea notices new commits by
+  itself: it checks every 90 seconds while the tab is open and again when you
+  come back to it, highlights Pull, and offers a Pull button in a
+  notification when commits arrive.
+- A search field in the editor toolbar and on the project list opens the
+  command palette and shows its shortcut (⌘K / Ctrl+K). The project list has
+  its own palette: new project, import, open a project by name, settings.
+- The Cite tab lists the entries of the project's .bib files, with a filter
+  once there are more than a few; clicking one inserts its `\cite`.
+- `deploy/hetzner`: a production stack on one Hetzner Cloud box (about €7 a
+  month), with the released images, Caddy, security updates, and nightly
+  backups kept on the box and copied to an S3-compatible bucket.
+- `deploy/aws` can point the app domain at a box outside AWS (`app_ipv4`)
+  and create a send-mail and backup key for it (`offbox_access`).
+  `fargate = false` then removes the Fargate service, ALB, EFS, ECR and
+  staging, and keeps DNS, SES and the CI role.
 - The divider between editor and preview can be dragged with a finger or a
   pen, moved with the arrow keys (Shift for larger steps) and reset with a
   double-click.
@@ -18,6 +63,9 @@ All notable changes to Aldine are documented here. The format follows
   an Undo button.
 
 ### Changed
+- The remote status check fetches into a ref of its own and at most once
+  per 30 seconds per project (`REMOTE_STATUS_TTL_MS`), so polling editors
+  cost one fetch and never race a pull.
 - Every control responds on press, not on release, and shows keyboard focus.
 - Menus, the command palette and notifications are translucent surfaces that
   open from their trigger; notifications slide out the way they came in and
@@ -44,11 +92,8 @@ All notable changes to Aldine are documented here. The format follows
   (Customize → Connectors → Add → Add custom connector).
 
 ### Fixed
-- The PDF preview rendered every CJK character as blank space (Latin text and
-  math were unaffected): pdf.js was not given `cMapUrl`/`cMapPacked`, so it
-  could not map the glyphs of Identity-H CID fonts such as XeLaTeX's Fandol.
-  The build ships the pdfjs-dist CMaps at `<base>/cmaps/`; in dev they
-  resolve from the installed package itself, so no dev middleware is needed.
+- Typing in the Cite tab's paper search or the Zotero citation search no
+  longer loses focus after the first keystroke or when results arrive.
 - The server could exit with an unhandled `write EPIPE` when a git command
   finished before reading its input (seen during agent commits under load).
 - Visual mode: math that was drawn before the math renderer had finished

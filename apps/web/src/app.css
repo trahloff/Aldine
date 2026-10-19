@@ -376,6 +376,13 @@
 .settings__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: var(--text-m); }
 
 /* agent access card (account settings) */
+/* Connect Claude: the client switch, then numbered steps or one command. */
+.connect { display: flex; flex-direction: column; gap: 10px; }
+.connect__clients { align-self: flex-start; }
+.connect__text { color: var(--text-2); font-size: var(--text-m); line-height: 1.5; margin: 0; }
+.connect__text--quiet { color: var(--text-3); font-size: var(--text-s); }
+.connect__steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); font-size: var(--text-m); line-height: 1.5; }
+.connect__steps .agent-connector { margin: 6px 0 0; }
 .agent-connector { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .agent-connector code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-s); }
 .agent-connector .btn { flex-shrink: 0; margin-left: auto; }
@@ -880,6 +887,26 @@
 }
 .errors__row:hover { background: var(--bg-hover); }
 .errors__row:active { background: var(--bg-active); }
+.errors__actions { display: flex; gap: 4px; margin-left: auto; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.errors__toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
+}
+.errors__toggle:hover { color: var(--text); }
+.errors__chev { font-size: 10px; width: 10px; }
+.errors__row--warning { cursor: default; padding-top: 4px; padding-bottom: 4px; align-items: center; }
+.errors__row--warning:active { background: var(--bg-hover); }
+.errors__jump {
+  display: flex; gap: 8px; flex: 1; min-width: 0; align-items: baseline;
+  border: 0; background: transparent; padding: 3px 0; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.errors__ignore { flex: none; }
+@media (hover: hover) {
+  .errors__ignore { opacity: 0; }
+  .errors__row--warning:hover .errors__ignore, .errors__ignore:focus-visible { opacity: 1; }
+}
 .errors__badge { flex: none; font-weight: 700; font-size: var(--text-xs); padding: 1px 0; border-radius: var(--radius-m); min-width: 52px; text-align: center; }
 .errors__badge--error { color: var(--error); background: var(--error-soft); }
 .errors__badge--warning { color: var(--warn-text); background: var(--warn-soft); }
@@ -917,6 +944,33 @@
 @media (pointer: coarse) { .resizer { width: 21px; margin: 0 -10px; } .resizer::after { inset: 0 9px; opacity: 0.25; } }
 
 /* command palette */
+/* A field that looks like search and opens the palette; the label tells
+   people what Mod+K does before they know to press it. */
+.palette-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  min-width: 220px;
+  padding: 0 6px 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+  background: var(--bg-panel);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-s);
+  cursor: pointer;
+  transition: border-color 150ms var(--ease), color 150ms var(--ease), transform 120ms var(--ease);
+}
+.palette-trigger__label { flex: 1; text-align: left; white-space: nowrap; }
+.palette-trigger__kbd { margin-left: 0; }
+@media (hover: hover) { .palette-trigger:hover { border-color: var(--text-3); color: var(--text-2); } }
+.palette-trigger:active { transform: scale(0.98); transition-duration: 0ms; }
+@media (max-width: 900px) {
+  .palette-trigger { min-width: 0; padding: 0 8px; }
+  .palette-trigger__label, .palette-trigger__kbd { display: none; }
+}
+
 .palette {
   width: 560px;
   max-width: calc(100vw - 48px);

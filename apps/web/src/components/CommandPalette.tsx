@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useExitGhost } from '../exitGhost';
+import { shortcut } from '../platform';
+import { IconSearch } from './Icons';
 
 export interface Command {
   id: string;
@@ -13,6 +15,29 @@ interface Props {
   open: boolean;
   commands: Command[];
   onClose(): void;
+  placeholder?: string;
+}
+
+/** The palette's visible door: a search field in the toolbar that names its shortcut. */
+export function PaletteTrigger({ onOpen, label }: { onOpen(): void; label: string }) {
+  return (
+    <button type="button" className="palette-trigger" onClick={onOpen} data-testid="palette-open" aria-label={`${label} (${shortcut('K')})`} aria-haspopup="dialog">
+      <IconSearch />
+      <span className="palette-trigger__label">{label}</span>
+      <kbd className="kbd palette-trigger__kbd">{shortcut('K')}</kbd>
+    </button>
+  );
+}
+
+/** Mod+K toggles the palette from anywhere on the page. */
+export function usePaletteHotkey(toggle: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); toggle(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggle]);
 }
 
 /** Simple subsequence fuzzy match with a score (lower = better). */
@@ -33,7 +58,7 @@ function fuzzy(query: string, text: string): number | null {
   return qi === q.length ? score : null;
 }
 
-export default function CommandPalette({ open, commands, onClose }: Props) {
+export default function CommandPalette({ open, commands, onClose, placeholder = 'Type a command or file…' }: Props) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,7 +100,7 @@ export default function CommandPalette({ open, commands, onClose }: Props) {
         <input
           ref={inputRef}
           className="palette__input"
-          placeholder="Type a command or file…"
+          placeholder={placeholder}
           value={query}
           data-testid="palette-input"
           onChange={(e) => setQuery(e.target.value)}

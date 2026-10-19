@@ -4,8 +4,9 @@ This is the recommended production setup: one dedicated-CPU box (e.g. a Hetzner
 CCX, OVH, or any VPS with ≥8 GB RAM and 2+ dedicated vCPUs), Docker Compose for
 the stack, and **your existing reverse proxy** (nginx, Traefik, …) — or the
 bundled Caddy if you don't have one — for TLS. No managed platform required.
-(Prefer AWS? There's a complete Terraform deployment — Fargate, EFS, ALB, SES —
-in [`deploy/aws`](aws/).)
+(On Hetzner, [`deploy/hetzner`](hetzner/) creates the box and runs this setup
+with backups for about €7 a month. Prefer AWS? There's a complete Terraform
+deployment — Fargate, EFS, ALB, SES — in [`deploy/aws`](aws/).)
 
 ## 1. Provision
 

@@ -57,6 +57,16 @@ r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/pull`});
 check(r.statusCode===200, 'pull ok '+r.body);
 check(fs.readFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'utf8').includes('EXTERNAL'),'pulled external change');
 
+// status polls inside the fetch TTL answer from the last fetch (editors poll
+// it); pull fetches for itself, so it still brings everything in
+r = await app.inject({url:`/api/projects/${pid}/github/status`});
+check(J(r).behind===0 && J(r).ahead===0, 'in sync after pull: '+r.body);
+execSync(`cd "${seed}" && git pull -q && printf 'EXTERNAL2\\n' >> main.tex && git commit -qam ext2 && git push -q`);
+r = await app.inject({url:`/api/projects/${pid}/github/status`});
+check(J(r).behind===0, 'a poll within the TTL does not fetch again: '+r.body);
+r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/pull`});
+check(r.statusCode===200 && fs.readFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'utf8').includes('EXTERNAL2'),'pull still fetches: '+r.body);
+
 // push with a custom commit message → the remote commit subject matches
 fs.writeFileSync(path.join(process.env.DATA_DIR,'projects',pid,'main.tex'),'v2\n');
 r = await app.inject({method:'POST',url:`/api/projects/${pid}/github/push`,payload:{message:'my custom message'}});
