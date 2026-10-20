@@ -1091,6 +1091,7 @@
 .history__msg { font-size: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history__meta { font-size: var(--text-xs); color: var(--text-2); }
 .history__meta .dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
+.history__pending { font-size: var(--text-xs); color: var(--text-2); padding: 0 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* segmented control (Source | Visual): equal segments, one thumb that
    slides to the selected one. Position and count come from the markup. */

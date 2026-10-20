@@ -5,7 +5,7 @@ import { ENGINES, texliveLabel } from '../util/engines';
 import { getTheme, setTheme, Theme } from '../theme';
 
 interface Props {
-  project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>;
+  project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
   /** The branch the download link archives. */
   branch: string;
   files: TreeEntry[];
@@ -18,6 +18,7 @@ interface Props {
   onSetRoot(path: string): Promise<void>;
   onSetEngine(engine: string): Promise<void>;
   onSetStopOnFirstError(on: boolean): Promise<void>;
+  onSetManualCommits(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
   onConnectClaude(): void;
 }
@@ -27,7 +28,7 @@ interface Props {
  * engine picker and the log dialog's stop-on-error box are shortcuts to the
  * same state). Every change saves on its own; there is no Save button.
  */
-export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onToggleAutoTypeset, onConnectClaude }: Props) {
+export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onConnectClaude }: Props) {
   const [name, setName] = useState(project.name);
   const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -140,6 +141,26 @@ export default function ProjectSettings({ project, branch, files, autoTypeset, i
                 data-testid="settings-auto-typeset"
               />
               <span className="settings__hint">{autoTypeset ? 'Typesets shortly after you stop typing, on this browser' : 'Typeset by hand only, on this browser'}</span>
+            </span>
+          </div>
+        </section>
+
+        <section data-testid="history-settings">
+          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>History</div>
+          <div className="settings__row">
+            <label className="settings__label" htmlFor="settings-commit-mode">Commit changes</label>
+            <span className="settings__control settings__control--check">
+              <select
+                id="settings-commit-mode"
+                className="input"
+                value={project.manualCommits ? 'manual' : 'auto'}
+                onChange={(e) => onSetManualCommits(e.target.value === 'manual')}
+                data-testid="settings-commit-mode"
+              >
+                <option value="auto">Automatically</option>
+                <option value="manual">When I commit</option>
+              </select>
+              <span className="settings__hint">{project.manualCommits ? 'Edits are saved, and wait in History for a commit with your message' : 'Every pause in typing becomes an autosave commit'}</span>
             </span>
           </div>
         </section>

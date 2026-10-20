@@ -32,7 +32,7 @@ const { initDb, closeDb } = await import('../db/index.js');
 const { ensureSigningSecret } = await import('../output-signing.js');
 const { createMcpServer } = await import('./server.js');
 const { shutdownFlushSet } = await import('../collab.js');
-const { autoCommit } = await import('../gitops.js');
+const { autosave } = await import('../gitops.js');
 
 // Tools go through the datastore exactly like the HTTP path.
 await initDb();
@@ -64,7 +64,7 @@ async function stop(reason: string): Promise<void> {
   stopping = true;
   try {
     const dirty = shutdownFlushSet();
-    await Promise.allSettled(dirty.map((d) => autoCommit(d.projectId, d.branch, 'aldine: autosave on shutdown')));
+    await Promise.allSettled(dirty.map((d) => autosave(d.projectId, d.branch, 'aldine: autosave on shutdown')));
     if (dirty.length) console.error(`aldine-mcp: ${reason} — flushed ${dirty.length} project/branch(es)`);
   } catch (err) {
     console.error('aldine-mcp: shutdown flush error', err);

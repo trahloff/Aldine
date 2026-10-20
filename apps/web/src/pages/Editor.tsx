@@ -607,6 +607,18 @@ export default function Editor() {
     }
   }, [id, project, toast]);
 
+  const setManualCommits = useCallback(async (on: boolean) => {
+    if (!project || on === !!project.manualCommits) return;
+    setProject((prev) => (prev ? { ...prev, manualCommits: on } : prev));
+    try {
+      await api.patchProject(id, { manualCommits: on });
+      toast(on ? 'Edits now wait for your commit in History' : 'Edits now commit automatically', 'ok');
+    } catch (err: any) {
+      setProject((prev) => (prev ? { ...prev, manualCommits: !on } : prev));
+      toast(`Could not change the setting: ${err.message}`, 'error');
+    }
+  }, [id, project, toast]);
+
   const setEngine = useCallback(async (engine: string) => {
     if (!project || engine === project.engine) return;
     try {
@@ -881,6 +893,7 @@ export default function Editor() {
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
+      { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
@@ -948,7 +961,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1119,7 +1132,7 @@ export default function Editor() {
                 onSetRoot={setRootFile}
               />
             )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} />}
+            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} />}
             {tab === 'review' && (
               <ReviewPanel
                 comments={comments}
@@ -1440,6 +1453,7 @@ export default function Editor() {
           onSetRoot={setRootFile}
           onSetEngine={setEngine}
           onSetStopOnFirstError={setStopOnFirstError}
+          onSetManualCommits={setManualCommits}
           onToggleAutoTypeset={toggleAuto}
           onConnectClaude={() => setConnectOpen(true)}
         />

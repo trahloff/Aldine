@@ -23,6 +23,8 @@ export interface ProjectSummary {
   remote?: RemoteLink | null;
   /** Server-side push after every autosave commit on main (owner-only toggle). */
   autopush?: boolean;
+  /** Edits wait in the working tree for a commit with the person's own message. */
+  manualCommits?: boolean;
   /** Set when GitLab provisioning was configured but failed at create time:
    *  the project exists locally only until a retry succeeds. */
   remotePending?: { provider: 'gitlab'; namespace: string } | null;
@@ -276,7 +278,7 @@ export const api = {
   },
   compilerInfo: () => req<CompilerInfo>('/api/compiler'),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
-  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>>) =>
+  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteProject: (id: string, permanent = false) => req<{ ok: boolean }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
@@ -326,6 +328,7 @@ export const api = {
   commit: (id: string, branch: string, message: string, author?: string) =>
     req<{ committed: boolean; hash?: string }>(`/api/projects/${id}/commit`, { method: 'POST', body: JSON.stringify({ branch, message, author }) }),
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
+  changes: (id: string, branch: string) => req<{ paths: string[] }>(`/api/projects/${id}/changes?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
     req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),

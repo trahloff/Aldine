@@ -70,6 +70,8 @@ export interface ProjectMeta {
   remote?: RemoteLink;
   /** Server-side push after every autosave on main (default on for provisioned projects). */
   autopush?: boolean;
+  /** People commit by hand, with their own message: the edit debounce leaves their changes in the working tree (agent work still commits under its own name). */
+  manualCommits?: boolean;
   /** Provisioning into a GitLab group was requested but has not happened yet (host down, or the project was deleted and may be restored). */
   remotePending?: { provider: 'gitlab'; namespace: string };
   /**

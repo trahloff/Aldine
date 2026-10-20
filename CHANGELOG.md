@@ -6,6 +6,14 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Manual commits: Project settings → History → "Commit changes: When I
+  commit" (also in the palette). Edits still save to disk as you type, but
+  no longer become "aldine: autosave" commits; History lists the files
+  waiting and commits them with your message. Claude's edits still commit
+  under its own name, the ZIP download includes the uncommitted edits
+  without committing them, and with autopush each of your commits is pushed.
+
 ## [0.12.3] — 2026-10-19
 
 ### Changed

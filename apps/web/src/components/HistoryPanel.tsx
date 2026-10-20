@@ -6,9 +6,12 @@ import DiffView from './DiffView';
 
 /** `version` bumps whenever the branch changed elsewhere (the files signal,
  *  a revert, an agent session ending); `live` polls while an agent is present,
- *  because its commits land on the autosave debounce, after the signal. */
-export default function HistoryPanel({ projectId, branch, version = 0, live = false }: { projectId: string; branch: string; version?: number; live?: boolean }) {
+ *  because its commits land on the autosave debounce, after the signal.
+ *  `manual`: the project commits by hand, so the panel lists what is waiting
+ *  and the commit asks for a message. */
+export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean }) {
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [pending, setPending] = useState<string[] | null>(null);
   const [msg, setMsg] = useState('');
   const [diff, setDiff] = useState<{ entry: LogEntry; patch: string } | null>(null);
   const toast = useToast();
@@ -22,8 +25,18 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
     }
   };
 
-  const load = () => api.log(projectId, branch).then(setLog).catch(() => setLog([]));
-  useEffect(() => { load(); }, [projectId, branch, version]);
+  const loadPending = () => {
+    if (!manual) { setPending(null); return; }
+    api.changes(projectId, branch).then((r) => setPending(r.paths)).catch(() => setPending(null));
+  };
+  const load = () => { api.log(projectId, branch).then(setLog).catch(() => setLog([])); loadPending(); };
+  useEffect(() => { load(); }, [projectId, branch, version, manual]);
+  // Typing changes the working tree without any signal reaching this panel.
+  useEffect(() => {
+    if (!manual) return;
+    const t = setInterval(loadPending, 4000);
+    return () => clearInterval(t);
+  }, [manual, projectId, branch]);
   useEffect(() => {
     if (!live) return;
     const t = setInterval(load, 5000);
@@ -31,10 +44,12 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
   }, [live, projectId, branch]);
 
   const commit = async () => {
+    if (manual && !msg.trim()) { toast('Write a commit message first', 'info'); return; }
     const message = msg.trim() || 'Checkpoint';
     try {
       const res = await api.commit(projectId, branch, message, localUser().name);
-      toast(res.committed ? 'Saved checkpoint' : 'No changes since last checkpoint', res.committed ? 'ok' : 'info');
+      const noun = manual ? 'commit' : 'checkpoint';
+      toast(res.committed ? `Saved ${noun}` : `No changes since the last ${noun}`, res.committed ? 'ok' : 'info');
       setMsg('');
       load();
     } catch (err: any) {
@@ -48,14 +63,19 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
         <input
           className="input"
           style={{ flex: 1, minWidth: 0 }}
-          placeholder="Checkpoint message"
+          placeholder={manual ? 'Commit message' : 'Checkpoint message'}
           value={msg}
           data-testid="commit-message"
           onChange={(e) => setMsg(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && commit()}
         />
-        <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>Save</button>
+        <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>{manual ? 'Commit' : 'Save'}</button>
       </div>
+      {manual && pending && (
+        <div className="history__pending" data-testid="uncommitted-changes" title={pending.join('\n')}>
+          {pending.length === 0 ? 'No uncommitted changes' : `${pending.length} ${pending.length === 1 ? 'file' : 'files'} not committed yet: ${pending.slice(0, 3).join(', ')}${pending.length > 3 ? ', …' : ''}`}
+        </div>
+      )}
       {log.map((c) => (
         <button key={c.hash} className={`history__item${c.author === 'Claude' ? ' history__item--agent' : ''}`} title={`${c.message}\n${c.hash.slice(0, 10)} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
           <div className="history__msg">{c.message}</div>

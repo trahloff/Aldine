@@ -743,11 +743,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
-  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError'>> }>(
+  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>> }>(
     '/api/projects/:id', async (req, reply) => {
       const meta = await requireMember(req, reply, 'rename or reconfigure this project');
       if (!meta) return;
-      const { name, rootFile, engine, stopOnFirstError } = req.body || {};
+      const { name, rootFile, engine, stopOnFirstError, manualCommits } = req.body || {};
       if (name !== undefined) {
         const trimmed = String(name).trim();
         if (!trimmed) return reply.code(400).send({ error: 'Project name cannot be empty' });
@@ -768,6 +768,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (stopOnFirstError !== undefined) {
         if (typeof stopOnFirstError !== 'boolean') return reply.code(400).send({ error: 'stopOnFirstError must be true or false' });
         meta.stopOnFirstError = stopOnFirstError;
+      }
+      if (manualCommits !== undefined) {
+        if (typeof manualCommits !== 'boolean') return reply.code(400).send({ error: 'manualCommits must be true or false' });
+        meta.manualCommits = manualCommits;
       }
       await store.writeMeta(meta);
       return publicMeta(meta, reqUser(req));
@@ -851,9 +855,13 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { meta = await store.readMeta(req.params.id); await gitops.ensureWorktree(req.params.id, branch); }
     catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
     flushBranchDocs(req.params.id, branch);
-    await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqUser(req)?.name).catch(() => {});
+    // A download is not a commit: with manual commits the ZIP is the working
+    // tree, and the uncommitted edits stay uncommitted.
+    let tree = branch;
+    if (meta.manualCommits) tree = await gitops.workingTreeId(req.params.id, branch);
+    else await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqUser(req)?.name).catch(() => {});
     const folder = archiveFolderName(meta.name);
-    const zip = await gitops.archiveZip(req.params.id, branch);
+    const zip = await gitops.archiveZip(req.params.id, branch, tree);
     return reply
       .header('content-type', 'application/zip')
       .header('content-disposition', `attachment; filename="${folder}.zip"; filename*=UTF-8''${encodeURIComponent(`${meta.name.trim() || 'project'}.zip`)}`)
@@ -1179,6 +1187,16 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/log', async (req) => {
     return gitops.log(req.params.id, req.query.branch || 'main');
+  });
+
+  // What the next commit would take. Flushes open docs first, or a change
+  // typed in the last second would be missing from the list.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/changes', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch)) return reply.code(400).send({ error: 'invalid branch name' });
+    flushBranchDocs(req.params.id, branch);
+    try { return { paths: await gitops.uncommittedPaths(req.params.id, branch) }; }
+    catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
   });
 
   app.get<{ Params: { id: string; hash: string } }>('/api/projects/:id/commit/:hash/diff', async (req, reply) => {
