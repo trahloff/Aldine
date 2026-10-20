@@ -6,7 +6,7 @@ import { scheduleAutopush } from './autopush.js';
 import { checkProvisioning, deprovisionProject } from './provision.js';
 import { TRASH_DAYS } from './trash.js';
 import { initProjectEvents } from './events.js';
-import { autoCommit } from './gitops.js';
+import { autosave } from './gitops.js';
 import * as store from './store.js';
 import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
@@ -77,11 +77,11 @@ async function shutdown(signal: string) {
   try {
     // commit only the branches that had open docs or pending agent work
     // (typically a handful), not every project — avoids a SIGTERM fan-out of
-    // hundreds of git processes. autoCommit, not commitAll: pending agent work
+    // hundreds of git processes. autosave, not commitAll: pending agent work
     // must land under its author before the anonymous sweep, exactly as the
     // debounce would have done.
     const dirty = shutdownFlushSet();
-    await Promise.allSettled(dirty.map((d) => autoCommit(d.projectId, d.branch, 'aldine: autosave on shutdown')));
+    await Promise.allSettled(dirty.map((d) => autosave(d.projectId, d.branch, 'aldine: autosave on shutdown')));
     console.log(`[aldine] flushed ${dirty.length} project/branch(es); exiting`);
   } catch (err) {
     console.error('[aldine] shutdown flush error', err);

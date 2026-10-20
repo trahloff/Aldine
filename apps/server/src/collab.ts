@@ -6,7 +6,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { autoCommit, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
+import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
 import { safeJoin, debouncePerKey } from './util.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
@@ -88,7 +88,7 @@ const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
   // A project or branch deleted inside the debounce window has nothing left
   // to commit; that is the ordinary end of a test or a trash action, not an error.
   if (!fs.existsSync(branchDir(projectId, branch))) return;
-  autoCommit(projectId, branch)
+  autosave(projectId, branch)
     .then((r) => { if (r && r.committed) for (const cb of autoCommitListeners) cb(projectId, branch); })
     .catch((err) => console.error('[collab] autocommit failed', err.message));
 });

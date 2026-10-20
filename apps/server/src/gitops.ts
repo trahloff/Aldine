@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { projectsDir } from './config.js';
-import { repoDir, branchDir, git } from './store.js';
+import { repoDir, branchDir, git, readMeta } from './store.js';
 import { spawn } from 'node:child_process';
 import { BRANCH_RE } from './util.js';
 
@@ -380,21 +380,44 @@ const RETRY_INTENT = 'aldine: agent edit';
  *  are put back (the failed one under RETRY_INTENT) and the sweep is skipped
  *  (sweeping would sign the agent's delta anonymously, or under the person);
  *  the next edit re-arms the debounce. */
-export async function autoCommitHeld(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string): Promise<{ committed: boolean; hash?: string }> {
+export async function autoCommitHeld(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string, sweep = true): Promise<{ committed: boolean; hash?: string }> {
   const attributed = takeAttributedPaths(id, branch);
+  let last: { committed: boolean; hash?: string } = { committed: false };
   if (attributed) {
     // One commit per intent, so History titles name what each commit holds.
     const groups = byIntent(attributed.paths);
     for (let i = 0; i < groups.length; i++) {
-      try { await commitPathsHeld(id, branch, groups[i].paths, groups[i].message, attributed.author); }
-      catch (err) {
+      try {
+        const r = await commitPathsHeld(id, branch, groups[i].paths, groups[i].message, attributed.author);
+        if (r.committed) last = { committed: true, hash: r.hash };
+      } catch (err) {
         registerAttributedPaths(id, branch, RETRY_INTENT, attributed.author, groups[i].paths);
         for (const g of groups.slice(i + 1)) registerAttributedPaths(id, branch, g.message, attributed.author, g.paths);
         throw err;
       }
     }
   }
+  if (!sweep) return last;
   return commitAllHeld(id, branch, sweepMessage, sweepAuthor);
+}
+
+/** The commit nobody asked for: the edit debounce and the shutdown flush. On
+ *  a project whose people commit by hand (`manualCommits`) only the agent's
+ *  attributed work lands; everything else stays in the working tree for the
+ *  person's own commit and message. Unreadable meta falls back to the sweep,
+ *  so a broken meta file can never leave edits out of history. */
+export async function autosave(id: string, branch: string, message = 'aldine: autosave'): Promise<{ committed: boolean; hash?: string }> {
+  const manual = await readMeta(id).then((m) => m.manualCommits === true, () => false);
+  return withRepoLock(id, () => autoCommitHeld(id, branch, message, undefined, !manual));
+}
+
+/** Paths that differ from the branch's last commit (untracked ones included),
+ *  build output excluded. Read-only: no lock, no index write. */
+export async function uncommittedPaths(id: string, branch: string): Promise<string[]> {
+  const dir = await ensureWorktree(id, branch);
+  ensureOutputExcluded(id);
+  const status = await git(dir).status(['--untracked-files=all']);
+  return status.files.map((f) => f.path).filter((p) => !/^\.(aldine|papyr)-out\//.test(p));
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
@@ -759,10 +782,10 @@ export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl:
  * Flat, without a top folder: that is the shape Overleaf downloads have and
  * the shape the ZIP import expects back.
  */
-export function archiveZip(id: string, branch: string): Promise<Buffer> {
+export function archiveZip(id: string, branch: string, treeish: string = branch): Promise<Buffer> {
   if (!BRANCH_RE.test(branch)) return Promise.reject(new Error('bad branch name'));
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['archive', '--format=zip', branch], { cwd: repoDir(id) });
+    const child = spawn('git', ['archive', '--format=zip', treeish], { cwd: repoDir(id) });
     const chunks: Buffer[] = [];
     let err = '';
     child.stdout.on('data', (c: Buffer) => chunks.push(c));
@@ -770,4 +793,27 @@ export function archiveZip(id: string, branch: string): Promise<Buffer> {
     child.on('error', reject);
     child.on('close', (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(err.trim() || `git archive exited ${code}`))));
   });
+}
+
+/**
+ * The branch's working tree as a tree object, for archiving a project whose
+ * edits wait for a hand-made commit: written through a throwaway index, so
+ * the branch's own index, refs and history stay untouched. Same file set as
+ * a commit would take (.gitignore and the output exclude apply).
+ */
+export async function workingTreeId(id: string, branch: string): Promise<string> {
+  const dir = await ensureWorktree(id, branch);
+  ensureOutputExcluded(id);
+  const index = path.join(os.tmpdir(), `aldine-index-${crypto.randomUUID()}`);
+  const run = (args: string[]) => new Promise<string>((resolve, reject) => {
+    execFile('git', args, { cwd: dir, env: { ...process.env, GIT_INDEX_FILE: index } }, (err, out, errOut) => (err ? reject(new Error(String(errOut).trim() || err.message)) : resolve(String(out).trim())));
+  });
+  try {
+    await run(['read-tree', 'HEAD']);
+    await run(['add', '-A']);
+    await run(['rm', '-r', '--cached', '--ignore-unmatch', '--quiet', '--', '.aldine-out', '.papyr-out']);
+    return await run(['write-tree']);
+  } finally {
+    fs.rmSync(index, { force: true });
+  }
 }
