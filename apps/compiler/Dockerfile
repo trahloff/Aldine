@@ -62,7 +62,7 @@ RUN biber --version
 RUN tlmgr conf texmf shell_escape p
 
 WORKDIR /srv
-COPY server.js catalog.js ./
+COPY server.js catalog.js preamble.js ./
 # server.js reports the scheme at GET /health; the ARG must be re-declared
 # after FROM to be visible in this stage.
 ARG TEXLIVE_SCHEME

@@ -46,6 +46,10 @@ export interface CompileResult {
   /** The draft left references, citations or the bibliography behind the
    *  source; a full typeset settles them. */
   needsFullRun?: boolean;
+  /** Whether the run loaded the precompiled preamble (compiler preamble.js):
+   *  hit, miss (being built), fallback (the format failed, the plain run
+   *  stood in), bad, or off. Absent from compilers that predate it. */
+  preambleCache?: string;
 }
 
 /** The engine's "Output written on x.pdf (N pages, …)" line — the last one
@@ -292,6 +296,7 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
     durationMs: raw.durationMs ?? 0,
     error: raw.error,
     ...(raw.draft ? { draft: true, needsFullRun: !!raw.needsFullRun } : {}),
+    ...(typeof raw.preambleCache === 'string' ? { preambleCache: raw.preambleCache } : {}),
   };
   const key = `${projectId}::${branch}`;
   const compileId = nextCompileId();

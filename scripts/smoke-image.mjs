@@ -9,7 +9,8 @@
 // set: the image reports "unknown" rather than failing when the build arg went
 // missing); the SPA and the template gallery are served; a biblatex document
 // typesets to a multi-page PDF with its citation resolved, under the compose
-// sandbox (no egress, caps dropped).
+// sandbox (no egress, caps dropped), and a later typeset of it loads the
+// precompiled preamble.
 const BASE = (process.env.ALDINE_URL || 'http://localhost:8080').replace(/\/$/, '');
 const EXPECT_SCHEME = process.env.EXPECT_SCHEME || '';
 const WAIT_MS = Number(process.env.SMOKE_WAIT_MS || 180_000);
@@ -139,5 +140,23 @@ const written = /Output written on [^\n]*\((\d+) pages?/.exec(log);
 const pages = written ? Number(written[1]) : 0;
 if (pages < 2) fail(`expected a multi-page PDF, log says ${written ? written[0] : 'nothing about pages'}`);
 ok(`PDF ${pdf.length} bytes, ${pages} pages`);
+
+// Precompiled preamble: the first typeset builds the format in the
+// background; a later one must load it, or the image lacks mylatexformat or
+// its pdfTeX cannot dump this preamble.
+let cached;
+for (let i = 0; i < 20; i++) {
+  await new Promise((r) => setTimeout(r, 1500));
+  await json(`/api/projects/${id}/file`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ branch: 'main', path: 'main.tex', content: mainTex.replace('Second page', `Second page (${i})`) }),
+  });
+  cached = (await json(`/api/projects/${id}/compile`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: 'main' }) })).body;
+  if (cached?.preambleCache === 'hit') break;
+}
+if (cached?.preambleCache !== 'hit' || !cached.ok) fail(`the precompiled preamble was never used: preambleCache=${cached?.preambleCache}, ok=${cached?.ok}`);
+if (/undefined (references|citations)|Citation .* undefined/i.test(cached.log || '')) fail('the citation did not resolve on the precompiled preamble');
+ok(`precompiled preamble used, typeset in ${cached.durationMs} ms`);
 
 console.log('smoke: all checks passed');
