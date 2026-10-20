@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-20
+
 ### Added
 - Manual commits: Project settings → History → "Commit changes: When I
   commit" (also in the palette). Edits still save to disk as you type, but
