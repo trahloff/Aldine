@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-10-20
+
 ### Changed
 - pdfLaTeX typesets load the preamble from a precompiled format: after the
   first typeset of a document, its packages are dumped once in the
