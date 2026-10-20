@@ -6,6 +6,18 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- pdfLaTeX typesets load the preamble from a precompiled format: after the
+  first typeset of a document, its packages are dumped once in the
+  background (mylatexformat), and every later typeset skips loading them.
+  On a biblatex, TikZ and pgfplots paper a one-pass edit went from about
+  2.7 s to 1.75 s and a full cycle from 7.5 s to 5.1 s. The format is
+  rebuilt when the preamble, a file it reads or TeX Live changes; preambles
+  that cannot be dumped faithfully (\makeindex, glossaries, filecontents,
+  minted and similar) keep the plain run, and a format that breaks a
+  document the plain run typesets is dropped. `ALDINE_PREAMBLE_CACHE=0`
+  on the compiler turns it off.
+
 ## [0.13.0] — 2026-10-20
 
 ### Added

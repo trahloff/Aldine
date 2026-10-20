@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getCatalog } = require('./catalog.js');
+const preamble = require('./preamble.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4020;
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../.data');
@@ -260,7 +261,7 @@ async function compileInner(body) {
   fs.mkdirSync(path.join(absDir, rootDir, OUT_SUBDIR), { recursive: true });
 
   const engineFlag = engine === 'xelatex' ? '-pdfxe' : engine === 'lualatex' ? '-pdflua' : '-pdf';
-  const mkArgs = (force) => [
+  const mkArgs = (force, withFormat = usingFormat) => [
     engineFlag,
     ...(force ? ['-g'] : []), // -g: run even if latexmk thinks it's up-to-date
     // Draft: one engine pass on the previous run's .aux/.bbl, no biber/bibtex.
@@ -286,6 +287,7 @@ async function compileInner(body) {
     '-synctex=1',
     '-cd', // chdir to the root file's directory before compiling
     `-outdir=${OUT_SUBDIR}`,
+    ...(withFormat ? pre.args : []),
     `./${rootFile}`, // never bare: a name starting with "-" must stay a file, not an option
   ];
   // Case-insensitive: the root picker accepts MAIN.TEX, and latexmk writes
@@ -299,7 +301,10 @@ async function compileInner(body) {
 
   // First pass without -g: latexmk skips work that is already up to date, so an
   // unchanged document "recompiles" in ~a second instead of a full rebuild.
-  const runOpts = { cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000' } };
+  const pre = await preamble.prepare({ projectRoot: absDir, cwd: path.join(absDir, rootDir), outAbs, base, rootPath: path.join(absDir, rootFile), engine });
+  let usingFormat = pre.use;
+  const optsFor = (withFormat) => ({ cwd: absDir, detached: true, env: { ...process.env, HOME: process.env.HOME || '/tmp', max_print_line: '10000', ...(withFormat ? pre.env : {}) } });
+  let runOpts = optsFor(usingFormat);
   // Freshness reference on the SAME filesystem clock as the outputs: a file
   // touched now. Comparing output mtimes against Date.now() needs slack for
   // coarse or skewed clocks, and that slack lets a run started right after
@@ -333,6 +338,23 @@ async function compileInner(body) {
       try { fs.rmSync(path.join(outAbs, `${base}.${ext}`), { force: true }); } catch { /* best effort */ }
     }
     ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS));
+  }
+  // A run on a format nobody has vouched for yet that fails gets the plain
+  // run: if that one succeeds, the format is what broke the document.
+  const capped = (o) => draft && /Maximum runs of \S+ reached/i.test(o);
+  let preambleCache = pre.status;
+  if (usingFormat) {
+    const formatOk = code === 0 || capped(out);
+    if (!formatOk && !timedOut && !pre.manifest.verified) {
+      usingFormat = false;
+      runOpts = optsFor(false);
+      ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS));
+      const plainOk = code === 0 || capped(out);
+      preamble.settle(pre, { formatOk, plainOk });
+      preambleCache = 'fallback';
+    } else {
+      preamble.settle(pre, { formatOk, plainOk: false });
+    }
   }
   const durationMs = Date.now() - t0;
   let log = readLog(out);
@@ -394,6 +416,7 @@ async function compileInner(body) {
   // Never report a failure the user cannot read: a run that fails with nothing
   // in either log falls back to latexmk's own summary.
   if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
+  if (!usingFormat && pre.status === 'miss' && !timedOut && documentBodyReached(log)) preamble.scheduleBuild(pre);
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
@@ -408,6 +431,7 @@ async function compileInner(body) {
     latexmkOutput: out.length > 20_000 ? out.slice(-20_000) : out,
     errors,
     durationMs,
+    preambleCache,
     ...(draft ? { draft: true, needsFullRun } : {}),
   };
 }
@@ -482,7 +506,7 @@ const server = http.createServer(async (req, res) => {
 
 // The log parsers are pure and worth testing without a TeX Live image; the
 // server only starts when this file is run directly (the image's CMD).
-module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached };
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, preambleIdle: preamble.idle };
 
 if (require.main === module) {
   probeTexLive().finally(() => {

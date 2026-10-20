@@ -363,6 +363,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_COMPILE_CONCURRENCY` | Max concurrent compiles the app forwards (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
+| `ALDINE_PREAMBLE_CACHE` | Compiler container. `0` turns off the precompiled preamble (pdfLaTeX projects load their packages from a format built in the background, rebuilt when the preamble or a file it reads changes). On by default |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
 | `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~4.3 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
 | `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (medium TeX Live plus the common collections) or `-full` (all of TeX Live, from 0.4.0). Single extra packages: a derived image with `RUN tlmgr install <pkg>`, see the root README, "Need a package it does not have?" |
