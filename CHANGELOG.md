@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-10-21
+
 ### Fixed
 - Import from GitHub listed one page of 100 repositories, organisations'
   included, and a repository outside it could not be found even by its full
