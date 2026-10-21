@@ -161,7 +161,7 @@ eq([gitlab.gitlab.tokenScopeHint, gitlab.gitlab.pathHint, gitlab.gitlab.baseUrlE
   eq(gitea.gitea.tokenUrl('https://codeberg.org/o/r.git', 'tok'), 'https://aldine:tok@codeberg.org/o/r.git', 'and a neutral user when no login is known');
   eq(gitea.gitea.tokenUrl('file:///bare.git', 'tok', 'alice'), 'file:///bare.git', 'Gitea tokenUrl leaves file:// alone');
   check(gitea.gitea.baseUrlRequired === true && gitea.gitea.oauthEnabled() === false, 'Gitea needs an instance URL and offers no OAuth');
-  eq([gitea.gitea.tokenScopeHint, gitea.gitea.pathHint, gitea.gitea.baseUrlExample], ['read:user and write:repository', 'Expected "owner/repo"', 'https://codeberg.org'], 'gitea hints');
+  eq([gitea.gitea.tokenScopeHint, gitea.gitea.pathHint, gitea.gitea.baseUrlExample], ['read:user and write:repository; publishing a project as a new repository also needs write:user', 'Expected "owner/repo"', 'https://codeberg.org'], 'gitea hints');
   delete process.env.GITEA_API_BASE;
   eq(gitea.normalizeBaseUrl('https://codeberg.org/'), 'https://codeberg.org', 'Gitea normaliser strips the trailing slash');
   eq(gitea.normalizeBaseUrl('https://forge.example.org/git/'), 'https://forge.example.org/git', 'keeps a sub-path install');

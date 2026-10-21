@@ -118,6 +118,11 @@ test.describe('Gitea / Forgejo sync', () => {
     await expect(page.getByTestId('gitea-import')).toContainText('Connected as e2e-user');
     const repo = page.getByTestId('gitea-repo-e2e-user/paper');
     await expect(repo).toBeVisible();
+    // a repository the list does not return is found by its path or URL
+    await expect(page.getByTestId('gitea-repo-other-team/shared-paper')).toHaveCount(0);
+    await page.getByTestId('gitea-filter').fill(`http://localhost:${GITEA}/other-team/shared-paper.git`);
+    await expect(page.getByTestId('gitea-repo-other-team/shared-paper')).toBeVisible();
+    await page.getByTestId('gitea-filter').fill('');
     await repo.click();
 
     await expect(page.getByTestId('editor-shell')).toBeVisible({ timeout: 30_000 });

@@ -84,10 +84,25 @@ export const github: RemoteProvider = {
     return { login: u.login, name: u.name || u.login };
   },
 
-  /** Repos the user can push to, most-recently-updated first. */
+  /** The user's own repositories and the ones they collaborate on, most
+   *  recently updated first, one page. Organisation repositories come from
+   *  searchRepos: members of large organisations would otherwise see a page
+   *  of other people's repositories and miss their own. */
   async listRepos(conn) {
-    const list = (await api(conn, '/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member')) as any[];
+    const list = (await api(conn, '/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator')) as any[];
     return (list || []).map(mapRepo);
+  },
+
+  /** Name search across the user's account and organisations. The search
+   *  API needs the owners named, or it searches every public repository. */
+  async searchRepos(conn, query) {
+    const orgs = ((await api(conn, '/user/orgs?per_page=100').catch(() => [])) as Array<{ login: string }>).map((o) => o.login);
+    const owners = [`user:${conn.login}`];
+    // The search query is capped at 256 characters; owners beyond that are left out.
+    for (const o of orgs) if ([query, 'in:name', ...owners, `org:${o}`].join(' ').length <= 256) owners.push(`org:${o}`);
+    const q = encodeURIComponent([query, 'in:name', ...owners].join(' '));
+    const res = (await api(conn, `/search/repositories?q=${q}&sort=updated&per_page=50`)) as { items?: any[] };
+    return (res.items || []).map(mapRepo);
   },
 
   async getRepo(conn, fullName) {

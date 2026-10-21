@@ -145,6 +145,11 @@ export const gitlab: RemoteProvider = {
     return (list || []).map(mapProject);
   },
 
+  async searchRepos(conn, query) {
+    const list = (await api(conn, `/projects?membership=true&min_access_level=30&search=${encodeURIComponent(query)}&search_namespaces=true&order_by=last_activity_at&sort=desc&per_page=50`)) as any[];
+    return (list || []).map(mapProject);
+  },
+
   async getRepo(conn, fullName) {
     return mapProject(await api(conn, `/projects/${encodePath(fullName)}`));
   },

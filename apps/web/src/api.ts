@@ -348,8 +348,9 @@ export const api = {
   remoteConnect: (p: RemoteProviderId, token: string, baseUrl?: string) =>
     req<{ connected: boolean; login: string; baseUrl?: string }>(`/api/remotes/${p}/connect`, { method: 'POST', body: JSON.stringify({ token, baseUrl }) }),
   remoteDisconnect: (p: RemoteProviderId) => req<{ ok: boolean }>(`/api/remotes/${p}/disconnect`, { method: 'POST' }),
-  remoteRepos: async (p: RemoteProviderId): Promise<RemoteRepo[]> => {
-    const res = await fetch(withBase(`/api/remotes/${p}/repos`));
+  /** Without `q` the first page of the user's repositories; with it, the host's own search (an exact owner/repo is looked up directly). */
+  remoteRepos: async (p: RemoteProviderId, q?: string): Promise<RemoteRepo[]> => {
+    const res = await fetch(withBase(`/api/remotes/${p}/repos${q ? `?q=${encodeURIComponent(q)}` : ''}`));
     if (res.ok) return res.json() as Promise<RemoteRepo[]>;
     const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
     if (res.status === 401 && body.reason === 'token-invalid') throw new RemoteTokenError(body.error || 'The stored token was rejected', p);

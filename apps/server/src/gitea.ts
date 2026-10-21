@@ -20,9 +20,10 @@ import { jsonResponse, normalizeInstanceUrl, RemoteApiError, type RemoteConnecti
  *  - POST /repos/{owner}/{repo}/pulls with CreatePullRequestOption {title, head, base, body}
  *    → PullRequest {html_url, number}
  * Token scopes: read:user (connect), write:repository (everything else),
- * write:organization only when publishing into an organisation (POST
- * /orgs/{org}/repos sits in the organization scope category, and a POST
- * there needs its write level).
+ * write:user when publishing under the account and write:organization when
+ * publishing into an organisation: POST /user/repos and POST
+ * /orgs/{org}/repos sit in the user and organization scope categories, and
+ * a POST there needs their write level.
  *
  * Git over https takes the token as the basic-auth password: a non-empty
  * password is looked up as a token and the user name is not checked
@@ -114,7 +115,7 @@ export const gitea: RemoteProvider = {
   selfHosted: true,
   baseUrlRequired: true,
   baseUrlExample: 'https://codeberg.org',
-  tokenScopeHint: 'read:user and write:repository',
+  tokenScopeHint: 'read:user and write:repository; publishing a project as a new repository also needs write:user',
   pathHint: 'Expected "owner/repo"',
   normalizeBaseUrl,
   instanceOrigin(conn) {
