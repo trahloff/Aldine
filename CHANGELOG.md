@@ -6,6 +6,16 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Import from GitHub listed one page of 100 repositories, organisations'
+  included, and a repository outside it could not be found even by its full
+  name. The list now holds your own and collaborator repositories, and
+  typing in the filter asks the host: GitHub's search across your account
+  and organisations, GitLab's project search. On every host an
+  `owner/repo` path or a pasted repository URL is looked up directly.
+- The Gitea / Forgejo connect form named `read:user` and `write:repository`
+  only; publishing a project as a new repository also needs `write:user`.
+
 ## [0.13.1] — 2026-10-20
 
 ### Changed

@@ -11,9 +11,15 @@ fs.writeFileSync(path.join(seed,'README.md'),'# hello\n');
 execSync(`cd "${seed}" && git add -A && git -c user.email=a@b.c -c user.name=t commit -q -m init && git push -q origin main`);
 
 const repoJson = { full_name:'octocat/hello', name:'hello', default_branch:'main', clone_url:`file://${bare}`, owner:{login:'octocat'}, private:false, updated_at:'2026-01-01' };
-const mock = http.createServer((req,res)=>{ res.setHeader('content-type','application/json');
+// an organisation repository the first page never returns
+const farJson = { ...repoJson, full_name:'acme/far-away', name:'far-away', owner:{login:'acme'} };
+const seen = [];
+const mock = http.createServer((req,res)=>{ res.setHeader('content-type','application/json'); seen.push(req.url);
   if (req.url==='/user') return res.end(JSON.stringify({login:'tester',name:'Tester'}));
   if (req.url.startsWith('/user/repos')) return res.end(JSON.stringify([repoJson]));
+  if (req.url.startsWith('/user/orgs')) return res.end(JSON.stringify([{login:'acme'}]));
+  if (req.url.startsWith('/search/repositories')) return res.end(JSON.stringify({ items: /far/.test(decodeURIComponent(req.url)) ? [farJson] : [] }));
+  if (req.url==='/repos/acme/far-away') return res.end(JSON.stringify(farJson));
   if (req.url==='/repos/octocat/hello') return res.end(JSON.stringify(repoJson));
   if (req.url.startsWith('/repos/octocat/hello/branches')) {
     const names = execSync(`git --git-dir="${bare}" for-each-ref --format='%(refname:short)' refs/heads`).toString().trim().split('\n').filter(Boolean);
@@ -36,6 +42,15 @@ r = await app.inject({url:'/api/github/status'});
 check(J(r).connected===true, 'status connected');
 r = await app.inject({url:'/api/github/repos'});
 check(Array.isArray(J(r)) && J(r)[0].fullName==='octocat/hello', 'repos list');
+check(seen.some((u)=>u.startsWith('/user/repos?') && u.includes('affiliation=owner,collaborator') && !u.includes('organization_member')), 'the first page is the user\'s own and collaborator repositories: '+seen.join(' '));
+r = await app.inject({url:'/api/github/repos?q=far'});
+check(J(r).map((x)=>x.fullName).join()==='acme/far-away', 'a name search finds an organisation repository: '+r.body);
+const search = decodeURIComponent(seen.find((u)=>u.startsWith('/search/repositories')) || '');
+check(/q=far in:name user:tester org:acme/.test(search), 'the search names the user and their organisations: '+search);
+r = await app.inject({url:'/api/github/repos?q='+encodeURIComponent('https://github.com/acme/far-away.git')});
+check(J(r)[0]?.fullName==='acme/far-away', 'a pasted clone URL is looked up by its path: '+r.body);
+r = await app.inject({url:'/api/github/repos?q=nothing-like-it'});
+check(Array.isArray(J(r)) && J(r).length===0, 'no match is an empty list, not an error: '+r.body);
 r = await app.inject({method:'POST',url:'/api/github/import',payload:{fullName:'octocat/hello'}});
 check(r.statusCode===200, 'import status '+r.body);
 const pid = J(r).id; check(pid, 'got project id');

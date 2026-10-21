@@ -27,7 +27,8 @@ const repos = new Map();
 let nextId = 100;
 const pulls = [];
 
-function createRepo(fullName, priv = true, seed = null) {
+/** `listed: false` is a repository the token can open but /user/repos does not return (another team's). */
+function createRepo(fullName, priv = true, seed = null, listed = true) {
   const [owner, name] = fullName.split('/');
   const bare = path.join(root, `${fullName}.git`);
   fs.mkdirSync(path.dirname(bare), { recursive: true });
@@ -44,7 +45,7 @@ function createRepo(fullName, priv = true, seed = null) {
     git('push -q origin main', work);
     fs.rmSync(work, { recursive: true, force: true });
   }
-  const r = { id: nextId++, fullName, owner, name, bare, private: priv, createdAt: new Date().toISOString() };
+  const r = { id: nextId++, fullName, owner, name, bare, private: priv, listed, createdAt: new Date().toISOString() };
   repos.set(fullName, r);
   return r;
 }
@@ -60,6 +61,7 @@ createRepo('e2e-user/paper', true, {
   'main.tex': '\\documentclass{article}\n\\begin{document}\nHello from Forgejo\n\\end{document}\n',
   'README.md': '# paper\n',
 });
+createRepo('other-team/shared-paper', true, { 'main.tex': '\\documentclass{article}\n\\begin{document}\nShared\n\\end{document}\n' }, false);
 
 const paginate = (list, url) => {
   const limit = Math.min(Number(url.searchParams.get('limit')) || 30, 50);
@@ -95,7 +97,7 @@ const server = http.createServer((req, res) => {
     const segs = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
 
     if (req.method === 'GET' && url.pathname === '/user') return send(200, userJson(LOGIN));
-    if (segs[0] === 'user' && segs[1] === 'repos' && req.method === 'GET') return send(200, paginate([...repos.values()].map(repoJson), url));
+    if (segs[0] === 'user' && segs[1] === 'repos' && req.method === 'GET') return send(200, paginate([...repos.values()].filter((r) => r.listed).map(repoJson), url));
     if (segs[0] === 'user' && segs[1] === 'repos' && req.method === 'POST') return create(LOGIN, body);
     if (segs[0] === 'orgs' && segs[2] === 'repos' && req.method === 'POST') {
       if (!orgs.has(segs[1])) return send(404, { message: 'organization does not exist' });

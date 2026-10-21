@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, RemoteRepo, RemoteStatus, RemoteTokenError } from '../api';
 import { remoteDescriptor, RemoteProviderId } from '../remotes';
 import { useToast } from './Toast';
@@ -16,6 +16,10 @@ export default function RemoteImport({ provider, onClose, onImported }: {
   /** Set when the host rejected the stored token: the connect form comes back with this above it. */
   const [reconnect, setReconnect] = useState('');
   const [filter, setFilter] = useState('');
+  /** What the host's search returned for the current filter; null while there is none. */
+  const [found, setFound] = useState<RemoteRepo[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const searchSeq = useRef(0);
   const [busy, setBusy] = useState('');
   const toast = useToast();
 
@@ -36,6 +40,22 @@ export default function RemoteImport({ provider, onClose, onImported }: {
     });
   }, [status?.connected]);
 
+  // The loaded list is one page; anything typed is also asked of the host,
+  // after a pause in typing, so a repository outside that page is found too.
+  useEffect(() => {
+    const q = filter.trim();
+    const seq = ++searchSeq.current;
+    if (!status?.connected || q.length < 2) { setFound(null); setSearching(false); return; }
+    const t = setTimeout(() => {
+      setSearching(true);
+      api.remoteRepos(provider, q)
+        .then((r) => { if (seq === searchSeq.current) setFound(r); })
+        .catch(() => { if (seq === searchSeq.current) setFound([]); })
+        .finally(() => { if (seq === searchSeq.current) setSearching(false); });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [filter, status?.connected, provider]);
+
   const importRepo = async (r: RemoteRepo) => {
     setBusy(r.fullName);
     try {
@@ -47,7 +67,8 @@ export default function RemoteImport({ provider, onClose, onImported }: {
 
   const disconnect = async () => { await api.remoteDisconnect(provider); setRepos(null); loadStatus(); };
 
-  const shown = (repos || []).filter((r) => r.fullName.toLowerCase().includes(filter.toLowerCase()));
+  const local = (repos || []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()));
+  const shown = [...local, ...(found || []).filter((r) => !local.some((l) => l.fullName === r.fullName))];
 
   return (
     <Modal onClose={onClose} label={`Import from ${d.label}`} wide testId={`${provider}-import`}>
@@ -74,10 +95,12 @@ export default function RemoteImport({ provider, onClose, onImported }: {
               </span>
               <button className="btn btn--ghost btn--small" onClick={disconnect} data-testid={`${provider}-disconnect`}>Disconnect</button>
             </p>
-            <input className="input" style={{ width: '100%', margin: '8px 0' }} placeholder="Filter repositories…" value={filter} data-testid={`${provider}-filter`} onChange={(e) => setFilter(e.target.value)} autoFocus />
+            <input className="input" style={{ width: '100%', margin: '8px 0' }} placeholder="Filter, or type owner/repo or paste its URL…" value={filter} data-testid={`${provider}-filter`} onChange={(e) => setFilter(e.target.value)} autoFocus />
             <div className="gh-repos" data-testid={`${provider}-repos`}>
               {!repos && <p style={{ color: 'var(--text-2)', padding: 8 }}>Loading your repositories…</p>}
-              {repos && shown.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8 }}>No matching repositories.</p>}
+              {repos && shown.length === 0 && (searching
+                ? <p style={{ color: 'var(--text-2)', padding: 8 }} data-testid={`${provider}-searching`}>Searching {d.label}…</p>
+                : <p style={{ color: 'var(--text-2)', padding: 8 }}>No matching repositories.</p>)}
               {shown.map((r) => (
                 <button key={r.fullName} className="gh-repo" onClick={() => importRepo(r)} disabled={!!busy} data-testid={`${provider}-repo-${r.fullName}`}>
                   <div className="gh-repo__main">

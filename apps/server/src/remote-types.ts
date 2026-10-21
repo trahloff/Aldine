@@ -52,6 +52,9 @@ export interface RemoteProvider {
   apiOverridden(): boolean;
   whoami(conn: RemoteConnection): Promise<{ login: string; name?: string }>;
   listRepos(conn: RemoteConnection): Promise<RemoteRepo[]>;
+  /** Repositories matching `query` by name, asked of the host. Absent where
+   *  listRepos already returns every repository (the route filters that). */
+  searchRepos?(conn: RemoteConnection, query: string): Promise<RemoteRepo[]>;
   getRepo(conn: RemoteConnection, fullName: string): Promise<RemoteRepo>;
   listBranches(conn: RemoteConnection, fullName: string): Promise<string[]>;
   /** `visibility` refines `private` for hosts with more than two levels (GitLab `internal`). */

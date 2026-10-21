@@ -138,6 +138,16 @@ async function requireOwner(req: any, reply: any, action: string): Promise<store
   return meta;
 }
 
+
+/** A repository as typed or pasted into the import search: `owner/repo`, a
+ *  name, or the repository's web or clone URL, reduced to its path (a
+ *  GitHub /tree/… or GitLab /-/… suffix dropped). */
+export function repoQuery(raw: unknown): string {
+  let q = String(raw ?? '').trim().slice(0, 200);
+  const url = q.match(/^https?:\/\/[^/]+\/(.+)$/) || q.match(/^(?:ssh:\/\/)?git@[^:/]+[:/](.+)$/);
+  if (url) q = url[1].replace(/\/-\/.*$/, '').replace(/\/(tree|blob|pulls?|issues|merge_requests)(\/.*)?$/, '');
+  return q.replace(/\.git$/, '').replace(/^\/+|\/+$/g, '');
+}
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async () => ({ ok: true, name: 'aldine' }));
 
@@ -1587,12 +1597,30 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
+  // Without `q`, the first page of the user's repositories. With it, the
+  // host is asked: an exact path (or a pasted URL) is looked up directly,
+  // whoever owns it, and the rest is a name search, so a repository outside
+  // the first page can always be found without listing them all.
   providerRoute('get', 'repos', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
     const conn = await remotes.getConnection(remoteUserId(req), p.id);
     if (!conn) return reply.code(400).send({ error: `${p.label} is not connected` });
-    try { return await p.listRepos(conn); }
-    catch (err: any) { return upstreamError(reply, err, p.label); }
+    const q = repoQuery(req.query?.q);
+    try {
+      if (!q) return await p.listRepos(conn);
+      const found = new Map<string, remotes.RemoteRepo>();
+      if (q.includes('/')) {
+        // Not found or no access is an ordinary miss here; the search may still match.
+        const exact = await p.getRepo(conn, q).catch(() => null);
+        if (exact) found.set(exact.fullName, exact);
+      }
+      const needle = q.toLowerCase();
+      const more = p.searchRepos
+        ? await p.searchRepos(conn, q.split('/').pop() || q)
+        : (await p.listRepos(conn)).filter((r) => r.fullName.toLowerCase().includes(needle));
+      for (const r of more) if (!found.has(r.fullName)) found.set(r.fullName, r);
+      return [...found.values()];
+    } catch (err: any) { return upstreamError(reply, err, p.label); }
   });
 
   // Import a repository as a new project (the primary create-project flow).

@@ -61,7 +61,8 @@ const glMock = http.createServer(async (req, res) => {
       res.statusCode = 201; return res.end(JSON.stringify(json));
     }
     check(u.searchParams.get('membership') === 'true', 'listRepos asks for membership only');
-    return res.end(JSON.stringify([...glProjects.values()].map((p) => p.json)));
+    const search = (u.searchParams.get('search') || '').toLowerCase();
+    return res.end(JSON.stringify([...glProjects.entries()].filter(([name]) => !search || name.toLowerCase().includes(search)).map(([, p]) => p.json)));
   }
   if (segs[0] === 'projects' && segs.length >= 2) {
     const p = glProjects.get(segs[1]);
@@ -141,6 +142,12 @@ check(J(r).connected === true && J(r).login === 'tester' && J(r).baseUrl === 'ht
 r = await app.inject({url: '/api/remotes/gitlab/repos'});
 check(r.statusCode === 200 && Array.isArray(J(r)) && J(r)[0].fullName === 'grp/sub/paper', 'repos list: ' + r.body);
 check(J(r)[0].owner === 'grp/sub' && J(r)[0].private === true && J(r)[0].cloneUrl === `file://${gl.bare}`, 'repo mapped from v4 shape: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitlab/repos?q=pap'});
+check(J(r).map((x) => x.fullName).join() === 'grp/sub/paper', 'a name search asks the host: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitlab/repos?q=' + encodeURIComponent('https://gitlab.example.org/gl/grp/sub/paper/-/tree/main')});
+check(J(r).some((x) => x.fullName === 'grp/sub/paper'), 'a pasted project URL finds the project: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitlab/repos?q=zzz'});
+check(Array.isArray(J(r)) && J(r).length === 0, 'no match is an empty list: ' + r.body);
 
 // ---------- import a three-segment path ----------
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload: {fullName: 'nope'}});
