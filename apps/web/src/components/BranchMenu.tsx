@@ -6,7 +6,7 @@ import { useExitGhost } from '../exitGhost';
 import { usePopover } from '../util/usePopover';
 
 export const BranchIcon = () => (
-  <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.25a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Zm0 2.122a3.25 3.25 0 1 0-1.5 0v5.256a3.25 3.25 0 1 0 1.5 0V9.5a2 2 0 0 1 2-2h3a3.5 3.5 0 0 0 3.5-3.5v-.372a3.25 3.25 0 1 0-1.5 0v.372a2 2 0 0 1-2 2h-3c-.729 0-1.412.195-2 .535ZM13.25 5a1.75 1.75 0 1 1 0-3.5 1.75 1.75 0 0 1 0 3.5Zm-8.5 7.75a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Z"/></svg>
+  <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zm-2.25.75a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.492 2.492 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25zM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM3.5 3.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0z"/></svg>
 );
 
 /** The project's own branches (a worktree each, on this server): list,

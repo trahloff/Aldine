@@ -6,6 +6,12 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Commenting on the selection is ⇧⌘M (Ctrl+Shift+M on Windows and Linux)
+  instead of ⌘⌥M, which German keyboards make awkward to press.
+- The branch pill uses the slimmer branch icon the git-host chip had
+  before 0.14.0.
+
 ## [0.14.0] — 2026-10-22
 
 ### Added
