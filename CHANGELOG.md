@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-22
+
 ### Added
 - ⌘⌥M (Ctrl+Alt+M elsewhere) comments on the selected text. The Comment
   button and the palette show the key.
