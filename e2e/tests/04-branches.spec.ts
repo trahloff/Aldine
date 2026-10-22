@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openSidebarTab } from './helpers';
 
 test.describe('git branches', () => {
   test('create branch, edit independently, switch back, merge into main', async ({ page, request }) => {
@@ -47,7 +47,7 @@ test.describe('git branches', () => {
       await page.locator('.cm-content').click();
       await page.keyboard.type('CHECKPOINT-CONTENT ');
       await page.waitForTimeout(2500);
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       await page.getByTestId('commit-message').fill('My checkpoint');
       await page.getByTestId('commit-button').click();
       await expect(page.getByTestId('history-panel')).toContainText('My checkpoint', { timeout: 10_000 });

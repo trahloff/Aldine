@@ -6,6 +6,23 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The sidebar folds away at any width: the button at the end of its tabs
+  leaves a slim rail, whose button brings it back. The browser remembers
+  the choice; the palette has "Hide the sidebar" and "Show the sidebar".
+
+### Changed
+- The sidebar's tabs are Files, Cite and Review. History moved into More,
+  beside the other plugin panels.
+- Cite lists the project's entries at the top, scrolling on their own;
+  paper search and add by identifier stay at the bottom of the panel.
+
+### Fixed
+- In the file tree a file's icon sat left of its folder's; files now keep
+  the chevron's column, so icons line up level by level. The chevrons are
+  drawn instead of a font glyph, here and in the problems panel and the
+  More tab.
+
 ## [0.14.1] — 2026-10-22
 
 ### Added

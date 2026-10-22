@@ -209,6 +209,7 @@ if ((compiled.body.pages ?? 1) > 1) {
 const reloadAt = now();
 await page.goto(`${BASE}/p/${id}`);
 await page.waitForSelector('.cm-content');
+await page.getByTestId('tab-more').click();
 await page.getByTestId('tab-history').click();
 await page.getByTestId('history-panel').getByText('Add a discussion section').waitFor({ timeout: 15000 });
 await page.getByTestId('agent-commit-dot').first().waitFor();

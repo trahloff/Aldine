@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { openProject, cleanup, expectTypesetOk, typeAtEnd } from './helpers';
+import { openProject, cleanup, expectTypesetOk, typeAtEnd, openSidebarTab } from './helpers';
 
 /**
  * Blank projects (issue #8): a project with no files, no typeset root, no
@@ -70,7 +70,7 @@ test.describe('blank project', () => {
       // create main.tex on the next blur.
       await name.press('Escape');
       await expect(name).toHaveCount(0);
-      await page.getByTestId('tab-history').click();
+      await openSidebarTab(page, 'history');
       await page.getByTestId('tab-files').click();
       await expect(page.getByTestId('file-tree')).toBeVisible();
       await expect(name).toHaveCount(0);

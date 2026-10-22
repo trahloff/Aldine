@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openSidebarTab } from './helpers';
 
 test.describe('Manual commits', () => {
   test('edits wait in History for a commit with my own message', async ({ page, request }) => {
@@ -16,7 +16,7 @@ test.describe('Manual commits', () => {
 
       await page.locator('.cm-content').click();
       await page.keyboard.type(' MANUAL-COMMIT-LINE ');
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       await expect(page.getByTestId('uncommitted-changes')).toContainText('1 file not committed yet', { timeout: 15_000 });
       await expect(page.getByTestId('commit-message')).toHaveAttribute('placeholder', 'Commit message');
 

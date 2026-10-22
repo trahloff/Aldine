@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { test, expect } from '../fixtures';
-import { createProject, openProject, expectTypesetOk, cleanup } from './helpers';
+import { createProject, openProject, expectTypesetOk, cleanup, openSidebarTab } from './helpers';
 
 /**
  * Agent presence + audit trust layer (UX.md), pinned end to end in a real
@@ -70,7 +70,7 @@ test.describe('agent presence and audit UI', () => {
       // Each edit is a commit authored Claude the moment it lands, with the
       // violet dot in history — and the panel, opened BEFORE the edit, shows
       // it without a tab switch (it polls while the agent is present).
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       await expect(page.getByTestId('history-panel')).toBeVisible();
       const edit2 = await call(client, 'edit_file', {
         project: id, path: 'main.tex',

@@ -86,6 +86,7 @@ for (const scheme of ['light', 'dark']) {
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
     await p.getByTestId('pdf-status').getByText(/Typeset in/).waitFor({ timeout: 120000 }).catch(() => {});
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
+    await p.getByTestId('tab-more').click();
     await p.getByTestId('tab-plugin:zotero').click();
     await p.waitForTimeout(400);
   });
@@ -95,7 +96,8 @@ for (const scheme of ['light', 'dark']) {
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
     await p.getByTestId('pdf-status').getByText(/Typeset in/).waitFor({ timeout: 120000 }).catch(() => {});
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
-    await p.getByRole('tab', { name: 'History' }).click();
+    await p.getByTestId('tab-more').click();
+    await p.getByTestId('tab-history').click();
     await p.waitForTimeout(400);
   });
   await ctx.request.delete(`${BASE}/api/projects/${id}`);

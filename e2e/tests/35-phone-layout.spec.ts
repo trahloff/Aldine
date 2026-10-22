@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openSidebarTab } from './helpers';
 
 /**
  * The editor at phone width (≤640px), where the agent flow sends people: a
@@ -46,7 +46,7 @@ test.describe('phone layout', () => {
     try {
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
       await openProject(page, id);
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       const sidebar = await page.locator('.sidebar').boundingBox();
       expect(sidebar!.width).toBeGreaterThanOrEqual(PHONE.width - 60);
 

@@ -64,6 +64,20 @@ export const IconChevronLeft = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const IconChevronRight = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={10} height={10} strokeWidth={1.75}>
+    <path d="M6 3.5 10.5 8 6 12.5" />
+  </svg>
+);
+
+/** A window with its side panel: the sidebar's own show/hide control. */
+export const IconSidebar = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="2" y="3" width="12" height="10" rx="2" />
+    <path d="M6.5 3v10" />
+  </svg>
+);
+
 export const IconLink = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={12} height={12}>
     <path d="M6.5 9.5 9.5 6.5" />
