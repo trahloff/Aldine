@@ -851,12 +851,12 @@ export default function Editor() {
   }, [id, branch, activeFile, toast]);
 
   // Cmd+S → typeset, Cmd+K → command palette, Cmd+J → jump the PDF to the
-  // cursor, Cmd+Alt+M → comment on the selection (Google Docs' key)
+  // cursor, Cmd+Shift+M → comment on the selection
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyM' && !e.getModifierState('AltGraph')) {
-        // e.code, not e.key: Option turns M into "µ" on a Mac keyboard. AltGr
-        // reports Ctrl+Alt on Windows, and AltGr+M types "µ" on German keyboards.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
+        // Shift, not Alt: Ctrl+Alt is AltGr on German Windows keyboards, and
+        // e.key rather than e.code keeps M where AZERTY puts it.
         e.preventDefault();
         startComment();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -900,7 +900,7 @@ export default function Editor() {
         run: () => setDraftTypeset((d) => { localStorage.setItem('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
       },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
-      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: shortcut('M', { alt: true }), run: startComment },
+      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: shortcut('M', { shift: true }), run: startComment },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
@@ -1048,8 +1048,8 @@ export default function Editor() {
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
-        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${shortcut('M', { alt: true })})`}>
-          Comment <kbd className="kbd toolbar__kbd">{shortcut('M', { alt: true })}</kbd>
+        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${shortcut('M', { shift: true })})`}>
+          Comment <kbd className="kbd toolbar__kbd">{shortcut('M', { shift: true })}</kbd>
         </button>
         <Presence users={users} />
         <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
