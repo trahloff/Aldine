@@ -41,8 +41,18 @@ export function bibKeys(source: string): Set<string> {
   return keys;
 }
 
+/** @string{name = {value}} definitions, for a field given as a bare macro. */
+function stringMacros(source: string): Map<string, string> {
+  const macros = new Map<string, string>();
+  const re = /@string\s*[{(]\s*([^\s=,{}"]+)\s*=\s*(?:\{((?:[^{}]|\{[^{}]*\})*)\}|"([^"]*)")/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source))) macros.set(m[1].toLowerCase(), m[2] ?? m[3]);
+  return macros;
+}
+
 export function parseBib(source: string, file: string): BibEntry[] {
   const entries: BibEntry[] = [];
+  const strings = stringMacros(source);
   const re = /@([a-zA-Z]+)\s*\{\s*([^,\s]+)\s*,/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source))) {
@@ -59,7 +69,7 @@ export function parseBib(source: string, file: string): BibEntry[] {
     }
     const body = source.slice(re.lastIndex, i - 1);
     const rawField = (name: string): string | undefined => {
-      const fm = body.match(new RegExp(`(?:^|[,\\s])${name}\\s*=\\s*(\\{|")`, 'i'));
+      const fm = body.match(new RegExp(`(?:^|[,\\s])${name}\\s*=\\s*(\\{|"|[^\\s,{}"#=]+)`, 'i'));
       if (!fm) return undefined;
       const open = fm[1];
       let start = fm.index! + fm[0].length;
@@ -71,10 +81,12 @@ export function parseBib(source: string, file: string): BibEntry[] {
           j++;
         }
         return body.slice(start, j - 1);
-      } else {
+      } else if (open === '"') {
         const end = body.indexOf('"', start);
         return end === -1 ? undefined : body.slice(start, end);
       }
+      // unbraced: year = 2020, or journal = jacm from an @string
+      return /^\d+$/.test(open) ? open : strings.get(open.toLowerCase());
     };
     const field = (name: string): string | undefined => {
       const raw = rawField(name);
@@ -95,6 +107,52 @@ export function parseBib(source: string, file: string): BibEntry[] {
   return entries;
 }
 
+const ACCENTS: Record<string, string> = {
+  '`': '̀', "'": '́', '^': '̂', '~': '̃', '=': '̄', '.': '̇', '"': '̈',
+  u: '̆', v: '̌', H: '̋', r: '̊', c: '̧', k: '̨', d: '̣', b: '̱',
+};
+
+/** Control words that print something; every other one prints nothing but
+ *  keeps its argument (\emph{x} is x). */
+const WORDS: Record<string, string> = {
+  TeX: 'TeX', LaTeX: 'LaTeX', LaTeXe: 'LaTeX2ε', BibTeX: 'BibTeX', XeTeX: 'XeTeX', XeLaTeX: 'XeLaTeX',
+  LuaTeX: 'LuaTeX', LuaLaTeX: 'LuaLaTeX', ConTeXt: 'ConTeXt', AmS: 'AMS', METAFONT: 'METAFONT', MF: 'METAFONT',
+  ss: 'ß', ae: 'æ', AE: 'Æ', oe: 'œ', OE: 'Œ', aa: 'å', AA: 'Å', o: 'ø', O: 'Ø', l: 'ł', L: 'Ł', i: 'ı', j: 'ȷ',
+  textendash: '–', textemdash: '—', ldots: '…', dots: '…', textellipsis: '…', textquoteleft: '‘',
+  textquoteright: '’', S: '§', P: '¶', copyright: '©', textregistered: '®', texttrademark: '™',
+  textdegree: '°', euro: '€', pounds: '£', textbackslash: '\\',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η',
+  theta: 'θ', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ',
+  phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω', Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ',
+  Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+
+// \"o, \"{o}, \'\i; a letter accent needs a brace or a space (\v{c}, \v c) so \cite and \url stay commands
+const ACCENT = /\\([`'^~=."])\s*(?:\{\s*(\\[ij]|[a-zA-Z])\s*\}|(\\[ij](?![a-zA-Z])|[a-zA-Z]))|\\([uvHrckdb])(?:\s*\{\s*(\\[ij]|[a-zA-Z])\s*\}|\s+(\\[ij](?![a-zA-Z])|[a-zA-Z]))/g;
+// TeX eats the spaces after a control word, so \TeX book is TeXbook
+const COMMAND = /\\([a-zA-Z]+)\s*|\\([^a-zA-Z])/g;
+const OPEN = '', CLOSE = '';
+
+/** BibTeX field text as it prints, for display only. Commands go before
+ *  braces: {\TeX}book must not become \TeXbook, one unknown command. */
 function clean(s: string): string {
-  return s.replace(/[{}]/g, '').replace(/\\[a-zA-Z]+\s*/g, '').replace(/\s+/g, ' ').trim();
+  return s
+    .replace(/\\\{/g, OPEN).replace(/\\\}/g, CLOSE)
+    .replace(/(?<!\\)\$/g, '')
+    .replace(ACCENT, (_, sym, symBraced, symBare, letter, letterBraced, letterBare) => {
+      const base: string = symBraced ?? symBare ?? letterBraced ?? letterBare;
+      return (base.startsWith('\\') ? base.slice(1) : base) + ACCENTS[sym ?? letter];
+    })
+    .replace(COMMAND, (_, word: string | undefined, symbol: string | undefined) => {
+      if (word) return WORDS[word] ?? '';
+      if (symbol === ' ' || symbol === '\\' || symbol === ',') return ' ';
+      return '&%$#_'.includes(symbol!) ? symbol! : '';
+    })
+    .replace(/[{}]/g, '')
+    .replace(new RegExp(OPEN, 'g'), '{').replace(new RegExp(CLOSE, 'g'), '}')
+    .replace(/---/g, '—').replace(/--/g, '–').replace(/``/g, '“').replace(/''/g, '”')
+    .replace(/~/g, ' ')
+    .replace(/\s+/g, ' ')
+    .normalize('NFC')
+    .trim();
 }

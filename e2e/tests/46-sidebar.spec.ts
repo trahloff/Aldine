@@ -61,11 +61,13 @@ test.describe('sidebar', () => {
     const id = await createProject(request, 'Cite Footer');
     try {
       const bib = Array.from({ length: 40 }, (_, i) => `@article{key${i},\n  title = {Entry number ${i}},\n  author = {Doe, Jane},\n  year = {2020}\n}\n`).join('\n');
-      await put(request, id, 'references.bib', bib);
+      await put(request, id, 'references.bib', `@book{knuth,\n  title = {The {\\TeX}book},\n  author = {Knuth, Donald E.},\n  year = {1984}\n}\n\n${bib}`);
       await page.setViewportSize({ width: 1280, height: 720 });
       await openProject(page, id);
       await openPluginTab(page, 'references');
       await expect(page.getByTestId('cite-bib-key39')).toBeAttached({ timeout: 15_000 });
+      // TeX markup prints as it would typeset, not cut at the first command
+      await expect(page.getByTestId('cite-bib-knuth')).toContainText('The TeXbook');
       await expect(page.getByTestId('reference-search')).toBeInViewport();
       await expect(page.getByTestId('reference-add')).toBeInViewport();
       const list = page.getByTestId('cite-project');

@@ -6,6 +6,16 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Cite and the `\cite` suggestions showed titles cut at TeX markup: "The
+  {\TeX}book" read as "The", and "{\LaTeX}: A Document Preparation System"
+  lost its first word. Entries now read as they typeset, with logos,
+  accents (M{\"u}ller is Müller), escaped characters, inline math, Greek
+  letters, dashes and quotes, and a formatting command keeps its text.
+- An unbraced value was dropped, so `year = 2020` showed no year. Bare
+  numbers now count, and a bare name is looked up in the file's
+  `@string` definitions (`journal = jacm`).
+
 ## [0.14.2] — 2026-10-22
 
 ### Added
