@@ -53,12 +53,18 @@ export async function typeAtEnd(page: Page, text: string): Promise<void> {
 
 /** Open a plugin's sidebar panel. Two or more plugins share the "More" tab,
  *  so its menu opens first. */
-export async function openPluginTab(page: Page, plugin: string): Promise<void> {
+/** A sidebar panel by its tab id ('history', 'plugin:zotero'): a tab of its
+ *  own, or an item of the More menu. */
+export async function openSidebarTab(page: Page, id: string): Promise<void> {
+  const tab = page.getByTestId(`tab-${id}`);
   const more = page.getByTestId('tab-more');
-  const tab = page.getByTestId(`tab-plugin:${plugin}`);
-  await expect(more.or(tab)).toBeVisible({ timeout: 15_000 });
-  if (await more.isVisible()) await more.click();
+  await expect(more).toBeVisible({ timeout: 15_000 });
+  if (!(await tab.isVisible())) await more.click();
   await tab.click();
+}
+
+export async function openPluginTab(page: Page, plugin: string): Promise<void> {
+  await openSidebarTab(page, `plugin:${plugin}`);
 }
 
 export async function typeset(page: Page): Promise<void> {

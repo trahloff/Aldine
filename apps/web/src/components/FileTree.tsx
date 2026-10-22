@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
-import { fileIcon } from './Icons';
+import { fileIcon, IconChevronRight } from './Icons';
 import { useDialogs } from './Dialogs';
 import { useExitGhost } from '../exitGhost';
 
@@ -159,13 +159,15 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   };
 
   const renderNode = (node: Node, depth: number): JSX.Element => {
-    const pad = 8 + depth * 13;
+    // one level is the chevron plus the gap, so a child's chevron sits under
+    // its folder's icon
+    const pad = 8 + depth * 18;
     if (node.type === 'dir') {
       const open = isOpen(node.path);
       return (
         <div key={node.path}>
           <button className="tree__item tree__dir" style={{ paddingLeft: pad }} onClick={() => toggle(node.path)} data-testid={`dir-${node.path}`} title={node.path}>
-            <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}>▸</span>
+            <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
             <span className="tree__icon"><FolderIcon /></span>
             {node.name}
           </button>
@@ -183,6 +185,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         onContextMenu={(e) => { e.preventDefault(); setMenu({ path: node.path, x: e.clientX, y: e.clientY }); }}
         title={node.path}
       >
+        <span className="tree__chevron" />
         <span className="tree__icon">{fileIcon(node.path, node.path === rootFile)}</span>
         {node.name}
         {node.path === rootFile && <span className="tree__root-tag">root</span>}

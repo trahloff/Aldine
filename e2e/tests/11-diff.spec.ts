@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openSidebarTab } from './helpers';
 
 test.describe('git diff view', () => {
   test('click a commit to see its diff', async ({ page, request }) => {
@@ -10,7 +10,7 @@ test.describe('git diff view', () => {
       await page.locator('.cm-content').click();
       await page.keyboard.type(' UNIQUE-DIFF-LINE ');
       await page.waitForTimeout(2500); // let it flush to disk
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       await page.getByTestId('commit-message').fill('Add unique line');
       await page.getByTestId('commit-button').click();
       await expect(page.getByTestId('history-panel')).toContainText('Add unique line', { timeout: 10_000 });
@@ -30,7 +30,7 @@ test.describe('git diff view', () => {
     const id = await createProject(request, 'Diff Initial');
     try {
       await openProject(page, id);
-      await page.getByRole('tab', { name: 'History' }).click();
+      await openSidebarTab(page, 'history');
       await page.getByText('Initial commit').click();
       await expect(page.getByTestId('diff-view')).toContainText('main.tex', { timeout: 10_000 });
       await expect(page.getByTestId('diff-view')).toContainText('documentclass');

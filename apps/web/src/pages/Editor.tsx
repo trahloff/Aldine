@@ -16,7 +16,7 @@ import ReviewPanel from '../components/ReviewPanel';
 import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
-import { IconChevronLeft } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconSidebar } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -45,6 +45,11 @@ type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 /** Commits the review dialog will render: one diff request each, so a branch
  *  Claude wrote hundreds of commits into shows a count, not a wall. */
 const AGENT_REVIEW_MAX_COMMITS = 20;
+
+/** The sidebar tabs beside Files and Review; every other panel, History
+ *  included, sits in the More menu. */
+const PINNED_PANELS = ['plugin:references'];
+const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
 
 /** A text field that is not the code editor. */
 function inTextField(target: EventTarget | null): boolean {
@@ -141,7 +146,14 @@ export default function Editor() {
   const bumpHistory = useCallback(() => setHistoryVersion((v) => v + 1), []);
   // Phones show the sidebar as an overlay; a deep link to a line collapses
   // it so the flagged line is on screen, and the toolbar button restores it.
-  const [sidebarHidden, setSidebarHidden] = useState(false);
+  // Wider screens collapse it to a rail by choice, remembered per browser.
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try { return !window.matchMedia('(max-width: 640px)').matches && localStorage.getItem(SIDEBAR_HIDDEN) === '1'; } catch { return false; }
+  });
+  const setSidebar = useCallback((hidden: boolean) => {
+    setSidebarHidden(hidden);
+    try { if (!window.matchMedia('(max-width: 640px)').matches) localStorage.setItem(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* storage off: this visit only */ }
+  }, []);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
   // Visual mode is gated by an experimental flag until it graduates.
   const visualEnabled = localStorage.getItem('aldine.experimental.visualEditor') === '1';
@@ -906,6 +918,7 @@ export default function Editor() {
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
+      { id: 'sidebar', group: 'View', title: sidebarHidden ? 'Show the sidebar' : 'Hide the sidebar', run: () => setSidebar(!sidebarHidden) },
       { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       { id: 'share', group: 'File', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
@@ -916,7 +929,7 @@ export default function Editor() {
       ...(agentPresenceEnabled
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
-      { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); } },
+      { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); setSidebar(false); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
     if (ignored.length > 0) {
@@ -972,7 +985,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, sidebarHidden, setSidebar]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1076,19 +1089,25 @@ export default function Editor() {
       )}
 
       <div className={`workspace${resizing ? ' workspace--resizing' : ''}`}>
+        {sidebarHidden && (
+          <div className="sidebar-rail">
+            <button className="btn btn--ghost sidebar-rail__btn" onClick={() => setSidebar(false)} title="Show the sidebar" aria-label="Show the sidebar" data-testid="sidebar-expand"><IconSidebar /></button>
+          </div>
+        )}
         <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
-            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" data-testid="tab-files">Files</button>
-            <button className={`sidebar__tab ${tab === 'history' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('history')} role="tab" data-testid="tab-history">History</button>
-            <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" data-testid="tab-review">
-              Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
-            </button>
-            {pluginPanels.length <= 1 ? pluginPanels.map((p) => (
-              <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" data-testid={`tab-${p.id}`}>
+            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" aria-selected={tab === 'files'} data-testid="tab-files">Files</button>
+            {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => (
+              <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} data-testid={`tab-${p.id}`}>
                 {p.title}
               </button>
-            )) : (() => {
-              const shown = pluginPanels.find((p) => p.id === tab);
+            ))}
+            <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" aria-selected={tab === 'review'} data-testid="tab-review">
+              Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
+            </button>
+            {(() => {
+              const more = [{ id: 'history', title: 'History' }, ...pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id))];
+              const shown = more.find((p) => p.id === tab);
               return (
                 <div ref={morePanels.ref} className="sidebar__more">
                   <button
@@ -1100,11 +1119,11 @@ export default function Editor() {
                     aria-expanded={morePanels.open}
                     data-testid="tab-more"
                   >
-                    {shown ? shown.title : 'More'}<span className="sidebar__chev" aria-hidden="true">▾</span>
+                    <span className="sidebar__more-label">{shown ? shown.title : 'More'}</span><span className="sidebar__chev" aria-hidden="true"><IconChevronRight /></span>
                   </button>
                   {morePanels.open && (
                     <div className="menu sidebar__menu" role="menu" data-testid="tab-more-menu">
-                      {pluginPanels.map((p) => (
+                      {more.map((p) => (
                         <button key={p.id} className="menu__item" role="menuitem" onClick={() => { morePanels.setOpen(false); setTab(p.id); }} data-testid={`tab-${p.id}`}>
                           <span className="branch-menu__check">{tab === p.id ? '✓' : ''}</span>{p.title}
                         </button>
@@ -1114,6 +1133,7 @@ export default function Editor() {
                 </div>
               );
             })()}
+            <button className="sidebar__collapse" onClick={() => setSidebar(true)} title="Hide the sidebar" aria-label="Hide the sidebar" data-testid="sidebar-collapse"><IconSidebar /></button>
           </div>
           <div className="sidebar__body">
             {tab === 'files' && (
@@ -1181,7 +1201,7 @@ export default function Editor() {
               />
             )}
             {pluginPanels.map((p) => (
-              <div key={p.id} style={{ display: tab === p.id ? 'block' : 'none' }} ref={(el) => { if (el && !el.hasChildNodes()) p.mount(el); }} />
+              <div key={p.id} className="sidebar__panel" style={{ display: tab === p.id ? 'block' : 'none' }} ref={(el) => { if (el && !el.hasChildNodes()) p.mount(el); }} />
             ))}
           </div>
         </aside>
@@ -1225,7 +1245,7 @@ export default function Editor() {
                     : warnCount > 0 ? `${warnCount} warning${warnCount === 1 ? '' : 's'}` : 'Problems';
                   return problemsFoldable && warnCount > 0 ? (
                     <button className="errors__toggle" onClick={toggleProblems} aria-expanded={problemsExpanded} data-testid="problems-toggle">
-                      <span className="errors__chev" aria-hidden>{problemsExpanded ? '▾' : '▸'}</span>{label}
+                      <span className={`errors__chev${problemsExpanded ? ' errors__chev--open' : ''}`} aria-hidden><IconChevronRight /></span>{label}
                     </button>
                   ) : <span>{label}</span>;
                 })()}

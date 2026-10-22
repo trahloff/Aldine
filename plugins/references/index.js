@@ -113,7 +113,7 @@ export default {
           dataset: { testid: 'reference-search' },
           oninput: (e) => onSearchInput(e.target.value),
         });
-        const hits = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } });
+        const hits = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }, dataset: { testid: 'reference-hits' } });
         const queryInput = h('input', {
           class: 'input',
           placeholder: '10.1145/… · arXiv:2401.01234',
@@ -162,15 +162,21 @@ export default {
               h('div', { style: line1 }, hit.title),
               h('div', { style: line2 }, [hit.authors, hit.year, hit.venue].filter(Boolean).join(' · ')),
             )));
+          hits.style.display = searching || results.length ? 'flex' : 'none';
           queryInput.value = query;
           addButton.disabled = busy;
           addButton.textContent = busy ? 'Fetching…' : 'Add & cite';
         }
 
-        root.replaceChildren(h('div', { class: 'panel-list', dataset: { testid: 'references-panel' }, style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' } },
-          label('In this project'), bibFilter, bibList,
-          label('Search papers', true), searchInput, hits,
-          label('Or add by identifier', true), queryInput, addButton,
+        // The project's entries scroll; search and add stay pinned below them.
+        root.replaceChildren(h('div', { class: 'panel-list', dataset: { testid: 'references-panel' }, style: { height: '100%', minHeight: '0' } },
+          h('div', { dataset: { testid: 'cite-project' }, style: { flex: '1', minHeight: '0', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' } },
+            label('In this project'), bibFilter, bibList,
+          ),
+          h('div', { dataset: { testid: 'cite-find' }, style: { flex: 'none', display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px 6px 8px', borderTop: '1px solid var(--hairline)' } },
+            label('Search papers'), searchInput, hits,
+            label('Or add by identifier', true), queryInput, addButton,
+          ),
         ));
         draw();
         drawBib();

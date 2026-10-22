@@ -327,8 +327,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 
 /* file tree directories */
 .tree__dir { color: var(--text); font-weight: 500; }
-/* a glyph used as an icon, sized as one: not a step of the type scale */
-.tree__chevron { display: inline-block; width: 12px; font-size: 0.5625rem; color: var(--text-3); transition: transform 150ms var(--ease-out); transform: rotate(0deg); }
+/* files keep an empty chevron column, so icons line up level by level */
+.tree__chevron { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; color: var(--text-3); transition: transform 150ms var(--ease-out); transform: rotate(0deg); }
 .tree__chevron--open { transform: rotate(90deg); }
 .tree__root-tag { margin-left: 6px; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); border: 1px solid var(--hairline); border-radius: 999px; padding: 0 5px; }
 
@@ -637,10 +637,13 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 }
 
 .sidebar { width: 230px; flex: none; background: var(--bg-inset); }
-.sidebar__tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 6px 6px 0; }
+.sidebar__tabs { display: flex; align-items: center; gap: 2px; padding: 6px 6px 0; }
 .sidebar__tab {
   flex: 1 1 auto;
-  min-width: 48px;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border: 0;
   background: transparent;
   color: var(--text-2);
@@ -654,10 +657,20 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 .sidebar__tab:hover { background: var(--bg-hover); }
 .sidebar__tab:active { background: var(--bg-active); }
 .sidebar__tab--active { background: var(--bg-active); color: var(--text); font-weight: 600; }
-/* two or more plugin panels share one "More" tab with a menu */
-.sidebar__more { position: relative; display: flex; flex: 1 1 auto; min-width: 48px; }
-.sidebar__more > .sidebar__tab { flex: 1; }
-.sidebar__chev { margin-left: 3px; font-size: 0.625rem; color: var(--text-3); }
+/* History and the panels that are not pinned share one "More" tab with a menu */
+.sidebar__more { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
+.sidebar__more > .sidebar__tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.sidebar__more-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sidebar__chev { flex: none; display: inline-flex; color: var(--text-3); transform: rotate(90deg); }
+.sidebar__collapse { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-3); cursor: pointer; }
+.sidebar__collapse:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar__collapse:active { background: var(--bg-active); }
+/* a panel fills the body, so one can pin its own controls to the bottom */
+.sidebar__panel { height: 100%; }
+.sidebar--hidden { display: none; }
+.sidebar-rail { flex: none; display: flex; flex-direction: column; align-items: center; width: 38px; padding-top: 6px; background: var(--bg-inset); }
+.sidebar-rail__btn { width: 26px; height: 26px; padding: 0; justify-content: center; color: var(--text-3); }
+.sidebar-rail__btn:hover { color: var(--text); }
 .sidebar__menu { top: 30px; right: 0; min-width: 170px; transform-origin: top right; }
 .sidebar__body { flex: 1; overflow: auto; padding: 6px; }
 
@@ -942,7 +955,8 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
   font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
 }
 .errors__toggle:hover { color: var(--text); }
-.errors__chev { font-size: 13px; line-height: 1; width: 12px; }
+.errors__chev { display: inline-flex; align-items: center; justify-content: center; width: 12px; transition: transform 150ms var(--ease-out); }
+.errors__chev--open { transform: rotate(90deg); }
 .errors__row--warning { cursor: default; padding-top: 4px; padding-bottom: 4px; align-items: center; }
 .errors__row--warning:active { background: var(--bg-hover); }
 .errors__jump {
@@ -1223,8 +1237,8 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
      screen has to wrap to be readable at all. */
   .diff { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* The overlay hides the editor; a deep link to a line collapses it and the
-     toolbar button brings it back. */
-  .sidebar--hidden { display: none; }
+     toolbar button brings it back, so the rail is not needed. */
+  .sidebar-rail { display: none; }
   .sidebar-toggle { display: inline-flex; }
 }
 
