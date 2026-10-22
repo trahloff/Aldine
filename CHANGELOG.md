@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.3] — 2026-10-22
+
 ### Changed
 - A compile log over 200 KB keeps its first 20 KB as well as its end,
   with a line marking the cut. The start names the engine, the format
