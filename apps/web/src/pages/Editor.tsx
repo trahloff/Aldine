@@ -34,7 +34,7 @@ import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
-import { shortcut } from '../platform';
+import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { usePopover } from '../util/usePopover';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
@@ -46,7 +46,7 @@ type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
  *  Claude wrote hundreds of commits into shows a count, not a wall. */
 const AGENT_REVIEW_MAX_COMMITS = 20;
 
-/** A text field that is not the code editor (whose own keymap owns Mod-j). */
+/** A text field that is not the code editor. */
 function inTextField(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el || typeof el.closest !== 'function') return false;
@@ -126,7 +126,8 @@ export default function Editor() {
   const [shareOpen, setShareOpen] = useState(false);
   // more than one plugin panel folds them all into a "More" tab
   const morePanels = usePopover();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean | 'shortcuts'>(false);
+  const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump') };
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
@@ -850,26 +851,23 @@ export default function Editor() {
     }
   }, [id, branch, activeFile, toast]);
 
-  // Cmd+S → typeset, Cmd+K → command palette, Cmd+J → jump the PDF to the
-  // cursor, Cmd+Shift+M → comment on the selection
+  // Typeset, command palette, jump to PDF and comment, on the keys this
+  // browser chose in settings (util/shortcuts.ts)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
-        // Shift, not Alt: Ctrl+Alt is AltGr on German Windows keyboards, and
-        // e.key rather than e.code keeps M where AZERTY puts it.
+      if (matchesShortcut(e, 'comment')) {
         e.preventDefault();
         startComment();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      } else if (matchesShortcut(e, 'typeset')) {
         e.preventDefault();
         doCompile();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      } else if (matchesShortcut(e, 'palette')) {
         e.preventDefault();
         setPaletteOpen((o) => !o);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j' && !e.defaultPrevented && !inTextField(e.target)) {
-        // CodeMirror binds Mod-j itself (and prevents default) when the editor
-        // has focus; this catches the shortcut from the PDF pane, tree, etc.
-        // Other text fields (comment composer, dialogs, palette) keep the
-        // keystroke: a jump against the editor's cursor from there is noise.
+      } else if (matchesShortcut(e, 'jump') && !e.defaultPrevented && !inTextField(e.target)) {
+        // Text fields other than the code editor (comment composer, dialogs,
+        // palette) keep the keystroke: a jump against the editor's cursor
+        // from there is noise.
         e.preventDefault();
         jumpToPdf();
       }
@@ -892,21 +890,22 @@ export default function Editor() {
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
-      { id: 'typeset', group: 'Action', title: 'Typeset document', hint: shortcut('S'), run: doCompile },
+      { id: 'typeset', group: 'Action', title: 'Typeset document', hint: keys.typeset, run: doCompile },
       { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       {
         id: 'draft-typeset', group: 'Action',
         title: draftTypeset ? 'Auto-typeset: run the full cycle every time (slower)' : 'Auto-typeset: quick draft while typing',
         run: () => setDraftTypeset((d) => { localStorage.setItem('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
       },
-      { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
-      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: shortcut('M', { shift: true }), run: startComment },
+      { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
+      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
       { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
+      { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
       { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       { id: 'share', group: 'File', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
@@ -973,7 +972,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1048,8 +1047,8 @@ export default function Editor() {
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
-        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${shortcut('M', { shift: true })})`}>
-          Comment <kbd className="kbd toolbar__kbd">{shortcut('M', { shift: true })}</kbd>
+        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
+          Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
         </button>
         <Presence users={users} />
         <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
@@ -1062,7 +1061,7 @@ export default function Editor() {
             disabled={compile.status === 'compiling'}
             aria-busy={compile.status === 'compiling' || undefined}
             data-testid="typeset-button"
-            title={`Typeset (${shortcut('S')})`}
+            title={`Typeset (${keys.typeset})`}
           >
             {compile.status === 'compiling' ? <span className="spinner" /> : null}
             Typeset
@@ -1202,10 +1201,8 @@ export default function Editor() {
                 filePath={activeFile}
                 rootFile={project?.rootFile}
                 onUsers={setUsers}
-                onSave={doCompile}
                 onDocChanged={onDocChanged}
                 onStats={setStats}
-                onJumpToPdf={jumpToPdf}
                 spellcheck={spellcheck}
                 mode={mode}
                 identity={identity}
@@ -1377,10 +1374,10 @@ export default function Editor() {
               <button
                 className="btn btn--ghost btn--small"
                 onClick={() => jumpToPdf()}
-                title={`Show this line in the PDF (${shortcut('J')})`}
+                title={`Show this line in the PDF (${keys.jump})`}
                 data-testid="jump-to-pdf"
               >
-                Jump<span className="jump__more"> to PDF</span> <span className="kbd">{shortcut('J')}</span>
+                Jump<span className="jump__more"> to PDF</span> <span className="kbd">{keys.jump}</span>
               </button>
             )}
             <div className="zoom" data-testid="zoom-controls">
@@ -1472,6 +1469,7 @@ export default function Editor() {
           onSetStopOnFirstError={setStopOnFirstError}
           onSetManualCommits={setManualCommits}
           onToggleAutoTypeset={toggleAuto}
+          focus={settingsOpen === 'shortcuts' ? 'shortcuts' : undefined}
         />
       )}
 

@@ -5,8 +5,8 @@
  */
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform || '');
 
-/** "⌘S" on Mac, "Ctrl+S" elsewhere; with `shift`, "⇧⌘M" and "Ctrl+Shift+M". */
-export function shortcut(key: string, opts?: { shift?: boolean }): string {
-  if (isMac) return `${opts?.shift ? '⇧' : ''}⌘${key}`;
-  return `Ctrl+${opts?.shift ? 'Shift+' : ''}${key}`;
+/** "⌘B" on Mac, "Ctrl+B" elsewhere, for the editor's fixed keys; the
+ *  changeable ones are labelled by util/shortcuts.ts. */
+export function shortcut(key: string): string {
+  return isMac ? `⌘${key}` : `Ctrl+${key}`;
 }

@@ -109,11 +109,9 @@ interface Props {
   /** Project root file — figure previews resolve image paths against its dir. */
   rootFile?: string;
   onUsers(users: PresenceUser[]): void;
-  onSave(): void;
   /** Fires on every doc change; `local` is false for applied remote updates. */
   onDocChanged?(local: boolean): void;
   onStats?(stats: { words: number; selWords: number | null }): void;
-  onJumpToPdf?(): void;
   spellcheck?: boolean;
   mode?: EditorMode;
   /** Who this client is to collaborators (awareness): the account when
@@ -180,11 +178,11 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onSave, onDocChanged, onStats, onJumpToPdf, spellcheck = false, mode = 'source', identity }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, mode = 'source', identity }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onSave, onJumpToPdf });
-  cbRef.current = { onDocChanged, onStats, onSave, onJumpToPdf };
+  const cbRef = useRef({ onDocChanged, onStats });
+  cbRef.current = { onDocChanged, onStats };
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
@@ -348,8 +346,6 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             ...yUndoManagerKeymap,
             ...completionKeymap,
             indentWithTab,
-            { key: 'Mod-s', run: () => { cbRef.current.onSave(); return true; } },
-            { key: 'Mod-j', run: () => { cbRef.current.onJumpToPdf?.(); return true; } },
             { key: 'Mod-b', run: toggleStyle('bold') },
             { key: 'Mod-i', run: toggleStyle('italic') },
           ]),

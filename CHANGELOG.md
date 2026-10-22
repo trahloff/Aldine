@@ -6,6 +6,14 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Project settings → Keyboard shortcuts in this browser: click a shortcut
+  and press new keys for typesetting, commenting, jumping the PDF to the
+  cursor or the command palette. Keys the browser keeps, keys the editor
+  already uses and bare letters are refused with the reason. Labels, the
+  palette and the toolbar follow; Reset brings the default back. The palette
+  has "Change keyboard shortcuts…".
+
 ### Changed
 - Commenting on the selection is ⇧⌘M (Ctrl+Shift+M on Windows and Linux)
   instead of ⌘⌥M, which German keyboards make awkward to press.
