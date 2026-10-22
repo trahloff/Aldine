@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-10-22
+
 ### Added
 - The sidebar folds away at any width: the button at the end of its tabs
   leaves a slim rail, whose button brings it back. The browser remembers
