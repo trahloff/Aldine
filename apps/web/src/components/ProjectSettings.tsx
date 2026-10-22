@@ -3,6 +3,7 @@ import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
 import { getTheme, setTheme, Theme } from '../theme';
+import { chordFromEvent, chordProblem, isDefaultChord, setChord, ShortcutId, SHORTCUTS, useShortcutLabel } from '../util/shortcuts';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
@@ -18,18 +19,71 @@ interface Props {
   onSetStopOnFirstError(on: boolean): Promise<void>;
   onSetManualCommits(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
+  /** Opened from the palette's shortcut command: scroll to that section. */
+  focus?: 'shortcuts';
 }
 
 /** Label and explanation on the left, the control in one column on the right. */
-function Row({ label, htmlFor, hint, hintTestId, children }: { label: string; htmlFor?: string; hint?: ReactNode; hintTestId?: string; children: ReactNode }) {
+function Row({ label, htmlFor, hint, hintTestId, hintError, children }: { label: string; htmlFor?: string; hint?: ReactNode; hintTestId?: string; hintError?: boolean; children: ReactNode }) {
   return (
     <div className="settings__row">
       <div className="settings__text">
         {htmlFor ? <label className="settings__label" htmlFor={htmlFor}>{label}</label> : <span className="settings__label">{label}</span>}
-        {hint && <span className="settings__hint" data-testid={hintTestId}>{hint}</span>}
+        {hint && <span className={`settings__hint${hintError ? ' settings__hint--error' : ''}`} data-testid={hintTestId}>{hint}</span>}
       </div>
       <div className="settings__control">{children}</div>
     </div>
+  );
+}
+
+/** Click the keys, press new ones; Esc keeps the old ones. */
+function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
+  const keys = useShortcutLabel(id);
+  const [recording, setRecording] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const stop = () => { setRecording(false); setProblem(null); };
+  useEffect(() => {
+    if (!recording) return;
+    // Window capture runs before the dialog's Escape and the editor's own
+    // shortcuts, so the chord being recorded does nothing else. Keyup too:
+    // Space would otherwise click the button on release.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) { stop(); return; }
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === 'keyup') return;
+      if (e.key === 'Escape') { stop(); return; }
+      const chord = chordFromEvent(e);
+      if (!chord) return;
+      const why = chordProblem(chord, id);
+      if (why) { setProblem(why); return; }
+      setChord(id, chord);
+      stop();
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKey, true);
+    };
+  }, [recording, id]);
+
+  return (
+    <Row label={label} hint={problem ?? (recording ? 'Press the new keys · Esc keeps these' : undefined)} hintTestId={`shortcut-hint-${id}`} hintError={!!problem}>
+      <button
+        type="button"
+        className={`input shortcut${recording ? ' is-recording' : ''}`}
+        onClick={() => (recording ? stop() : setRecording(true))}
+        onBlur={stop}
+        aria-label={`${label}: ${keys}. Press to change`}
+        data-testid={`shortcut-${id}`}
+      >
+        {recording ? 'Press keys…' : <kbd className="kbd">{keys}</kbd>}
+      </button>
+      {!isDefaultChord(id) && (
+        <button type="button" className="btn btn--small shortcut__reset" onClick={() => setChord(id, null)} title="Use the default keys" data-testid={`shortcut-reset-${id}`}>Reset</button>
+      )}
+    </Row>
   );
 }
 
@@ -40,10 +94,12 @@ function Row({ label, htmlFor, hint, hintTestId, children }: { label: string; ht
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, focus }: Props) {
   const [name, setName] = useState(project.name);
   const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
+  const shortcutsRef = useRef<HTMLElement>(null);
+  useEffect(() => { if (focus === 'shortcuts') shortcutsRef.current?.scrollIntoView({ block: 'nearest' }); }, [focus]);
   useEffect(() => {
     let live = true;
     api.compilerInfo()
@@ -171,6 +227,11 @@ export default function ProjectSettings({ project, files, autoTypeset, importNot
               <option value="light">Light</option>
             </select>
           </Row>
+        </section>
+
+        <section className="settings__section" data-testid="settings-shortcuts" ref={shortcutsRef}>
+          <div className="menu__label settings__heading">Keyboard shortcuts in this browser</div>
+          {SHORTCUTS.map((s) => <ShortcutRow key={s.id} id={s.id} label={s.label} />)}
         </section>
 
         <div className="modal__row">

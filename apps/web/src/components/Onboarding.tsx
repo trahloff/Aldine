@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import Modal from './Modal';
-import { shortcut } from '../platform';
+import { useShortcutLabel } from '../util/shortcuts';
 import { remoteDescriptor, RemoteProviderId } from '../remotes';
 /** First-run welcome shown once (localStorage-gated by the parent). One
  *  import tile per git host the server offers. */
@@ -11,6 +11,7 @@ export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onCl
   // A <label> around a hidden file input is not focusable, so the tile was
   // mouse-only; a button that opens the input keeps it on the tab order.
   const zipInput = useRef<HTMLInputElement>(null);
+  const typesetKeys = useShortcutLabel('typeset');
 
   return (
     <Modal onClose={onClose} label="Welcome to Aldine" testId="onboarding" wide>
@@ -38,7 +39,7 @@ export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onCl
         </div>
 
         <ul className="onboard__points">
-          <li><strong>Typeset</strong> with {shortcut('S')} — errors jump to the line; double-click the PDF to jump back.</li>
+          <li><strong>Typeset</strong> with {typesetKeys} — errors jump to the line; double-click the PDF to jump back.</li>
           <li><strong>Collaborate</strong> live — invite others, see their cursors, leave anchored comments.</li>
           <li><strong>Version</strong> everything — branches, checkpoints, and full sync with GitHub, GitLab or Gitea.</li>
         </ul>

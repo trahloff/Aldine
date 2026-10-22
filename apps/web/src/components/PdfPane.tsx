@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
-import { shortcut } from '../platform';
+import { useShortcutLabel } from '../util/shortcuts';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -41,6 +41,7 @@ interface Props {
 
 const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
   const renderTask = useRef(0);
@@ -256,7 +257,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           ) : ready && !hasTex ? (
             <p data-testid="pdf-empty-no-tex">Create a .tex file to typeset and preview.</p>
           ) : (
-            <p>Press <span className="kbd">{shortcut('S')}</span> to typeset and preview.</p>
+            <p>Press <span className="kbd">{typesetKeys}</span> to typeset and preview.</p>
           )}
         </div>
       )}

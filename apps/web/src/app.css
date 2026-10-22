@@ -422,6 +422,12 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 .settings__control > input[type="checkbox"] { margin: 0 0 0 11px; }
 /* text read-only beside the selects lines up with their text, not their border */
 .settings__value { padding: 0 11px; font-variant-numeric: tabular-nums; }
+.settings__hint--error { color: var(--error); }
+/* a shortcut is a button that records the next chord pressed */
+.shortcut { display: flex; align-items: center; font: inherit; text-align: left; cursor: pointer; color: var(--text-2); }
+.shortcut .kbd { margin-left: 0; font-size: var(--text-s); color: var(--text); }
+.shortcut.is-recording { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.shortcut__reset { flex: none; margin-left: 6px; }
 @media (max-width: 480px) {
   .settings__row:has(.settings__control) { flex-wrap: wrap; }
   .settings__control { flex-basis: 100%; }

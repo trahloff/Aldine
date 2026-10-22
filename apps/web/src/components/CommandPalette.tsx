@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useExitGhost } from '../exitGhost';
-import { shortcut } from '../platform';
+import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { IconSearch } from './Icons';
 
 export interface Command {
@@ -20,20 +20,21 @@ interface Props {
 
 /** The palette's visible door: a search field in the toolbar that names its shortcut. */
 export function PaletteTrigger({ onOpen, label }: { onOpen(): void; label: string }) {
+  const keys = useShortcutLabel('palette');
   return (
-    <button type="button" className="palette-trigger" onClick={onOpen} data-testid="palette-open" aria-label={`${label} (${shortcut('K')})`} aria-haspopup="dialog">
+    <button type="button" className="palette-trigger" onClick={onOpen} data-testid="palette-open" aria-label={`${label} (${keys})`} aria-haspopup="dialog">
       <IconSearch />
       <span className="palette-trigger__label">{label}</span>
-      <kbd className="kbd palette-trigger__kbd">{shortcut('K')}</kbd>
+      <kbd className="kbd palette-trigger__kbd">{keys}</kbd>
     </button>
   );
 }
 
-/** Mod+K toggles the palette from anywhere on the page. */
+/** The palette's shortcut (Mod+K unless changed in settings) toggles it from anywhere on the page. */
 export function usePaletteHotkey(toggle: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); toggle(); }
+      if (matchesShortcut(e, 'palette')) { e.preventDefault(); toggle(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
