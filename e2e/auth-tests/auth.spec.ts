@@ -160,7 +160,7 @@ test.describe('auth', () => {
     await carol.close();
   });
 
-  test('share from the editor toolbar: owner-only button, link mode, copyable link', async ({ page, browser }) => {
+  test('share from the editor toolbar: owner-only access, link mode, copyable link', async ({ page, browser }) => {
     const email = uniq();
     await register(page, email);
     const proj = await (await page.request.post('/api/projects', { data: { name: 'Toolbar Share' } })).json();
@@ -185,13 +185,19 @@ test.describe('auth', () => {
     const after = await (await page.request.get(`/api/projects/${proj.id}`)).json();
     expect(after.share.mode).toBe('link');
 
-    // a link visitor opens the same project — and gets no Share button
+    // a link visitor opens the same project: Share holds only the downloads
     const carol = await browser.newContext();
     await carol.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
     const carolPage = await carol.newPage();
     await carolPage.goto(`/p/${proj.id}`);
     await expect(carolPage.getByTestId('editor-shell')).toBeVisible();
-    await expect(carolPage.getByTestId('share-project')).toHaveCount(0);
+    await carolPage.getByTestId('share-project').click();
+    await expect(carolPage.getByTestId('share-downloads')).toBeVisible();
+    await expect(carolPage.getByTestId('share-private')).toHaveCount(0);
+    await expect(carolPage.getByTestId('share-save')).toHaveCount(0);
+    await carolPage.getByTestId('share-close').click();
+    await carolPage.getByTestId('branch-menu').click();
+    await expect(carolPage.getByTestId('branch-list')).toBeVisible();
     await expect(carolPage.getByTestId('remote-publish-open')).toHaveCount(0);
     await carol.close();
   });

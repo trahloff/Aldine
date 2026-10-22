@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { typeAtEnd } from '../tests/helpers';
+import { typeAtEnd, openPluginTab } from '../tests/helpers';
 
 /** Mirrors ALDINE_BASE_PATH in playwright.base-path.config.ts. */
 const BASE = '/internal/aldine';
@@ -85,8 +85,7 @@ test.describe('served under a base path (#27)', () => {
     await page.goto(`${BASE}/p/${id}`);
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     // the host imports each plugin's entry module dynamically — a wrong base would 404 it
-    await expect(page.getByTestId('tab-plugin:zotero')).toBeVisible();
-    await page.getByTestId('tab-plugin:zotero').click();
+    await openPluginTab(page, 'zotero');
     await expect(page.getByTestId('zotero-panel')).toBeVisible();
     expect(failed).toEqual([]);
   });
@@ -110,6 +109,7 @@ test.describe('served under a base path (#27)', () => {
     await expect(page.getByTestId('pdf-status')).toContainText('Typeset in', { timeout: 120_000 });
     await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 30_000 });
 
+    await page.getByTestId('share-project').click();
     const href = await page.getByTestId('download-pdf').getAttribute('href');
     expect(href).toMatch(new RegExp(`^${BASE}/api/projects/${id}/output\\?`));
     const pdf = await request.get(href!);

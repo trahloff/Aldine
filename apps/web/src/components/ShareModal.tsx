@@ -11,9 +11,14 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ORCID_RE = /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/;
 const MAX_COLLABORATORS = 50;
 
-/** Owner-only sharing dialog: private/link mode + collaborator emails. */
-export default function ShareModal({ project, onClose, onSaved }: {
+/** Who may open the project (the owner's call, and only with sign-in) and,
+ *  from the editor, the PDF and the source as files, which everyone gets. */
+export default function ShareModal({ project, canManage = true, downloads, onClose, onSaved }: {
   project: Pick<ProjectSummary, 'id' | 'name' | 'share'>;
+  canManage?: boolean;
+  /** The branch the source download archives, and the PDF on screen (null
+   *  until a typeset succeeds). */
+  downloads?: { branch: string; pdfUrl: string | null };
   onClose(): void;
   onSaved(updated: ProjectSummary): void;
 }) {
@@ -22,6 +27,7 @@ export default function ShareModal({ project, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
+  const fileStem = (project.name || 'document').replace(/[\\/:*?"<>|]/g, '-');
 
   const copyLink = async () => {
     try {
@@ -57,34 +63,62 @@ export default function ShareModal({ project, onClose, onSaved }: {
     <Modal onClose={onClose} label={`Share ${project.name}`} testId="share-modal">
       <div>
         <h2>Share “{project.name}”</h2>
-        <p className="modal__sub">Choose who can open and edit this project.</p>
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          <input type="radio" name="share-mode" checked={mode === 'private'} onChange={() => setMode('private')} data-testid="share-private" />
-          <span><strong>Invite only</strong> — you and the collaborators below</span>
-        </label>
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-          <input type="radio" name="share-mode" checked={mode === 'link'} onChange={() => setMode('link')} data-testid="share-link" />
-          <span><strong>Anyone signed in with the link</strong> can edit — it won’t appear in their project list</span>
-        </label>
-        {mode === 'link' && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-            <code data-testid="share-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--text-s)' }}>{shareUrl}</code>
-            <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
-          </div>
+        {canManage ? (
+          <>
+            <p className="modal__sub">Choose who can open and edit this project.</p>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <input type="radio" name="share-mode" checked={mode === 'private'} onChange={() => setMode('private')} data-testid="share-private" />
+              <span><strong>Invite only</strong> — you and the collaborators below</span>
+            </label>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+              <input type="radio" name="share-mode" checked={mode === 'link'} onChange={() => setMode('link')} data-testid="share-link" />
+              <span><strong>Anyone signed in with the link</strong> can edit — it won’t appear in their project list</span>
+            </label>
+            {mode === 'link' && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+                <code data-testid="share-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--text-s)' }}>{shareUrl}</code>
+                <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
+              </div>
+            )}
+            <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>Collaborator emails or ORCID iDs, comma-separated</label>
+            <input
+              id="share-emails"
+              className="input"
+              placeholder="ada@example.edu, grace@example.edu"
+              value={emails}
+              data-testid="share-emails"
+              onChange={(e) => setEmails(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+            />
+          </>
+        ) : (
+          <p className="modal__sub">Download the typeset PDF or the whole source.</p>
         )}
-        <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>Collaborator emails or ORCID iDs, comma-separated</label>
-        <input
-          id="share-emails"
-          className="input"
-          placeholder="ada@example.edu, grace@example.edu"
-          value={emails}
-          data-testid="share-emails"
-          onChange={(e) => setEmails(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-        />
+
+        {downloads && (
+          <section className="share__downloads" data-testid="share-downloads">
+            <div className="menu__label share__label">Download</div>
+            <div className="share__buttons">
+              {downloads.pdfUrl ? (
+                <a className="btn" href={downloads.pdfUrl} download={`${fileStem}.pdf`} title="Download the compiled PDF" data-testid="download-pdf">PDF</a>
+              ) : (
+                <button className="btn" disabled title="Typeset the document first" data-testid="download-pdf">PDF</button>
+              )}
+              <a className="btn" href={api.archiveUrl(project.id, downloads.branch)} download data-testid="download-zip">Source as ZIP</a>
+            </div>
+            <p className="settings__hint">The ZIP holds every file on {downloads.branch}; it imports back into Aldine, or into Overleaf.</p>
+          </section>
+        )}
+
         <div className="modal__row">
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>
+          {canManage ? (
+            <>
+              <button className="btn" onClick={onClose}>Cancel</button>
+              <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>
+            </>
+          ) : (
+            <button className="btn" onClick={onClose} data-testid="share-close">Close</button>
+          )}
         </div>
       </div>
     </Modal>

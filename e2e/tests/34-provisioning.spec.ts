@@ -119,8 +119,9 @@ test.describe('GitLab auto-provisioning', () => {
     await expect(page.locator('.toast').filter({ hasText: 'Also created on GitLab' })).toContainText(ROOT);
 
     await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await page.getByTestId('branch-menu').click();
     const autopush = page.getByTestId('gitlab-autopush');
-    await expect(autopush).toHaveText('Autopush on');
+    await expect(autopush).toHaveText('On');
     await expect(autopush).toHaveAttribute('aria-pressed', 'true');
 
     const s = await summary(request, teamPaperId);
@@ -170,8 +171,12 @@ test.describe('GitLab auto-provisioning', () => {
     await page.goto(`/p/${teamPaperId}`);
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     await openFile(page, 'main.tex');
+    // autopush sits in the branch menu; it closes before each edit so it cannot cover the line
+    const menu = page.getByTestId('branch-menu');
     const autopush = page.getByTestId('gitlab-autopush');
+    await menu.click();
     await expect(autopush).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Escape');
 
     // The autosave commit waits 20 s after edits settle; the commit route takes
     // the same path (flush, commit, scheduleAutopush) without the wait.
@@ -180,15 +185,18 @@ test.describe('GitLab auto-provisioning', () => {
     expect((await (await request.post(`/api/projects/${teamPaperId}/commit`, { data: { branch: 'main', message: 'e2e' } })).json()).committed).toBe(true);
     await expect.poll(() => bareMainTex(teamPaperRepo), { timeout: 4_000 }).toContain(first);
 
+    await menu.click();
     await autopush.click();
     await expect(autopush).toHaveAttribute('aria-pressed', 'false');
-    await expect(autopush).toHaveText('Autopush off');
+    await expect(autopush).toHaveText('Off');
+    await page.keyboard.press('Escape');
     const second = `E2E-HELD-${Date.now()}`;
     await typeAndFlush(page, request, teamPaperId, second);
     expect((await (await request.post(`/api/projects/${teamPaperId}/commit`, { data: { branch: 'main', message: 'e2e held' } })).json()).committed).toBe(true);
     await page.waitForTimeout(1500); // > debounce: an enabled autopush would have landed by now
     expect(bareMainTex(teamPaperRepo)).not.toContain(second);
 
+    await menu.click();
     await autopush.click();
     await expect(autopush).toHaveAttribute('aria-pressed', 'true');
     await request.post(`/api/projects/${teamPaperId}/commit`, { data: { branch: 'main', message: 'e2e released' } });

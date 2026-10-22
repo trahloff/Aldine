@@ -78,7 +78,9 @@ test.describe(`deployed instance${BASE ? ` under ${BASE}` : ''}`, () => {
       await page.getByTestId('typeset-button').click();
       await expect(page.getByTestId('pdf-status')).toContainText('Typeset in', { timeout: 240_000 });
       await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 30_000 });
+      await page.getByTestId('share-project').click();
       await expect(page.getByTestId('download-pdf')).toHaveAttribute('href', new RegExp(`^${BASE}/api/projects/${projectId}/output`));
+      await page.keyboard.press('Escape');
     }
 
     // the share link is the public URL of this project (sharing exists only with sign-in)

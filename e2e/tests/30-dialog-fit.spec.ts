@@ -57,10 +57,10 @@ test.describe('a dialog never hides its own actions', () => {
 });
 
 test.describe('the editor never scrolls sideways', () => {
-  for (const s of [{ w: 1440, h: 900 }, { w: 1280, h: 800 }, { w: 1100, h: 700 }, { w: 900, h: 700 }]) {
+  for (const s of [{ w: 1440, h: 900 }, { w: 1280, h: 800 }, { w: 1100, h: 700 }, { w: 1024, h: 700 }, { w: 900, h: 700 }]) {
     test(`no horizontal overflow at ${s.w}x${s.h}`, async ({ page, request }) => {
-      // A typeset project is the wide case: the toolbar only grows its status
-      // and its Download button once there is a PDF.
+      // A typeset project is the wide case: the preview header only grows its
+      // status and the word count once there is a PDF.
       const id = await createPaperProject(request, `Overflow ${s.w}`);
       try {
         await page.setViewportSize({ width: s.w, height: s.h });
@@ -68,7 +68,8 @@ test.describe('the editor never scrolls sideways', () => {
         await expectTypesetOk(page);
         const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
         expect(over).toBeLessThanOrEqual(0);
-        for (const t of ['engine-select', 'zoom-controls', 'pdf-status']) {
+        // Typeset is the one button that must never be pushed out
+        for (const t of ['typeset-button', 'zoom-controls', 'pdf-status', 'auto-toggle']) {
           const b = await page.getByTestId(t).boundingBox();
           if (b) expect(b.x + b.width).toBeLessThanOrEqual(s.w);
         }

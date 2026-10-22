@@ -8,15 +8,20 @@ import { createProject, openProject, cleanup } from './helpers';
  * only ever named.
  */
 test.describe('Connect Claude', () => {
-  test('from project settings: the Claude Code command with the token header', async ({ page, request, baseURL }) => {
+  test('from the palette: the Claude Code command with the token header', async ({ page, request, baseURL }) => {
     const id = await createProject(request, 'Connect Claude');
     try {
       await openProject(page, id);
+      // the connector serves the whole server, so project settings leave it out
       await page.getByTestId('project-settings-open').click();
-      await page.getByTestId('settings-connect-claude').click();
+      await expect(page.getByTestId('project-settings')).toBeVisible();
+      await expect(page.getByTestId('settings-connect-claude')).toHaveCount(0);
+      await page.getByTestId('settings-close').click();
+      await page.getByTestId('palette-open').click();
+      await page.keyboard.type('connect claude');
+      await page.getByTestId('palette-item-connect-claude').click();
       const modal = page.getByTestId('connect-claude');
       await expect(modal).toBeVisible();
-      await expect(page.getByTestId('project-settings')).toHaveCount(0);
 
       // localhost: nothing in Anthropic's cloud can reach it, so Claude Code
       // is the only route and there is nothing to switch between

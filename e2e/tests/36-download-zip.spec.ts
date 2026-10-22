@@ -53,17 +53,17 @@ test.describe('download a project as ZIP', () => {
     } finally { await cleanup(request, id); }
   });
 
-  test('project settings offers the download and the browser saves a .zip', async ({ page, request }) => {
-    const id = await createPaperProject(request, 'Zip From Settings');
+  test('the share dialog offers the download and the browser saves a .zip', async ({ page, request }) => {
+    const id = await createPaperProject(request, 'Zip From Share');
     try {
       await openProject(page, id);
-      await page.getByTestId('project-settings-open').click();
-      const link = page.getByTestId('settings-download-zip');
+      await page.getByTestId('share-project').click();
+      const link = page.getByTestId('download-zip');
       await expect(link).toBeVisible();
       await expect(link).toHaveAttribute('href', /\/api\/projects\/.+\/archive\?branch=main$/);
       const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
       // Browsers prefer the UTF-8 name over the ASCII fallback in the header.
-      expect(download.suggestedFilename()).toBe('Zip From Settings.zip');
+      expect(download.suggestedFilename()).toBe('Zip From Share.zip');
       const saved = await download.path();
       expect(saved).toBeTruthy();
       const entries = unzip(fs.readFileSync(saved!));

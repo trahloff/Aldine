@@ -6,6 +6,41 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- ⌘⌥M (Ctrl+Alt+M elsewhere) comments on the selected text. The Comment
+  button and the palette show the key.
+
+### Changed
+- The editor's top bar names the branch once. In a project linked to a git
+  host, that pill lists the host's branches, carries the counts of commits
+  waiting, and its menu holds push, pull, autopush, the repository link and
+  opening a pull or merge request. Pull or Push appears beside the pill only
+  while commits wait. Branches that exist only on this server are listed
+  apart; push and pull act on main, so they show while main is open.
+  Publishing an unlinked project moved into the same menu.
+- Share holds the PDF and source-ZIP downloads for everyone who can open the
+  project. Inviting and link sharing stay the owner's.
+- The preview header lost its title, the engine picker (Project settings and
+  the palette keep it) and Download, and gained Jump to PDF and the word
+  count from the editor's header, which leaves the visual mode's formatting
+  buttons room.
+- Project settings: one column of controls, each explanation under its
+  label, a drawn chevron on every select, and the options split into This
+  project and This browser. The source download moved to Share; the Claude
+  connector serves the whole server, so it is reached from the palette and
+  the project list instead.
+- Two or more plugin panels share one More tab instead of wrapping the
+  sidebar's tab row onto a second line.
+
+### Fixed
+- At 1280 px the top bar cut the project name short and the preview header
+  wrapped; at 1024 px Comment and Typeset were off the screen. The name and
+  the search field now give way first, and the preview header drops its
+  shortcut hints before it wraps.
+- The TeX Live release in Project settings sat at the far right edge, away
+  from every other value.
+- The search field's magnifier shrank to a dot in a tight top bar.
+
 ## [0.13.2] — 2026-10-21
 
 ### Fixed
