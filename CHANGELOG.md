@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-10-22
+
 ### Added
 - Project settings → Keyboard shortcuts in this browser: click a shortcut
   and press new keys for typesetting, commenting, jumping the PDF to the
