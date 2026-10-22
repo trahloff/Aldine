@@ -34,6 +34,24 @@ const DRAFT_RERUN_HINT = /Rerun to get|Label\(s\) may have changed|Please \(?re\
 // server.js directly has no such file and reports "unknown".
 const SCHEME_FILE = process.env.TEXLIVE_SCHEME_FILE || path.join(__dirname, 'texlive-scheme');
 
+const LOG_MAX = 200_000;
+const LOG_HEAD = 20_000;
+
+/**
+ * The log as the app keeps it. The head names the engine, the format and the
+ * packages loaded; the tail has the last error and the page count. A log
+ * over LOG_MAX loses its middle, cut at line ends.
+ */
+function clipLog(log) {
+  if (log.length <= LOG_MAX) return log;
+  const headEnd = log.lastIndexOf('\n', LOG_HEAD);
+  const head = log.slice(0, headEnd > 0 ? headEnd : LOG_HEAD);
+  const tailStart = log.indexOf('\n', log.length - (LOG_MAX - LOG_HEAD));
+  const tail = log.slice(tailStart >= 0 ? tailStart + 1 : log.length - (LOG_MAX - LOG_HEAD));
+  const cut = log.length - head.length - tail.length;
+  return `${head}\n[… ${Math.ceil(cut / 1000)} KB of the log left out …]\n${tail}`;
+}
+
 function json(res, code, body) {
   const buf = Buffer.from(JSON.stringify(body));
   res.writeHead(code, { 'content-type': 'application/json', 'content-length': buf.length });
@@ -427,7 +445,7 @@ async function compileInner(body) {
     pdfFresh: isFresh(pdfPath),
     synctex: fs.existsSync(synctexPath) ? rel(`${base}.synctex.gz`) : null,
     synctexFresh: isFresh(synctexPath),
-    log: log.length > 200_000 ? log.slice(-200_000) : log,
+    log: clipLog(log),
     latexmkOutput: out.length > 20_000 ? out.slice(-20_000) : out,
     errors,
     durationMs,
@@ -506,7 +524,7 @@ const server = http.createServer(async (req, res) => {
 
 // The log parsers are pure and worth testing without a TeX Live image; the
 // server only starts when this file is run directly (the image's CMD).
-module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, preambleIdle: preamble.idle };
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, clipLog, preambleIdle: preamble.idle };
 
 if (require.main === module) {
   probeTexLive().finally(() => {
