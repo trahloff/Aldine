@@ -41,8 +41,18 @@ export function bibKeys(source: string): Set<string> {
   return keys;
 }
 
+/** @string{name = {value}} definitions, for a field given as a bare macro. */
+function stringMacros(source: string): Map<string, string> {
+  const macros = new Map<string, string>();
+  const re = /@string\s*[{(]\s*([^\s=,{}"]+)\s*=\s*(?:\{((?:[^{}]|\{[^{}]*\})*)\}|"([^"]*)")/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source))) macros.set(m[1].toLowerCase(), m[2] ?? m[3]);
+  return macros;
+}
+
 export function parseBib(source: string, file: string): BibEntry[] {
   const entries: BibEntry[] = [];
+  const strings = stringMacros(source);
   const re = /@([a-zA-Z]+)\s*\{\s*([^,\s]+)\s*,/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source))) {
@@ -59,7 +69,7 @@ export function parseBib(source: string, file: string): BibEntry[] {
     }
     const body = source.slice(re.lastIndex, i - 1);
     const rawField = (name: string): string | undefined => {
-      const fm = body.match(new RegExp(`(?:^|[,\\s])${name}\\s*=\\s*(\\{|")`, 'i'));
+      const fm = body.match(new RegExp(`(?:^|[,\\s])${name}\\s*=\\s*(\\{|"|[^\\s,{}"#=]+)`, 'i'));
       if (!fm) return undefined;
       const open = fm[1];
       let start = fm.index! + fm[0].length;
@@ -71,10 +81,12 @@ export function parseBib(source: string, file: string): BibEntry[] {
           j++;
         }
         return body.slice(start, j - 1);
-      } else {
+      } else if (open === '"') {
         const end = body.indexOf('"', start);
         return end === -1 ? undefined : body.slice(start, end);
       }
+      // unbraced: year = 2020, or journal = jacm from an @string
+      return /^\d+$/.test(open) ? open : strings.get(open.toLowerCase());
     };
     const field = (name: string): string | undefined => {
       const raw = rawField(name);

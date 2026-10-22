@@ -31,4 +31,10 @@ eq(one('  author = {Castanon Remy, Jean},').authorLabel, 'Castanon Remy', 'a com
 eq(one('  title = "Quoted \\TeX{} field",').title, 'Quoted TeX field', 'a quoted field cleans the same way');
 check(one('  year = {2020},').title === undefined, 'a missing title stays missing');
 
+// unbraced values: a number, or a macro from @string
+const [bare] = parseBib('@string{jacm = {Journal of the {ACM}}}\n@article{b,\n  title = {T},\n  year = 2020,\n  journal = JACM\n}', 'refs.bib');
+eq(bare.year, '2020', 'an unbraced year');
+eq(bare.journal, 'Journal of the ACM', 'a journal from an @string macro');
+check(one('  title = {T},\n  journal = nosuchmacro').journal === undefined, 'an undefined macro is no journal');
+
 console.log('bib: ok');
