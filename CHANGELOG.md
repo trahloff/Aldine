@@ -6,6 +6,11 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- A compile log over 200 KB keeps its first 20 KB as well as its end,
+  with a line marking the cut. The start names the engine, the format
+  and the packages loaded, which a long log used to lose.
+
 ### Fixed
 - Cite and the `\cite` suggestions showed titles cut at TeX markup: "The
   {\TeX}book" read as "The", and "{\LaTeX}: A Document Preparation System"
