@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
@@ -6,8 +6,6 @@ import { getTheme, setTheme, Theme } from '../theme';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
-  /** The branch the download link archives. */
-  branch: string;
   files: TreeEntry[];
   /** The auto-typeset switch lives in localStorage, not in the project. */
   autoTypeset: boolean;
@@ -20,15 +18,29 @@ interface Props {
   onSetStopOnFirstError(on: boolean): Promise<void>;
   onSetManualCommits(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
-  onConnectClaude(): void;
+}
+
+/** Label and explanation on the left, the control in one column on the right. */
+function Row({ label, htmlFor, hint, hintTestId, children }: { label: string; htmlFor?: string; hint?: ReactNode; hintTestId?: string; children: ReactNode }) {
+  return (
+    <div className="settings__row">
+      <div className="settings__text">
+        {htmlFor ? <label className="settings__label" htmlFor={htmlFor}>{label}</label> : <span className="settings__label">{label}</span>}
+        {hint && <span className="settings__hint" data-testid={hintTestId}>{hint}</span>}
+      </div>
+      <div className="settings__control">{children}</div>
+    </div>
+  );
 }
 
 /**
- * The permanent home of the project's compile options (the preview header's
- * engine picker and the log dialog's stop-on-error box are shortcuts to the
- * same state). Every change saves on its own; there is no Save button.
+ * The permanent home of the project's compile options (the palette's engine
+ * commands and the log dialog's stop-on-error box are shortcuts to the same
+ * state). What is stored with the project comes first; what this browser
+ * remembers on its own is kept apart. Every change saves on its own; there is
+ * no Save button.
  */
-export default function ProjectSettings({ project, branch, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onConnectClaude }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset }: Props) {
   const [name, setName] = useState(project.name);
   const [theme, setThemeChoice] = useState<Theme>(getTheme());
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -58,154 +70,107 @@ export default function ProjectSettings({ project, branch, files, autoTypeset, i
   const close = () => { commitName(); onClose(); };
 
   return (
-    <Modal onClose={close} label="Project settings" testId="project-settings" width={520}>
+    <Modal onClose={close} label="Project settings" testId="project-settings" width={560}>
       <div>
         <h2>Project settings</h2>
         <p className="modal__sub">Changes save as you make them.</p>
 
-        <div className="settings__row">
-          <label className="settings__label" htmlFor="settings-name">Name</label>
-          <input
-            id="settings-name"
-            className="input settings__control"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-            data-testid="settings-name"
-          />
-        </div>
-
-        <section data-testid="compiler-settings">
-          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Compiler</div>
-
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-root-file">Main document</label>
+        <section className="settings__section" data-testid="settings-this-project">
+          <div className="menu__label settings__heading">This project</div>
+          <Row label="Name" htmlFor="settings-name">
+            <input
+              id="settings-name"
+              className="input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              data-testid="settings-name"
+            />
+          </Row>
+          <Row label="Main document" htmlFor="settings-root-file" hint="The file a typeset starts from">
             <select
               id="settings-root-file"
-              className="input settings__control"
+              className="input"
               value={project.rootFile}
               onChange={(e) => onSetRoot(e.target.value)}
               data-testid="settings-root-file"
             >
               {rootOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-          </div>
-
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-engine">Compiler</label>
+          </Row>
+          <Row label="Compiler" htmlFor="settings-engine" hint={importNote} hintTestId="settings-engine-note">
             <select
               id="settings-engine"
-              className="input settings__control"
+              className="input"
               value={engine}
               onChange={(e) => onSetEngine(e.target.value)}
               data-testid="settings-engine"
             >
               {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
             </select>
-          </div>
-          {importNote && (
-            <div className="settings__row">
-              <span className="settings__label" />
-              <span className="settings__hint" data-testid="settings-engine-note">{importNote}</span>
-            </div>
-          )}
-
-          <div className="settings__row">
-            <span className="settings__label">TeX Live</span>
-            <span data-testid="settings-texlive" title="Release and scheme of the compiler this server talks to">{texliveLabel(compiler)}</span>
-          </div>
-
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-stop-on-error">Stop on first error</label>
-            <span className="settings__control settings__control--check">
-              <input
-                id="settings-stop-on-error"
-                type="checkbox"
-                checked={!!project.stopOnFirstError}
-                onChange={(e) => onSetStopOnFirstError(e.target.checked)}
-                data-testid="settings-stop-on-error"
-              />
-              <span className="settings__hint">{project.stopOnFirstError ? 'The run stops at the first error and keeps the previous PDF' : 'The run continues to the end and lists the errors beside the PDF'}</span>
-            </span>
-          </div>
-
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-auto-typeset">Auto-typeset</label>
-            <span className="settings__control settings__control--check">
-              <input
-                id="settings-auto-typeset"
-                type="checkbox"
-                checked={autoTypeset}
-                onChange={onToggleAutoTypeset}
-                data-testid="settings-auto-typeset"
-              />
-              <span className="settings__hint">{autoTypeset ? 'Typesets shortly after you stop typing, on this browser' : 'Typeset by hand only, on this browser'}</span>
-            </span>
-          </div>
+          </Row>
+          <Row label="TeX Live" hint="Set by this server">
+            <span className="settings__value" data-testid="settings-texlive" title="Release and scheme of the compiler this server talks to">{texliveLabel(compiler)}</span>
+          </Row>
+          <Row
+            label="Stop on first error"
+            htmlFor="settings-stop-on-error"
+            hint={project.stopOnFirstError ? 'The run stops at the first error and keeps the previous PDF' : 'The run continues to the end and lists the errors beside the PDF'}
+          >
+            <input
+              id="settings-stop-on-error"
+              type="checkbox"
+              checked={!!project.stopOnFirstError}
+              onChange={(e) => onSetStopOnFirstError(e.target.checked)}
+              data-testid="settings-stop-on-error"
+            />
+          </Row>
+          <Row
+            label="Commit changes"
+            htmlFor="settings-commit-mode"
+            hint={project.manualCommits ? 'Edits are saved, and wait in History for a commit with your message' : 'Every pause in typing becomes an autosave commit'}
+          >
+            <select
+              id="settings-commit-mode"
+              className="input"
+              value={project.manualCommits ? 'manual' : 'auto'}
+              onChange={(e) => onSetManualCommits(e.target.value === 'manual')}
+              data-testid="settings-commit-mode"
+            >
+              <option value="auto">Automatically</option>
+              <option value="manual">When I commit</option>
+            </select>
+          </Row>
         </section>
 
-        <section data-testid="history-settings">
-          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>History</div>
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-commit-mode">Commit changes</label>
-            <span className="settings__control settings__control--check">
-              <select
-                id="settings-commit-mode"
-                className="input"
-                value={project.manualCommits ? 'manual' : 'auto'}
-                onChange={(e) => onSetManualCommits(e.target.value === 'manual')}
-                data-testid="settings-commit-mode"
-              >
-                <option value="auto">Automatically</option>
-                <option value="manual">When I commit</option>
-              </select>
-              <span className="settings__hint">{project.manualCommits ? 'Edits are saved, and wait in History for a commit with your message' : 'Every pause in typing becomes an autosave commit'}</span>
-            </span>
-          </div>
-        </section>
-
-        <section data-testid="appearance-settings">
-          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Appearance</div>
-
-          <div className="settings__row">
-            <label className="settings__label" htmlFor="settings-theme">Theme</label>
-            <span className="settings__control settings__control--check">
-              <select
-                id="settings-theme"
-                className="input"
-                value={theme}
-                onChange={(e) => { const t = e.target.value as Theme; setTheme(t); setThemeChoice(t); }}
-                data-testid="settings-theme"
-              >
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
-              <span className="settings__hint">Applies to this browser</span>
-            </span>
-          </div>
-        </section>
-
-        <section data-testid="export-settings">
-          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Export</div>
-          <div className="settings__row">
-            <span className="settings__label">Source</span>
-            <span className="settings__control settings__control--check">
-              <a className="btn" href={api.archiveUrl(project.id, branch)} download data-testid="settings-download-zip">Download as ZIP</a>
-              <span className="settings__hint">Every file on {branch}; imports back into Aldine, or into Overleaf</span>
-            </span>
-          </div>
-        </section>
-
-        <section data-testid="claude-settings">
-          <div className="menu__label" style={{ margin: '18px 0 4px', padding: 0 }}>Claude</div>
-          <div className="settings__row">
-            <span className="settings__label">Connector</span>
-            <span className="settings__control settings__control--check">
-              <button className="btn" onClick={() => { close(); onConnectClaude(); }} data-testid="settings-connect-claude">Connect Claude…</button>
-              <span className="settings__hint">Let Claude read, edit and typeset projects on this server</span>
-            </span>
-          </div>
+        <section className="settings__section" data-testid="settings-this-browser">
+          <div className="menu__label settings__heading">This browser</div>
+          <Row
+            label="Auto-typeset"
+            htmlFor="settings-auto-typeset"
+            hint={autoTypeset ? 'Typesets shortly after you stop typing' : 'Typeset by hand only'}
+          >
+            <input
+              id="settings-auto-typeset"
+              type="checkbox"
+              checked={autoTypeset}
+              onChange={onToggleAutoTypeset}
+              data-testid="settings-auto-typeset"
+            />
+          </Row>
+          <Row label="Theme" htmlFor="settings-theme">
+            <select
+              id="settings-theme"
+              className="input"
+              value={theme}
+              onChange={(e) => { const t = e.target.value as Theme; setTheme(t); setThemeChoice(t); }}
+              data-testid="settings-theme"
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </Row>
         </section>
 
         <div className="modal__row">

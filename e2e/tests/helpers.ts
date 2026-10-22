@@ -51,6 +51,16 @@ export async function typeAtEnd(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text);
 }
 
+/** Open a plugin's sidebar panel. Two or more plugins share the "More" tab,
+ *  so its menu opens first. */
+export async function openPluginTab(page: Page, plugin: string): Promise<void> {
+  const more = page.getByTestId('tab-more');
+  const tab = page.getByTestId(`tab-plugin:${plugin}`);
+  await expect(more.or(tab)).toBeVisible({ timeout: 15_000 });
+  if (await more.isVisible()) await more.click();
+  await tab.click();
+}
+
 export async function typeset(page: Page): Promise<void> {
   await page.getByTestId('typeset-button').click();
 }

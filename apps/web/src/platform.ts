@@ -5,7 +5,8 @@
  */
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform || '');
 
-/** "⌘S" on Mac, "Ctrl+S" elsewhere. */
-export function shortcut(key: string): string {
-  return isMac ? `⌘${key}` : `Ctrl+${key}`;
+/** "⌘S" on Mac, "Ctrl+S" elsewhere; with `alt`, "⌘⌥M" and "Ctrl+Alt+M". */
+export function shortcut(key: string, opts?: { alt?: boolean }): string {
+  if (isMac) return `⌘${opts?.alt ? '⌥' : ''}${key}`;
+  return `Ctrl+${opts?.alt ? 'Alt+' : ''}${key}`;
 }

@@ -153,6 +153,7 @@ test.describe('Gitea / Forgejo sync', () => {
     await page.keyboard.type(` ${marker}`);
     await expect(content).toContainText(marker);
 
+    await page.getByTestId('branch-menu').click();
     await page.getByTestId('gitea-push-btn').click();
     await expect(page.getByTestId('push-dialog')).toContainText('Push to Gitea / Forgejo');
     await page.getByTestId('push-message').fill('Add e2e marker');
@@ -160,20 +161,21 @@ test.describe('Gitea / Forgejo sync', () => {
     await expect(page.locator('.toast').filter({ hasText: 'Pushed to Gitea / Forgejo' })).toBeVisible();
     expect(git(['--git-dir', GITEA_BARE, 'show', 'main:main.tex'])).toContain(marker);
 
-    const chip = page.getByTestId('gitea-branch');
+    const chip = page.getByTestId('branch-menu');
     await expect(chip).toContainText('main');
     await chip.click();
-    await expect(page.getByTestId('gitea-branch-menu')).toBeVisible();
+    await expect(page.getByTestId('branch-list')).toBeVisible();
     await expect(page.getByTestId('gitea-open-pr')).toHaveCount(0);
     const branch = `feature-${Date.now()}`;
-    await page.getByTestId('gitea-new-branch').fill(branch);
-    await page.getByTestId('gitea-create-branch').click();
+    await page.getByTestId('new-branch').click();
+    await page.getByTestId('new-branch-name').fill(branch);
+    await page.getByTestId('new-branch-create').click();
     await expect(page.locator('.toast').filter({ hasText: `Created branch ${branch}` })).toBeVisible();
     await expect(chip).toContainText(branch);
     expect(git(['--git-dir', GITEA_BARE, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'])).toContain(branch);
 
     await chip.click();
-    await expect(page.getByTestId('gitea-branch-menu')).toBeVisible();
+    await expect(page.getByTestId('branch-list')).toBeVisible();
     await page.getByTestId('gitea-open-pr').click();
     const dialog = page.getByTestId('pr-dialog');
     await expect(dialog.locator('h2')).toHaveText('Open pull request');
@@ -202,6 +204,7 @@ test.describe('Gitea / Forgejo sync', () => {
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     await expect(page.getByTestId('gitea-sync')).toHaveCount(0);
 
+    await page.getByTestId('branch-menu').click();
     await page.getByTestId('remote-publish-open').click();
     const modal = page.getByTestId('remote-publish');
     await expect(modal).toBeVisible();
@@ -267,6 +270,7 @@ test.describe('GitLab sync', () => {
     await page.keyboard.type(` ${marker}`);
     await expect(content).toContainText(marker);
 
+    await page.getByTestId('branch-menu').click();
     await page.getByTestId('gitlab-push-btn').click();
     await expect(page.getByTestId('push-dialog')).toBeVisible();
     await page.getByTestId('push-message').fill('Add e2e marker');
@@ -288,12 +292,14 @@ test.describe('GitLab sync', () => {
 
     // nobody clicks anything: the open editor notices the new commit by itself
     await expect(page.getByTestId('gitlab-counts')).toContainText('↓1', { timeout: 15_000 });
-    await expect(page.getByTestId('gitlab-pull-btn')).toHaveClass(/btn--primary/);
+    // with a commit waiting, Pull sits beside the pill without opening anything
+    await expect(page.getByTestId('gitlab-sync-action')).toHaveText('Pull');
+    await expect(page.getByTestId('gitlab-sync-action')).toHaveClass(/btn--primary/);
     await expect(page.locator('.toast').filter({ hasText: '1 new commit on GitLab' })).toBeVisible();
     await page.getByTestId('gitlab-pull-toast').click();
     await expect(page.locator('.toast').filter({ hasText: 'Pulled from GitLab' })).toBeVisible();
     await expect(page.getByTestId('gitlab-counts')).toHaveCount(0);
-    await expect(page.getByTestId('gitlab-pull-btn')).not.toHaveClass(/btn--primary/);
+    await expect(page.getByTestId('gitlab-sync-action')).toHaveCount(0);
     await expect(content).toContainText(external);
     await expect(content).toContainText(marker);
   });
@@ -307,19 +313,20 @@ test.describe('GitLab sync', () => {
     await page.goto(`/p/${projectId}`);
     await expect(page.getByTestId('gitlab-sync')).toBeVisible();
 
-    const chip = page.getByTestId('gitlab-branch');
+    const chip = page.getByTestId('branch-menu');
     await expect(chip).toContainText('main');
     await chip.click();
-    await expect(page.getByTestId('gitlab-branch-menu')).toBeVisible();
+    await expect(page.getByTestId('branch-list')).toBeVisible();
     await expect(page.getByTestId('gitlab-open-pr')).toHaveCount(0); // nothing to merge from the default branch
-    await page.getByTestId('gitlab-new-branch').fill('feature-x');
-    await page.getByTestId('gitlab-create-branch').click();
+    await page.getByTestId('new-branch').click();
+    await page.getByTestId('new-branch-name').fill('feature-x');
+    await page.getByTestId('new-branch-create').click();
     await expect(page.locator('.toast').filter({ hasText: 'Created branch feature-x' })).toBeVisible();
     await expect(chip).toContainText('feature-x');
     expect(git(['--git-dir', BARE, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'])).toContain('feature-x');
 
     await chip.click();
-    await expect(page.getByTestId('gitlab-branch-menu')).toBeVisible();
+    await expect(page.getByTestId('branch-list')).toBeVisible();
     await expect(page.getByTestId('gitlab-branch-feature-x')).toBeVisible();
     await page.getByTestId('gitlab-open-pr').click();
     const dialog = page.getByTestId('pr-dialog');
@@ -350,6 +357,7 @@ test.describe('GitLab sync', () => {
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     await expect(page.getByTestId('gitlab-sync')).toHaveCount(0);
 
+    await page.getByTestId('branch-menu').click();
     await page.getByTestId('remote-publish-open').click();
     const modal = page.getByTestId('remote-publish');
     await expect(modal).toBeVisible();

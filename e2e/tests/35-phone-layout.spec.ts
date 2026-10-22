@@ -55,10 +55,6 @@ test.describe('phone layout', () => {
       expect(content!.width).toBeGreaterThanOrEqual(PHONE.width * 0.6);
       await expect(page.locator('.pane--preview')).toBeHidden();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-      // header controls sit beside or below each other, never on top of one another
-      const jump = (await page.getByTestId('jump-to-pdf').boundingBox())!;
-      const words = (await page.getByTestId('word-count').boundingBox())!;
-      expect(words.x >= jump.x + jump.width - 1 || words.y >= jump.y + jump.height - 1).toBe(true);
 
       // a deep link to a line (the PDF viewer's and Claude's click-through) lands in the same state
       await page.goto(`/p/${id}?line=5`);

@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab } from './helpers';
 
 const BIB = `@article{turing1950,
   author = {Turing, Alan M.},
@@ -23,7 +23,7 @@ test.describe('Cite panel: the project bibliography', () => {
       const put = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'refs.bib', content: BIB } });
       expect(put.ok()).toBeTruthy();
       await openProject(page, id);
-      await page.getByTestId('tab-plugin:references').click();
+      await openPluginTab(page, 'references');
 
       const entry = page.getByTestId('cite-bib-lamport1994');
       await expect(entry).toBeVisible();
@@ -41,7 +41,7 @@ test.describe('Cite panel: the project bibliography', () => {
     const id = await createProject(request, 'Bib Focus');
     try {
       await openProject(page, id);
-      await page.getByTestId('tab-plugin:references').click();
+      await openPluginTab(page, 'references');
       const search = page.getByTestId('reference-search');
       await search.click();
       // typed key by key, with a pause long enough for a search to come back

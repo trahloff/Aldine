@@ -40,7 +40,6 @@ test.describe('engine detection on import', () => {
     try {
       id = await importFile(page, file, stem, 'XeLaTeX (latexmkrc in the archive)');
       expect((await meta(request, id)).engine).toBe('xelatex');
-      await expect(page.getByTestId('engine-select')).toHaveValue('xelatex');
       // auto-typeset is on by default: the first build runs without any click
       await expectTypesetOk(page);
       await page.getByTestId('view-log').click();
@@ -48,7 +47,7 @@ test.describe('engine detection on import', () => {
       await page.keyboard.press('Escape');
       // the panel is the permanent home and agrees
       await page.getByTestId('project-settings-open').click();
-      await expect(page.getByTestId('compiler-settings')).toBeVisible();
+      await expect(page.getByTestId('settings-this-project')).toBeVisible();
       await expect(page.getByTestId('settings-engine')).toHaveValue('xelatex');
       await expect(page.getByTestId('settings-engine-note')).toHaveText('Set on import because of latexmkrc in the archive');
       await expect(page.getByTestId('settings-root-file')).toHaveValue('main.tex');
@@ -66,7 +65,8 @@ test.describe('engine detection on import', () => {
     try {
       id = await importFile(page, file, stem, 'XeLaTeX (the xepersian package in the main document)');
       expect((await meta(request, id)).engine).toBe('xelatex');
-      await expect(page.getByTestId('engine-select')).toHaveValue('xelatex');
+      await page.getByTestId('project-settings-open').click();
+      await expect(page.getByTestId('settings-engine')).toHaveValue('xelatex');
     } finally {
       if (id) await cleanup(request, id);
       fs.rmSync(dir, { recursive: true, force: true });
@@ -107,7 +107,7 @@ test.describe('compiler settings panel', () => {
       await openProject(page, id);
 
       await page.getByTestId('project-settings-open').click();
-      const panel = page.getByTestId('compiler-settings');
+      const panel = page.getByTestId('settings-this-project');
       await expect(panel).toBeVisible();
       await expect(page.getByTestId('settings-texlive')).not.toHaveText('Checking the compiler');
       const texlive = (await page.getByTestId('settings-texlive').textContent()) || '';
@@ -116,7 +116,6 @@ test.describe('compiler settings panel', () => {
 
       await page.getByTestId('settings-engine').selectOption('lualatex');
       await expect.poll(async () => (await meta(request, id)).engine).toBe('lualatex');
-      await expect(page.getByTestId('engine-select')).toHaveValue('lualatex');
 
       await page.getByTestId('settings-stop-on-error').check();
       await expect.poll(async () => (await meta(request, id)).stopOnFirstError).toBe(true);

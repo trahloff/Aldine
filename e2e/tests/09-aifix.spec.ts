@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab } from './helpers';
 
 /** Runs against the mock Anthropic API (tests/mock-zotero.mjs serves /v1/messages). */
 test.describe('AI error fix (plugin)', () => {
@@ -17,9 +17,7 @@ test.describe('AI error fix (plugin)', () => {
       await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
 
       // open the Fix plugin (proves the AI plugin loaded)
-      const tab = page.getByTestId('tab-plugin:aifix');
-      await expect(tab).toBeVisible({ timeout: 15_000 });
-      await tab.click();
+      await openPluginTab(page, 'aifix');
 
       // diagnose
       await page.getByTestId('aifix-diagnose').click();

@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab } from './helpers';
 
 test.describe('v0.2 features', () => {
   test('template gallery creates a compiling project', async ({ page, request }) => {
@@ -81,9 +81,7 @@ test.describe('DOI / arXiv citation (references plugin)', () => {
     const id = await createProject(request, 'DOI Cite');
     try {
       await openProject(page, id);
-      const tab = page.getByTestId('tab-plugin:references');
-      await expect(tab).toBeVisible({ timeout: 15_000 });
-      await tab.click();
+      await openPluginTab(page, 'references');
       await page.getByTestId('reference-query').fill('10.1145/mock.12345');
       await page.getByTestId('reference-add').click();
       // cite inserted into the editor
@@ -179,7 +177,7 @@ test.describe('cite-from-search (OpenAlex)', () => {
     const id = await createProject(request, 'Search Cite');
     try {
       await openProject(page, id);
-      await page.getByTestId('tab-plugin:references').click();
+      await openPluginTab(page, 'references');
       await page.getByTestId('reference-search').fill('mock searchable paper');
       // results render from the mock OpenAlex
       await expect(page.getByTestId('search-hit-W111')).toBeVisible({ timeout: 10_000 });
@@ -198,7 +196,7 @@ test.describe('cite-from-search (OpenAlex)', () => {
     const id = await createProject(request, 'Search Cite 2');
     try {
       await openProject(page, id);
-      await page.getByTestId('tab-plugin:references').click();
+      await openPluginTab(page, 'references');
       await page.getByTestId('reference-search').fill('doi-less mock');
       await page.getByTestId('search-hit-W222').click();
       await expect(page.locator('.cm-content')).toContainText('\\cite{smith2019}', { timeout: 15_000 });

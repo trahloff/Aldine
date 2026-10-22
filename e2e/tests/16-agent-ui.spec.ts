@@ -118,7 +118,7 @@ test.describe('agent presence and audit UI', () => {
       // By now auto-typeset has followed the agent's edit; note the run on screen.
       await expectTypesetOk(page);
       await expect(page.getByTestId('typeset-button')).toBeEnabled();
-      const shownBefore = await page.getByTestId('download-pdf').getAttribute('href');
+      const shownBefore = await page.getByTestId('preview').getAttribute('data-pdf');
       await page.getByTestId('agent-session-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
       await expect(page.getByTestId('agent-review-modal')).toContainText('AGENT-ADDED-SENTENCE');
@@ -135,7 +135,7 @@ test.describe('agent presence and audit UI', () => {
       await expect(page.locator('.cm-content')).not.toContainText('AGENT-ADDED-SENTENCE', { timeout: 15_000 });
       await expect(page.locator('.cm-content')).toContainText('Results improve steadily across trials.');
       // Auto-typeset is on, so the preview stops showing what was just undone.
-      await expect.poll(() => page.getByTestId('download-pdf').getAttribute('href'), { timeout: 60_000 }).not.toBe(shownBefore);
+      await expect.poll(() => page.getByTestId('preview').getAttribute('data-pdf'), { timeout: 60_000 }).not.toBe(shownBefore);
       await expectTypesetOk(page);
     } finally {
       await client.close().catch(() => {});
@@ -414,7 +414,7 @@ test.describe('auto-typeset follows the agent', () => {
   /** The cache-buster on the preview's PDF link: it changes iff the preview
    *  moved to another run. */
   async function previewRun(page: import('@playwright/test').Page): Promise<string | null> {
-    const href = await page.getByTestId('download-pdf').getAttribute('href');
+    const href = await page.getByTestId('preview').getAttribute('data-pdf');
     return href ? new URL(href, BASE).searchParams.get('t') : null;
   }
 

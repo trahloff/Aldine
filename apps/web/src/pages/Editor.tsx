@@ -35,6 +35,7 @@ import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { shortcut } from '../platform';
+import { usePopover } from '../util/usePopover';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
@@ -123,6 +124,8 @@ export default function Editor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // more than one plugin panel folds them all into a "More" tab
+  const morePanels = usePopover();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -847,10 +850,16 @@ export default function Editor() {
     }
   }, [id, branch, activeFile, toast]);
 
-  // Cmd+S → typeset, Cmd+K → command palette, Cmd+J → jump the PDF to the cursor
+  // Cmd+S → typeset, Cmd+K → command palette, Cmd+J → jump the PDF to the
+  // cursor, Cmd+Alt+M → comment on the selection (Google Docs' key)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyM' && !e.getModifierState('AltGraph')) {
+        // e.code, not e.key: Option turns M into "µ" on a Mac keyboard. AltGr
+        // reports Ctrl+Alt on Windows, and AltGr+M types "µ" on German keyboards.
+        e.preventDefault();
+        startComment();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         doCompile();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -867,7 +876,7 @@ export default function Editor() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doCompile, jumpToPdf]);
+  }, [doCompile, jumpToPdf, startComment]);
 
   const pluginCtx = useMemo(() => ({
     projectId: id,
@@ -891,6 +900,7 @@ export default function Editor() {
         run: () => setDraftTypeset((d) => { localStorage.setItem('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
       },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: shortcut('J'), run: () => jumpToPdf() },
+      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: shortcut('M', { alt: true }), run: startComment },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
@@ -898,6 +908,7 @@ export default function Editor() {
       { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
+      { id: 'share', group: 'File', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
       ...(visualEnabled
@@ -915,12 +926,13 @@ export default function Editor() {
     if (project?.remote) {
       const d = remoteDescriptor(project.remote.provider);
       const click = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.click();
+      // These live in the branch menu, so open that first and let it render
+      // before clicking through.
+      const viaMenu = (testid: string) => { click('branch-menu'); setTimeout(() => click(testid), 0); };
       cmds.push(
-        { id: 'remote-push', group: 'Git', title: `Push to ${d.label}`, run: () => click(`${d.id}-push-btn`) },
-        { id: 'remote-pull', group: 'Git', title: `Pull from ${d.label}`, run: () => click(`${d.id}-pull-btn`) },
-        // The change-request entry lives in the branch menu, so open that first
-        // and let it render before clicking through.
-        { id: 'remote-change-request', group: 'Git', title: `Open ${d.changeRequest}`, run: () => { click(`${d.id}-branch`); setTimeout(() => click(`${d.id}-open-pr`), 0); } },
+        { id: 'remote-push', group: 'Git', title: `Push to ${d.label}`, run: () => viaMenu(`${d.id}-push-btn`) },
+        { id: 'remote-pull', group: 'Git', title: `Pull from ${d.label}`, run: () => viaMenu(`${d.id}-pull-btn`) },
+        { id: 'remote-change-request', group: 'Git', title: `Open ${d.changeRequest}`, run: () => viaMenu(`${d.id}-open-pr`) },
       );
     }
     if (activeFile) {
@@ -961,7 +973,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -985,6 +997,8 @@ export default function Editor() {
   // Without auth everyone is owner and member; with it, trust the server's word.
   const isProjectOwner = !authEnabled || !!project.isOwner;
   const canSync = !authEnabled || !!project.isMember;
+  // Access exists only with sign-in, and only the owner may change it.
+  const canManageSharing = authEnabled && !!project.isOwner;
 
   return (
     <div className="editor-shell" data-testid="editor-shell">
@@ -1001,12 +1015,29 @@ export default function Editor() {
         >
           {project.name}
         </span>
-        <BranchMenu
-          projectId={id}
-          current={branch}
-          onSwitch={switchBranch}
-          onChanged={() => { loadProject(); loadFiles(); }}
-        />
+        {/* Syncing is members-only and publishing is owner-only server-side —
+            don't offer either to someone here on a share link. */}
+        {project.remote && canSync ? (
+          <RemoteSync
+            projectId={id}
+            link={project.remote}
+            autopush={!!project.autopush}
+            isOwner={isProjectOwner}
+            current={branch}
+            onSwitch={switchBranch}
+            onChanged={() => { loadProject(); loadFiles(); }}
+            onPulled={() => { loadFiles(); loadProject(); }}
+            onAutopushChange={() => loadProject()}
+          />
+        ) : (
+          <BranchMenu
+            projectId={id}
+            current={branch}
+            onSwitch={switchBranch}
+            onChanged={() => { loadProject(); loadFiles(); }}
+            onPublish={!project.remote && isProjectOwner ? () => setPublishOpen(true) : undefined}
+          />
+        )}
         {visualEnabled && (
           <div className="seg" role="tablist" aria-label="Editing mode" data-testid="mode-toggle">
             <button role="tab" aria-selected={mode === 'source'} className={`seg__btn ${mode === 'source' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('source')}>Source</button>
@@ -1015,31 +1046,11 @@ export default function Editor() {
         )}
         <div className="toolbar__spacer" />
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
-        {/* Syncing is members-only and publishing is owner-only server-side —
-            don't offer either to someone here on a share link. */}
-        {project.remote ? (
-          canSync && (
-            <RemoteSync
-              projectId={id}
-              link={project.remote}
-              autopush={!!project.autopush}
-              isOwner={isProjectOwner}
-              onPulled={() => { loadFiles(); loadProject(); }}
-              onAutopushChange={() => loadProject()}
-            />
-          )
-        ) : (
-          isProjectOwner && (
-            <button className="btn btn--ghost" onClick={() => setPublishOpen(true)} data-testid="remote-publish-open" title="Publish this project to a git host — backup + sync">
-              Publish
-            </button>
-          )
-        )}
-        {authEnabled && project.isOwner && (
-          <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title="Invite collaborators or share by link">Share</button>
-        )}
+        <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
-        <button className="btn" onClick={startComment} data-testid="add-comment" title="Comment on the selected text">Comment</button>
+        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${shortcut('M', { alt: true })})`}>
+          Comment <kbd className="kbd toolbar__kbd">{shortcut('M', { alt: true })}</kbd>
+        </button>
         <Presence users={users} />
         <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
           {sidebarHidden ? 'Files' : 'Hide files'}
@@ -1073,11 +1084,37 @@ export default function Editor() {
             <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" data-testid="tab-review">
               Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
             </button>
-            {pluginPanels.map((p) => (
+            {pluginPanels.length <= 1 ? pluginPanels.map((p) => (
               <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" data-testid={`tab-${p.id}`}>
                 {p.title}
               </button>
-            ))}
+            )) : (() => {
+              const shown = pluginPanels.find((p) => p.id === tab);
+              return (
+                <div ref={morePanels.ref} className="sidebar__more">
+                  <button
+                    className={`sidebar__tab ${shown ? 'sidebar__tab--active' : ''}`}
+                    onClick={() => morePanels.setOpen(!morePanels.open)}
+                    role="tab"
+                    aria-selected={!!shown}
+                    aria-haspopup="menu"
+                    aria-expanded={morePanels.open}
+                    data-testid="tab-more"
+                  >
+                    {shown ? shown.title : 'More'}<span className="sidebar__chev" aria-hidden="true">▾</span>
+                  </button>
+                  {morePanels.open && (
+                    <div className="menu sidebar__menu" role="menu" data-testid="tab-more-menu">
+                      {pluginPanels.map((p) => (
+                        <button key={p.id} className="menu__item" role="menuitem" onClick={() => { morePanels.setOpen(false); setTab(p.id); }} data-testid={`tab-${p.id}`}>
+                          <span className="branch-menu__check">{tab === p.id ? '✓' : ''}</span>{p.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <div className="sidebar__body">
             {tab === 'files' && (
@@ -1156,32 +1193,6 @@ export default function Editor() {
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
-                <span className="toolbar__spacer" />
-                <button
-                  className="btn btn--ghost btn--small"
-                  onClick={() => jumpToPdf()}
-                  title={`Show this line in the PDF (${shortcut('J')})`}
-                  data-testid="jump-to-pdf"
-                >
-                  Jump to PDF <span className="kbd">{shortcut('J')}</span>
-                </button>
-                {(() => {
-                  // document total with the open file's count kept live; a file
-                  // outside the include graph falls back to its own count
-                  const inDoc = !!(docWords && activeFile && docWords.files[activeFile] != null);
-                  const total = inDoc ? docWords!.total - docWords!.files[activeFile!] + stats.words : stats.words;
-                  return (
-                    <span
-                      className="pdf-status"
-                      data-testid="word-count"
-                      title={inDoc ? 'Words in the whole document (root file plus everything it includes)' : 'Words in this file (it is not included from the root file)'}
-                    >
-                      {stats.selWords != null
-                        ? `${stats.selWords.toLocaleString()} of ${total.toLocaleString()} words`
-                        : `${total.toLocaleString()} words`}
-                    </span>
-                  );
-                })()}
               </div>
               <CodePane
                 key={`${id}::${branch}::${activeFile}`}
@@ -1330,10 +1341,10 @@ export default function Editor() {
           }}
         />
 
-        <section className="pane pane--preview" style={{ width: pdfWidth, flex: 'none' }}>
+        {/* data-pdf: the run on screen, for tests that follow it across typesets */}
+        <section className="pane pane--preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined}>
           <div className="pane__header">
-            <span className="pane__title">Preview</span>
-            <span className="pdf-status" data-testid="pdf-status" style={{ marginLeft: 10 }}>
+            <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
               ) : (<>
@@ -1344,41 +1355,48 @@ export default function Editor() {
                 {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
               </>)}
             </span>
+            {activeFile && (() => {
+              // document total with the open file's count kept live; a file
+              // outside the include graph falls back to its own count
+              const inDoc = !!(docWords && docWords.files[activeFile] != null);
+              const total = inDoc ? docWords!.total - docWords!.files[activeFile] + stats.words : stats.words;
+              return (
+                <span
+                  className="pdf-status pdf-words"
+                  data-testid="word-count"
+                  title={inDoc ? 'Words in the whole document (root file plus everything it includes)' : 'Words in this file (it is not included from the root file)'}
+                >
+                  {stats.selWords != null
+                    ? `${stats.selWords.toLocaleString()} of ${total.toLocaleString()} words`
+                    : `${total.toLocaleString()} words`}
+                </span>
+              );
+            })()}
             <span className="toolbar__spacer" />
-            <select
-              className="fmt__select"
-              value={ENGINES.some((e) => e.id === project.engine) ? project.engine : 'pdf'}
-              onChange={(e) => setEngine(e.target.value)}
-              title="Typesetting engine"
-              aria-label="Typesetting engine"
-              data-testid="engine-select"
-            >
-              {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
-            </select>
+            {activeFile && (
+              <button
+                className="btn btn--ghost btn--small"
+                onClick={() => jumpToPdf()}
+                title={`Show this line in the PDF (${shortcut('J')})`}
+                data-testid="jump-to-pdf"
+              >
+                Jump<span className="jump__more"> to PDF</span> <span className="kbd">{shortcut('J')}</span>
+              </button>
+            )}
             <div className="zoom" data-testid="zoom-controls">
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" aria-label="Zoom out">−</button>
               <button className="zoom__label" onClick={() => setZoom(1)} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} title="Zoom in" aria-label="Zoom in">+</button>
             </div>
-            {compile.result?.pdfUrl && (
-              <a
-                className="btn btn--ghost btn--small"
-                href={compile.result.pdfUrl}
-                download={`${(project?.name || 'document').replace(/[\\/:*?"<>|]/g, '-')}.pdf`}
-                title="Download the compiled PDF"
-                data-testid="download-pdf"
-              >
-                Download
-              </a>
-            )}
             <button
               className={`auto-toggle ${auto ? 'auto-toggle--on' : ''}`}
               onClick={toggleAuto}
               title={auto ? 'Auto-typeset is on — typesets shortly after you stop typing' : 'Auto-typeset is off'}
+              aria-label="Auto-typeset"
               data-testid="auto-toggle"
             >
               <span className="auto-toggle__knob" />
-              Auto
+              <span className="auto-toggle__label">Auto</span>
             </button>
           </div>
           <PdfPane
@@ -1444,7 +1462,6 @@ export default function Editor() {
       {settingsOpen && (
         <ProjectSettings
           project={project}
-          branch={branch}
           files={files}
           autoTypeset={auto}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
@@ -1455,13 +1472,14 @@ export default function Editor() {
           onSetStopOnFirstError={setStopOnFirstError}
           onSetManualCommits={setManualCommits}
           onToggleAutoTypeset={toggleAuto}
-          onConnectClaude={() => setConnectOpen(true)}
         />
       )}
 
       {shareOpen && (
         <ShareModal
           project={project}
+          canManage={canManageSharing}
+          downloads={{ branch, pdfUrl: compile.result?.pdfUrl || null }}
           onClose={() => setShareOpen(false)}
           onSaved={(updated) => { setShareOpen(false); setProject((prev) => (prev ? { ...prev, share: updated.share } : prev)); }}
         />

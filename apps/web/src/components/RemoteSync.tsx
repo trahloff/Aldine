@@ -3,21 +3,29 @@ import { api, RemoteLink } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
 import { useExitGhost } from '../exitGhost';
+import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './BranchMenu';
+import { usePopover } from '../util/usePopover';
 
-/** Toolbar control for a project linked to a git host: branch switch/create
- *  + change request, ahead/behind, push (with a commit message), pull (with
- *  conflict handling), and the autopush toggle. Autopush is the server's
- *  job (it pushes after autosave commits on main) and the owner's setting:
- *  members see its state but cannot flip it. The provider comes from the
- *  link; the server never takes it from the request for these routes. */
+/** The branch pill of a project linked to a git host. The host's branches are
+ *  the project's branches: local `main` tracks one of them, and push, pull
+ *  and autopush act on `main` only, so they show only while main is open.
+ *  Branches that exist only on this server are listed apart. Ahead/behind
+ *  ride on the pill, with Pull or Push beside it only when commits wait.
+ *  Switching the tracked branch and autopush are the owner's calls
+ *  server-side. The provider comes from the link; the server never takes it
+ *  from the request for these routes. */
 // e2e shortens the interval through localStorage; nothing else sets it.
 const REMOTE_POLL_MS = Number(localStorage.getItem('aldine.remotePollMs')) || 90_000;
 
-export default function RemoteSync({ projectId, link, autopush, isOwner, onPulled, onAutopushChange }: {
+export default function RemoteSync({ projectId, link, autopush, isOwner, current, onSwitch, onChanged, onPulled, onAutopushChange }: {
   projectId: string;
   link: RemoteLink;
   autopush: boolean;
   isOwner: boolean;
+  /** The open branch of this project (local). */
+  current: string;
+  onSwitch(name: string): void;
+  onChanged(): void;
   onPulled(): void;
   onAutopushChange(v: boolean): void;
 }) {
@@ -29,14 +37,18 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
   const [message, setMessage] = useState('');
   const [conflicts, setConflicts] = useState<string[] | null>(null);
   const [autopushBusy, setAutopushBusy] = useState(false);
-  // branches
   const [branchInfo, setBranchInfo] = useState<{ branches: string[]; current: string; default: string } | null>(null);
-  const [menu, setMenu] = useState(false);
-  const [newName, setNewName] = useState('');
   const [crTitle, setCrTitle] = useState('');
   const [showCr, setShowCr] = useState(false);
+  const pop = usePopover();
   const toast = useToast();
   const leave = useExitGhost();
+  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: () => pop.setOpen(false) });
+
+  const onMain = current === 'main';
+  const tracked = branchInfo?.current ?? link.remoteBranch;
+  const label = onMain ? tracked : current;
+  const webUrl = /^https?:\/\//.test(link.cloneUrl) ? link.cloneUrl.replace(/\.git$/, '') : null;
 
   const refresh = useCallback(async () => {
     try { const s = await api.projectRemoteStatus(projectId); setStatus({ ahead: s.ahead, behind: s.behind }); }
@@ -46,6 +58,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     try { setBranchInfo(await api.remoteBranches(projectId)); } catch { /* offline */ }
   }, [projectId]);
   useEffect(() => { refresh(); loadBranches(); }, [refresh, loadBranches]);
+  useEffect(() => { if (pop.open) { refresh(); loadBranches(); local.load(); } }, [pop.open]);
 
   // Co-authors push from elsewhere: look again while the tab is in view, and
   // the moment it comes back into view. The server fetches at most once per
@@ -62,6 +75,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     };
   }, [refresh]);
 
+  const openPush = () => { pop.setOpen(false); setMessage('Update from Aldine'); setShowPush(true); };
   const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
     try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
@@ -79,6 +93,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     setAutopushBusy(false);
   };
   const pull = async () => {
+    pop.setOpen(false);
     setBusy('pull');
     try {
       const r = await api.remotePull(projectId);
@@ -93,20 +108,32 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     catch (err: any) { toast(err.message, 'error'); }
     setBusy('');
   };
+  // A host branch is always opened through main, the branch that tracks it.
   const switchTo = async (branch: string) => {
-    setMenu(false);
-    if (branch === branchInfo?.current) return;
+    pop.setOpen(false);
+    if (branch === tracked) { if (!onMain) onSwitch('main'); return; }
     setBusy('branch');
-    try { await api.remoteSwitchBranch(projectId, branch); toast(`Switched to ${branch}`, 'ok'); onPulled(); await loadBranches(); await refresh(); }
-    catch (err: any) { toast(err.message, 'error'); }
+    try {
+      await api.remoteSwitchBranch(projectId, branch);
+      toast(`Switched to ${branch}`, 'ok');
+      if (!onMain) onSwitch('main');
+      onPulled();
+      await loadBranches();
+      await refresh();
+    } catch (err: any) { toast(err.message, 'error'); }
     setBusy('');
   };
-  const createBranch = async () => {
-    const name = newName.trim(); if (!name) return;
-    setBusy('branch'); setMenu(false); setNewName('');
-    try { await api.remoteCreateBranch(projectId, name); toast(`Created branch ${name}`, 'ok'); await loadBranches(); await refresh(); }
-    catch (err: any) { toast(err.message, 'error'); }
-    setBusy('');
+  const createOnHost = async (name: string) => {
+    pop.setOpen(false);
+    setBusy('branch');
+    try {
+      await api.remoteCreateBranch(projectId, name);
+      toast(`Created branch ${name}`, 'ok');
+      await loadBranches();
+      await refresh();
+      return true;
+    } catch (err: any) { toast(err.message, 'error'); return false; }
+    finally { setBusy(''); }
   };
   const openChangeRequest = async () => {
     setShowCr(false);
@@ -118,7 +145,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
   };
 
   // Say so once when commits arrive during the session; what was waiting at
-  // load time is already on the Pull button.
+  // load time is already on the pill.
   const lastBehind = useRef<number | null>(null);
   const pullRef = useRef(pull);
   pullRef.current = pull;
@@ -131,67 +158,121 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
     toast(`${n} new ${n === 1 ? 'commit' : 'commits'} on ${d.label}`, 'info', { label: 'Pull', testId: `${p}-pull-toast`, key: `${p}-behind`, onClick: () => pullRef.current() });
   }, [status, d.label, p, toast]);
 
-  const onDefault = branchInfo && branchInfo.current === branchInfo.default;
+  const ahead = status?.ahead ?? 0;
+  const behind = status?.behind ?? 0;
+  const waiting = [
+    ahead > 0 && `${ahead} ${ahead === 1 ? 'commit' : 'commits'} to push`,
+    behind > 0 && `${behind} to pull`,
+  ].filter(Boolean).join(' · ');
+  const localOnly = local.branches.filter((b) => b.name !== 'main');
 
   return (
-    <div className="gh-sync" data-testid={`${p}-sync`} title={`Synced with ${link.fullName} on ${d.label}`}>
-      {branchInfo && (
-        <div className="gh-branch" onMouseLeave={() => setMenu(false)}>
-          <button className="gh-branch__chip" onClick={() => setMenu((v) => !v)} disabled={busy === 'branch'} data-testid={`${p}-branch`} title={`Switch or create a ${d.label} branch`}>
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zm-2.25.75a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.492 2.492 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25zM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM3.5 3.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0z"/></svg>
-            {busy === 'branch' ? '…' : branchInfo.current}
-          </button>
-          {menu && (
-            <div ref={leave} className="gh-branch__menu" data-testid={`${p}-branch-menu`}>
-              <div className="gh-branch__label">Switch branch</div>
-              {branchInfo.branches.map((b) => (
-                <button key={b} className={`gh-branch__item ${b === branchInfo.current ? 'is-current' : ''}`} onClick={() => switchTo(b)} data-testid={`${p}-branch-${b}`}>
-                  {b}{b === branchInfo.default && <span className="gh-branch__tag">default</span>}
-                </button>
-              ))}
-              <div className="gh-branch__sep" />
-              <div className="gh-branch__new">
-                <input className="input" placeholder="new-branch-name" value={newName} data-testid={`${p}-new-branch`} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createBranch()} />
-                <button className="btn btn--small" onClick={createBranch} data-testid={`${p}-create-branch`}>Create</button>
+    <div ref={pop.ref} className="branch" data-testid={`${p}-sync`}>
+      <button
+        className="branch-pill"
+        onClick={() => pop.setOpen(!pop.open)}
+        disabled={busy === 'branch'}
+        data-testid="branch-menu"
+        title={`Branches · synced with ${link.fullName} on ${d.label}`}
+        aria-haspopup="menu"
+        aria-expanded={pop.open}
+      >
+        <BranchIcon />
+        <span className="branch-pill__name">{busy === 'branch' ? '…' : label}</span>
+        {onMain && (ahead > 0 || behind > 0) && (
+          <span className="branch-pill__counts" data-testid={`${p}-counts`}>
+            {ahead > 0 && <span title={`${ahead} local commit(s) to push`}>↑{ahead}</span>}
+            {behind > 0 && <span title={`${behind} remote commit(s) to pull`}>↓{behind}</span>}
+          </span>
+        )}
+      </button>
+      {onMain && behind > 0 && (
+        <button className="btn btn--small btn--primary" onClick={pull} disabled={!!busy} data-testid={`${p}-sync-action`} title={`Pull ${behind} new ${behind === 1 ? 'commit' : 'commits'} from ${d.label}`}>
+          {busy === 'pull' ? '…' : 'Pull'}
+        </button>
+      )}
+      {onMain && behind === 0 && ahead > 0 && (
+        <button className="btn btn--small" onClick={openPush} disabled={!!busy} data-testid={`${p}-sync-action`} title={`Push ${ahead} ${ahead === 1 ? 'commit' : 'commits'} to ${d.label}`}>
+          {busy === 'push' ? '…' : 'Push'}
+        </button>
+      )}
+
+      {pop.open && (
+        <div ref={leave} className="menu branch-menu" data-testid="branch-list">
+          {webUrl
+            ? <a className="branch-menu__repo" href={webUrl} target="_blank" rel="noopener noreferrer" data-testid={`${p}-repo-link`}>{d.icon}<span>{link.fullName}</span><span aria-hidden="true">↗</span></a>
+            : <span className="branch-menu__repo">{d.icon}<span>{link.fullName}</span></span>}
+          {onMain ? (
+            <>
+              <div className="branch-menu__sync">
+                <span className="branch-menu__state" data-testid={`${p}-state`}>{status ? (waiting || 'No commits waiting') : `Checking ${d.label}…`}</span>
+                <button className={`btn btn--small ${behind > 0 ? 'btn--primary' : ''}`} onClick={pull} disabled={!!busy} data-testid={`${p}-pull-btn`} title={`Pull from ${d.label}`}>Pull</button>
+                <button className="btn btn--small" onClick={openPush} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Commit what is waiting and push to ${d.label}`}>Push…</button>
               </div>
-              {!onDefault && <button className="gh-branch__item" onClick={() => { setMenu(false); setCrTitle(`Update ${branchInfo.current}`); setShowCr(true); }} data-testid={`${p}-open-pr`}>Open {d.changeRequest}…</button>}
-            </div>
+              <div className="branch-menu__setting">
+                <span>Autopush</span>
+                <button
+                  className={`auto-toggle ${autopush ? 'auto-toggle--on' : ''}`}
+                  onClick={toggleAutopush}
+                  disabled={!isOwner || autopushBusy}
+                  aria-pressed={autopush}
+                  data-testid={`${p}-autopush`}
+                  title={isOwner ? `Push every autosave to ${d.label} from the server` : 'Only the project owner can change autopush'}
+                >
+                  <span className="auto-toggle__knob" />
+                  {autopush ? 'On' : 'Off'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="branch-menu__note" data-testid={`${p}-local-note`}>{current} exists only on this server. Push and pull work on main.</p>
+          )}
+          <div className="menu__sep" />
+          <div className="menu__label">On {d.label}</div>
+          {(branchInfo?.branches ?? [tracked]).map((b) => (
+            <button
+              key={b}
+              className="menu__item"
+              onClick={() => switchTo(b)}
+              disabled={!isOwner && b !== tracked}
+              title={!isOwner && b !== tracked ? 'Only the project owner can switch the tracked branch' : undefined}
+              data-testid={`${p}-branch-${b}`}
+            >
+              <span className="branch-menu__check">{onMain && b === tracked ? '✓' : ''}</span>
+              <span className="branch-menu__name">{b}</span>
+              {b === branchInfo?.default && <span className="menu__hint">default</span>}
+            </button>
+          ))}
+          {localOnly.length > 0 && (
+            <>
+              <div className="menu__label">Only on this server</div>
+              {localOnly.map((b) => (
+                <LocalBranchRow
+                  key={b.name}
+                  name={b.name}
+                  current={b.name === current}
+                  onOpen={() => { pop.setOpen(false); onSwitch(b.name); }}
+                  onMerge={() => local.mergeIntoMain(b.name)}
+                  onDelete={() => local.remove(b.name)}
+                />
+              ))}
+            </>
+          )}
+          <div className="menu__sep" />
+          <NewBranch from={label} onCreate={onMain ? createOnHost : local.create} />
+          {onMain && branchInfo && tracked !== branchInfo.default && (
+            <button className="menu__item" onClick={() => { pop.setOpen(false); setCrTitle(`Update ${tracked}`); setShowCr(true); }} data-testid={`${p}-open-pr`}>
+              <span className="branch-menu__check" />Open {d.changeRequest}…
+            </button>
           )}
         </div>
       )}
-
-      {status && (status.ahead > 0 || status.behind > 0) && (
-        <span className="gh-sync__counts" data-testid={`${p}-counts`}>
-          {status.ahead > 0 && <span title={`${status.ahead} local commit(s) to push`}>↑{status.ahead}</span>}
-          {status.behind > 0 && <span title={`${status.behind} remote commit(s) to pull`}>↓{status.behind}</span>}
-        </span>
-      )}
-      <button
-        className={`gh-sync__autopush ${autopush ? 'gh-sync__autopush--on' : ''}`}
-        onClick={toggleAutopush}
-        disabled={!isOwner || autopushBusy}
-        aria-pressed={autopush}
-        data-testid={`${p}-autopush`}
-        title={`Push every autosave to ${d.label} from the server`}
-      >
-        {autopush ? 'Autopush on' : 'Autopush off'}
-      </button>
-      <button
-        className={`btn btn--small ${status?.behind ? 'btn--primary' : ''}`}
-        onClick={pull}
-        disabled={!!busy}
-        data-testid={`${p}-pull-btn`}
-        title={status?.behind ? `Pull ${status.behind} new ${status.behind === 1 ? 'commit' : 'commits'} from ${d.label}` : `Pull from ${d.label}`}
-      >
-        {busy === 'pull' ? '…' : 'Pull'}
-      </button>
-      <button className="btn btn--small" onClick={() => { setMessage('Update from Aldine'); setShowPush(true); }} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Push to ${d.label}`}>{busy === 'push' ? '…' : 'Push'}</button>
 
       {showPush && (
         <div className="modal-backdrop" onClick={() => setShowPush(false)}>
           <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()} data-testid="push-dialog">
             <h2 style={{ marginBottom: 8 }}>Push to {d.label}</h2>
-            <p className="modal__sub" style={{ marginBottom: 10 }}>{link.fullName} · {branchInfo?.current}</p>
+            <p className="modal__sub" style={{ marginBottom: 10 }}>{link.fullName} · {tracked}</p>
             <input className="input" style={{ width: '100%' }} value={message} data-testid="push-message" autoFocus
               onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doPush(message.trim() || 'Update from Aldine')} placeholder="Commit message" />
             <div className="modal__row" style={{ marginTop: 12 }}>
@@ -206,7 +287,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, onPulle
         <div className="modal-backdrop" onClick={() => setShowCr(false)}>
           <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()} data-testid="pr-dialog">
             <h2 style={{ marginBottom: 8 }}>Open {d.changeRequest}</h2>
-            <p className="modal__sub" style={{ marginBottom: 10 }}>{branchInfo?.current} → {branchInfo?.default}</p>
+            <p className="modal__sub" style={{ marginBottom: 10 }}>{tracked} → {branchInfo?.default}</p>
             <input className="input" style={{ width: '100%' }} value={crTitle} data-testid="pr-title" autoFocus onChange={(e) => setCrTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && openChangeRequest()} placeholder={`${sentence(d.changeRequest)} title`} />
             <div className="modal__row" style={{ marginTop: 12 }}>
               <button className="btn" onClick={() => setShowCr(false)}>Cancel</button>

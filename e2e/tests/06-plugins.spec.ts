@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab } from './helpers';
 
 test.describe('plugin system', () => {
   test('registry lists plugins with manifests', async ({ request }) => {
@@ -21,8 +21,7 @@ test.describe('plugin system', () => {
     const id = await createProject(request, 'Plugin Host Test');
     try {
       await openProject(page, id);
-      await expect(page.getByTestId('tab-plugin:zotero')).toBeVisible({ timeout: 15_000 });
-      await page.getByTestId('tab-plugin:zotero').click();
+      await openPluginTab(page, 'zotero');
       await expect(page.getByTestId('zotero-panel')).toBeVisible();
     } finally {
       await cleanup(request, id);

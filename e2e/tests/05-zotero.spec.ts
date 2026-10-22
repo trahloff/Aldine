@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab } from './helpers';
 
 /** Runs against the mock Zotero API (tests/mock-zotero.mjs, key: test-key-123). */
 test.describe('Zotero integration (via plugin system)', () => {
@@ -9,9 +9,7 @@ test.describe('Zotero integration (via plugin system)', () => {
       await openProject(page, id);
 
       // the Zotero plugin registered a sidebar tab — proves the plugin system loads
-      const tab = page.getByTestId('tab-plugin:zotero');
-      await expect(tab).toBeVisible({ timeout: 15_000 });
-      await tab.click();
+      await openPluginTab(page, 'zotero');
 
       // connect with the mock key
       await page.getByTestId('zotero-key').fill('test-key-123');
@@ -31,7 +29,7 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.getByTestId('file-zotero.bib')).toBeVisible({ timeout: 10_000 });
 
       // citation insert via panel
-      await page.getByTestId('tab-plugin:zotero').click();
+      await openPluginTab(page, 'zotero');
       await page.getByTestId('zotero-search').click();
       // key by key: each keystroke redraws the list, the field keeps focus
       await page.keyboard.type('turing');
@@ -48,7 +46,7 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.locator('.cm-content')).toContainText('\\cite{shannon1948}');
 
       // sync-now round trip (mock returns 304 → "unchanged")
-      await page.getByTestId('tab-plugin:zotero').click();
+      await openPluginTab(page, 'zotero');
       await page.getByTestId('zotero-sync').click();
       await expect(page.locator('.toast').last()).toContainText(/unchanged|Synced/i, { timeout: 10_000 });
     } finally {

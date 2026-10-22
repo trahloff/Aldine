@@ -17,25 +17,28 @@ async function engineOf(request: import('@playwright/test').APIRequestContext, i
 }
 
 test.describe('engine picker', () => {
-  test('the preview select and the palette both persist the engine', async ({ page, request }) => {
+  test('project settings and the palette both persist the engine', async ({ page, request }) => {
     const id = await createProject(request, 'Engine Picker');
     try {
       await openProject(page, id);
-      const sel = page.getByTestId('engine-select');
+      // the preview header carries no engine picker; settings is its home
+      await expect(page.getByTestId('engine-select')).toHaveCount(0);
+      await page.getByTestId('project-settings-open').click();
+      const sel = page.getByTestId('settings-engine');
       await expect(sel).toHaveValue('pdf');
       await sel.selectOption('xelatex');
       await expect.poll(() => engineOf(request, id)).toBe('xelatex');
-      await expect(sel).toHaveValue('xelatex');
+      await page.getByTestId('settings-close').click();
 
       await page.keyboard.press(`${mod}+k`);
       await page.getByTestId('palette-input').fill('Typeset with LuaLaTeX');
       await page.getByTestId('palette-item-engine-lualatex').click();
       await expect.poll(() => engineOf(request, id)).toBe('lualatex');
-      await expect(sel).toHaveValue('lualatex');
 
       // the value survives a reload — it is project meta, not UI state
       await page.reload();
-      await expect(page.getByTestId('engine-select')).toHaveValue('lualatex');
+      await page.getByTestId('project-settings-open').click();
+      await expect(page.getByTestId('settings-engine')).toHaveValue('lualatex');
     } finally { await cleanup(request, id); }
   });
 
