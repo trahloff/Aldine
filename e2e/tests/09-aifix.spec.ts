@@ -35,10 +35,75 @@ test.describe('AI error fix (plugin)', () => {
     }
   });
 
-  test('AI status endpoint reports configured', async ({ request }) => {
+  test('a fix made by hand clears the diagnosis', async ({ page, request }) => {
+    const id = await createProject(request, 'AI Fix By Hand');
+    try {
+      await request.put(`/api/projects/${id}/file`, {
+        data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\n\\thisisnotacommand\nHello world.\n\\end{document}\n' },
+      });
+      await openProject(page, id);
+      await page.getByTestId('typeset-button').click();
+      await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
+      await openPluginTab(page, 'aifix');
+      await page.getByTestId('aifix-diagnose').click();
+      await expect(page.getByTestId('aifix-apply-0')).toBeVisible({ timeout: 20_000 });
+
+      // the user deletes the broken line in the editor, not with Apply fix
+      await page.locator('.cm-line', { hasText: 'thisisnotacommand' }).click();
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Shift+End');
+      await page.keyboard.press('Backspace');
+      await expect(page.locator('.cm-content')).not.toContainText('thisisnotacommand');
+      await page.getByTestId('typeset-button').click();
+      await expect(page.getByTestId('pdf-status')).toContainText('Typeset in', { timeout: 120_000 });
+
+      await expect(page.getByTestId('aifix-explanation')).toHaveCount(0, { timeout: 5_000 });
+      await expect(page.getByTestId('aifix-apply-0')).toHaveCount(0);
+      await expect(page.getByTestId('aifix-panel')).toContainText('compiles cleanly');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('with ALDINE_AI_AUTOFIX a failed typeset opens Fix and diagnoses once', async ({ page, request }) => {
+    const id = await createProject(request, 'AI Fix Auto');
+    try {
+      // the e2e server runs without the flag; the client only reads it from here
+      await page.route('**/api/ai/status', async (route) => {
+        const res = await route.fetch();
+        await route.fulfill({ response: res, json: { ...(await res.json()), autoFix: true } });
+      });
+      let diagnoses = 0;
+      page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/ai/fix')) diagnoses++; });
+      await request.put(`/api/projects/${id}/file`, {
+        data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\n\\thisisnotacommand\nHello world.\n\\end{document}\n' },
+      });
+      await openProject(page, id);
+      await expect(page.getByTestId('tab-files')).toHaveAttribute('aria-selected', 'true');
+
+      await page.getByTestId('typeset-button').click();
+      await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
+      await expect(page.getByTestId('tab-more')).toHaveText(/^Fix/, { timeout: 10_000 });
+      await expect(page.getByTestId('aifix-explanation')).toContainText(/not defined/, { timeout: 20_000 });
+      await expect(page.getByTestId('aifix-auto')).toBeVisible();
+      expect(diagnoses).toBe(1);
+
+      // the same failure again is not a new error: no second model call
+      await page.getByTestId('typeset-button').click();
+      await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
+      await page.waitForTimeout(3_500); // two of the panel's 1.5 s checks
+      expect(diagnoses).toBe(1);
+      await expect(page.getByTestId('aifix-explanation')).toBeVisible();
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('AI status endpoint reports configured, auto-fix off by default', async ({ request }) => {
     const res = await request.get('/api/ai/status');
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     expect(body.configured).toBeTruthy();
+    expect(body.autoFix).toBe(false);
   });
 });

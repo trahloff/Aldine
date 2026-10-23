@@ -6,6 +6,18 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `ALDINE_AI_AUTOFIX=1` on the server: a failed typeset opens the Fix tab
+  and runs the diagnosis without a click. It runs once per new error, so
+  auto-typeset failing the same way again makes no second model call. Off
+  by default. Plugins can bring their own panel forward with
+  `aldine.ui.showPanel(id)`.
+
+### Fixed
+- The Fix tab kept showing its diagnosis and Apply fix button after you
+  fixed the error yourself. A diagnosis now clears once none of the errors
+  it answered is left in the latest compile.
+
 ## [0.14.3] — 2026-10-22
 
 ### Changed

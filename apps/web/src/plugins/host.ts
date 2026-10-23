@@ -24,6 +24,7 @@ export interface PluginCtx {
   refreshProject(): Promise<unknown>;
   compile(): void;
   toast(text: string, kind?: 'info' | 'error' | 'ok'): void;
+  showPanel(id: string): void;
 }
 
 export interface AldineAPI {
@@ -40,7 +41,11 @@ export interface AldineAPI {
   compile(): void;
   toast(text: string, kind?: 'info' | 'error' | 'ok'): void;
   fetch(url: string, init?: RequestInit): Promise<Response>;
-  ui: { registerSidebarPanel(panel: { id: string; title: string; render(el: HTMLElement) : void }): void };
+  ui: {
+    registerSidebarPanel(panel: { id: string; title: string; render(el: HTMLElement) : void }): void;
+    /** Select one of this plugin's panels by the id it registered. */
+    showPanel(id: string): void;
+  };
 }
 
 interface Props {
@@ -75,6 +80,7 @@ export function PluginHost({ ctx, onPanels }: Props) {
         registerSidebarPanel(panel) {
           panels.push({ id: `plugin:${panel.id}`, title: panel.title, mount: (el) => panel.render(el) });
         },
+        showPanel: (panelId) => ctxRef.current.showPanel(`plugin:${panelId}`),
       },
     };
 
