@@ -898,6 +898,11 @@ export default function Editor() {
     refreshProject: loadProject,
     compile: doCompile,
     toast,
+    // unfolded for this visit only; a phone's sidebar is an overlay over the code
+    showPanel: (panelId: string) => {
+      setTab(panelId);
+      if (!window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
+    },
   }), [id, branch, activeFile, compile.result, insertAtCursor, loadFiles, loadProject, doCompile, toast]);
 
   const commands: Command[] = useMemo(() => {

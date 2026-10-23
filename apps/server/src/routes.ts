@@ -25,7 +25,7 @@ import { guessRoot, detectRoot, adoptRootIfUnset } from './root.js';
 import { config } from './config.js';
 import { detectEngine, decodeText } from './detect.js';
 import { multipartBoundary, parseMultipart } from './multipart.js';
-import { aiConfigured, aiModel, diagnose } from './ai.js';
+import { aiAutoFix, aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
@@ -1882,7 +1882,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // ---------- AI error fix ----------
-  app.get('/api/ai/status', async () => ({ configured: aiConfigured(), model: aiModel() }));
+  app.get('/api/ai/status', async () => ({ configured: aiConfigured(), model: aiModel(), autoFix: aiAutoFix() }));
 
   app.post<{ Params: { id: string }; Body: { branch?: string; errors?: Array<{ type: string; line: number | null; message: string; file?: string }>; log?: string } }>(
     '/api/projects/:id/ai/fix', async (req, reply) => {

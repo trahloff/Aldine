@@ -85,6 +85,9 @@ OPENROUTER_API_KEY=sk-or-...
 #ANTHROPIC_API_KEY=
 #OPENAI_API_KEY=
 #ALDINE_AI_MODEL=
+# 1 = a failed typeset opens the Fix tab and diagnoses on its own, once per
+# new error (each one is a model call)
+#ALDINE_AI_AUTOFIX=1
 
 # password-reset email: SMTP (any provider) or AWS SES — set one transport.
 # Without one, reset tokens are logged server-side (or echoed in the API
@@ -351,6 +354,7 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `OPENAI_API_KEY` | AI error-fix; precedence OpenRouter > OpenAI > Anthropic |
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
+| `ALDINE_AI_AUTOFIX` | `1` = a failed typeset opens the Fix tab and diagnoses without a click (default off) |
 | `ALDINE_COMPILE_QUOTA_MIN` | Per-user compile minutes per month (blank = uncapped) |
 | `DATABASE_URL` | Postgres datastore (blank = flat JSON files) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |

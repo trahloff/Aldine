@@ -93,7 +93,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   plain-English diagnosis and one-click fixes. Set `OPENROUTER_API_KEY`,
   `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` on the server to enable (that
   precedence order if several are set; `ALDINE_AI_MODEL` overrides the model).
-  The key stays server-side and never reaches the browser. Unset the key and
+  With `ALDINE_AI_AUTOFIX=1` a failed typeset opens the Fix tab and runs the
+  diagnosis without a click, once per new error. The key stays server-side and never reaches the browser. Unset the key and
   Aldine is a 100% AI-free editor.
 - **Find and cite papers without leaving the editor**: search the literature
   by title or author (OpenAlex), or paste a DOI / arXiv id — one click appends
@@ -481,8 +482,9 @@ plugins/hello/
 └── index.js        # export default { activate(aldine) { ... } }
 ```
 
-The `aldine` API exposes `ui.registerSidebarPanel`, `editor.insertAtCursor`,
-`project` context, `compile()`, `toast()`, and `fetch()`. See
+The `aldine` API exposes `ui.registerSidebarPanel`, `ui.showPanel` (select
+one of the plugin's own panels), `editor.insertAtCursor`, `project` context,
+`compile()`, `toast()`, and `fetch()`. See
 `plugins/zotero` for a complete example.
 
 ## Templates

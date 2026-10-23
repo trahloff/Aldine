@@ -25,7 +25,12 @@ export default {
         let busy = false;
         let result = null;   // { explanation, fixes: [...] }
         let configured = null; // null=unknown, true/false
+        let autoFix = false;   // ALDINE_AI_AUTOFIX on the server
         let error = '';
+        let diagnosed = new Set(); // the errors the result answers
+
+        // warnings stay after a fix, so only errors say whether a result still applies
+        const errorKeys = (c) => (c && !c.ok ? c.errors.filter((e) => e.type !== 'warning').map((e) => `${e.file ?? ''}\n${e.message}`) : []);
 
         const jfetch = async (url, init) => {
           const res = await aldine.fetch(url, init ? { headers: { 'content-type': 'application/json' }, ...init } : undefined);
@@ -35,8 +40,11 @@ export default {
         };
 
         const checkConfig = async () => {
-          try { configured = (await jfetch('/api/ai/status')).configured; }
-          catch { configured = false; }
+          try {
+            const status = await jfetch('/api/ai/status');
+            configured = status.configured;
+            autoFix = !!status.autoFix;
+          } catch { configured = false; }
           draw();
         };
 
@@ -44,7 +52,7 @@ export default {
           const compile = aldine.project.lastCompile();
           if (!compile) { aldine.toast('Typeset the document first to check for errors.', 'info'); return; }
           if (compile.ok) { aldine.toast('Your document compiles cleanly — no errors to fix.', 'ok'); return; }
-          busy = true; error = ''; result = null; draw();
+          busy = true; error = ''; result = null; diagnosed = new Set(errorKeys(compile)); draw();
           try {
             result = await jfetch(`/api/projects/${aldine.project.id}/ai/fix`, {
               method: 'POST',
@@ -110,6 +118,9 @@ export default {
             }, busy ? 'Diagnosing…' : 'Diagnose & fix'),
           );
 
+          if (autoFix) wrap.append(h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: 0 }, dataset: { testid: 'aifix-auto' } },
+            'A failed typeset opens this tab and runs the diagnosis on its own.'));
+
           if (error) wrap.append(h('p', { style: { color: 'var(--error)', fontSize: '12px' } }, error));
 
           if (result) {
@@ -143,13 +154,25 @@ export default {
         draw();
         checkConfig();
 
-        // keep the "there are/aren't errors" hint fresh as the user typesets
+        // keep the hint fresh as the user typesets, and drop a result once the
+        // errors it answered are gone, fixed here or by hand
         let lastHadErrors = null;
         const poll = setInterval(() => {
           if (!root.isConnected) { clearInterval(poll); return; }
           const c = aldine.project.lastCompile();
           const has = !!(c && !c.ok);
-          if (has !== lastHadErrors && !busy) { lastHadErrors = has; draw(); }
+          if (busy) return;
+          const keys = errorKeys(c);
+          const stale = (result || error) && (!has || (diagnosed.size > 0 && !keys.some((k) => diagnosed.has(k))));
+          if (stale) { result = null; error = ''; diagnosed = new Set(); }
+          // once per new error, so auto-typeset re-running the same failure costs nothing
+          if (autoFix && configured && keys.some((k) => !diagnosed.has(k))) {
+            lastHadErrors = has;
+            aldine.ui.showPanel('aifix');
+            diagnose();
+            return;
+          }
+          if (has !== lastHadErrors || stale) { lastHadErrors = has; draw(); }
         }, 1500);
       },
     });

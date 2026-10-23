@@ -34,6 +34,12 @@ export function aiModel(): string {
   return aiConfigured() ? model() : '';
 }
 
+/** ALDINE_AI_AUTOFIX=1: a failed typeset opens the Fix tab and diagnoses
+ *  without a click. Off by default, since every new error costs a model call. */
+export function aiAutoFix(): boolean {
+  return aiConfigured() && process.env.ALDINE_AI_AUTOFIX === '1';
+}
+
 export interface AiFix { file: string; find: string; replace: string; note?: string }
 export interface AiResult { explanation: string; fixes: AiFix[] }
 
