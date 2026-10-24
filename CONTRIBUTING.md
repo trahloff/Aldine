@@ -97,6 +97,17 @@ disagree about.
 
 ## Releasing
 
+One release a week, cut on Sunday evening, Berlin time, from whatever is on
+`main` by then; a merged PR waits for that Sunday. Two kinds of fix do not
+wait: a security fix, and a fix for a bug that loses or corrupts data, go out
+as a patch release as soon as they are merged.
+
+Each release asks every self-hoster to pull new images (about 1.5 GB of the
+default compiler image changes each time), which is why there is one a week
+and not one per merge. An install pinned with `ALDINE_VERSION` moves only
+when its owner changes the pin, and `latest` moves only after the maintainer
+approves the `promote` job described below.
+
 A version tag ships to nobody. Pushing one runs `.github/workflows/release.yml`,
 which checks the tag is on main and every version pin agrees with it, runs the
 full CI suite on that commit, builds `aldine-app` and `aldine-compiler` as

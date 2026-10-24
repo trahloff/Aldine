@@ -16,6 +16,12 @@ All notable changes to Aldine are documented here. The format follows
   Unraid runs the standard compose file through the Compose Manager Plus
   plugin (`docs/UNRAID.md`).
 
+### Changed
+- Releases go out once a week, on Sunday evening Berlin time, instead of
+  after nearly every merge. Security fixes and fixes for bugs that lose or
+  corrupt data still ship at once. The rule is in CONTRIBUTING.md,
+  "Releasing".
+
 ## [0.14.4] — 2026-10-24
 
 ### Added
