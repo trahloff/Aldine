@@ -1,0 +1,52 @@
+name: e2e compiler
+description: >-
+  The published aldine-compiler image running this checkout's apps/compiler,
+  so a pull request's compiler changes are tested without building TeX Live.
+inputs:
+  data-dir:
+    description: >-
+      Absolute path of the suite's DATA_DIR. The compiler sees it at the same
+      path, so whatever the app server resolves there resolves here too.
+    required: true
+  port:
+    description: Host port the compiler listens on (COMPILER_URL's port).
+    default: '4020'
+runs:
+  using: composite
+  steps:
+    - name: Start the compiler
+      shell: bash
+      env:
+        DATA: ${{ inputs.data-dir }}
+        PORT: ${{ inputs.port }}
+      run: |
+        set -euo pipefail
+        # The version docker-compose.yml pins moves with every release cut.
+        # A cut's own pull request (and the tag's verify run) pins a version
+        # whose image is not built yet; `latest` is the previous release.
+        read -r repo version < <(sed -n 's/^ *image: \([^:]*aldine-compiler\):\${ALDINE_VERSION:-\([0-9][0-9.]*\)}.*/\1 \2/p' docker-compose.yml)
+        image="$repo:$version"
+        if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+          echo "::notice::$image is not published yet; the compiler runs on $repo:latest"
+          image="$repo:latest"
+        fi
+        docker pull --quiet "$image"
+        # Created by this user before docker would create it as root.
+        mkdir -p "$DATA"
+        # File by file, so the image's own /srv/texlive-scheme stays visible.
+        mounts=()
+        for f in apps/compiler/*.js; do mounts+=(-v "$PWD/$f:/srv/${f##*/}:ro"); done
+        # The runner's uid, so the app server can delete what a typeset wrote;
+        # HOME is where TeX and biber keep their per-user caches.
+        docker run -d --name "aldine-compiler-$PORT" --network host --init \
+          --user "$(id -u):$(id -g)" -e HOME=/tmp \
+          -e PORT="$PORT" -e DATA_DIR="$DATA" -v "$DATA:$DATA" "${mounts[@]}" \
+          "$image" >/dev/null
+        for _ in $(seq 60); do
+          curl -fsS "http://localhost:$PORT/health" && break
+          sleep 1
+        done
+        curl -fsS "http://localhost:$PORT/health" >/dev/null
+        # The image warmed biber's self-extraction cache for root only; a cold
+        # extraction inside the first biblatex typeset can outlast its timeout.
+        docker exec "aldine-compiler-$PORT" biber --version
