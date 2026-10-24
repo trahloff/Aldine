@@ -6,6 +6,16 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Install routes for NAS systems, each with the compiler sandbox intact (no
+  internet, no Linux capabilities, bounded memory and processes). CasaOS and
+  ZimaOS import `deploy/casaos/docker-compose.yml` under App Store → Custom
+  Install; it keeps the data in `/DATA/AppData/aldine` and keeps CasaOS's
+  global variables, such as API keys, away from the compiler. TrueNAS 24.10
+  and later paste the YAML in `docs/TRUENAS.md` into Install via YAML.
+  Unraid runs the standard compose file through the Compose Manager Plus
+  plugin (`docs/UNRAID.md`).
+
 ## [0.14.4] — 2026-10-24
 
 ### Added

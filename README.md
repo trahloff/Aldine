@@ -232,6 +232,10 @@ what `deploy/backup.sh` looks for.
     `ALDINE_TEXLIVE=-full` next to `ALDINE_VERSION` and pull again.
 - **Port 8080 taken?** Change the left side of `ports:`; with
   `docker-compose.full.yml`, set `ALDINE_PORT=8081` in `.env` instead.
+- **On a NAS**, with the same compiler sandbox:
+  - CasaOS and ZimaOS: import [`deploy/casaos/docker-compose.yml`](deploy/casaos/docker-compose.yml) under App Store → Custom Install.
+  - TrueNAS 24.10 and later: [docs/TRUENAS.md](docs/TRUENAS.md) (Install via YAML).
+  - Unraid: [docs/UNRAID.md](docs/UNRAID.md) (Compose Manager Plus).
 - **Everything beyond the minimum**: building from source (latest `main`,
   not a release), auth/SSO/AI/email options, TLS, Postgres/Redis. All of it
   lives in [`docker-compose.full.yml`](docker-compose.full.yml), which carries
