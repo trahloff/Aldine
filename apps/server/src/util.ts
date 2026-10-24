@@ -206,12 +206,12 @@ export function isTextFile(p: string): boolean {
 
 /** Bytes that cannot be served as text: a NUL in the head, or a head that is
  *  not UTF-8. Checked on content, not the extension — a `.dat` of numbers is
- *  text, a `.tex` with a NUL is not. */
-export function looksBinary(data: Buffer): boolean {
+ *  text, a `.tex` with a NUL is not. `more`: `data` is only the file's start. */
+export function looksBinary(data: Buffer, more = false): boolean {
   const head = data.subarray(0, 8000);
   if (head.includes(0)) return true;
   // Streaming mode buffers a sequence the cut split instead of throwing; invalid bytes still throw.
-  try { new TextDecoder('utf-8', { fatal: true }).decode(head, { stream: data.length > head.length }); return false; } catch { return true; }
+  try { new TextDecoder('utf-8', { fatal: true }).decode(head, { stream: more || data.length > head.length }); return false; } catch { return true; }
 }
 
 export function debouncePerKey<A extends unknown[]>(ms: number, fn: (key: string, ...args: A) => void) {

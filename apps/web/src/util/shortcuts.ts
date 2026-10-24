@@ -9,7 +9,7 @@ import { isMac } from '../platform';
  */
 export interface Chord { mod: boolean; shift: boolean; alt: boolean; key: string; code?: string }
 
-export type ShortcutId = 'typeset' | 'comment' | 'jump' | 'palette';
+export type ShortcutId = 'typeset' | 'comment' | 'jump' | 'palette' | 'search';
 
 export const SHORTCUTS: readonly { id: ShortcutId; label: string; chord: Chord }[] = [
   { id: 'typeset', label: 'Typeset', chord: { mod: true, shift: false, alt: false, key: 's' } },
@@ -17,6 +17,7 @@ export const SHORTCUTS: readonly { id: ShortcutId; label: string; chord: Chord }
   { id: 'comment', label: 'Comment on the selection', chord: { mod: true, shift: true, alt: false, key: 'm' } },
   { id: 'jump', label: 'Jump the PDF to the cursor', chord: { mod: true, shift: false, alt: false, key: 'j' } },
   { id: 'palette', label: 'Command palette', chord: { mod: true, shift: false, alt: false, key: 'k' } },
+  { id: 'search', label: 'Search the project', chord: { mod: true, shift: true, alt: false, key: 'f' } },
 ];
 
 /** What the browser keeps for itself, or the editor already does, under a chord. */
@@ -134,6 +135,14 @@ export function chordProblem(c: Chord, which: ShortcutId, mac = isMac): string |
   const other = SHORTCUTS.find((s) => s.id !== which && sameChord(chordFor(s.id), c));
   if (other) return `${label} is already ${other.label}`;
   return null;
+}
+
+/** Another shortcut on the same keys as `which`, as the keys stand now — a
+ *  chord saved before a later default took the same keys. Only one of them
+ *  can run, so settings say so on both rows. */
+export function chordConflict(which: ShortcutId): string | null {
+  const mine = chordFor(which);
+  return SHORTCUTS.find((s) => s.id !== which && sameChord(chordFor(s.id), mine))?.label ?? null;
 }
 
 const NAMED_KEYS: Record<string, [mac: string, other: string]> = {

@@ -32,7 +32,8 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isAdmin, isListed, isMember, isOwner, ownerName } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, clientKey } from './ratelimit.js';
+import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
@@ -1047,6 +1048,48 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
     } catch { /* meta unreadable — leave as-is */ }
     return { ok: true, ...(newRoot ? { newRoot } : {}) };
+  });
+
+  // ---------- search and replace across the branch ----------
+  type SearchQ = { branch?: string; q?: string; case?: string; word?: string; regex?: string };
+  const flag = (v: unknown) => v === '1' || v === 'true';
+  const branchReady = async (id: string, branch: string): Promise<boolean> => {
+    try { await store.readMeta(id); await gitops.ensureWorktree(id, branch); return true; } catch { return false; }
+  };
+
+  // A GET, so a showcase project can be searched: its guard refuses every
+  // other method. Reads the live documents and never flushes.
+  app.get<{ Params: { id: string }; Querystring: SearchQ }>('/api/projects/:id/search', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    if (!(await branchReady(req.params.id, branch))) return reply.code(404).send({ error: 'Project or branch not found' });
+    const key = clientKey(req, reqUser(req)?.id);
+    if (!(await searchLimiter.take(key))) return reply.code(429).send({ error: 'Search rate limit reached — please slow down' });
+    const { q, case: matchCase, word, regex } = req.query;
+    try {
+      return await searchProject(req.params.id, branch, { q, caseSensitive: flag(matchCase), wholeWord: flag(word), regex: flag(regex) }, key);
+    } catch (err) {
+      if (err instanceof SearchError) return reply.code(err.status).send(err.body);
+      throw err;
+    }
+  });
+
+  // Write access is the same as PUT /file's: there is no read-only share
+  // role, and the showcase guard already refuses this POST.
+  app.post<{ Params: { id: string }; Body: ReplaceBody }>('/api/projects/:id/replace', async (req, reply) => {
+    const body: ReplaceBody = req.body && typeof req.body === 'object' ? req.body : {};
+    const branch = typeof body.branch === 'string' && body.branch ? body.branch : 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    if (!(await branchReady(req.params.id, branch))) return reply.code(404).send({ error: 'Project or branch not found' });
+    const key = clientKey(req, reqUser(req)?.id);
+    if (!(await replaceLimiter.take(key))) return reply.code(429).send({ error: 'Replace rate limit reached — please slow down' });
+    const author = commitAuthor(req, typeof body.author === 'string' ? body.author : undefined);
+    try {
+      return await replaceInProject(req.params.id, branch, body, author, key);
+    } catch (err) {
+      if (err instanceof SearchError) return reply.code(err.status).send(err.body);
+      throw err;
+    }
   });
 
   /**

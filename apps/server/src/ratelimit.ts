@@ -126,6 +126,16 @@ export const oauthRegisterLimiter = new RateLimiter('oauth-register', n(process.
  *  60 SSRF-guarded fetches (5 s / 64 KB each) before the refill applies. */
 export const oauthClientLimiter = new RateLimiter('oauth-client', n(process.env.RL_OAUTH_CLIENT_BURST, 60), 0.2);
 
+/** Project search: 60 burst, 2/s — the panel searches as you type, 300 ms after the last key. */
+export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_BURST, 60), 2);
+/** Replace (one or all): 30 burst, 1/2s — every replace is a commit. */
+export const replaceLimiter = new RateLimiter('replace', n(process.env.RL_REPLACE_BURST, 30), 0.5);
+/** Every search and replace scans in a worker of its own: one in flight per
+ *  client, and at most four per process (key 'all'), so slow scans cannot
+ *  take every core. */
+export const searchGate = new ConcurrencyGate(1);
+export const searchSlots = new ConcurrencyGate(4);
+
 /** Agent-originated compiles: 1 in flight per user, acquired BEFORE the shared
  *  2-slot compileGate — an agent can hold at most one of the user's two slots,
  *  so the human always keeps one. */

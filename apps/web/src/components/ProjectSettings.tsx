@@ -3,7 +3,7 @@ import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
 import { getTheme, setTheme, Theme } from '../theme';
-import { chordFromEvent, chordProblem, isDefaultChord, setChord, ShortcutId, SHORTCUTS, useShortcutLabel } from '../util/shortcuts';
+import { chordConflict, chordFromEvent, chordProblem, isDefaultChord, setChord, ShortcutId, SHORTCUTS, useShortcutLabel } from '../util/shortcuts';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
@@ -68,8 +68,10 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
     };
   }, [recording, id]);
 
+  const clash = recording ? null : chordConflict(id);
+  const clashHint = clash ? `${keys} is also ${clash} — change one of them` : null;
   return (
-    <Row label={label} hint={problem ?? (recording ? 'Press the new keys · Esc keeps these' : undefined)} hintTestId={`shortcut-hint-${id}`} hintError={!!problem}>
+    <Row label={label} hint={problem ?? clashHint ?? (recording ? 'Press the new keys · Esc keeps these' : undefined)} hintTestId={`shortcut-hint-${id}`} hintError={!!(problem || clashHint)}>
       <button
         type="button"
         className={`input shortcut${recording ? ' is-recording' : ''}`}
