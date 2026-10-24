@@ -32,7 +32,9 @@ if [ -n "$(container app)" ]; then
 fi
 
 DB=""
-if tar -tzf "$IN" | grep -qx 'postgres/aldine.sql'; then
+# Not grep -q: an early exit would SIGPIPE tar, and pipefail would read
+# that as "no dump" and skip the database.
+if tar -tzf "$IN" | grep -x 'postgres/aldine.sql' >/dev/null; then
   DB="$(container db)"
   if [ -z "$DB" ]; then
     echo "error: this backup holds a Postgres database, and the db container of project '${PROJECT}' is not running. Start it alone first: docker compose --profile postgres up -d db (with the same -f files as the stack)." >&2
