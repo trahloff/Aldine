@@ -8,6 +8,8 @@ name: Release
 #     build      aldine-app and aldine-compiler as 0.4.0 + sha-<commit>, immutable
 #     smoke      boot those exact digests with the user-facing compose file and
 #                typeset a document with a bibliography inside the sandbox
+#     lifecycle  upgrade from the previous release onto those digests, and a
+#                backup/restore drill, on the JSON and the Postgres datastore
 #     promote    waits for approval in the `latest` environment, then moves
 #                `latest` to the same digests and publishes the GitHub Release
 #
@@ -132,8 +134,15 @@ jobs:
             echo "Next: approve the promote job to move \`latest\` here, or leave it and nothing changes for users."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  lifecycle:
+    needs: [build-app, build-compiler]
+    uses: ./.github/workflows/lifecycle.yml
+    with:
+      app-image: ghcr.io/${{ github.repository_owner }}/aldine-app@${{ needs.build-app.outputs.digest }}
+      compiler-image: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler.outputs.digest }}
+
   promote:
-    needs: [preflight, smoke]
+    needs: [preflight, smoke, lifecycle]
     uses: ./.github/workflows/promote.yml
     with:
       version: ${{ needs.preflight.outputs.version }}

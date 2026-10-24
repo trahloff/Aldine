@@ -32,6 +32,7 @@ npm run typecheck -w apps/web                # tsc, no emit
 npm run test -w apps/web                     # vitest unit tests
 npm run dev:server / dev:web / dev:compiler  # local stack (:3000 / :5173 / :4020)
 npm run test:e2e                             # playwright (starts its own server)
+scripts/lifecycle/drill.sh upgrade|restore   # Docker: upgrade / backup+restore drill (DATASTORE=postgres)
 ```
 
 e2e needs the compiler on :4020 **with the e2e data dir**:
@@ -78,6 +79,10 @@ traces as the `playwright-<suite>` artifact.
   must keep the cursor-tour e2e green.
 - Yjs docs reload from binary snapshots (`META_DIR` sidecar); never reseed
   open docs from plain text — that duplicates content on reconnect.
+- With `DATABASE_URL` set, users, sessions, tokens, project metadata and
+  comments live in Postgres, not in `META_DIR`: anything that copies "the
+  data" (`deploy/backup.sh`, a migration) must cover both. The lifecycle
+  drill (`.github/workflows/lifecycle.yml`) checks it on both datastores.
 - `META_DIR` is deliberately outside `DATA_DIR` so the compiler container can
   never read API keys — don't "simplify" them onto one volume.
 - The file tree defaults to source-only view; e2e that asserts non-source

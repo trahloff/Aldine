@@ -31,6 +31,8 @@ e2e/playwright-report/
 e2e/.auth/
 .data-c2/
 .secrets-c2/
+# scripts/lifecycle/data.mjs seed: test passwords and a token
+lifecycle-state.json
 apps/web/dist/
 apps/server/dist/
 

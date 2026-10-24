@@ -1,0 +1,124 @@
+name: Lifecycle
+
+# What a self-hoster does with their data, on real images with accounts on,
+# for the JSON and the Postgres datastore (scripts/lifecycle/drill.sh, which
+# runs the same way locally):
+#
+#   upgrade  a release's images seed a stack; the candidate starts on the
+#            same volumes and must find every account, file, commit, branch,
+#            comment thread, share and token, and still typeset. It runs from
+#            the previous release and from OLDEST_SUPPORTED, the oldest
+#            release whose data a new one must still start on
+#            (docs/STABILITY.md); one job when the two are the same
+#   restore  the candidate is seeded and backed up with deploy/backup.sh, the
+#            stack and its volumes are deleted, deploy/restore.sh restores onto
+#            an empty Docker as deploy/README.md says, and the same checks run
+#
+# release.yml calls this with the digests it just built, and promote waits for
+# it: a release that loses data on upgrade or restore never becomes latest.
+# Pull requests that touch storage run it too, on the PR's app image (built
+# here, amd64 only, never pushed) and the released compiler; there the upgrade
+# from OLDEST_SUPPORTED runs on JSON only.
+on:
+  workflow_call:
+    inputs:
+      app-image:
+        description: App image under test, by digest
+        required: true
+        type: string
+      compiler-image:
+        description: Compiler image under test, by digest
+        required: true
+        type: string
+      previous-version:
+        description: Release the upgrade starts from (default the newest tag before this one)
+        required: false
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - apps/server/src/db/**
+      - apps/server/src/store.ts
+      - apps/server/src/collab.ts
+      - apps/server/src/gitops.ts
+      - apps/server/src/auth.ts
+      - apps/server/src/config.ts
+      - apps/server/Dockerfile
+      - docker-compose.full.yml
+      - deploy/docker-compose.prod.yml
+      - deploy/backup.sh
+      - deploy/restore.sh
+      - scripts/lifecycle/**
+      - .github/workflows/lifecycle.yml
+
+permissions:
+  contents: read
+
+env:
+  OLDEST_SUPPORTED: 0.14.4
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the previous release is the newest tag before this one
+      - name: Releases to upgrade from
+        id: plan
+        env:
+          PREVIOUS: ${{ inputs.previous-version }}
+        run: |
+          set -euo pipefail
+          # On a tag, docker-compose.yml already pins the candidate; on a pull
+          # request it pins the release users run, the one they upgrade from.
+          if [ -z "$PREVIOUS" ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+            PREVIOUS=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")
+          elif [ -z "$PREVIOUS" ]; then
+            PREVIOUS=$(sed -n 's/.*aldine-app:.{ALDINE_VERSION:-\([^}]*\)}.*/\1/p' docker-compose.yml)
+          fi
+          oldest_stores='["json","postgres"]'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then oldest_stores='["json"]'; fi
+          matrix=$(jq -cn --arg previous "${PREVIOUS#v}" --arg oldest "${OLDEST_SUPPORTED#v}" --argjson oldestStores "$oldest_stores" '
+            {include: [
+              (["json", "postgres"][] | {drill: "upgrade", from: $previous, datastore: .}),
+              (if $oldest == $previous then empty else ($oldestStores[] | {drill: "upgrade", from: $oldest, datastore: .}) end),
+              (["json", "postgres"][] | {drill: "restore", from: "", datastore: .})
+            ]}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          jq . <<<"$matrix"
+
+  drill:
+    needs: plan
+    name: ${{ matrix.drill == 'upgrade' && format('upgrade from {0} ({1})', matrix.from, matrix.datastore) || format('restore ({0})', matrix.datastore) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    concurrency:
+      group: lifecycle-${{ github.ref }}-${{ matrix.drill }}-${{ matrix.from }}-${{ matrix.datastore }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Free runner disk for the compiler image
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+      - name: Build the app image of this pull request
+        if: ${{ inputs.app-image == '' }}
+        run: docker build -f apps/server/Dockerfile -t aldine-app:candidate .
+      # An empty compiler image falls back to the drill's default, which on a
+      # pull request is right: the compiler of the release users run.
+      - name: Drill
+        run: scripts/lifecycle/drill.sh "$DRILL"
+        env:
+          DRILL: ${{ matrix.drill }}
+          DATASTORE: ${{ matrix.datastore }}
+          PREVIOUS_VERSION: ${{ matrix.from }}
+          CANDIDATE_APP_IMAGE: ${{ inputs.app-image || 'aldine-app:candidate' }}
+          CANDIDATE_COMPILER_IMAGE: ${{ inputs.compiler-image }}
+          ALDINE_REGISTRY: ghcr.io/${{ github.repository_owner }}

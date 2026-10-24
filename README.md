@@ -430,9 +430,10 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
 # …or, if nothing else owns ports 80/443, add the bundled Caddy for
 # zero-config HTTPS: append `--profile tls` and set ALDINE_DOMAIN in .env.
 
-# Back up the data + secrets volumes:
+# Back up the data + secrets volumes (and the bundled Postgres, if you use it):
 deploy/backup.sh aldine-backup.tar.gz
-# Restore, after stopping the stack with `docker compose down`:
+# Restore, after stopping the stack with `docker compose down` (with Postgres,
+# start the database alone first: deploy/README.md, "Restore"):
 #   deploy/restore.sh aldine-backup.tar.gz
 ```
 

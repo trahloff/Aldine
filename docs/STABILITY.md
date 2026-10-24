@@ -53,8 +53,9 @@ The project repositories are plain git: you can clone, read and back them up
 without Aldine running. The compose files put `DATA_DIR` (`/data`) on the
 `aldine-data` volume and `META_DIR` (`/secrets`) on `aldine-secrets`. The
 compiler mounts only the first, which is why the two must stay apart.
-`deploy/backup.sh` archives both volumes; with Postgres, dump the database
-as well. From 1.0 the image names (`ghcr.io/trahloff/aldine-app`,
+`deploy/backup.sh` archives both volumes, and with the bundled Postgres a
+dump of the database (one outside the stack is backed up with its own
+tools). From 1.0 the image names (`ghcr.io/trahloff/aldine-app`,
 `aldine-compiler`, `-full` for all of TeX Live), the volume names and these
 two paths stay as they are within 1.x.
 
@@ -84,14 +85,17 @@ From 1.0: **any 1.x release starts on data written by an earlier 1.x, or by
 0.14 or later, with no manual step.** That covers every row of the table
 above, with either datastore.
 
-The upgrade check in the release workflow backs this. It starts the previous
-release on a fresh instance, fills it through the API (accounts, projects
-with several files, commits, a branch, review comments, a personal access
-token), then starts the candidate on the same volumes and checks that all of
-it is still there and still works, typeset included, with the JSON and with
-the Postgres datastore. A failure stops the release before `latest` moves.
-The check is being built; until it runs on every release, back up before
-every upgrade.
+The upgrade check in the release workflow backs this
+(`.github/workflows/lifecycle.yml`). It starts the previous release, and the
+oldest release the promise covers (0.14.4, `OLDEST_SUPPORTED` in that file),
+on a fresh instance, fills it through the API (accounts, projects with
+several files, commits, a branch, review comments, a share, a personal
+access token), then starts the candidate on the same volumes and checks that
+all of it is still there and still works, typeset included, with the JSON
+and with the Postgres datastore. A failure stops the release before `latest`
+moves. The same check runs on pull requests that change how data is stored.
+It covers what it seeds, not everything an instance can hold, so back up
+before an upgrade all the same.
 
 Not promised: going back to an earlier release. Releases so far have added
 fields and columns rather than changing them, but nothing checks a
@@ -187,7 +191,7 @@ it. It goes away no earlier than the next major release.
 
 | Promise | Check | Today |
 |---|---|---|
-| Upgrades start on older data, JSON and Postgres | the upgrade check in the release workflow | being built |
+| Upgrades start on older data, JSON and Postgres | the upgrade check in the release workflow (`lifecycle.yml`), from the previous release and from 0.14.4 | in place |
 | Both datastores behave the same | the datastore conformance suite, in CI on every pull request and release | in place |
 | Released images boot and typeset | the smoke test in the release workflow, against the published digests | in place |
 | MCP tool names and parameters | a snapshot of `tools/list` that fails on a removed or renamed tool or parameter | to be added |
