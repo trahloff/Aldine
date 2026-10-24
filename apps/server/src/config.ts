@@ -34,6 +34,25 @@ export function publicAppUrl(publicUrl: string | undefined, basePath: string): s
   try { return `${new URL(publicUrl).origin}${basePath}`; } catch { return ''; }
 }
 
+const warnedLegacy = new Set<string>();
+
+/**
+ * A setting read under its current name, else under the names it had before
+ * (docs/STABILITY.md, "Deprecation"). A set old name logs one warning per
+ * process naming both. Empty counts as unset: the compose files hand every
+ * variable they list to the container, set or not.
+ */
+export function envWithFallback(name: string, legacy: string[], env: NodeJS.ProcessEnv = process.env): string | undefined {
+  for (const old of legacy) {
+    if (!env[old] || warnedLegacy.has(old)) continue;
+    warnedLegacy.add(old);
+    console.warn(env[name]
+      ? `[aldine] ${old} is set but ignored, because ${name} replaces it — remove ${old}`
+      : `[aldine] ${old} is deprecated — rename it to ${name}; the old name stops working in the next major release`);
+  }
+  return env[name] || legacy.map((old) => env[old]).find(Boolean) || undefined;
+}
+
 const basePath = normalizeBasePath(process.env.ALDINE_BASE_PATH, process.env.ALDINE_PUBLIC_URL);
 
 export const config = {

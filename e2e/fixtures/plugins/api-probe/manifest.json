@@ -1,0 +1,8 @@
+{
+  "id": "api-probe",
+  "name": "API probe",
+  "description": "Test fixture: hands its plugin API object to tests/06-plugins.spec.ts.",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "slots": ["sidebarPanel"]
+}

@@ -1,0 +1,85 @@
+{
+  "batch_write": {
+    "branch": { "type": "string", "required": false },
+    "files": { "type": "object[]", "required": true },
+    "files[].base_version": { "type": "integer", "required": false },
+    "files[].content": { "type": "string", "required": false },
+    "files[].edits": { "type": "object[]", "required": false },
+    "files[].edits[].occurrence": { "type": "integer", "required": false },
+    "files[].edits[].quote": { "type": "string", "required": true },
+    "files[].edits[].replacement": { "type": "string", "required": true },
+    "files[].path": { "type": "string", "required": true },
+    "message": { "type": "string", "required": true },
+    "project": { "type": "string", "required": false }
+  },
+  "commit": {
+    "branch": { "type": "string", "required": false },
+    "message": { "type": "string", "required": true },
+    "project": { "type": "string", "required": false }
+  },
+  "compile": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "create_project": {
+    "name": { "type": "string", "required": true },
+    "template": { "type": "string", "required": false }
+  },
+  "edit_file": {
+    "base_version": { "type": "integer", "required": false },
+    "branch": { "type": "string", "required": false },
+    "edits": { "type": "object[]", "required": true },
+    "edits[].occurrence": { "type": "integer", "required": false },
+    "edits[].quote": { "type": "string", "required": true },
+    "edits[].replacement": { "type": "string", "required": true },
+    "message": { "type": "string", "required": false },
+    "path": { "type": "string", "required": true },
+    "project": { "type": "string", "required": false }
+  },
+  "get_pdf_url": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "list_citations": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "list_labels": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "list_projects": {},
+  "ping": {},
+  "project_structure": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "read_file": {
+    "branch": { "type": "string", "required": false },
+    "from_line": { "type": "integer", "required": false },
+    "path": { "type": "string", "required": true },
+    "project": { "type": "string", "required": false },
+    "to_line": { "type": "integer", "required": false }
+  },
+  "references_add": {
+    "bibFile": { "type": "string", "required": false },
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false },
+    "query": { "type": "string", "required": true }
+  },
+  "trash_project": {
+    "project": { "type": "string", "required": true }
+  },
+  "wordcount": {
+    "branch": { "type": "string", "required": false },
+    "project": { "type": "string", "required": false }
+  },
+  "write_file": {
+    "base_version": { "type": "integer", "required": false },
+    "branch": { "type": "string", "required": false },
+    "content": { "type": "string", "required": true },
+    "message": { "type": "string", "required": false },
+    "path": { "type": "string", "required": true },
+    "project": { "type": "string", "required": false }
+  }
+}
