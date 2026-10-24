@@ -66,7 +66,7 @@ networks:
 ```
 
 Save. The first install pulls the compiler image, which carries TeX Live
-(about 1.1 GB to download, 4.3 GB on disk). Then open
+(about 2.4 GB to download, 5 GB on disk). Then open
 `http://<truenas-address>:8480`. If 8480 is taken, change the left side of
 `8480:3000`.
 

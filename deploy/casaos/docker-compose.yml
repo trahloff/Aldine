@@ -154,7 +154,7 @@ x-casaos:
   tips:
     before_install:
       en_US: |
-        The compiler image carries TeX Live: about 1.1 GB to download and 4.3 GB on disk, so the first install takes a while.
+        The compiler image carries TeX Live: about 2.4 GB to download and 5 GB on disk, so the first install takes a while.
 
         Aldine starts without a login: anyone who can reach port 8480 can open and edit every project. To require accounts, set AUTH_ENABLED to 1 in the app's settings and restart it. Anyone who can reach the port can still create an account, so keep it on your own network or behind a reverse proxy.
   version: "0.14.4"

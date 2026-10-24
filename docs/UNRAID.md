@@ -23,7 +23,7 @@ keeps every limit from the repository's `docker-compose.yml`.
    `- /mnt/user/appdata/aldine/secrets:/secrets`, and delete the `volumes:`
    block at the end of the file.
 5. Start the stack (compose up). The first start pulls the compiler image,
-   which carries TeX Live (about 1.1 GB to download, 4.3 GB on disk).
+   which carries TeX Live (about 2.4 GB to download, 5 GB on disk).
 6. Open `http://<server>:8080`. If 8080 is taken, change the left side of
    `8080:3000`.
 
