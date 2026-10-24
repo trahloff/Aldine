@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-24
+
+This release fixes security problems found in a review before 1.0 (see
+Security below). Upgrade every instance, and run `find "$DATA_DIR" -type l`
+to list symbolic links left by projects imported earlier.
+
 ### Added
 - Install routes for NAS systems, each with the compiler sandbox intact (no
   internet, no Linux capabilities, bounded memory and processes). CasaOS and
