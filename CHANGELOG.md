@@ -27,6 +27,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   after nearly every merge. Security fixes and fixes for bugs that lose or
   corrupt data still ship at once. The rule is in CONTRIBUTING.md,
   "Releasing".
+- `deploy/restore.sh` refuses to run while the app is up, since the app
+  would keep writing into the volumes being replaced. `--yes` skips its
+  confirmation, for scripted restores.
 
 ### Fixed
 - The upgrade command in the README and on aldine.dev set `ALDINE_VERSION`
@@ -41,8 +44,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   1.1 GB and 4.3 GB.
 - `deploy/README.md` now lists every variable the server and compiler read,
   with the test and tuning ones in a table of their own, and says that an
-  instance switched to Postgres starts without its JSON data and that
-  `deploy/backup.sh` does not dump the database.
+  instance switched to Postgres starts without its JSON data.
+- On the Postgres datastore `deploy/backup.sh` left the database out, so a
+  restore brought back every project's files and history but no accounts,
+  sessions, project settings, shares or comments. With `DATABASE_URL`
+  pointing at the bundled `db` service the tarball now holds a dump of the
+  database, and `deploy/restore.sh` loads it into a database started on its
+  own (deploy/README.md, "Restore"). For a database outside the stack the
+  backup stops with an explanation instead of leaving it out quietly;
+  `ALDINE_BACKUP_DB=skip` writes it without the database.
+- `docker compose up` after a restore warned that the volumes were not
+  created by Docker Compose. `deploy/restore.sh` labels the volumes it
+  creates the way compose does.
 
 ## [0.14.4] — 2026-10-24
 

@@ -222,15 +222,49 @@ sudo systemctl enable --now aldine-backup.timer
 
 Daily snapshots of the `aldine-data` (projects/git) and `aldine-secrets` (users,
 sessions, keys, comments, usage) volumes land in `/var/backups/aldine`, 14 kept.
-Restore with `deploy/restore.sh <backup.tar.gz>` after `docker compose down`.
-(If your compose project name isn't `aldine`, set `ALDINE_PROJECT` for both
-scripts.)
+On the Postgres datastore (`DATABASE_URL` pointing at the bundled `db`
+service) users, sessions, project metadata, comments and usage live in the
+database instead, and each tarball also holds a `pg_dump` of it, so the stack
+must be up when the backup runs. A database outside the stack, such as a
+managed Postgres, is not in the tarball: back it up with its provider's tools
+and set `ALDINE_BACKUP_DB=skip` for `deploy/backup.sh`, which otherwise
+refuses to write a backup without it. (If your compose project name isn't
+`aldine`, set `ALDINE_PROJECT` for both scripts.)
 
 Check that it took: `systemctl list-timers aldine-backup.timer` shows the next
 run, and `systemctl start aldine-backup.service` forces one now. If you
 installed these units before 0.4.0 they were named `papyr-backup.*`; disable
 the old ones with `sudo systemctl disable --now papyr-backup.timer` and delete
 them from `/etc/systemd/system/`, or you will run both.
+
+### Restore
+
+On the same box, or on a new one set up with steps 1 to 3 (the checkout and
+the same `.env`), with the tarball copied over:
+
+```bash
+cd /opt/aldine
+docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml down
+# Postgres datastore only: start the database by itself, the restore loads into it
+docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml --profile postgres up -d db
+deploy/restore.sh /var/backups/aldine/aldine-20261024.tar.gz
+docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -d
+# (append --profile postgres, --profile tls and any other profiles you run)
+```
+
+`deploy/restore.sh` replaces everything in the two volumes, and the database
+when the backup holds one, with the contents of the backup. It refuses while
+the app is running, and asks before it overwrites anything (`--yes` skips the
+question). Afterwards people are still signed in and access tokens still
+work.
+
+Every release runs exactly these steps on an empty Docker, for both
+datastores, before it can become `latest`: `scripts/lifecycle/drill.sh
+restore` seeds a stack, backs it up while it runs, deletes it with its
+volumes, restores it and checks every account, file, commit, branch, comment,
+share and token. You can run the drill yourself (`DATASTORE=postgres` for the
+database); it uses its own compose project, `aldine-lifecycle` on port 8191,
+and never touches the `aldine` volumes.
 
 ## 5. Upgrade
 
@@ -267,7 +301,7 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
   both backends. Nothing copies an existing instance's JSON files into
   Postgres: an instance switched over starts with no accounts and lists no
   projects, so choose the backend before people use it. `deploy/backup.sh`
-  does not dump the database; back it up with `pg_dump` alongside.
+  puts a dump of the bundled database in its tarball (section 4).
   Enabling Redis works the same way: `--profile redis` plus the `REDIS_URL`
   line in `.env`.
 
@@ -394,6 +428,7 @@ compose files hand a variable to a container only when they name it:
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PREAMBLE_CACHE` | Compiler container. `0` turns off the precompiled preamble (pdfLaTeX projects load their packages from a format built in the background, rebuilt when the preamble or a file it reads changes). On by default |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
+| `ALDINE_BACKUP_DB` | `skip` = `deploy/backup.sh` writes a backup without the database when `DATABASE_URL` points outside the stack (back that database up with its own tools); unset, it refuses |
 | `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, about 5 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
 | `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (medium TeX Live plus the common collections) or `-full` (all of TeX Live, from 0.4.0). Single extra packages: a derived image with `RUN tlmgr install <pkg>`, see the root README, "Need a package it does not have?" |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |
