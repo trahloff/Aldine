@@ -41,7 +41,11 @@ test.describe('Zotero integration (via plugin system)', () => {
       await page.locator('.cm-content').click();
       await page.keyboard.press('End');
       await page.keyboard.type(' \\cite{shan');
-      await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('shannon1948', { timeout: 10_000 });
+      // Enter falls through to a newline while the list is stale (a query
+      // pending) and for CodeMirror's interactionDelay (75 ms) after it opens.
+      await expect(page.locator('.cm-tooltip-autocomplete:not(.cm-tooltip-autocomplete-disabled) li[aria-selected]'))
+        .toContainText('shannon1948', { timeout: 10_000 });
+      await page.waitForTimeout(150);
       await page.keyboard.press('Enter');
       await expect(page.locator('.cm-content')).toContainText('\\cite{shannon1948}');
 
