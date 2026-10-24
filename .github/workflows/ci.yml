@@ -88,3 +88,86 @@ jobs:
           ALDINE_DOMAIN=x DATABASE_URL=x docker compose -f docker-compose.full.yml --profile tls --profile postgres --profile redis config >/dev/null
           ALDINE_APP_BIND=127.0.0.1 docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml config >/dev/null
           AppID=aldine docker compose -f deploy/casaos/docker-compose.yml config >/dev/null
+
+  # Every Playwright config, against this checkout's server, web build and
+  # compiler code. Each suite gets its own runner, so the configs' default
+  # ports and data dirs never meet.
+  e2e:
+    name: e2e (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: main 1/4, id: main-1, config: e2e/playwright.config.ts, args: --shard=1/4, data: .data-e2e }
+          - { suite: main 2/4, id: main-2, config: e2e/playwright.config.ts, args: --shard=2/4, data: .data-e2e }
+          - { suite: main 3/4, id: main-3, config: e2e/playwright.config.ts, args: --shard=3/4, data: .data-e2e }
+          - { suite: main 4/4, id: main-4, config: e2e/playwright.config.ts, args: --shard=4/4, data: .data-e2e }
+          - { suite: provisioning, id: provisioning, config: e2e/playwright.provisioning.config.ts, data: .data-e2e-prov }
+          - { suite: auth, id: auth, config: e2e/playwright.auth.config.ts, data: .data-auth }
+          - { suite: base path, id: base-path, config: e2e/playwright.base-path.config.ts, data: .data-base-path }
+          # The deployed-instance smoke, aimed at a server started below in
+          # the shape a deployment has: sign-in on, under a path prefix.
+          - { suite: remote, id: remote, config: e2e/playwright.remote.config.ts, data: .data-remote }
+    env:
+      PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ github.workspace }}/e2e/playwright-report
+      PLAYWRIGHT_HTML_OPEN: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: ./.github/actions/e2e-compiler
+        with:
+          data-dir: ${{ github.workspace }}/${{ matrix.data }}
+      - run: npm ci
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Install Chromium's system libraries
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - name: Configure git identity (the specs commit to their own fixture repos)
+        run: |
+          git config --global user.email ci@aldine.local
+          git config --global user.name aldine-ci
+          git config --global init.defaultBranch main
+      - name: Start a signed-in instance under a prefix
+        if: matrix.id == 'remote'
+        run: |
+          npm run build -w apps/web
+          PORT=3400 AUTH_ENABLED=1 ALDINE_BASE_PATH=/internal/aldine \
+            DATA_DIR="$PWD/.data-remote" META_DIR="$PWD/.secrets-remote" CACHE_DIR="$PWD/.data-remote/cache" \
+            nohup npx tsx apps/server/src/index.ts > "$RUNNER_TEMP/remote-server.log" 2>&1 &
+          for _ in $(seq 120); do
+            curl -fsS http://localhost:3400/internal/aldine/api/health && break
+            sleep 1
+          done
+          curl -fsS http://localhost:3400/internal/aldine/api/health >/dev/null
+          echo "ALDINE_REMOTE_URL=http://localhost:3400" >> "$GITHUB_ENV"
+          echo "ALDINE_REMOTE_BASE_PATH=/internal/aldine" >> "$GITHUB_ENV"
+      - name: Playwright
+        run: npx playwright test -c ${{ matrix.config }} ${{ matrix.args }} --reporter=list,html,github
+      - name: Compiler and server logs
+        if: failure()
+        run: |
+          docker logs aldine-compiler-4020 2>&1 | tail -200
+          if [ -f "$RUNNER_TEMP/remote-server.log" ]; then tail -200 "$RUNNER_TEMP/remote-server.log"; fi
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.id }}
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14

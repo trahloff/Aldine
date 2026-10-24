@@ -38,12 +38,23 @@ e2e needs the compiler on :4020 **with the e2e data dir**:
 `DATA_DIR=$(pwd)/.data-e2e PORT=4020 node apps/compiler/server.js` — a
 compiler on the default `.data` makes every compile test fail while looking
 healthy. `ALDINE_URL=http://localhost:8080 npm run test:e2e` targets a running
-compose stack instead. Two `07-features` tests need full TeX Live (BasicTeX
-lacks packages); everything else passes locally. Two checkouts side by side
+compose stack instead. Two `07-features` tests need biblatex, which BasicTeX
+lacks; everything else passes locally. Two checkouts side by side
 (`reuseExistingServer` would otherwise test the other tree's server):
 `E2E_PORT=3101 E2E_MOCK_PORT=4920 E2E_GITLAB_PORT=4922 E2E_GITEA_PORT=4924 E2E_AUTH_PORT=3201 E2E_AUTH_MOCK_PORT=4928 E2E_AUTH_OIDC_PORT=4944 COMPILER_URL=http://localhost:4021 npm run test:e2e`.
 Every mock server runs with `reuseExistingServer`, so a port left at its
 default silently shares the other checkout's mock.
+
+CI (`ci.yml`, job `e2e`) runs every Playwright config on each pull request,
+one runner per suite: the main config in four `--shard`s, provisioning, auth,
+base path, and the remote smoke against a signed-in server under
+`/internal/aldine` that the job starts itself. The compiler is the published
+image at the docker-compose.yml pin (`latest` while a cut's version is
+unpublished) with this checkout's `apps/compiler/*.js` mounted over `/srv`,
+as the runner's uid, the suite's data dir at the same absolute path
+(`.github/actions/e2e-compiler`). Its scheme is medium, which has biblatex, so
+no suite needs the `-full` image. A failed suite uploads its HTML report and
+traces as the `playwright-<suite>` artifact.
 
 ## Conventions
 
