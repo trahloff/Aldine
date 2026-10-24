@@ -200,6 +200,6 @@ setting has been renamed so far, so nothing logs this warning today.
 | Both datastores behave the same | the datastore conformance suite, in CI on every pull request and release | in place |
 | Released images boot and typeset | the smoke test in the release workflow, against the published digests | in place |
 | MCP tool names and parameters | `apps/server/test/mcp-contract.test.mjs` compares `tools/list` with the snapshot in `test/fixtures/mcp-contract.json` and fails on a removed or renamed tool or parameter, a parameter made required or a changed type; it also calls the tools for the three error names | in place |
-| Plugin API | `e2e/tests/06-plugins.spec.ts` loads a plugin and registers a panel | covers loading, not every member |
+| Plugin API | `e2e/tests/06-plugins.spec.ts` loads the fixture plugin in `e2e/fixtures/plugins/api-probe` and checks every member listed above by what it does | in place |
 | Stable settings keep their names | `apps/server/test/stable-settings.test.mjs` reads the main table of `deploy/README.md` and fails on a variable that the server, the compiler or (for the deployment's own) the compose files no longer read | in place |
 | Deprecations warn | settings: `apps/server/test/env-fallback.test.mjs` checks that an old name read through `envWithFallback` still works and warns once. MCP tools: none, no tool is deprecated | in place for settings |
