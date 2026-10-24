@@ -69,9 +69,10 @@ jobs:
         run: npm run test:unit -w apps/server
       - name: Web unit tests
         run: npm run test -w apps/web
-      # package.json versions, the compose default and the README block all
-      # name the release by hand; a tag whose pins disagree is refused by
-      # release.yml, so catch the drift on the PR instead.
+      # package.json versions, the compose default, the README block, the
+      # CasaOS compose and the TrueNAS YAML all name the release by hand; a tag
+      # whose pins disagree is refused by release.yml, so catch the drift on
+      # the PR instead.
       - name: Release pins agree
         run: node scripts/check-release-pins.mjs
 
