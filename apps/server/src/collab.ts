@@ -7,7 +7,7 @@ import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
 import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
-import { safeJoin, debouncePerKey } from './util.js';
+import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
@@ -221,12 +221,20 @@ function isSignalDoc(filePath: string): boolean {
   return filePath.startsWith('.aldine/');
 }
 
+/** Whether a document may load and store `filePath` on disk: the names the
+ *  file routes accept. A document over `.git/config` or a hook would run code
+ *  on the server at the next git command; one over '.' names the branch
+ *  directory itself. */
+function isProjectFile(filePath: string): boolean {
+  return importPath(filePath) !== null && !isHiddenPath(filePath);
+}
+
 export function writeDocToDisk(name: string, document: Y.Doc): void {
   if (tombstoned.has(name)) return;
   const parsed = parseDocName(name);
   if (!parsed) return;
   const { projectId, branch, filePath } = parsed;
-  if (isSignalDoc(filePath)) return;
+  if (isSignalDoc(filePath) || !isProjectFile(filePath)) return;
   const dir = branchDir(projectId, branch);
   if (!fs.existsSync(dir)) return; // branch was deleted while doc loaded
   const abs = safeJoin(dir, filePath);
@@ -251,7 +259,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
 const authHook = AUTH_ENABLED ? {
   async onAuthenticate({ documentName, requestHeaders }: { documentName: string; requestHeaders: Record<string, string | string[] | undefined> }) {
     const parsed = parseDocName(documentName);
-    if (!parsed) throw new Error('invalid document');
+    if (!parsed || !(isSignalDoc(parsed.filePath) || isProjectFile(parsed.filePath))) throw new Error('invalid document');
     // Bearer tokens (agents) are accepted alongside session cookies, with the
     // same project scoping the HTTP preHandler enforces. A presented bearer is
     // authoritative (mirrors the HTTP onRequest hook): a revoked/expired/
@@ -331,6 +339,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     if (!parsed) throw new Error(`invalid document name: ${documentName}`);
     const { projectId, branch, filePath } = parsed;
     if (isSignalDoc(filePath)) return document; // ephemeral coordination channel, nothing to load
+    if (!isProjectFile(filePath)) throw new Error(`invalid document name: ${documentName}`);
     // A client whose socket was closed by evictDoc reconnects at once; while
     // the tombstone stands, the file is gone on purpose and a fresh empty doc
     // would let that client's copy write it straight back.
@@ -338,8 +347,9 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     await ensureWorktree(projectId, branch);
     const text = document.getText(TEXT_KEY);
     if (text.length > 0) return document; // already has state (e.g. synced from a peer node)
+    const abs = safeJoin(branchDir(projectId, branch), filePath); // no document for a path safeJoin refuses
     let content = '';
-    try { content = fs.readFileSync(safeJoin(branchDir(projectId, branch), filePath), 'utf8'); } catch { /* new file → empty */ }
+    try { content = fs.readFileSync(abs, 'utf8'); } catch { /* new file → empty */ }
 
     // Prefer the Yjs snapshot (preserves operation identity → reconnect-safe).
     // Fall back to a plain-text seed only when there's no snapshot or the file

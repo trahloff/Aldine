@@ -574,16 +574,22 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }
 
-/** Merge `from` into `into`. On conflict: abort and report conflicting files. */
+/** Merge `from` into `into`. On conflict: abort and report conflicting files.
+ *  `from` must be a local branch; git gets it fully qualified, so it can be
+ *  neither an option nor any other revision. */
 export async function merge(id: string, from: string, into: string, author?: string): Promise<MergeResult> {
+  if (!BRANCH_RE.test(from) || from.includes('..')) throw new Error('bad branch name');
+  const fromRef = `refs/heads/${from}`;
   return withRepoLock(id, async () => {
+    const known = await git(repoDir(id)).raw(['rev-parse', '-q', '--verify', fromRef]).then((s) => !!s.trim(), () => false);
+    if (!known) return { ok: false, message: `No branch named "${from}"` };
     // commit any pending changes in both branches first so the merge sees latest state
     await autoCommitHeld(id, from, `aldine: checkpoint before merge`, author).catch(() => {});
     await autoCommitHeld(id, into, `aldine: checkpoint before merge`, author).catch(() => {});
     const dir = await ensureWorktree(id, into);
     const g = git(dir);
     let mergeErr: unknown = null;
-    try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, from]); } catch (e) { mergeErr = e; }
+    try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, fromRef]); } catch (e) { mergeErr = e; }
     const conflicts = (await g.status()).conflicted;
     if (conflicts.length) {
       await g.raw(['merge', '--abort']).catch(() => {});
@@ -805,8 +811,10 @@ export async function workingTreeId(id: string, branch: string): Promise<string>
   const dir = await ensureWorktree(id, branch);
   ensureOutputExcluded(id);
   const index = path.join(os.tmpdir(), `aldine-index-${crypto.randomUUID()}`);
+  // core.symlinks=false as in store.git(): a link checked out as a plain file
+  // keeps its link entry, as a commit records it.
   const run = (args: string[]) => new Promise<string>((resolve, reject) => {
-    execFile('git', args, { cwd: dir, env: { ...process.env, GIT_INDEX_FILE: index } }, (err, out, errOut) => (err ? reject(new Error(String(errOut).trim() || err.message)) : resolve(String(out).trim())));
+    execFile('git', ['-c', 'core.symlinks=false', ...args], { cwd: dir, env: { ...process.env, GIT_INDEX_FILE: index } }, (err, out, errOut) => (err ? reject(new Error(String(errOut).trim() || err.message)) : resolve(String(out).trim())));
   });
   try {
     await run(['read-tree', 'HEAD']);

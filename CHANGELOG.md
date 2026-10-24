@@ -57,6 +57,104 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   created by Docker Compose. `deploy/restore.sh` labels the volumes it
   creates the way compose does.
 
+### Security
+- Symbolic links in a project are no longer followed. Importing, pulling,
+  resetting to the remote and opening a branch check a link out as a plain
+  file holding its target (the repository keeps the link), and the editor,
+  the file API, the PDF route and the agent tools refuse a path through a
+  link already on disk. A repository with a link let the server read and
+  write files outside the project, its own secrets included. Projects
+  imported before this release may still hold links on disk:
+  `find "$DATA_DIR" -type l` lists them. Template repositories
+  (`TEMPLATE_REPOS`) check links out as plain files too, and a template
+  whose `template.json` is a link out of the checkout is not listed.
+- Typesetting refuses a project that holds a symbolic link pointing outside
+  the project, into its `.git` folder or at nothing, and names the link; a
+  link to another file of the project still typesets. The compiler followed
+  such a link from an earlier import, so a document could `\input` another
+  account's project or write into it. Delete the link in the project's
+  repository and pull.
+- The compiler no longer reads a project's `latexmkrc` or `.latexmkrc`, or
+  any system or user latexmk rc file. latexmk runs an rc file as Perl,
+  outside TeX's restricted shell escape and file limits, so a project could
+  read and overwrite every other project on the data volume. The engine an
+  import picks from a `latexmkrc` still applies; other rc settings, such as
+  a custom rule that runs `makeglossaries`, no longer do. The precompiled
+  preamble now covers projects with a `latexmkrc` as well.
+- Looking up a reference by DOI follows a redirect only to the DOI
+  resolver itself or, over https, to a registration agency's metadata
+  service (Crossref, DataCite, mEDRA, JaLC). A DOI registered to point
+  anywhere else used to make the server fetch that address, an internal
+  one included, and a reply starting with `@` was added to the project's
+  `.bib`. Such a DOI now finds nothing, as its landing page did before.
+- Access tokens and Connect sessions reach only the project routes they are
+  documented for: reading, editing files, typesetting, commits, reverts, a
+  new branch, references and comments. Sharing, claiming, trashing and
+  deleting a project, remote sync and linking, the Zotero link, merging,
+  deleting a branch and the AI fix now need a browser session; a token used
+  to be able to share a project with another account or delete it for good.
+- The app's pages can no longer be shown inside another site's frame
+  (`frame-ancestors 'none'` and `X-Frame-Options: DENY`), the Connect
+  consent page included.
+- A Connect refresh must name the client it was issued to (`client_id`);
+  one without it is refused like one naming another client.
+- Resetting or changing a password now revokes the account's access
+  tokens and Connect sessions (refresh tokens and authorization codes not
+  yet exchanged included), not only its browser sessions. A token minted by
+  whoever held the account before kept reading and writing every project,
+  new ones too. The reset screen and Account settings say when agent
+  access was revoked.
+- `TRUST_PROXY` is a hop count. `TRUST_PROXY=1` used to take the leftmost
+  `X-Forwarded-For` entry, which the client writes itself behind nginx's
+  `$proxy_add_x_forwarded_for` or a load balancer, so a changing header gave
+  every request a fresh sign-in, sign-up and reset limit. The client address
+  is now the one the proxy appends. `2` covers a CDN in front of your proxy,
+  and a list of proxy addresses or CIDR ranges works too. Bundled Caddy was
+  not affected.
+- Per-address rate limits count an IPv6 client by its /64, and an
+  IPv4-mapped address as its IPv4 address. Every address of one /64 used to
+  get its own sign-in budget.
+- Passwords are hashed off the event loop, and changing a password is rate
+  limited like signing in (`RL_LOGIN_BURST`). A burst of wrong current
+  passwords from one account stalled every request and editing session on
+  the server.
+- A display name keeps at most 100 characters, without control characters,
+  from the sign-up form and from a provider profile alike. Sign-up took a
+  name as long as the 32 MB request limit, and a few such accounts made
+  every account write on the JSON datastore slow, then failed once
+  `users.json` passed what one string can hold.
+- The file routes refuse a path that names no file, such as `.` or `./`.
+  Deleting `.` removed the branch's whole checkout, and on main the
+  repository with its history, for anyone who could edit the project, link
+  visitors included. A review comment can no longer be anchored to the
+  project folder or to git internals: accepting its suggestion wrote that
+  file, `.git/config` included.
+- The editor's live documents follow the same rule as the file routes: none
+  opens for git internals, compile output or the project folder itself.
+  Anyone who could edit a project, link visitors and access tokens
+  included, could open `.git/config` or a git hook as a document over the
+  collaboration socket and have the server run a command of their choosing
+  at its next git operation.
+- The welcome email no longer greets the new account by the name typed at
+  sign-up. Sign-up does not confirm the address, so the name let anyone
+  have the instance send their own text and links to any address.
+- Rules that depend on the request path hold however the path is
+  percent-encoded: the read-only showcase projects
+  (`ALDINE_PROTECTED_PROJECTS`), the sign-in needed to list, create and
+  import projects, and the short list of routes an access token may use. An
+  encoded project id let a visitor edit or wipe a showcase, an encoded path
+  let an anonymous visitor create and import projects that then belonged to
+  every signed-in user, and let an access token change its account's
+  password. An import without a session is now refused before its upload
+  is read, not after up to 80 MB of it sat in memory.
+- A link visitor can delete only the review comments their own account
+  wrote. The check compared display names, which anyone can pick at sign-up.
+  Comments written before this release can be deleted by the owner and
+  collaborators only.
+- Merging takes an existing local branch as `from`, checked like a new
+  branch's name. Any other value reached git's command line, where git read
+  it as an option or a revision.
+
 ## [0.14.4] — 2026-10-24
 
 ### Added

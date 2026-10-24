@@ -123,7 +123,7 @@ const before = await store.getProjectVisit(ada.id, id, 'main');
 const { token } = await auth.createAccessToken(ada.id, 'Agent', null, null);
 res = await seen({ branch: 'main', head: a.head, kind: 'acknowledged' }, { authorization: `Bearer ${token}` });
 eq(res.statusCode, 403, 'a bearer token is refused');
-check(res.json().error.includes('Access tokens cannot clear the review prompt'), 'and told why');
+check(res.json().error.includes('Access tokens cannot use this route — sign in'), 'and told why');
 eq(await store.getProjectVisit(ada.id, id, 'main'), before, 'the stored mark is untouched');
 
 // ---- (10) branch names are validated on both routes ----

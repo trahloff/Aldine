@@ -510,6 +510,9 @@ let happy;
   r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t2.refresh_token, client_id: 'aldc_someoneelse00000000' }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'refresh bound to another client_id → invalid_grant');
   check(await mcpAccepts(t2.access_token), 'a client_id mismatch does not burn the family');
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t2.refresh_token }, ip);
+  check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'refresh without client_id → invalid_grant (the binding is not optional)');
+  check(await mcpAccepts(t2.access_token), 'an omitted client_id does not burn the family either');
   r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t2.refresh_token, resource: 'https://other.example/mcp' }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_target', 'foreign resource on refresh → invalid_target');
   r = await tokenReq({ grant_type: 'refresh_token' }, ip);
@@ -626,7 +629,7 @@ const slowStore = (method, ms = 5) => {
   const rec = await db().getRefreshByHash(auth.secretDigest(t.refresh_token));
   // Backdate through the store: the record shape is the seam, not a private API.
   await db().createRefresh({ ...rec, expiresAt: new Date(Date.now() - 1000).toISOString() });
-  const r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token }, ip);
+  const r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: clientId }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'an expired refresh token → invalid_grant');
 }
 
@@ -651,14 +654,14 @@ const revoke = (body, ip = freshIp()) => app.inject({ method: 'POST', url: '/oau
   let r = await revoke({ token: t.access_token, token_type_hint: 'access_token' });
   check(r.statusCode === 200, `revoke access token → 200 (got ${r.statusCode})`);
   check(!(await mcpAccepts(t.access_token)), 'the revoked access token is dead');
-  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token }, ip);
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: clientId }, ip);
   check(r.statusCode === 200, 'revoking an access token alone leaves its refresh token usable (RFC 7009 §2.1 MAY)');
   t = r.json();
 
   r = await revoke({ token: t.refresh_token, token_type_hint: 'refresh_token' });
   check(r.statusCode === 200, `revoke refresh token → 200 (got ${r.statusCode})`);
   check(!(await mcpAccepts(t.access_token)), 'revoking a refresh token revokes the family\'s access token');
-  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token }, ip);
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: clientId }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'the revoked refresh token is dead');
 
   for (const body of [{ token: 'aldr_nothing' }, { token: 'aldn_nothing' }, { token: 'garbage' }, {}, { token: 'x'.repeat(600) }]) {
@@ -672,7 +675,7 @@ const revoke = (body, ip = freshIp()) => app.inject({ method: 'POST', url: '/oau
   const id = (await auth.userFromToken(`Bearer ${t3.access_token}`)).tokenScope.tokenId;
   r = await app.inject({ method: 'DELETE', url: `/api/tokens/${id}`, headers: { cookie } });
   check(r.statusCode === 200, `DELETE /api/tokens revokes the OAuth token (got ${r.statusCode})`);
-  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t3.refresh_token }, ip);
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t3.refresh_token, client_id: clientId }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'a card revoke cancels the refresh token — the connector cannot mint a replacement');
 }
 

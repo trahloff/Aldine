@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { getSharedRedis, type RedisLike } from './redis.js';
 
 /**
@@ -131,12 +132,36 @@ export const oauthClientLimiter = new RateLimiter('oauth-client', n(process.env.
 export const agentCompileGate = new ConcurrencyGate(1);
 
 /**
- * Rate-limit key: the signed-in user when available, else the client IP.
- * req.ip is resolved by Fastify — it only honors X-Forwarded-For when the
- * server is started with trustProxy (TRUST_PROXY=1), so an untrusted client
- * cannot spoof the header to change its key.
+ * The client a per-address limit counts: an IPv4 address as is (IPv4-mapped
+ * IPv6 included), an IPv6 address by its /64. A /64 is the smallest block a
+ * subscriber is assigned, so every address inside it is one client.
+ */
+export function addressKey(ip: string): string {
+  const addr = ip.split('%')[0].toLowerCase(); // drop an IPv6 zone index
+  if (!net.isIPv6(addr)) return ip;
+  let s = addr;
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number);
+    s = `${s.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail] = s.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = (tail === undefined ? h : [...h, ...Array(8 - h.length - t.length).fill('0'), ...t]).map((g) => parseInt(g, 16));
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join('.');
+  }
+  return `${groups.slice(0, 4).map((g) => g.toString(16)).join(':')}::/64`;
+}
+
+/**
+ * Rate-limit key: the signed-in user when available, else the client address
+ * (addressKey). req.ip is resolved by Fastify — it only honors
+ * X-Forwarded-For when the server is started with trustProxy (TRUST_PROXY),
+ * so an untrusted client cannot spoof the header to change its key.
  */
 export function clientKey(req: { ip?: string }, userId?: string): string {
   if (userId) return `u:${userId}`;
-  return `ip:${req.ip || 'unknown'}`;
+  return `ip:${req.ip ? addressKey(req.ip) : 'unknown'}`;
 }

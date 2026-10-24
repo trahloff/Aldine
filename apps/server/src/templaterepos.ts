@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { simpleGit } from 'simple-git';
 import { config } from './config.js';
 import { injectToken, stripCreds } from './gitops.js';
+import { git } from './store.js';
 import { scanTemplateDir, templateFilesIn, type TemplateInfo } from './templates.js';
 
 /**
@@ -145,10 +145,11 @@ export function templateRepoDir(id: string): string {
 }
 
 /**
- * A directory inside the checkout, resolved through symlinks, or null when it
- * does not exist or escapes the checkout. Git preserves symlinks in a working
- * tree, so a repository can ship `thesis -> ../../..`; every path this module
- * reads is confirmed to still be under the checkout after resolution.
+ * A path inside the checkout, resolved through symlinks, or null when it
+ * does not exist or escapes the checkout. A checkout cloned before git ran
+ * with core.symlinks=false can hold a link such as `thesis -> ../../..`;
+ * every path this module reads is confirmed to still be under the checkout
+ * after resolution.
  */
 function insideCheckout(entry: TemplateRepoEntry, rel: string): string | null {
   const checkout = templateRepoDir(entry.id);
@@ -168,7 +169,7 @@ function templatesRoot(entry: TemplateRepoEntry): string | null {
 
 /** Bytes of every blob in `rev`, from the object store: known before the working tree is touched. */
 async function treeBytes(dir: string, rev: string): Promise<number> {
-  const out = await simpleGit({ baseDir: dir }).raw(['ls-tree', '-r', '-l', rev]);
+  const out = await git(dir).raw(['ls-tree', '-r', '-l', rev]);
   let total = 0;
   for (const line of out.split('\n')) {
     const m = /^\d+ blob \S+\s+(\d+)\t/.exec(line);
@@ -221,10 +222,10 @@ async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(path.dirname(dir), { recursive: true });
       const args = ['--depth', '1', '--single-branch', ...(entry.ref !== 'HEAD' ? ['--branch', entry.ref] : [])];
-      await simpleGit().clone(url, dir, args);
-      await simpleGit({ baseDir: dir }).remote(['set-url', 'origin', stripCreds(entry.url)]); // never persist the token
+      await git(path.dirname(dir)).clone(url, dir, args);
+      await git(dir).remote(['set-url', 'origin', stripCreds(entry.url)]); // never persist the token
     } else {
-      const g = simpleGit({ baseDir: dir });
+      const g = git(dir);
       await g.raw(['fetch', '--depth', '1', url, entry.ref]);
       // Size the incoming tree from the object store first: the previous good
       // checkout stays in place when the new revision is over the cap.
@@ -239,7 +240,7 @@ async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
       fs.rmSync(dir, { recursive: true, force: true });
       throw new Error(`checkout exceeds TEMPLATE_REPO_MAX_BYTES (${limit} bytes)`);
     }
-    s.head = (await simpleGit({ baseDir: dir }).revparse(['HEAD'])).trim();
+    s.head = (await git(dir).revparse(['HEAD'])).trim();
     s.ok = true;
     s.available = true;
     s.syncedAt = new Date().toISOString();
@@ -298,8 +299,11 @@ export function listRepoTemplates(): TemplateInfo[] {
   for (const entry of loadTemplateRepos()) {
     const root = templatesRoot(entry);
     if (!root) continue;
-    // A folder that resolves outside the checkout (a symlink in the repository) is not a template.
-    const inside = (name: string) => !!insideCheckout(entry, entry.path ? `${entry.path}/${name}` : name);
+    // A folder or manifest that resolves outside the checkout (a symlink in the repository) is not a template.
+    const inside = (name: string) => {
+      const folder = entry.path ? `${entry.path}/${name}` : name;
+      return !!insideCheckout(entry, folder) && !!insideCheckout(entry, `${folder}/template.json`);
+    };
     out.push(...scanTemplateDir(root, { idPrefix: `${REPO_PREFIX}${entry.id}/`, source: { kind: 'repo', label: entry.label }, accept: inside }));
   }
   return out;

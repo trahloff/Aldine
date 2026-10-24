@@ -47,6 +47,47 @@ function archiveFolderName(name: string): string {
   return ascii || 'project';
 }
 
+/** Whether a file route's path names a file or folder inside the project.
+ *  '.', './' and an absolute path name none: the first two resolve to the
+ *  branch directory, which on main is the repository with its .git. */
+const namesEntry = (rel: unknown) => typeof rel === 'string' && importPath(rel) !== null;
+const NOT_AN_ENTRY = 'Path must name a file or folder in the project';
+
+/**
+ * The /api/projects/:id routes an access token may use besides reads: the
+ * project's content and settings (files, typesetting, commits and reverts, a
+ * new branch, references, comments, restoring from the trash). Sharing,
+ * ownership, trash and purge, the remote and Zotero links, merging, deleting
+ * a branch and the AI fix take a browser session (docs/AGENT_API.md, "What it
+ * cannot do"); so does every route not listed here. Reads exclude remote/*
+ * and github/*: those call the provider with the stored connection. Keyed
+ * by method and registered route pattern, never by the raw URL.
+ */
+const TOKEN_PROJECT_WRITES = new Set([
+  'PATCH /api/projects/:id',
+  'POST /api/projects/:id/restore',
+  'PUT /api/projects/:id/file',
+  'POST /api/projects/:id/file/rename',
+  'DELETE /api/projects/:id/file',
+  'POST /api/projects/:id/compile',
+  'POST /api/projects/:id/synctex',
+  'POST /api/projects/:id/branches',
+  'POST /api/projects/:id/commit',
+  'POST /api/projects/:id/revert',
+  'POST /api/projects/:id/references/add',
+  'POST /api/projects/:id/zotero/sync',
+  'POST /api/projects/:id/comments',
+  'POST /api/projects/:id/comments/:cid/reply',
+  'POST /api/projects/:id/comments/:cid/resolve',
+  'POST /api/projects/:id/comments/:cid/accept',
+  'DELETE /api/projects/:id/comments/:cid',
+]);
+function tokenMayUseProjectRoute(method: string, route: string | undefined): boolean {
+  if (!route) return false;
+  if (method === 'GET' || method === 'HEAD') return !/^\/api\/projects\/:id\/(remote|github)\//.test(route);
+  return TOKEN_PROJECT_WRITES.has(`${method} ${route}`);
+}
+
 /**
  * Current user for a request. Resolved once per request by an onRequest hook
  * (which awaits the async datastore) and cached on the request, so the many
@@ -154,13 +195,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Showcase projects (ALDINE_PROTECTED_PROJECTS): every visitor may read and
   // typeset them, nobody may change them — a public demo's sample paper must
   // survive launch-day traffic. The collab websocket enforces the same rule
-  // via read-only connections (collab.ts onConnect).
+  // via read-only connections (collab.ts onConnect). Decided on the decoded
+  // :id and the matched route pattern, which are what the handler acts on.
   if (protectedProjects.size) {
     app.addHook('preHandler', async (req, reply) => {
       if (req.method === 'GET' || req.method === 'HEAD') return;
-      const m = req.url.match(/^\/api\/projects\/([^/?]+)(?:\/([^?]*))?/);
-      if (!m || !protectedProjects.has(m[1])) return;
-      if (/^(compile|synctex)$/.test(m[2] || '')) return; // reading the doc includes building it
+      const id = (req.params as { id?: string } | undefined)?.id;
+      const route = req.routeOptions.url;
+      if (id === undefined || !route?.startsWith('/api/projects/:id') || !protectedProjects.has(id)) return;
+      if (route === '/api/projects/:id/compile' || route === '/api/projects/:id/synctex') return; // reading the doc includes building it
       return reply.code(403).send({ error: 'This is a read-only showcase project — create your own to try editing.' });
     });
   }
@@ -198,10 +241,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const user = await auth.register(req.body.email, req.body.password, req.body.name);
       reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
       // Fire-and-forget a simple welcome email (no verification step). Never let
-      // a mail failure affect the signup response.
+      // a mail failure affect the signup response. Nothing but the address
+      // comes from the request: the address is unconfirmed, so the name would
+      // put the signer's own text and links in a mail this instance sends to
+      // anyone.
       const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
       if (email.emailConfigured() && base && user.email) {
-        const greeting = user.name ? `Hi ${user.name},` : 'Hi there,';
+        const greeting = 'Hi there,';
         email.sendMail({
           to: user.email,
           subject: 'Welcome to Aldine',
@@ -231,16 +277,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // change password (logged in): revokes all sessions, then re-issues the current one
+  // change password (logged in): revokes all sessions and agent credentials,
+  // then re-issues the current session
   app.post<{ Body: { currentPassword: string; newPassword: string } }>('/api/auth/password', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     const user = reqUser(req);
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
+    if (!(await loginLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
     try {
-      await auth.changePassword(user.id, req.body?.currentPassword || '', req.body?.newPassword || '');
+      const revokedTokens = await auth.changePassword(user.id, req.body?.currentPassword || '', req.body?.newPassword || '');
       reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
-      return { ok: true };
+      return { ok: true, revokedTokens };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
@@ -280,8 +328,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     try {
-      await auth.resetPassword(req.body?.token || '', req.body?.newPassword || '');
-      return { ok: true };
+      const revokedTokens = await auth.resetPassword(req.body?.token || '', req.body?.newPassword || '');
+      return { ok: true, revokedTokens };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
@@ -379,17 +427,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   await registerAdminRoutes(app, reqUser);
 
   // Global guard: enforce project access when auth is on. Runs after routing,
-  // so it uses the DECODED :id param — never a regex over the raw (still
-  // percent-encoded) URL, which a `%61bc…` id would slip past.
+  // so it uses the DECODED :id param and the matched route pattern — never a
+  // regex over the raw (still percent-encoded) URL, which `%61bc…` or
+  // `/api/pr%6Fjects` would slip past while the router still matches.
   app.addHook('preHandler', async (req, reply) => {
     const reqId = (req.params as { id?: string } | undefined)?.id;
+    const route = req.routeOptions.url;
     // Trashed projects behave as gone for every route except restore and
     // delete (purge) — works with or without auth.
     if (reqId !== undefined) {
       let m: store.ProjectMeta | null = null;
       try { m = await store.readMeta(reqId); } catch { /* handled below / by the route */ }
-      const p = req.url.split('?')[0];
-      if (m?.deletedAt && !(p.endsWith('/restore') || (req.method === 'DELETE' && p === `/api/projects/${reqId}`))) {
+      if (m?.deletedAt && !(route === '/api/projects/:id/restore' || (req.method === 'DELETE' && route === '/api/projects/:id'))) {
         return reply.code(404).send({ error: 'project not found' });
       }
     }
@@ -410,11 +459,14 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (scope?.projectIds && !scope.projectIds.includes(id)) {
         return reply.code(403).send({ error: 'This token does not have access to this project' });
       }
+      if (scope && !tokenMayUseProjectRoute(req.method, req.routeOptions.url)) {
+        return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
+      }
       return;
     }
     // non-id routes: require sign-in for the project list / create / import
-    const path = req.url.split('?')[0];
-    if (/^\/api\/projects(\/import|\/trash)?$/.test(path) && !reqUser(req)) {
+    const projectsRoute = route === '/api/projects' || route === '/api/projects/import' || route === '/api/projects/trash';
+    if (projectsRoute && !reqUser(req)) {
       return reply.code(401).send({ error: 'Sign in required' });
     }
     // Bearer tokens are project credentials, not the account. Off the
@@ -427,9 +479,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // projects beyond its scope either (db/types.ts: projectIds restricts the
     // token to exactly those ids).
     const scope = (req as any)._tokenScope as auth.TokenScope | null;
-    if (scope && path.startsWith('/api/')) {
-      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(path);
-      const allProjects = !scope.projectIds && /^\/api\/projects(\/import|\/trash)?$/.test(path);
+    if (scope && route?.startsWith('/api/')) {
+      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(route);
+      const allProjects = !scope.projectIds && projectsRoute;
       if (!neutral && !allProjects) {
         return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
       }
@@ -528,6 +580,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // No `files` and no `template` seeds the default article; `files: {}` or
   // `template: "blank"` creates a project with no files at all.
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
+    // With accounts on, an ownerless project would be every user's (isMember).
+    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const { name = 'Untitled Project', files, template, namespace } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
     let resolved: TemplateSeed | undefined;
@@ -666,7 +720,13 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
   type ImportBody = { name?: string; zipBase64?: string; zip?: Buffer; zipName?: string; namespace?: string };
-  app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit }, async (req, reply) => {
+  // With accounts on, an ownerless project would be every user's (isMember).
+  // Refused in onRequest, before the body is read: a preHandler sees an
+  // anonymous upload only after all of it (up to importBodyLimit) is in memory.
+  const signedInFirst = async (req: any, reply: any) => {
+    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
+  };
+  app.post<{ Body: ImportBody }>('/api/projects/import', { bodyLimit: importBodyLimit, onRequest: signedInFirst }, async (req, reply) => {
     const body = req.body || {};
     let buf: Buffer;
     if (Buffer.isBuffer(body.zip)) buf = body.zip;
@@ -883,6 +943,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     '/api/projects/:id/file', async (req, reply) => {
       const { branch = 'main', path: rel, content = '', encoding = 'utf8', createOnly = false, baseVersion } = req.body || {};
       if (!rel) return reply.code(400).send({ error: 'path required' });
+      if (!namesEntry(rel)) return reply.code(400).send({ error: NOT_AN_ENTRY });
       if (isHiddenPath(rel) || rel.includes('..')) return reply.code(403).send({ error: 'Invalid file path' });
       if (optionLikePath(rel)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       await gitops.ensureWorktree(req.params.id, branch);
@@ -918,6 +979,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     '/api/projects/:id/file/rename', async (req, reply) => {
       const { branch = 'main', from, to } = req.body || {};
       if (!from || !to) return reply.code(400).send({ error: 'from/to required' });
+      if (!namesEntry(from) || !namesEntry(to)) return reply.code(400).send({ error: NOT_AN_ENTRY });
       if (isHiddenPath(from) || isHiddenPath(to)) return reply.code(403).send({ error: 'forbidden path' });
       if (optionLikePath(to)) return reply.code(400).send({ error: 'File name cannot start with "-"' });
       if (from === to) return { ok: true };
@@ -962,6 +1024,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   app.delete<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/file', async (req, reply) => {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
+    if (!namesEntry(rel)) return reply.code(400).send({ error: NOT_AN_ENTRY });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
     const wasDir = store.isDirectory(req.params.id, branch, rel);
     evictDoc(req.params.id, branch, rel); // prevent resurrection via pending store
@@ -1241,11 +1304,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
-  // Records the visit. Session-cookie only: an agent's own token must never
-  // be able to clear the human's review prompt (plan SECURITY.md §1).
+  // Records the visit. Session-cookie only (not in TOKEN_PROJECT_WRITES): an
+  // agent's own token must never be able to clear the human's review prompt
+  // (plan SECURITY.md §1).
   app.post<{ Params: { id: string }; Body: { branch?: string; head?: string; kind?: 'prompted' | 'acknowledged' } }>(
     '/api/projects/:id/agent-activity/seen', async (req, reply) => {
-      if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot clear the review prompt — sign in to do this' });
       const branch = req.body?.branch || 'main';
       if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'bad branch name' });
       const head = String(req.body?.head || '');
@@ -1282,6 +1345,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const { from, into, author: claimed } = req.body || {};
       const author = commitAuthor(req, claimed);
       if (!from || !into) return reply.code(400).send({ error: 'from/into required' });
+      if ([from, into].some((b) => typeof b !== 'string' || !BRANCH_RE.test(b) || b.includes('..'))) {
+        return reply.code(400).send({ error: 'Invalid branch name' });
+      }
       flushBranchDocs(req.params.id, from);
       flushBranchDocs(req.params.id, into);
       const result = await gitops.merge(req.params.id, from, into, author);
@@ -1409,7 +1475,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const b = req.body || ({} as any);
       if (!b.file || !b.anchor) return reply.code(400).send({ error: 'file and anchor required' });
       const branch = b.branch || 'main';
-      // the anchor must point at a real span in a real file
+      // the anchor must point at a real span in a real file; accepting a
+      // suggestion writes that file
+      if (!namesEntry(b.file)) return reply.code(400).send({ error: NOT_AN_ENTRY });
+      if (isHiddenPath(b.file)) return reply.code(403).send({ error: 'forbidden path' });
       if (!store.fileExists(req.params.id, branch, b.file)) return reply.code(404).send({ error: 'File not found' });
       const { from, to } = b.anchor;
       if (typeof from !== 'number' || typeof to !== 'number' || from < 0 || to <= from) {
@@ -1422,6 +1491,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         file: b.file,
         anchor: b.anchor,
         author: reqUser(req)?.name || b.author || 'Anonymous',
+        ...(reqUser(req) ? { authorId: reqUser(req)!.id } : {}),
         body: b.body || '',
         suggestion: b.suggestion,
       });
@@ -1429,7 +1499,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   app.post<{ Params: { id: string; cid: string }; Body: { body: string; author?: string } }>(
     '/api/projects/:id/comments/:cid/reply', async (req, reply) => {
-      const c = await comments.replyComment(req.params.id, req.params.cid, reqUser(req)?.name || req.body?.author || 'Anonymous', req.body?.body || '');
+      const c = await comments.replyComment(req.params.id, req.params.cid, reqUser(req)?.name || req.body?.author || 'Anonymous', req.body?.body || '', reqUser(req)?.id);
       return c || reply.code(404).send({ error: 'comment not found' });
     });
 
@@ -1450,6 +1520,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const c = all.find((x) => x.id === req.params.cid);
       if (!c) return reply.code(404).send({ error: 'comment not found' });
       if (c.suggestion === undefined) return reply.code(400).send({ error: 'This comment has no suggestion to apply' });
+      if (!namesEntry(c.file) || isHiddenPath(c.file)) return reply.code(403).send({ error: 'forbidden path' });
       let outcome = applySuggestionToDoc(req.params.id, branch, c.file, c.anchor, c.suggestion);
       if (outcome === 'no-doc') {
         // nobody has the file open — the disk copy is authoritative, edit it directly
@@ -1478,12 +1549,14 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     });
 
   // Anyone in the document may comment and reply, but clearing someone else's
-  // review thread is for the team — a link visitor can only delete their own.
+  // review thread is for the team — a link visitor can only delete their own,
+  // by account id (a comment without one is no visitor's).
   app.delete<{ Params: { id: string; cid: string }; Querystring: Q }>('/api/projects/:id/comments/:cid', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     if (!isMember(meta, reqUser(req))) {
       const all = await comments.listComments(req.params.id, req.query.branch || 'main');
-      const mine = all.find((c) => c.id === req.params.cid)?.author === reqUser(req)?.name;
+      const authorId = all.find((c) => c.id === req.params.cid)?.authorId;
+      const mine = !!authorId && authorId === reqUser(req)?.id;
       if (!mine) return reply.code(403).send({ error: 'Only the owner and collaborators can delete this comment' });
     }
     await comments.deleteComment(req.params.id, req.params.cid);

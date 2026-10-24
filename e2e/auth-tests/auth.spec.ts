@@ -319,10 +319,13 @@ test.describe('auth depth', () => {
     await s1.close(); await s2.close();
   });
 
-  test('forgot-password → reset flow works from the login screen', async ({ page }) => {
+  test('forgot-password → reset flow works from the login screen and revokes agent access', async ({ page, request }) => {
     const email = uniq();
-    // register then sign out
+    // register, mint an agent token, then sign out
     await register(page, email);
+    const { token } = await (await page.request.post('/api/tokens', { data: { name: 'Script' } })).json();
+    const bearer = { authorization: `Bearer ${token}` };
+    expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(200);
     await page.goto('/');
     await page.getByTestId('logout').click();
     // forgot flow (self-host echo returns the token → reset mode)
@@ -333,8 +336,10 @@ test.describe('auth depth', () => {
     await expect(page.getByTestId('auth-token')).not.toHaveValue('', { timeout: 10_000 });
     await page.getByTestId('auth-password').fill('brandnewpass1');
     await page.getByTestId('auth-submit').click();
-    // back to login; sign in with the new password
-    await expect(page.getByTestId('auth-info')).toContainText(/updated/i, { timeout: 10_000 });
+    // back to login, told the token went with the old password
+    await expect(page.getByTestId('auth-info')).toContainText('Password updated, and agent access was revoked', { timeout: 10_000 });
+    expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(401);
+    // sign in with the new password
     await page.getByTestId('auth-email').fill(email);
     await page.getByTestId('auth-password').fill('brandnewpass1');
     await page.getByTestId('auth-submit').click();
@@ -353,12 +358,16 @@ test.describe('auth depth', () => {
     await expect(page.getByTestId('oauth-orcid')).toBeVisible();
   });
 
-  test('change password from account settings revokes other sessions', async ({ page, browser, request }) => {
+  test('change password from account settings revokes other sessions and agent access', async ({ page, browser, request }) => {
     const email = uniq();
     await register(page, email);
     // a second session for the same account (should be revoked by the change)
     const other = await browser.newContext();
     await other.request.post('/api/auth/login', { data: { email, password: 'password123' } });
+    // and an agent token (should be revoked too)
+    const { token } = await (await page.request.post('/api/tokens', { data: { name: 'Script' } })).json();
+    const bearer = { authorization: `Bearer ${token}` };
+    expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(200);
 
     // open account settings and change the password
     await page.getByTestId('user-name').click();
@@ -366,9 +375,11 @@ test.describe('auth depth', () => {
     await page.getByTestId('current-password').fill('password123');
     await page.getByTestId('new-password').fill('changed-pw-99');
     await page.getByTestId('save-password').click();
+    await expect(page.locator('.toast', { hasText: 'Password updated' })).toContainText('Agent access was revoked');
 
-    // the other session is now revoked
+    // the other session and the token are now revoked
     await expect.poll(async () => (await (await other.request.get('/api/auth/me')).json()).user).toBeNull();
+    expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(401);
     // and the new password works
     expect((await request.post('/api/auth/login', { data: { email, password: 'changed-pw-99' } })).ok()).toBeTruthy();
     await other.close();

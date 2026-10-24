@@ -226,6 +226,28 @@ async function runSuite(store, label) {
   check((await store.getRefreshByHash(ancient.hash)) === null, `${label}: createRefresh prunes records expired for over a week`);
   check((await store.getRefreshByHash(r3.hash)) !== null, `${label}: createRefresh keeps unexpired records`);
 
+  // ---- every credential of one user (password reset/change) ----
+  const owner = `owner-${t}`, bystander = `bystander-${t}`;
+  const uPat = { ...tok, id: `upat-${t}`, hash: `digest-upat-${t}`, userId: owner };
+  const uOa = { ...oa1, id: `uoa-${t}`, hash: `digest-uoa-${t}`, userId: owner, family: `ufam-${t}` };
+  const uDone = { ...tok, id: `udone-${t}`, hash: `digest-udone-${t}`, userId: owner, revokedAt: '2026-06-03T00:00:00.000Z' };
+  const bPat = { ...tok, id: `bpat-${t}`, hash: `digest-bpat-${t}`, userId: bystander };
+  for (const r of [uPat, uOa, uDone, bPat]) await store.createToken(r);
+  const uRf = rf(20, { userId: owner, family: `ufam-${t}` });
+  const uRfOrphan = rf(21, { userId: owner, family: `ufam2-${t}`, usedAt: '2026-07-05T00:00:00.000Z' });
+  const bRf = rf(22, { userId: bystander, family: `bfam-${t}` });
+  for (const r of [uRf, uRfOrphan, bRf]) await store.createRefresh(r);
+  await store.revokeCredentialsForUser(owner, '2026-07-07T00:00:00.000Z');
+  eq((await store.getToken(uPat.id)).revokedAt, '2026-07-07T00:00:00.000Z', `${label}: revokeCredentialsForUser revokes a hand-made token`);
+  eq((await store.getToken(uOa.id)).revokedAt, '2026-07-07T00:00:00.000Z', `${label}: revokeCredentialsForUser revokes an OAuth token`);
+  eq((await store.getToken(uDone.id)).revokedAt, '2026-06-03T00:00:00.000Z', `${label}: revokeCredentialsForUser keeps an earlier revokedAt`);
+  eq((await store.getRefreshByHash(uRf.hash)).revokedAt, '2026-07-07T00:00:00.000Z', `${label}: revokeCredentialsForUser revokes a refresh token`);
+  eq((await store.getRefreshByHash(uRfOrphan.hash)).revokedAt, '2026-07-07T00:00:00.000Z', `${label}: revokeCredentialsForUser revokes a refresh token with no listed access token`);
+  eq((await store.getToken(bPat.id)).revokedAt, null, `${label}: revokeCredentialsForUser leaves another user's tokens alone`);
+  eq((await store.getRefreshByHash(bRf.hash)).revokedAt, null, `${label}: revokeCredentialsForUser leaves another user's refresh tokens alone`);
+  await store.revokeCredentialsForUser(`nobody-${t}`, '2026-07-07T00:00:00.000Z');
+  check(true, `${label}: revokeCredentialsForUser for a user with no credentials is a no-op`);
+
   // ---- project meta ----
   const older = { id: `p1${t}`, name: 'Older', rootFile: 'main.tex', engine: 'pdf', createdAt: '2026-01-01T00:00:00.000Z' };
   const newer = { id: `p2${t}`, name: 'Newer', rootFile: 'main.tex', engine: 'pdf', createdAt: '2026-06-01T00:00:00.000Z' };

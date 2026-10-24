@@ -530,25 +530,28 @@ If you do not want to expose the instance:
   the server never relies on the model to decline. An unauthenticated `/mcp`
   would be a public write path into every project; the configuration is made
   unrepresentable instead of discouraged.
-- **What a credential can do.** Read, edit, create files, typeset, commit and
-  add references in the projects it reaches; create projects if unscoped.
+- **What a credential can do.** Read, edit, create, rename and delete files,
+  typeset, commit, revert, start a branch, comment and add references in the
+  projects it reaches; create projects if unscoped.
   Protected (showcase) projects stay read-only. Agent typesets take at most
   one of the account's two concurrent slots, so the person always keeps one,
   and count against the account's monthly quota.
-- **What it cannot do.** Purge a project (the one trash tool reaches only
-  projects the agent created, and only as far as the workspace trash),
-  change sharing, push to a git remote (GitHub or GitLab), or create, list or
-  revoke tokens; those routes accept browser
-  sessions only, so a leaked token cannot escalate to a session or mint
-  another token.
+- **What it cannot do.** Trash or purge a project (the one trash tool
+  reaches only projects the agent created, and only as far as the workspace
+  trash), change sharing or ownership, link, push, pull or reset a git remote
+  (GitHub, GitLab or Gitea), link a Zotero library, merge or delete a branch,
+  or create, list or revoke tokens; those routes accept browser sessions
+  only, so a leaked token cannot escalate to a session, mint another token
+  or hand the project to another account.
 - **At rest and in transit.** Tokens are stored as SHA-256 digests. `/mcp`
   checks the credential before parsing any JSON-RPC, caps bodies at 2 MB and
-  is rate limited per client IP and per token (60 burst, 1/s sustained;
-  `RL_MCP_BURST` tunes it).
+  is rate limited per client IP (an IPv6 client counts by its /64) and per
+  token (60 burst, 1/s sustained; `RL_MCP_BURST` tunes it).
 - **Revocation.** The Agent access card lists every token and Connect session
   with its last use; Revoke takes effect on the next request and, for a
   Connect session, also ends its refresh tokens. A reused refresh token
-  revokes the whole family.
+  revokes the whole family. Resetting or changing the account's password
+  revokes every token and Connect session of the account.
 - **Rollback.** Every write is a commit; any change is one revert away.
 
 ## Troubleshooting

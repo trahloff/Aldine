@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 
@@ -20,7 +21,11 @@ export function newId(len = 10): string {
 export const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
 export const PROJECT_ID_RE = /^[a-z0-9]{4,20}$/;
 
-/** Resolve a user-supplied relative file path inside a base dir, rejecting escapes. */
+/** Resolve a user-supplied relative file path inside a base dir, rejecting
+ *  escapes: lexical ones, and any segment that exists on disk as a symbolic
+ *  link. Every fs call on the result follows links, so a link anywhere on the
+ *  path would take the read or write to wherever it points. A segment that
+ *  does not exist yet ends the check: mkdir creates it as a directory. */
 export function safeJoin(base: string, rel: string): string {
   // Reject any `..` segment up front: `path.resolve` would collapse `a/../.git`
   // back inside `base` (so the prefix check below passes), letting a crafted
@@ -28,6 +33,13 @@ export function safeJoin(base: string, rel: string): string {
   if (rel.split(/[\\/]/).includes('..')) throw new Error(`path escapes project: ${rel}`);
   const abs = path.resolve(base, rel);
   if (abs !== base && !abs.startsWith(base + path.sep)) throw new Error(`path escapes project: ${rel}`);
+  let cur = base;
+  for (const seg of path.relative(base, abs).split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, seg);
+    let st: fs.Stats;
+    try { st = fs.lstatSync(cur); } catch { break; }
+    if (st.isSymbolicLink()) throw new Error(`path is a symbolic link: ${rel}`);
+  }
   return abs;
 }
 

@@ -281,8 +281,8 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
     if (next.length < 8) { toast('New password must be at least 8 characters', 'error'); return; }
     setBusy(true);
     try {
-      await api.changePassword(current, next);
-      toast('Password updated', 'ok');
+      const { revokedTokens } = await api.changePassword(current, next);
+      toast(revokedTokens ? 'Password updated. Agent access was revoked: reconnect your agents and create new tokens.' : 'Password updated', 'ok');
       setCurrent(''); setNext('');
       onClose();
     } catch (err: any) {
@@ -327,7 +327,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
             <div className="menu__label" style={{ margin: '18px 0 6px' }}>Change password</div>
             <input className="input login__input" type="password" placeholder="Current password" aria-label="Current password" value={current} data-testid="current-password" onChange={(e) => setCurrent(e.target.value)} />
             <input className="input login__input" type="password" placeholder="New password (min 8)" aria-label="New password" value={next} data-testid="new-password" onChange={(e) => setNext(e.target.value)} />
-            <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '4px 0 0' }}>Changing your password signs out your other sessions.</p>
+            <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '4px 0 0' }}>Changing your password signs out your other sessions and revokes agent access.</p>
           </>
         )}
 

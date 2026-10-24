@@ -415,11 +415,11 @@ export const api = {
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   changePassword: (currentPassword: string, newPassword: string) =>
-    req<{ ok: boolean }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+    req<{ ok: boolean; revokedTokens?: number }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   resetRequest: (email: string) =>
     req<{ ok: boolean; token?: string }>('/api/auth/reset-request', { method: 'POST', body: JSON.stringify({ email }) }),
   resetPassword: (token: string, newPassword: string) =>
-    req<{ ok: boolean }>('/api/auth/reset', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
+    req<{ ok: boolean; revokedTokens?: number }>('/api/auth/reset', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
   login: (email: string, password: string) =>
     req<{ user: AuthUser }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   register: (email: string, password: string, name?: string) =>
