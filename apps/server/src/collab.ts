@@ -139,6 +139,56 @@ const tombstoned = new Set<string>();
 const lastWritten = new Map<string, string>();
 const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 
+/** Loaded docs whose file ends every line with CRLF. Y.Text holds LF only:
+ *  editors count "\r\n" as one character, so CR bytes in the shared text put
+ *  every client's offsets one behind per line above the edit. The file gets
+ *  its CRLF back whenever it is written. */
+const crlfDocs = new Set<string>();
+
+/** A file's text as an open document holds it: LF only, the text editor
+ *  offsets (comment anchors among them) count in. `crlf` when every line of
+ *  the file ends with CRLF, so text edited from it is stored with CRLF again. */
+export function docView(raw: string): { text: string; crlf: boolean } {
+  if (!raw.includes('\r')) return { text: raw, crlf: false };
+  const crlf = raw.split('\r\n').length - 1;
+  return {
+    text: raw.replace(/\r\n?/g, '\n'),
+    crlf: crlf > 0 && crlf === raw.split('\n').length - 1 && crlf === raw.split('\r').length - 1,
+  };
+}
+
+export const withCrlf = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
+
+/** `raw` as doc `name` holds it; records whether its file uses CRLF throughout. */
+function adoptLineEndings(name: string, raw: string): string {
+  const view = docView(raw);
+  if (view.crlf) crlfDocs.add(name);
+  else crlfDocs.delete(name); // mixed or bare-CR endings: the first save writes LF
+  return view.text;
+}
+
+/** The bytes doc `name`'s text is stored as on disk. */
+function diskText(name: string, text: string): string {
+  return crlfDocs.has(name) ? withCrlf(text) : text;
+}
+
+/** A snapshot written while Y.Text still held the file's CRs, migrated in
+ *  place: only the CRs go, so every other character keeps its identity and
+ *  edits a client made against the older state merge where they were made,
+ *  not after a reseeded copy of the whole text. */
+function dropCarriageReturns(text: Y.Text, held: string): void {
+  for (let i = held.length - 1; i >= 0; i--) {
+    if (held[i] !== '\r') continue;
+    text.delete(i, 1);
+    if (held[i + 1] !== '\n') text.insert(i, '\n');
+  }
+}
+
+/** Live-doc text in its file's line endings, for commits built from a snapshot of the doc. */
+export function inFileLineEndings(projectId: string, branch: string, filePath: string, text: string): string {
+  return diskText(docName(projectId, branch, filePath), text);
+}
+
 export function tombstone(name: string): void { tombstoned.add(name); }
 export function untombstone(name: string): void { tombstoned.delete(name); }
 
@@ -238,7 +288,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
   const dir = branchDir(projectId, branch);
   if (!fs.existsSync(dir)) return; // branch was deleted while doc loaded
   const abs = safeJoin(dir, filePath);
-  const text = document.getText(TEXT_KEY).toString();
+  const text = diskText(name, document.getText(TEXT_KEY).toString());
   // Keep the collab snapshot in step with the live doc on every store (small,
   // and independent of the .tex-write skip below so reconnect identity is
   // always current even when the rendered text didn't change).
@@ -345,11 +395,15 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     // would let that client's copy write it straight back.
     if (tombstoned.has(documentName)) throw new Error('file was deleted');
     await ensureWorktree(projectId, branch);
+    const abs = safeJoin(branchDir(projectId, branch), filePath); // no document for a path safeJoin refuses
+    let raw = '';
+    try { raw = fs.readFileSync(abs, 'utf8'); } catch { /* new file → empty */ }
+    // Compared and seeded as LF: against the file's own CRLF bytes every load
+    // would count the doc as changed on disk and reseed it. Read before the
+    // early return so a doc synced from a peer still writes the file's endings.
+    const content = adoptLineEndings(documentName, raw);
     const text = document.getText(TEXT_KEY);
     if (text.length > 0) return document; // already has state (e.g. synced from a peer node)
-    const abs = safeJoin(branchDir(projectId, branch), filePath); // no document for a path safeJoin refuses
-    let content = '';
-    try { content = fs.readFileSync(abs, 'utf8'); } catch { /* new file → empty */ }
 
     // Prefer the Yjs snapshot (preserves operation identity → reconnect-safe).
     // Fall back to a plain-text seed only when there's no snapshot or the file
@@ -360,8 +414,12 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
       try {
         Y.applyUpdate(document, snap);
         loaded = true;
-        if (text.toString() !== content) {
-          document.transact(() => { text.delete(0, text.length); if (content.length) text.insert(0, content); });
+        const held = text.toString();
+        if (held !== content) {
+          document.transact(() => {
+            if (held.replace(/\r\n?/g, '\n') === content) dropCarriageReturns(text, held);
+            else { text.delete(0, text.length); if (content.length) text.insert(0, content); }
+          });
           writeSnapshot(documentName, document);
         }
       } catch {
@@ -374,8 +432,9 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
       writeSnapshot(documentName, document); // establish a snapshot for future reconnects
     }
     // Track lastWritten against disk so the first store of an unchanged doc
-    // skips the .tex rewrite (no latexmk churn).
-    lastWritten.set(documentName, sha1(content));
+    // skips the .tex rewrite (no latexmk churn) — a file with mixed line
+    // endings included, which is left as it is until someone edits it.
+    lastWritten.set(documentName, sha1(diskText(documentName, content)));
     return document;
   },
   // A sole viewer's reload unloads the doc (unloadImmediately) and with it the
@@ -392,6 +451,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // the map is bounded by live docs and a reopened doc never trusts a stale hash.
   async afterUnloadDocument({ documentName }: { documentName: string }) {
     lastWritten.delete(documentName);
+    crlfDocs.delete(documentName);
   },
 });
 
@@ -427,6 +487,7 @@ export function evictDoc(projectId: string, branch: string, filePath: string): v
   const name = docName(projectId, branch, filePath);
   tombstone(name);
   lastWritten.delete(name);
+  crlfDocs.delete(name);
   deleteSnapshot(name); // file deleted/renamed → drop its collab snapshot so a re-create starts clean
   const doc = hocuspocus.documents.get(name) as (Y.Doc & { destroy?: () => void }) | undefined;
   if (doc) {
@@ -535,9 +596,10 @@ export function applySuggestionToDoc(
     to = from + anchor.quote.length;
   }
   if (from < 0) return 'stale';
+  const insert = replacement.replace(/\r\n?/g, '\n');
   doc.transact(() => {
     ytext.delete(from, to - from);
-    if (replacement) ytext.insert(from, replacement);
+    if (insert) ytext.insert(from, insert);
   }, origin);
   writeDocToDisk(name, doc); // suggestion is on disk immediately, like a manual flush
   return 'applied';
@@ -646,9 +708,9 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
     const parsed = parseDocName(name);
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;
     const abs = safeJoin(branchDir(projectId, branch), parsed.filePath);
-    let content: string | null = null;
-    try { content = fs.readFileSync(abs, 'utf8'); } catch { content = null; }
-    if (content === null) {
+    let raw: string | null = null;
+    try { raw = fs.readFileSync(abs, 'utf8'); } catch { raw = null; }
+    if (raw === null) {
       // File deleted on disk (merge/reset). Drop the hash so the next store
       // re-materializes the still-open doc's content instead of wrongly skipping
       // (which would leave the editor showing content that never persists).
@@ -656,11 +718,12 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
       return;
     }
     const text = doc.getText(TEXT_KEY);
-    lastWritten.set(name, sha1(content)); // disk now holds `content`; keep tracking in sync
+    const content = adoptLineEndings(name, raw);
+    lastWritten.set(name, sha1(diskText(name, content))); // disk now holds `raw`; keep tracking in sync
     if (text.toString() === content) return;
     doc.transact(() => {
       text.delete(0, text.length);
-      text.insert(0, content!);
+      text.insert(0, content);
     });
     writeSnapshot(name, doc); // the doc's ops changed → keep the reconnect snapshot current
   });

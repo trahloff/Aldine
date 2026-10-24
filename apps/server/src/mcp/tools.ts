@@ -12,6 +12,7 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
+  inFileLineEndings,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
@@ -50,6 +51,14 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface EditSpec { quote: string; replacement: string; occurrence?: number }
+
+/** An open document holds LF only, while read_file serves the file's own
+ *  bytes: quotes and replacements copied from a CRLF file carry CRs. */
+function forLiveDoc(edits: EditSpec[]): EditSpec[] {
+  const lf = (s: string) => s.replace(/\r\n?/g, '\n');
+  return edits.map((e) => ({ ...e, quote: lf(e.quote), replacement: lf(e.replacement) }));
+}
+
 /** `occurrence` is set on the candidates of an ambiguous quote: the value that picks that line. */
 export interface AnchorCandidate { line: number; text: string; occurrence?: number }
 /** stale_anchor: the quote is not in the file (re-read); ambiguous_anchor: it
@@ -595,7 +604,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         let newContent: string;
         let firstFrom: number;
         if (live !== null) {
-          const res = resolveEdits(live, edits);
+          const liveEdits = forLiveDoc(edits);
+          const res = resolveEdits(live, liveEdits);
           if (!res.ok) {
             if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
             return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
@@ -606,7 +616,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           // Back-to-front, same tick: earlier offsets stay valid, and no human
           // keystroke can interleave. 'stale' from the CRDT apply is impossible
           // here by construction but handled defensively anyway.
-          const order = res.ranges.map((r, i) => ({ ...r, edit: edits[i] })).sort((a, b) => b.from - a.from);
+          const order = res.ranges.map((r, i) => ({ ...r, edit: liveEdits[i] })).sort((a, b) => b.from - a.from);
           for (const e of order) {
             const st = applySuggestionToDoc(meta.id, branch, rel, { from: e.from, to: e.to, quote: e.edit.quote }, e.edit.replacement, AGENT_ORIGIN);
             if (st !== 'applied') {
@@ -615,7 +625,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             applied++;
           }
           signalAgentWrite(meta.id, branch);
-          before = live;
+          before = inFileLineEndings(meta.id, branch, rel, live);
           newContent = openDocContent(meta.id, branch, rel) ?? '';
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         } else {
@@ -640,7 +650,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           applied = edits.length;
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         }
-        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after: newContent }], cleanCommitMessage(message, `Edit ${rel}`));
+        const after = live !== null ? inFileLineEndings(meta.id, branch, rel, newContent) : newContent;
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], cleanCommitMessage(message, `Edit ${rel}`));
         const e = await echo(meta.id, branch);
         return ok({ applied, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...commitFields(commit, e.head), ...e });
       });
@@ -674,7 +685,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           const conflict = versionConflict(meta.id, branch, rel, base_version);
           if (conflict) return ok({ ...conflict, path: rel, contentVersion: conflict.currentVersion, ...(await echo(meta.id, branch)) });
         }
-        const before = openDocContent(meta.id, branch, rel) ?? diskContent(meta.id, branch, rel);
+        const open = openDocContent(meta.id, branch, rel);
+        const before = open !== null ? inFileLineEndings(meta.id, branch, rel, open) : diskContent(meta.id, branch, rel);
         markAgentPresence(meta.id, branch, rel);
         store.writeFile(meta.id, branch, rel, content);
         refreshBranchDocsFromDisk(meta.id, branch, [rel]);
@@ -755,20 +767,21 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           }
           const open = openDocContent(meta.id, branch, f.path);
           if (f.content !== undefined) {
-            writes.push({ path: f.path, before: open ?? diskContent(meta.id, branch, f.path), next: f.content, live: null });
+            writes.push({ path: f.path, before: open !== null ? inFileLineEndings(meta.id, branch, f.path, open) : diskContent(meta.id, branch, f.path), next: f.content, live: null });
             continue;
           }
           if (isDirectoryPath(meta.id, branch, f.path)) return fail(`"${f.path}" is a folder on ${branch} — an edits entry changes a file; name one inside it`);
           let raw: Buffer | null = null;
           if (open === null) { try { raw = store.readFile(meta.id, branch, f.path); } catch { return fail(`No file named "${f.path}" on ${branch}`); } }
           const current = open ?? raw!.toString('utf8');
-          const res = resolveEdits(current, f.edits!);
+          const edits = open !== null ? forLiveDoc(f.edits!) : f.edits!;
+          const res = resolveEdits(current, edits);
           if (!res.ok) {
             if (res.error === 'invalid_quote') return fail(`"${f.path}", edit ${res.editIndex + 1}: ${res.reason}`);
             return failed(f.path, { error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: f.edits![i] })).sort((a, b) => b.from - a.from) : null;
-          writes.push({ path: f.path, before: raw ?? current, next: spliceEdits(current, f.edits!, res.ranges), live });
+          const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: edits[i] })).sort((a, b) => b.from - a.from) : null;
+          writes.push({ path: f.path, before: raw ?? inFileLineEndings(meta.id, branch, f.path, current), next: spliceEdits(current, edits, res.ranges), live });
         }
         for (const w of writes) markAgentPresence(meta.id, branch, w.path);
         const reseed: string[] = [];
@@ -787,7 +800,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         // whole-tree commit would sign them as Claude (and expose them to the
         // session toast's revert). They reach history through the normal
         // autosave debounce instead.
-        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.next })), cleanCommitMessage(message, 'Update files'));
+        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.live ? inFileLineEndings(meta.id, branch, w.path, w.next) : w.next })), cleanCommitMessage(message, 'Update files'));
         // See write_file: the first .tex of a rootless project becomes the root.
         const firstTex = writes.find((w) => /\.tex$/i.test(w.path))?.path;
         const newRoot = firstTex ? await adoptRootIfUnset(meta.id, branch, firstTex) : undefined;

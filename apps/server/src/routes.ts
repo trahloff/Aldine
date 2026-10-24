@@ -11,7 +11,7 @@ import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject } from './trash.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
@@ -1524,19 +1524,21 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       let outcome = applySuggestionToDoc(req.params.id, branch, c.file, c.anchor, c.suggestion);
       if (outcome === 'no-doc') {
         // nobody has the file open — the disk copy is authoritative, edit it directly
-        let content: string;
-        try { content = store.readFile(req.params.id, branch, c.file).toString('utf8'); } catch {
+        let raw: string;
+        try { raw = store.readFile(req.params.id, branch, c.file).toString('utf8'); } catch {
           return reply.code(404).send({ error: 'File not found' });
         }
+        // the anchor counts in the editor's text, which holds LF only
+        const { text: content, crlf } = docView(raw);
+        const suggestion = c.suggestion.replace(/\r\n?/g, '\n');
         let next: string | null = null;
         if (content.slice(c.anchor.from, c.anchor.to) === c.anchor.quote) {
-          next = content.slice(0, c.anchor.from) + c.suggestion + content.slice(c.anchor.to);
+          next = content.slice(0, c.anchor.from) + suggestion + content.slice(c.anchor.to);
         } else if (c.anchor.quote && c.anchor.quote.length === c.anchor.to - c.anchor.from && content.split(c.anchor.quote).length === 2) {
-          const suggestion = c.suggestion;
           next = content.replace(c.anchor.quote, () => suggestion);
         }
         if (next === null) { outcome = 'stale'; } else {
-          store.writeFile(req.params.id, branch, c.file, next);
+          store.writeFile(req.params.id, branch, c.file, crlf ? withCrlf(next) : next);
           refreshBranchDocsFromDisk(req.params.id, branch, [c.file]);
           outcome = 'applied';
         }
