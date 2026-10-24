@@ -7,14 +7,14 @@
 > compiles, a built-in MCP server for Claude, and a byte-stable visual editing
 > mode. AGPL-3.0.
 
-Status: v0.11.0 (September 2026), AGPL-3.0. There is no paid plan and no
+Status: v0.14.4 (October 2026), AGPL-3.0. There is no paid plan and no
 hosted service today; you run it yourself.
 
 Key facts:
 
 - Self-hosting is two Docker containers (app + compiler) via `docker compose up -d`.
-  No external services required. The first pull is about 1.1 GB compressed,
-  4.3 GB on disk.
+  No external services required. The compiler image is about 2.4 GB to
+  download, about 5 GB on disk.
 - Git: every project is a real git repository. Branches are created, edited
   and merged from the UI. Push and pull to GitHub, GitLab (gitlab.com or
   self-hosted), Gitea and Forgejo (Codeberg included), and open a pull or

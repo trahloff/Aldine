@@ -4,7 +4,8 @@ Aldine is built to run two ways from one codebase:
 
 - **Solo / self-host** — one box, `docker compose up`, flat-JSON datastore. The
   default, and the thing you give a colleague to run tonight.
-- **Cloud / multi-tenant** — horizontally scalable, Postgres-backed.
+- **Cloud / multi-tenant** — Postgres-backed, built toward horizontal scale.
+  One app node is still the only supported topology (see the walls below).
 
 The two share all product code (editor, Yjs collaboration, git versioning, the
 TeX Live compile pipeline, plugins). Only the **persistence and topology glue**
@@ -38,7 +39,8 @@ unaffected.
 1. **Flat-JSON stores + in-memory rate/quota state** — per-process, so two app
    nodes can't share them. *Blocks running more than one app node.*
    → **Done for the datastore:** Postgres (`DATABASE_URL`) covers users,
-   sessions, project metadata, comments, and usage/quotas; Redis (`REDIS_URL`)
+   sessions, tokens, OAuth clients, project metadata, comments, connections
+   and usage/quotas; Redis (`REDIS_URL`)
    shares the rate limiters across nodes. The compile concurrency gate stays
    per-node by design (it protects each node's compiler; the shared ceiling is
    the per-user compile quota).
@@ -49,8 +51,11 @@ unaffected.
    git tolerates the duplicate push — benign), the bib/label index caches,
    and `compileChain` (serializes latexmk per branch; with two nodes sharing
    one volume that serialization is gone and aux-file corruption becomes
-   reachable). The datastore is multi-node-ready; these
-   caches are not yet.
+   reachable), OAuth authorization codes (a Connect whose token exchange
+   lands on another node than its consent fails), and the per-branch
+   `contentVersion` counters behind the Agent API's conflict checks (a
+   write answered by another node can be refused as `version_conflict`). The
+   datastore is multi-node-ready; these caches are not yet.
 2. **Single-process Hocuspocus** — each Yjs document's CRDT state lives in one
    process's memory. → **Partially built, not yet a supported topology.** What
    exists: the Redis collab extension (`REDIS_URL`) syncs awareness across

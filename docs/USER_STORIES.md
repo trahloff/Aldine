@@ -8,8 +8,9 @@ issues can cite them.
 Each domain names the suite that automates most of it. The mapping is at the
 domain level on purpose: a story with no dedicated assertion is not a bug in
 this file, it is a gap in the suite, and per-story claims would hide that.
-Suites live in `e2e/tests/` (main), `e2e/auth-tests/` (auth), and
-`apps/server/test/` (API-level integration).
+Suites live in `e2e/tests/` (main), `e2e/auth-tests/` (auth),
+`e2e/base-path-tests/` (served under a path prefix), `e2e/remote-tests/` (a
+deployed instance) and `apps/server/test/` (API-level integration).
 
 Legend: **[auth]** needs `AUTH_ENABLED=1`; **[flag]** behind an experimental
 flag; everything else works in the default single-tenant deploy.
@@ -18,14 +19,15 @@ flag; everything else works in the default single-tenant deploy.
 
 ## Onboarding & projects (PROJ)
 
-*Automated in `01-home.spec.ts`.*
+*Automated in `01-home.spec.ts`; PROJ-3 in `20-blank-project.spec.ts`, PROJ-6
+in `21-zip-import.spec.ts`.*
 
 - **PROJ-1** — As a new visitor, I land on the home screen and see a first-run
   onboarding overlay that I can dismiss, and it stays dismissed on return.
 - **PROJ-2** — I create a project from a template (article, IAC paper, beamer,
   report) and land in the editor with the template's files seeded.
-- **PROJ-3** — I create a blank project and get a minimal `main.tex` +
-  `references.bib`.
+- **PROJ-3** — I create a blank project: it has no files, and the first
+  `.tex` file I add becomes its main document.
 - **PROJ-4** — I rename a project inline from the toolbar; the name persists.
 - **PROJ-5** — I delete a project from the home screen; it disappears from the
   list and stays restorable from the trash for `ALDINE_TRASH_DAYS` (30 by
@@ -139,7 +141,9 @@ flag; everything else works in the default single-tenant deploy.
 ## GitLab sync (GL)
 
 *Automated at the API level in `apps/server/test/gitlab-sync.integration.mjs`
-and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`.*
+and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`; provisioning
+(GL-7 to GL-11) in `34-provisioning.spec.ts` (its own Playwright config),
+`gitlab-autoprovision.integration.mjs` and `gitlab-delete.integration.mjs`.*
 
 - **GL-1** — I connect a GitLab account with a personal access token (any
   https instance, sub-path installs included) or with OAuth.
@@ -236,13 +240,14 @@ Forgejo (Codeberg) share one API, so one provider covers both.*
 
 ## Auth & sharing (AUTH) [auth]
 
-*Automated in `e2e/auth-tests/auth.spec.ts` (its own Playwright config,
-port 3200).*
+*Automated in `e2e/auth-tests/` (its own Playwright config, port 3200):
+`auth.spec.ts`, plus `oidc.spec.ts`, `oauth.spec.ts`, `tokens.spec.ts`,
+`mcp.spec.ts` and `admin.spec.ts`.*
 
 - **AUTH-1** — With auth on, I register, log in, log out, and my session
   persists; my projects are mine.
-- **AUTH-2** — Google & GitHub SSO sign-in works; SSO-only mode hides
-  passwords.
+- **AUTH-2** — Google, GitHub, ORCID and OpenID Connect sign-in work;
+  SSO-only mode hides passwords.
 - **AUTH-3** — I request a password reset and receive a link (email transport)
   scoped to the configured public URL.
 - **AUTH-4** — Registering a password for an email that has SSO is blocked

@@ -16,7 +16,7 @@ you in the fix's release notes unless you prefer otherwise.
 ## Scope notes for self-hosters
 
 - Aldine's compiler container is sandboxed (no network egress, dropped
-  capabilities, CPU/memory/PID limits, restricted shell-escape), but LaTeX is a
+  capabilities, memory and PID limits, restricted shell-escape), but LaTeX is a
   Turing-complete language processing untrusted input. Treat the compiler
   container as semi-trusted and keep the isolation that ships in both
   `docker-compose.yml` and `docker-compose.full.yml`: the `internal: true`
@@ -27,7 +27,9 @@ you in the fix's release notes unless you prefer otherwise.
   the internet, set `AUTH_ENABLED=1` and serve over HTTPS (the `tls` profile in
   `docker-compose.full.yml` ships a Caddy config that gets certificates for you).
 - Session cookies are HTTP-only and revocable server-side; passwords are
-  scrypt-hashed. Set `COOKIE_SECURE=1` behind HTTPS.
+  scrypt-hashed. They carry the Secure flag when `ALDINE_PUBLIC_URL` starts
+  with `https`; behind HTTPS without it, set `COOKIE_SECURE=1` (the prod
+  overlay does).
 - Single sign-on never signs into an existing account that merely shares an
   email address: not a password account, not another provider's, not another
   OIDC identity. With OpenID Connect the address is used only when the IdP

@@ -26,7 +26,7 @@ Guides on aldine.dev:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="e2e/shots/editor-dark.png">
-  <img alt="Aldine editor: LaTeX source on the left, live PDF on the right, collaborator cursors visible" src="e2e/shots/editor-light.png">
+  <img alt="Aldine editor: LaTeX source on the left, live PDF on the right" src="e2e/shots/editor-light.png">
 </picture>
 
 Live collaboration, a recompile, and a SyncTeX jump, in one real recording (compile wait trimmed):
@@ -55,7 +55,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   click-to-jump.
 - **GitHub/GitLab/Gitea/Forgejo sync**: import from GitHub, GitLab, Gitea or
   Forgejo as a project *or publish a local project to a fresh repo*, push/pull
-  with ahead/behind indicators, branches, conflict resolution, server-side
+  with ahead/behind indicators, branches, a conflicting pull that lists the
+  files and keeps your version until you take the remote's, server-side
   autopush, and open a pull or merge request, all from the editor. gitlab.com
   and self-hosted GitLab, any Gitea or Forgejo instance (Codeberg included);
   a personal access token needs no OAuth app. A team instance can create
@@ -104,9 +105,13 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
 - **Plugin system**: manifest + ES module plugins add sidebar panels and
   write into the editor. Zotero, references, and AI-fix ship as plugins;
   write your own.
-- **Templates & import**: article, IAC conference paper, beamer,
-  report/thesis, plus your group's own templates from any git repository
-  (`TEMPLATE_REPOS`); or import an existing project from an Overleaf ZIP.
+- **Templates & import**: article, IAC conference paper, beamer and
+  report/thesis; a template for each publisher class the compiler's TeX Live
+  carries (Elsevier, IEEE, ACM, REVTeX, LNCS and more: 15 in the published
+  images); 25 official conference and journal kits (NeurIPS, ICML, ACL, CVPR,
+  Springer Nature, Wiley, …) downloaded from the publisher when you create
+  the project; plus your group's own templates from any git repository
+  (`TEMPLATE_REPOS`). Or import an existing project from an Overleaf ZIP.
 - **Editor niceties**: auto-typeset on idle, live whole-document word count,
   spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
   error hints + raw log, command palette (⌘K / Ctrl+K).
@@ -184,12 +189,19 @@ what `deploy/backup.sh` looks for.
 - **You are pinned to a version.** The block above says
   `${ALDINE_VERSION:-0.14.4}`, so a fresh copy installs the current release and
   nothing under a running install changes on its own. To upgrade, read the
-  [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), then:
+  [CHANGELOG](CHANGELOG.md), back up (`deploy/backup.sh`), write the new
+  version into a `.env` file next to `docker-compose.yml`, then pull:
 
-      ALDINE_VERSION=<new version> docker compose pull && docker compose up -d
+      # .env
+      ALDINE_VERSION=<new version>
 
-  To roll back, set `ALDINE_VERSION` to the previous release and run the same
-  command. Your projects live in the `aldine-data` and `aldine-secrets`
+      docker compose pull && docker compose up -d
+
+  Compose reads `.env` on every call, so a later `up` stays on that version.
+  A prefix (`ALDINE_VERSION=… docker compose pull && docker compose up -d`)
+  reaches only the first command, and `up` starts the old version again. To
+  roll back, put the previous release in `.env` and run the same two
+  commands. Your projects live in the `aldine-data` and `aldine-secrets`
   volumes and an image swap does not touch them. `:latest` still exists and
   points at the newest release; pinning is what lets you choose when to move.
 - **Pre-1.0 stability.** Versions follow SemVer with one caveat: before 1.0
@@ -199,9 +211,11 @@ what `deploy/backup.sh` looks for.
   before `:latest` moves to them. Upgrades across a minor are not yet tested
   against existing data, so back up first. Watch the repo's Releases for
   security fixes: per [SECURITY.md](SECURITY.md), only the latest release
-  gets them.
+  gets them. What 1.0 will promise (which data, settings and APIs every 1.x
+  keeps working, and how upgrades are checked) is in
+  [docs/STABILITY.md](docs/STABILITY.md).
 - **The first pull is big.** TeX Live lives in the compiler image: about
-  1.1 GB compressed, 4.3 GB on disk. It carries TeX Live's medium scheme plus
+  2.4 GB to download, about 5 GB on disk. It carries TeX Live's medium scheme plus
   the pictures, latexextra and bibtexextra collections (pgfplots, tikz-cd,
   cleveref, todonotes, minted, biblatex, …), the publisher classes, and the
   Arabic, Persian, Cyrillic and Greek scripts; the one family it leaves out
@@ -256,8 +270,8 @@ what `deploy/backup.sh` looks for.
 | GitHub/GitLab/Gitea sync + PRs/MRs from the editor | ✅ | Overleaf documents GitHub synchronization as "a premium feature for Overleaf Cloud users" ([source][ol-gitdocs]); absent from its on-premises comparison ([source][ol-cmp]) | ✅ natively |
 | Zotero | Whole library **or one collection** | Overleaf lists Zotero among the third-party integrations of its cloud platform ([source][ol-onprem]); absent from its on-premises comparison ([source][ol-cmp]) | Via Better BibTeX auto-export |
 | Warm recompile | ~2s (persistent latexmk cache) | Not measured | Local |
-| Templates gallery | 4 built-in, plus your own from git repositories | ❌ private template management is Server Pro only ([source][ol-cmp]) | CTAN / your own |
-| Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (~4.3 GB); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | Minimal TeX Live in the image; full with `tlmgr install scheme-full` ([source][ol-tl]) | Whatever you install |
+| Templates gallery | 4 starter templates, one per publisher class in the compiler's TeX Live (15 in the published images), 25 conference and journal kits fetched from the publisher, plus your own from git repositories | ❌ private template management is Server Pro only ([source][ol-cmp]) | CTAN / your own |
+| Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (about 5 GB on disk); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | Minimal TeX Live in the image; full with `tlmgr install scheme-full` ([source][ol-tl]) | Whatever you install |
 | Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, review suggestions shown inline (accept/dismiss) | ✅ Visual Editor; its code is in the open-source repository ([source][ol-visual]) | ❌ |
 | Maturity | Young (v0.x, 2026) | Overleaf dates from 2011 ([source][ol-about]) | Very mature |
 | License | AGPL-3.0 | AGPL-3.0 ([source][ol-repo]) | MIT/varies |
@@ -499,8 +513,8 @@ poster or report templates puts the same layout in any git repository
 (GitHub, GitLab, Gitea, a bare repo over https), lists it in
 `TEMPLATE_REPOS`, and the templates appear in the gallery under the
 repository's name, refreshed on an interval or with "Refresh templates", with
-`{{PROJECT_NAME}}`, `{{AUTHOR}}` and `{{DATE}}` filled in on create. Layout,
-manifest fields, placeholders and private-repository tokens:
+`{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}` and `{{YEAR}}` filled in on
+create. Layout, manifest fields, placeholders and private-repository tokens:
 [templates/README.md](templates/README.md).
 
 ## License
@@ -514,7 +528,9 @@ own `LICENSE` and states it in `template.json` (the gallery shows it on the
 tile): the generic templates are MIT, and `templates/iac-paper` is LPPL-1.3c,
 the customary license for a LaTeX class file. Venue templates are generated
 from the classes installed in the compiler image, with the license `tlmgr`
-reports; no publisher file is stored in this repository. Overleaf is a
+reports. Venue kits are downloaded from the publisher when a project is
+created, and their tile links the publisher's terms instead of naming a
+license. No publisher file is stored in this repository. Overleaf is a
 trademark of its owner. Claude, Zotero, GitHub, GitLab and other names are
 trademarks of their respective owners. Aldine is an independent project, not
 affiliated with or endorsed by any of them.

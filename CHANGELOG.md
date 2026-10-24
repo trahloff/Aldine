@@ -3,6 +3,7 @@
 All notable changes to Aldine are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break things).
+What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
@@ -15,6 +16,33 @@ All notable changes to Aldine are documented here. The format follows
   and later paste the YAML in `docs/TRUENAS.md` into Install via YAML.
   Unraid runs the standard compose file through the Compose Manager Plus
   plugin (`docs/UNRAID.md`).
+- `docs/STABILITY.md`: what 1.0 will promise. Which on-disk data, settings,
+  MCP tools and plugin API members a 1.x release keeps working, how each kind
+  of data migrates today, what counts as breaking, how long a deprecation
+  lasts, what is not covered (the REST API among it), and which check backs
+  each promise.
+
+### Changed
+- Releases go out once a week, on Sunday evening Berlin time, instead of
+  after nearly every merge. Security fixes and fixes for bugs that lose or
+  corrupt data still ship at once. The rule is in CONTRIBUTING.md,
+  "Releasing".
+
+### Fixed
+- The upgrade command in the README and on aldine.dev set `ALDINE_VERSION`
+  for `docker compose pull` only, so the `up -d` after it started the old
+  version again. Both now put the version in `.env`.
+- `docker-compose.full.yml` did not pass `ALDINE_AI_AUTOFIX` to the app, so
+  setting it in `.env` did nothing.
+- The README and aldine.dev said the gallery had 4 templates. It has
+  4 starter templates, one per publisher class in the compiler's TeX Live (15
+  in the published images) and 25 conference and journal kits. The
+  compiler image is about 2.4 GB to download and about 5 GB on disk, not
+  1.1 GB and 4.3 GB.
+- `deploy/README.md` now lists every variable the server and compiler read,
+  with the test and tuning ones in a table of their own, and says that an
+  instance switched to Postgres starts without its JSON data and that
+  `deploy/backup.sh` does not dump the database.
 
 ## [0.14.4] — 2026-10-24
 

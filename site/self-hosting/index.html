@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/self-hosting/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-12",
+      "dateModified": "2026-10-24",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -93,12 +93,12 @@
 <p class="crumbs"><a href="/">Aldine</a> / Self-hosting guide</p>
 <h1>Self-hosting Aldine with Docker Compose</h1>
 <p class="lede">Aldine is an open-source, self-hosted collaborative LaTeX editor. It runs as two containers: the app and a sandboxed TeX Live compiler. This guide covers the install and what comes after it: upgrades, TeX packages, logins, TLS, backups and limits.</p>
-<p class="checked">Applies to Aldine 0.11.0. Updated on 12 October 2026. The reference is the <a href="https://github.com/trahloff/Aldine#quick-start">README</a> and the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md">single-VPS runbook</a>.</p>
+<p class="checked">Applies to Aldine 0.14.4. Updated on 24 October 2026. The reference is the <a href="https://github.com/trahloff/Aldine#quick-start">README</a> and the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md">single-VPS runbook</a>.</p>
 
 <h2 id="requirements">What it needs to run</h2>
 <ul>
 <li>Docker Engine with the compose plugin.</li>
-<li>Disk for the compiler image: the first pull is about 1.1 GB compressed and 4.3 GB on disk, because TeX Live lives in that image.</li>
+<li>Disk for the compiler image: the first pull is about 2.4 GB to download and about 5 GB on disk, because TeX Live lives in that image.</li>
 <li>For a shared production instance, the runbook recommends a VPS with 2 or more dedicated vCPUs, at least 8 GB of RAM and at least 40 GB of disk. LaTeX compiles are CPU and RAM bursts of about 2 GB each, so size for the compiles you expect to run at once.</li>
 <li>No database and no external services. Projects are git repositories on disk and metadata is stored in flat files by default.</li>
 </ul>
@@ -109,7 +109,7 @@
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.11.0}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-0.14.4}
     ports:
       - &quot;8080:3000&quot;
     volumes:
@@ -120,7 +120,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.11.0}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-0.14.4}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -151,9 +151,11 @@ volumes:
 <p>returns <code>{"ok":true,"name":"aldine"}</code>.</p>
 
 <h2 id="upgrade">Version pinning, upgrade and rollback</h2>
-<p>The compose file says <code>${ALDINE_VERSION:-0.11.0}</code>, so you are pinned to a release and nothing changes under a running install on its own. To upgrade, read the <a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">changelog</a>, back up, then:</p>
-<pre><code>ALDINE_VERSION=&lt;new version&gt; docker compose pull &amp;&amp; docker compose up -d</code></pre>
-<p>To roll back, set <code>ALDINE_VERSION</code> to the previous release and run the same command. Your projects live in the <code>aldine-data</code> and <code>aldine-secrets</code> volumes, and an image swap does not touch them.</p>
+<p>The compose file says <code>${ALDINE_VERSION:-0.14.4}</code>, so you are pinned to a release and nothing changes under a running install on its own. To upgrade, read the <a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">changelog</a>, back up, write the new version into a <code>.env</code> file next to <code>docker-compose.yml</code>, then pull:</p>
+<pre><code># .env
+ALDINE_VERSION=&lt;new version&gt;</code></pre>
+<pre><code>docker compose pull &amp;&amp; docker compose up -d</code></pre>
+<p>Compose reads <code>.env</code> on every call, so a later <code>up</code> stays on that version. A prefix (<code>ALDINE_VERSION=&hellip; docker compose pull &amp;&amp; docker compose up -d</code>) reaches only the first command, and <code>up</code> starts the old version again. To roll back, put the previous release in <code>.env</code> and run the same two commands. Your projects live in the <code>aldine-data</code> and <code>aldine-secrets</code> volumes, and an image swap does not touch them.</p>
 <p>Versions follow SemVer with one caveat: before 1.0 a minor bump (0.3 to 0.4) may change behaviour or the on-disk layout, and a patch bump will not. Upgrades across a minor version are not yet tested against existing data, so back up first. Only the latest release gets security fixes.</p>
 
 <h2 id="tex-packages">TeX packages and the full image</h2>
@@ -165,14 +167,14 @@ volumes:
     image: aldine-compiler-local
     build:
       dockerfile_inline: |
-        FROM ghcr.io/trahloff/aldine-compiler:0.11.0
+        FROM ghcr.io/trahloff/aldine-compiler:0.14.4
         RUN tlmgr install pgfplots tikz-cd</code></pre>
 <p>Bump the <code>FROM</code> tag when you bump <code>ALDINE_VERSION</code>.</p>
 <h3>Get all of TeX Live, including CJK</h3>
 <p>Every release from 0.4.0 also ships all of TeX Live as a <code>-full</code> image: about 2.8 GB compressed and 9 GB on disk. CJK is only in this image. Add <code>ALDINE_TEXLIVE=-full</code> next to <code>ALDINE_VERSION</code> and pull again.</p>
 
 <h2 id="auth">Logins and single sign-on</h2>
-<p>Out of the box Aldine is single-tenant with no login. Everything beyond the minimum is configured with environment variables, and those are wired up in <a href="https://github.com/trahloff/Aldine/blob/main/docker-compose.full.yml"><code>docker-compose.full.yml</code></a>, which carries the same compiler sandbox and the same volumes, so you can switch without losing data. That file has no <code>image:</code> lines: it needs a clone of the repository, builds from source (20 to 60 minutes the first time) and runs the commit you have checked out, not the pinned release image. Start it with <code>docker compose -f docker-compose.full.yml up -d --build</code>. To stay on the release images instead, add an <code>environment:</code> block with the variables you need to the <code>app</code> service of the minimal file. Settings go in a <code>.env</code> file next to the compose files:</p>
+<p>Out of the box Aldine is single-tenant with no login. Everything beyond the minimum is configured with environment variables, and most of them are passed through from <code>.env</code> by <a href="https://github.com/trahloff/Aldine/blob/main/docker-compose.full.yml"><code>docker-compose.full.yml</code></a>, which carries the same compiler sandbox and the same volumes, so you can switch without losing data. Its <code>app</code> and <code>compiler</code> services have no <code>image:</code> lines: it needs a clone of the repository, builds from source (20 to 60 minutes the first time) and runs the commit you have checked out, not the pinned release image. Start it with <code>docker compose -f docker-compose.full.yml up -d --build</code>. To stay on the release images instead, add an <code>environment:</code> block with the variables you need to the <code>app</code> service of the minimal file. Settings go in a <code>.env</code> file next to the compose files:</p>
 <pre><code># multi-user login, ownership and sharing (unset = single-tenant)
 AUTH_ENABLED=1
 # Google SSO
@@ -232,7 +234,7 @@ sudo systemctl enable --now aldine-backup.timer</code></pre>
 <tbody>
 <tr><th scope="row"><code>COMPILE_TIMEOUT_MS</code></th><td>Time per compile, in the compiler container</td><td>120000 ms</td></tr>
 <tr><th scope="row"><code>MAX_CONCURRENT_COMPILES</code></th><td>Compiles in flight in the compiler container</td><td>2</td></tr>
-<tr><th scope="row"><code>RL_COMPILE_CONCURRENCY</code></th><td>Concurrent compiles the app forwards</td><td>2</td></tr>
+<tr><th scope="row"><code>RL_COMPILE_CONCURRENCY</code></th><td>Typesets one client (the signed-in user, else the IP address) may have in flight</td><td>2</td></tr>
 <tr><th scope="row"><code>ALDINE_COMPILE_QUOTA_MIN</code></th><td>Compile minutes per user per month; over-quota compiles return HTTP 402</td><td>uncapped</td></tr>
 </tbody>
 </table>
@@ -255,7 +257,7 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
 
 <h2 id="other-limits">Limits to know before you rely on it</h2>
 <ul>
-<li><strong>Young.</strong> Aldine is at v0.x (0.11.0, September 2026). Before 1.0 a minor version may change behaviour or the on-disk layout, so back up before upgrading.</li>
+<li><strong>Young.</strong> Aldine is at v0.x (0.14.4, October 2026). Before 1.0 a minor version may change behaviour or the on-disk layout, so back up before upgrading.</li>
 <li><strong>No keystroke-level track changes.</strong> Aldine has review comments with suggested edits.</li>
 <li><strong>Single node.</strong> One app node is the supported topology; you scale it vertically. <a href="https://github.com/trahloff/Aldine/blob/main/docs/SCALING.md">docs/SCALING.md</a> says what is and is not built.</li>
 <li><strong>CJK needs the full image.</strong> The default compiler image leaves out the CJK scripts; they are in the <code>-full</code> image (about 2.8 GB compressed, 9 GB on disk).</li>
@@ -270,7 +272,7 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
 
 <h2 id="faq">Common questions</h2>
 <h3>What does Aldine need to run?</h3>
-<p>Docker with the compose plugin and room for the compiler image (about 4.3 GB on disk). No database is required.</p>
+<p>Docker with the compose plugin and room for the compiler image (about 5 GB on disk). No database is required.</p>
 <h3>How do I upgrade?</h3>
 <p>Back up, then run <code>docker compose pull</code> and <code>docker compose up -d</code> with <code>ALDINE_VERSION</code> set to the new release. Rolling back is the same command with the previous version.</p>
 <h3>How do I back up?</h3>

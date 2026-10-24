@@ -3,10 +3,10 @@
 #   medium (default) — scheme-medium plus the collections it leaves out that
 #     papers reach for (pictures, latexextra, bibtexextra), the publisher
 #     classes, and the Arabic/Persian, Cyrillic, Greek and "other" script
-#     collections. CJK is the one family left to full. About 4.3 GB on disk;
+#     collections. CJK is the one family left to full. About 5 GB on disk;
 #     this is the published aldine-compiler:<version> image. Anything else:
 #     `RUN tlmgr install <pkg>` in a derived image (README, "Need a package").
-#   full — everything on CTAN preinstalled (~9 GB on disk). Every script and
+#   full — all of TeX Live preinstalled (~9 GB on disk). Every script and
 #     language TeX Live supports compiles out of the box. Published as
 #     aldine-compiler:<version>-full (ALDINE_TEXLIVE=-full in compose), or
 #     built locally:
