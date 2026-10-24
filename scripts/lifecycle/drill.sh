@@ -12,7 +12,8 @@
 # Environment (all optional):
 #   CANDIDATE_APP_IMAGE, CANDIDATE_COMPILER_IMAGE
 #                     images under test (default: the release docker-compose.yml pins)
-#   PREVIOUS_VERSION  release the upgrade starts from (default: the pinned one)
+#   PREVIOUS_VERSION  release the upgrade starts from (default: the pinned one;
+#                     CI also starts from OLDEST_SUPPORTED in lifecycle.yml)
 #   DATASTORE         json (default) or postgres (the bundled `db` service)
 #   ALDINE_PROJECT    compose project name (default aldine-lifecycle; never aldine)
 #   ALDINE_PORT       host port of the app (default 8191, beside a stack on 8080)
@@ -31,7 +32,7 @@ DATASTORE="${DATASTORE:-json}"
 PROJECT="${ALDINE_PROJECT:-aldine-lifecycle}"
 PORT="${ALDINE_PORT:-8191}"
 REGISTRY="${ALDINE_REGISTRY:-ghcr.io/trahloff}"
-PINNED="$(sed -n 's/.*aldine-app:\${ALDINE_VERSION:-\([^}]*\)}.*/\1/p' docker-compose.yml)"
+PINNED="$(sed -n 's/.*aldine-app:.{ALDINE_VERSION:-\([^}]*\)}.*/\1/p' docker-compose.yml)"
 PREVIOUS="${PREVIOUS_VERSION:-$PINNED}"
 CANDIDATE_APP="${CANDIDATE_APP_IMAGE:-$REGISTRY/aldine-app:$PINNED}"
 CANDIDATE_COMPILER="${CANDIDATE_COMPILER_IMAGE:-$REGISTRY/aldine-compiler:$PINNED}"
