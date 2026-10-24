@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Files with Windows (CRLF) line endings: every edit landed one character to
+  the left for each line above it, and the stored file and other people's
+  editors no longer matched what you saw. Open documents now use LF line
+  endings; a file that uses CRLF throughout keeps it when it is saved.
+
 ## [0.15.0] — 2026-10-24
 
 This release fixes security problems found in a review before 1.0 (see
