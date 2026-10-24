@@ -211,7 +211,9 @@ what `deploy/backup.sh` looks for.
   before `:latest` moves to them. Upgrades across a minor are not yet tested
   against existing data, so back up first. Watch the repo's Releases for
   security fixes: per [SECURITY.md](SECURITY.md), only the latest release
-  gets them.
+  gets them. What 1.0 will promise (which data, settings and APIs every 1.x
+  keeps working, and how upgrades are checked) is in
+  [docs/STABILITY.md](docs/STABILITY.md).
 - **The first pull is big.** TeX Live lives in the compiler image: about
   2.4 GB to download, about 5 GB on disk. It carries TeX Live's medium scheme plus
   the pictures, latexextra and bibtexextra collections (pgfplots, tikz-cd,

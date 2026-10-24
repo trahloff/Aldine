@@ -3,6 +3,7 @@
 All notable changes to Aldine are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break things).
+What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
@@ -15,6 +16,11 @@ All notable changes to Aldine are documented here. The format follows
   and later paste the YAML in `docs/TRUENAS.md` into Install via YAML.
   Unraid runs the standard compose file through the Compose Manager Plus
   plugin (`docs/UNRAID.md`).
+- `docs/STABILITY.md`: what 1.0 will promise. Which on-disk data, settings,
+  MCP tools and plugin API members a 1.x release keeps working, how each kind
+  of data migrates today, what counts as breaking, how long a deprecation
+  lasts, what is not covered (the REST API among it), and which check backs
+  each promise.
 
 ### Changed
 - Releases go out once a week, on Sunday evening Berlin time, instead of

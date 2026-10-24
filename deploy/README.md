@@ -404,9 +404,9 @@ compose files hand a variable to a container only when they name it:
 
 ### Tests and internals
 
-These exist for the test suites, for development and for tuning. They may
-change or go away in any release, and none of them belongs in a production
-`.env`.
+These exist for the test suites, for development and for tuning. They are
+not covered by [docs/STABILITY.md](../docs/STABILITY.md) and may change or go
+away in any release; none of them belongs in a production `.env`.
 
 | Variable | Purpose |
 |---|---|
