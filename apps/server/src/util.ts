@@ -210,3 +210,9 @@ export function debouncePerKey<A extends unknown[]>(ms: number, fn: (key: string
     timers.set(key, setTimeout(() => { timers.delete(key); fn(key, ...args); }, ms));
   };
 }
+
+const TEX_SPECIALS: Record<string, string> = { '\\': '\\textbackslash{}', '&': '\\&', '%': '\\%', '$': '\\$', '#': '\\#', '_': '\\_', '{': '\\{', '}': '\\}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
+/** A project name is prose; inside a .tex file its specials must not typeset as commands. */
+export function latexEscape(s: string): string {
+  return s.replace(/[\\&%$#_{}~^]/g, (c) => TEX_SPECIALS[c]);
+}

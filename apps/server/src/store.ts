@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
-import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
+import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName, latexEscape } from './util.js';
 import { db } from './db/index.js';
 import type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
 
@@ -204,7 +204,7 @@ const DEFAULT_MAIN_TEX = (title: string) => `\\documentclass{article}
 \\usepackage[backend=biber]{biblatex}
 \\addbibresource{references.bib}
 
-\\title{${title.replace(/[\\{}]/g, '')}}
+\\title{${latexEscape(title)}}
 \\author{}
 \\date{\\today}
 

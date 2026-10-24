@@ -528,7 +528,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // No `files` and no `template` seeds the default article; `files: {}` or
   // `template: "blank"` creates a project with no files at all.
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
-    const { name = 'Untitled Project', files, template, namespace } = req.body || {};
+    const { name = 'Untitled project', files, template, namespace } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
     let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {

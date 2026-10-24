@@ -195,7 +195,7 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const create = async () => {
     if (submitting) return;
-    const name = newName.trim() || 'Untitled Project';
+    const name = newName.trim() || 'Untitled project';
     setSubmitting(true);
     try {
       const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate), namespace);

@@ -32,6 +32,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   confirmation, for scripted restores.
 
 ### Fixed
+- A project created without a template or files seeded a starter `main.tex`
+  whose `\title` kept the project name unescaped apart from `\`, `{` and
+  `}`: a name like `Results_v2`, `R&D notes` or `50% draft` broke the first
+  typeset. The starter titles the project through the same `latexEscape`
+  helper the folder templates use (it now lives in `apps/server/src/util.ts`,
+  out of the template modules), and the seeded default name is
+  "Untitled project".
 - The upgrade command in the README and on aldine.dev set `ALDINE_VERSION`
   for `docker compose pull` only, so the `up -d` after it started the old
   version again. Both now put the version in `.env`.
