@@ -1,0 +1,12 @@
+# Overlay for scripts/lifecycle/drill.sh: docker-compose.full.yml as a
+# self-hoster runs it from .env (AUTH_ENABLED, DATABASE_URL and the postgres
+# profile come from the environment the drill sets), with released or
+# candidate images in place of a local build. Nothing else changes, so the
+# volumes, the sandbox and the datastore wiring are the ones users have.
+services:
+  app:
+    build: !reset null
+    image: ${ALDINE_APP_IMAGE:?set ALDINE_APP_IMAGE}
+  compiler:
+    build: !reset null
+    image: ${ALDINE_COMPILER_IMAGE:?set ALDINE_COMPILER_IMAGE}
