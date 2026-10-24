@@ -228,6 +228,14 @@ export class JsonStore implements DataStore {
     for (const r of Object.values(m)) if (r.family === family && !r.revokedAt) { r.revokedAt = revokedAt; changed = true; }
     if (changed) this.write(this.refreshPath, m);
   }
+  async revokeCredentialsForUser(userId: string, revokedAt: string) {
+    const tokens = this.tokens(); let changed = false;
+    for (const t of Object.values(tokens)) if (t.userId === userId && !t.revokedAt) { t.revokedAt = revokedAt; changed = true; }
+    if (changed) this.write(this.tokensPath, tokens);
+    const refresh = this.refreshTokens(); changed = false;
+    for (const r of Object.values(refresh)) if (r.userId === userId && !r.revokedAt) { r.revokedAt = revokedAt; changed = true; }
+    if (changed) this.write(this.refreshPath, refresh);
+  }
 
   // ---- project meta ----
   private metaPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.metaDir, `${id}.json`); }

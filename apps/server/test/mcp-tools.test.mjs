@@ -1094,7 +1094,11 @@ rres = await app.inject({ method: 'POST', url: `/api/projects/${p3.id}/branches`
 check(rres.statusCode === 200, `setup: create branch feature (got ${rres.statusCode} ${rres.body})`);
 ({ body } = await call('read_file', { project: p3.id, path: 'main.tex', branch: 'feature' }));
 const featureBase = body.contentVersion;
+// deleting a branch takes a browser session; an access token is refused
 rres = await app.inject({ method: 'DELETE', url: `/api/projects/${p3.id}/branches?name=feature`, headers: { authorization: `Bearer ${token}` } });
+check(rres.statusCode === 403, `an access token cannot delete a branch (got ${rres.statusCode} ${rres.body})`);
+const adaCookie = auth.sessionCookie(await auth.createSession(user.id)).split(';')[0];
+rres = await app.inject({ method: 'DELETE', url: `/api/projects/${p3.id}/branches?name=feature`, headers: { cookie: adaCookie } });
 check(rres.statusCode === 200, `setup: delete branch feature (got ${rres.statusCode} ${rres.body})`);
 rres = await app.inject({ method: 'POST', url: `/api/projects/${p3.id}/branches`, headers: { authorization: `Bearer ${token}` }, payload: { name: 'feature', from: 'main' } });
 check(rres.statusCode === 200, `setup: recreate branch feature (got ${rres.statusCode} ${rres.body})`);

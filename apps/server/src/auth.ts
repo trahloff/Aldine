@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 import { db } from './db/index.js';
 import type { TokenRecord, User } from './db/types.js';
 import { config } from './config.js';
 import { providers, type OAuthProfile } from './oauth.js';
 import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
+import { discardCodesForUser } from './oauth/codes.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -52,14 +54,28 @@ export function orcidOf(u: { subject?: string }): string | undefined {
   return u.subject?.startsWith('orcid:') ? u.subject.slice('orcid:'.length) : undefined;
 }
 
-function hashPassword(password: string, salt: string): string {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+// Asynchronous (libuv thread pool): one scrypt call costs tens of
+// milliseconds, and a synchronous one stalls every request and collab socket
+// on the node while it runs.
+const scrypt = promisify(crypto.scrypt) as (password: string, salt: string, keylen: number) => Promise<Buffer>;
+async function hashPassword(password: string, salt: string): Promise<string> {
+  return (await scrypt(password, salt, 64)).toString('hex');
 }
-function verifyPassword(password: string, user: User): boolean {
-  const attempt = hashPassword(password, user.salt);
-  const a = Buffer.from(attempt, 'hex');
+async function verifyPassword(password: string, user: User): Promise<boolean> {
+  const a = Buffer.from(await hashPassword(password, user.salt), 'hex');
   const b = Buffer.from(user.hash, 'hex');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/** Longest display name an account keeps, from the sign-up form or a provider profile. */
+export const NAME_MAX = 100;
+/** A display name as stored: a string with no control characters, at most
+ *  NAME_MAX UTF-16 units, never ending in half a surrogate pair. Every user
+ *  write on the JSON datastore serialises every account, so the length is
+ *  bounded here rather than by the request body limit. */
+function cleanName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, NAME_MAX).replace(/[\ud800-\udbff]$/, '').trim();
 }
 
 export async function register(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<PublicUser> {
@@ -72,9 +88,9 @@ export async function register(email: string | null, password: string, name?: st
   const user: User = {
     id: crypto.randomBytes(9).toString('base64url'),
     email,
-    name: (name || (email ? email.split('@')[0] : subject!)).trim(),
+    name: cleanName(name) || cleanName(email ? email.split('@')[0] : subject),
     salt,
-    hash: password ? hashPassword(password, salt) : '',
+    hash: password ? await hashPassword(password, salt) : '',
     createdAt: new Date().toISOString(),
     provider,
     subject,
@@ -94,7 +110,7 @@ function refuseSsoAccount(user: User): void {
 
 export async function login(email: string, password: string): Promise<PublicUser> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
-  if (!user || user.provider || !user.hash || !verifyPassword(password, user)) throw new Error('Incorrect email or password');
+  if (!user || user.provider || !user.hash || !(await verifyPassword(password, user))) throw new Error('Incorrect email or password');
   return pub(user);
 }
 
@@ -149,16 +165,18 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   return register(email, '', profile.name, provider, profile.subject);
 }
 
-export async function changePassword(userId: string, current: string, next: string): Promise<void> {
+/** Returns how many access tokens were revoked with the old password. */
+export async function changePassword(userId: string, current: string, next: string): Promise<number> {
   if (next.length < 8) throw new Error('New password must be at least 8 characters');
   const user = await db().getUser(userId);
   if (!user) throw new Error('User not found');
   refuseSsoAccount(user);
-  if (user.hash && !verifyPassword(current, user)) throw new Error('Current password is incorrect');
+  if (user.hash && !(await verifyPassword(current, user))) throw new Error('Current password is incorrect');
   user.salt = crypto.randomBytes(16).toString('hex');
-  user.hash = hashPassword(next, user.salt);
+  user.hash = await hashPassword(next, user.salt);
   await db().updateUser(user);
   await revokeUser(userId); // sign out everywhere; caller re-issues the current session
+  return revokeAgentAccess(userId);
 }
 
 /** Create a reset token. Returns {token} for self-host relay; caller may also email it. */
@@ -170,7 +188,8 @@ export async function requestReset(email: string): Promise<{ token: string; user
   return { token, user: pub(user) };
 }
 
-export async function resetPassword(token: string, next: string): Promise<void> {
+/** Returns how many access tokens were revoked with the old password. */
+export async function resetPassword(token: string, next: string): Promise<number> {
   if (next.length < 8) throw new Error('New password must be at least 8 characters');
   const r = await db().getReset(token);
   if (!r || r.exp < Date.now()) throw new Error('This reset link is invalid or has expired');
@@ -178,10 +197,11 @@ export async function resetPassword(token: string, next: string): Promise<void> 
   if (!user) throw new Error('User not found');
   refuseSsoAccount(user);
   user.salt = crypto.randomBytes(16).toString('hex');
-  user.hash = hashPassword(next, user.salt);
+  user.hash = await hashPassword(next, user.salt);
   await db().updateUser(user);
   await db().deleteReset(token);
   await revokeUser(user.id);
+  return revokeAgentAccess(user.id);
 }
 
 // ---------- sessions (revocable) ----------
@@ -197,6 +217,19 @@ export async function destroySession(sid: string | undefined): Promise<void> {
 
 export async function revokeUser(userId: string): Promise<void> {
   await db().deleteSessionsForUser(userId);
+}
+
+/**
+ * End every agent credential of the account: access tokens, OAuth refresh
+ * tokens and authorization codes not yet exchanged. A new password must
+ * leave no credential minted under the old one. Returns how many tokens the
+ * Agent access card listed.
+ */
+export async function revokeAgentAccess(userId: string): Promise<number> {
+  const listed = (await db().listTokensForUser(userId)).filter((t) => !t.revokedAt).length;
+  discardCodesForUser(userId);
+  await db().revokeCredentialsForUser(userId, new Date().toISOString());
+  return listed;
 }
 
 export async function verifyToken(sid: string | undefined): Promise<PublicUser | null> {

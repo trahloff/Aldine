@@ -92,6 +92,11 @@ export function consumeCode(code: string, now = Date.now()): ConsumeResult {
   return { status: 'ok', grant, markUsed: (family) => { entry.usedFamily = family; return entry.reusedWhilePending; } };
 }
 
+/** Drop every code issued to the user: none may be exchanged once their credentials were revoked. */
+export function discardCodesForUser(userId: string): void {
+  for (const [k, v] of codes) if (v.userId === userId) codes.delete(k);
+}
+
 /** Test hook: drop every outstanding code. */
 export function resetCodesForTests(): void {
   codes.clear();

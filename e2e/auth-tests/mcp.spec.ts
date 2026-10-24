@@ -155,7 +155,7 @@ test.describe('MCP over PAT auth', () => {
         headers: { authorization: `Bearer ${minted.token}` },
       });
       expect(denied.status()).toBe(403);
-      expect((await denied.json()).error).toMatch(/Access tokens cannot clear the review prompt/);
+      expect((await denied.json()).error).toMatch(/Access tokens cannot use this route — sign in/);
       expect((await (await bob.get(url)).json()).commitCount).toBe(first.commitCount);
     } finally {
       await bob.dispose();

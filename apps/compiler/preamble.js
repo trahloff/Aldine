@@ -106,7 +106,6 @@ async function prepare({ projectRoot, cwd, outAbs, base, rootPath, engine }) {
   if (engine !== 'pdf') return { ...state, reason: `engine ${engine}` };
   // The name lands in latexmk's $pdflatex, which latexmk runs through a shell.
   if (!/^[A-Za-z0-9._-]+$/.test(base)) return { ...state, reason: 'file name' };
-  if (['latexmkrc', '.latexmkrc'].some((f) => fs.existsSync(path.join(cwd, f)))) return { ...state, reason: 'project latexmkrc' };
   const key = await toolKey();
   if (!key) return { ...state, reason: 'mylatexformat not installed' };
   let text;

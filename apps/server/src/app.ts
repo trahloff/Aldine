@@ -1,6 +1,7 @@
 import Fastify, { LogController, type FastifyInstance, type FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { config } from './config.js';
 import { registerRoutes } from './routes.js';
@@ -67,6 +68,31 @@ export function renderIndexHtml(raw: string): string {
     .replace('<head>', `<head>\n    <meta name="aldine-base-path" content="${BASE}/" />`);
 }
 
+const PROXY_NAMES = /^(loopback|linklocal|uniquelocal)$/;
+const isProxyAddress = (entry: string) => {
+  const [addr, bits, ...rest] = entry.split('/');
+  return rest.length === 0 && net.isIP(addr) !== 0 && (bits === undefined || /^\d{1,3}$/.test(bits));
+};
+
+/**
+ * Fastify's trustProxy for TRUST_PROXY: a hop count (`1` for the one reverse
+ * proxy of the documented setups), or the comma-separated addresses / CIDR
+ * ranges of the trusted proxies. Either way req.ip is the address the
+ * outermost trusted proxy appended to X-Forwarded-For, never an entry the
+ * client wrote itself (nginx's $proxy_add_x_forwarded_for and a load
+ * balancer append to the client's header rather than replace it). Unset,
+ * `0` or an unreadable value: off, req.ip is the socket address.
+ */
+export function trustProxySetting(raw: string | undefined): number | string | false {
+  const v = (raw || '').trim();
+  if (!v || v === '0') return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  const entries = v.split(',').map((s) => s.trim());
+  if (entries.every((e) => PROXY_NAMES.test(e) || isProxyAddress(e))) return entries.join(',');
+  console.warn(`[aldine] TRUST_PROXY=${v} is neither a hop count nor a list of proxy addresses; X-Forwarded-For is ignored`);
+  return false;
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   // trustProxy makes req.ip honor X-Forwarded-For — enable ONLY behind a trusted
   // reverse proxy (Caddy/nginx). Off by default so clients can't spoof their IP
@@ -78,7 +104,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: { level: process.env.LOG_LEVEL || 'info' },
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 32 * 1024 * 1024,
-    trustProxy: process.env.TRUST_PROXY === '1',
+    trustProxy: trustProxySetting(process.env.TRUST_PROXY),
     rewriteUrl: (req) => rewriteUrl(req.url || '/'),
   });
 
@@ -96,7 +122,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   const indexFile = path.join(config.webDist, 'index.html');
   if (fs.existsSync(indexFile)) {
     const indexHtml = renderIndexHtml(fs.readFileSync(indexFile, 'utf8'));
-    const sendIndex = (_req: unknown, reply: FastifyReply) => reply.type('text/html').send(indexHtml);
+    // No page of the app renders inside another page's frame: the OAuth
+    // consent page grants account access on a single click.
+    const sendIndex = (_req: unknown, reply: FastifyReply) => reply
+      .header('content-security-policy', "frame-ancestors 'none'")
+      .header('x-frame-options', 'DENY')
+      .type('text/html').send(indexHtml);
     // The raw index.html never goes on the wire: '/' has its own route, the
     // static plugin is told not to serve directory indexes or the file itself,
     // and every other app route lands in the not-found fallback below.

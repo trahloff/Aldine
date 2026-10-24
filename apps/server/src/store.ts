@@ -23,8 +23,11 @@ export function branchDir(id: string, branch: string): string {
   return path.join(worktreesDir, id, safe);
 }
 
+/** core.symlinks=false on every command: a link in a cloned or pulled tree
+ *  is checked out as a plain file holding the link's target, never as a link
+ *  the server would follow. The tree entry keeps its link mode. */
 export function git(dir: string): SimpleGit {
-  return simpleGit({ baseDir: dir });
+  return simpleGit({ baseDir: dir, config: ['core.symlinks=false'] });
 }
 
 /** Throws 'project not found' when absent, preserving the try/catch semantics at call sites. */
@@ -155,7 +158,8 @@ export function listFiles(id: string, branch: string): TreeEntry[] {
   const walk = (rel: string) => {
     const abs = path.join(base, rel);
     for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
-      if (isHiddenName(e.name)) continue;
+      // safeJoin refuses a path through a link, so a link is no project file
+      if (isHiddenName(e.name) || e.isSymbolicLink()) continue;
       const relPath = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         out.push({ path: relPath, type: 'dir' });
@@ -181,21 +185,30 @@ export function isDirectory(id: string, branch: string, rel: string): boolean {
   try { return fs.statSync(safeJoin(branchDir(id, branch), rel)).isDirectory(); } catch { return false; }
 }
 
+/** The checkout path of a project file or folder the store may write, rename
+ *  or delete: never the branch directory itself (on main that is the whole
+ *  repository, .git included), never git internals or compile output. */
+function entryPath(base: string, rel: string): string {
+  const abs = safeJoin(base, rel);
+  if (abs === base || isHiddenPath(rel)) throw new Error(`not a project file: ${rel}`);
+  return abs;
+}
+
 export function writeFile(id: string, branch: string, rel: string, content: string | Buffer): void {
-  const abs = safeJoin(branchDir(id, branch), rel);
+  const abs = entryPath(branchDir(id, branch), rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
 }
 
 export function deleteFile(id: string, branch: string, rel: string): void {
-  fs.rmSync(safeJoin(branchDir(id, branch), rel), { recursive: true, force: true });
+  fs.rmSync(entryPath(branchDir(id, branch), rel), { recursive: true, force: true });
 }
 
 export function renameFile(id: string, branch: string, from: string, to: string): void {
   const base = branchDir(id, branch);
-  const absTo = safeJoin(base, to);
+  const absTo = entryPath(base, to);
   fs.mkdirSync(path.dirname(absTo), { recursive: true });
-  fs.renameSync(safeJoin(base, from), absTo);
+  fs.renameSync(entryPath(base, from), absTo);
 }
 
 const DEFAULT_MAIN_TEX = (title: string) => `\\documentclass{article}

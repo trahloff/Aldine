@@ -307,6 +307,20 @@ eq(repos.refreshIntervalMs(), 600_000, 'the default is ten minutes');
   let threw = '';
   try { tmpl.templateFiles('repo:lab/escape'); } catch (err) { threw = err.message; }
   check(/unknown template|bad template id/.test(threw), 'seeding through an escaping symlink is refused: ' + threw);
+  const checkout = repos.templateRepoDir('lab');
+  for (const name of ['escape', 'alias']) {
+    const lst = fs.lstatSync(path.join(checkout, name));
+    check(lst.isFile() && !lst.isSymbolicLink(), `the checkout holds ${name} as a plain file, not a link`);
+  }
+  // A checkout cloned before links were checked out as files can still hold one.
+  const outsideManifest = path.join(tmp, 'outside-manifest.json');
+  fs.writeFileSync(outsideManifest, JSON.stringify({ name: 'Outside', apiKey: 'outside-secret' }));
+  fs.mkdirSync(path.join(checkout, 'planted'));
+  fs.symlinkSync(outsideManifest, path.join(checkout, 'planted', 'template.json'));
+  const afterPlant = repos.listRepoTemplates();
+  check(!afterPlant.some((t) => t.id === 'repo:lab/planted'), 'a manifest linked outside the checkout is not listed: ' + afterPlant.map((t) => t.id).join(','));
+  check(!JSON.stringify(afterPlant).includes('outside-secret'), 'nothing from the linked file reaches the gallery');
+  fs.rmSync(path.join(checkout, 'planted'), { recursive: true });
   const goodHead = st.head;
 
   // ---- a revision over the cap leaves the previous checkout in place ----

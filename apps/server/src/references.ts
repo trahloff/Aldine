@@ -266,15 +266,42 @@ async function readCapped(res: Response, cap = 2 * 1024 * 1024): Promise<string>
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** The registration agencies' metadata services doi.org sends a BibTeX
+ *  request on to (Crossref, DataCite via crosscite, mEDRA, JaLC). Any other
+ *  redirect target is the DOI's landing page, which answers with HTML. */
+const DOI_METADATA_DOMAINS = ['doi.org', 'crossref.org', 'crosscite.org', 'datacite.org', 'medra.org', 'japanlinkcenter.org'];
+const DOI_MAX_REDIRECTS = 5;
+
+/** A DOI lookup goes only to DOI_BASE's own origin, or over https to an agency's metadata service. */
+export function doiHopAllowed(url: URL): boolean {
+  if (url.origin === new URL(DOI_BASE).origin) return true;
+  if (url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase();
+  return DOI_METADATA_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 async function fetchDoi(doi: string): Promise<string | null> {
-  const res = await fetch(`${DOI_BASE}/${encodeURIComponent(doi)}`, {
-    headers: { Accept: 'application/x-bibtex; charset=utf-8' },
-    redirect: 'follow',
-  });
-  if (notRegistered(res)) return null;
-  if (!res.ok) throw new Error(`DOI lookup failed (HTTP ${res.status})`);
-  const bib = (await readCapped(res)).trim();
-  return bib.startsWith('@') ? sanitizeBibtex(bib) : null;
+  let url = new URL(`${DOI_BASE}/${encodeURIComponent(doi)}`);
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/x-bibtex; charset=utf-8' },
+      redirect: 'manual',
+    });
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined);
+      const loc = res.headers.get('location');
+      if (!loc) throw new Error(`DOI lookup failed (HTTP ${res.status} without a location)`);
+      if (hop >= DOI_MAX_REDIRECTS) throw new Error(`DOI lookup failed (more than ${DOI_MAX_REDIRECTS} redirects)`);
+      url = new URL(loc, url);
+      // a landing page never answers with BibTeX: the DOI has none to offer
+      if (!doiHopAllowed(url)) return null;
+      continue;
+    }
+    if (notRegistered(res)) return null;
+    if (!res.ok) throw new Error(`DOI lookup failed (HTTP ${res.status})`);
+    const bib = (await readCapped(res)).trim();
+    return bib.startsWith('@') ? sanitizeBibtex(bib) : null;
+  }
 }
 
 async function fetchArxiv(id: string): Promise<string | null> {

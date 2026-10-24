@@ -128,8 +128,8 @@ export async function refreshTokens(issuer: string, p: Params): Promise<TokenRes
   // the rotation response); either way the whole family is burned.
   const reused = async () => { await revokeFamily(rec.family); return invalid(); };
   if (rec.usedAt) throw await reused();
-  const clientId = param(p, 'client_id');
-  if (clientId !== undefined && clientId !== rec.clientId) throw invalid();
+  // A public client names itself on every refresh; an absent client_id is a mismatch.
+  if (param(p, 'client_id') !== rec.clientId) throw invalid();
   if (Date.parse(rec.expiresAt) <= Date.now()) throw invalid();
   const now = new Date().toISOString();
   // The mark is a compare-and-set: of two concurrent rotations of one token

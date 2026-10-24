@@ -26,13 +26,17 @@ export interface User {
   subject?: string;
 }
 
-export interface Reply { author: string; body: string; createdAt: string }
+/** `author` is the display name shown with the text; `authorId` is the
+ *  account that wrote it (absent without accounts and on older rows). Names
+ *  are free text and not unique, so ownership is decided on the id only. */
+export interface Reply { author: string; authorId?: string; body: string; createdAt: string }
 export interface Comment {
   id: string;
   branch: string;
   file: string;
   anchor: { from: number; to: number; quote: string };
   author: string;
+  authorId?: string;
   body: string;
   suggestion?: string;
   resolved: boolean;
@@ -234,6 +238,11 @@ export interface DataStore {
    *  rotations of one token must see exactly one true — the loser is reuse. */
   markRefreshUsed(id: string, usedAt: string): Promise<boolean>;
   revokeRefreshFamily(family: string, revokedAt: string): Promise<void>;
+  /** Revoke every access token and refresh token the user holds, hand-made
+   *  and OAuth-minted alike. A refresh token outlives the revocation of its
+   *  access token alone (RFC 7009), so walking the token list is not enough.
+   *  An earlier revokedAt is kept. */
+  revokeCredentialsForUser(userId: string, revokedAt: string): Promise<void>;
 
   // project metadata
   readMeta(id: string): Promise<ProjectMeta | null>;

@@ -4,7 +4,9 @@
  * \printbibliography with an error pointing at main.tex, `month = June` is
  * an undefined macro to biber, and its key style differed from the
  * synthesized arXiv/OpenAlex entries. A 404 is the resolver's "not
- * registered", not an outage.
+ * registered", not an outage. A DOI lookup follows a redirect only to
+ * DOI_BASE's origin or to a registration agency's metadata service over
+ * https; any other target is never requested.
  */
 import http from 'node:http';
 import { check, eq } from './assert.mjs';
@@ -14,6 +16,12 @@ const upstream = http.createServer((req, res) => {
   const send = (code, body, type = 'application/x-bibtex') => { res.writeHead(code, { 'content-type': type }); res.end(body); };
   if (req.url === `/${encodeURIComponent('10.1145/3442188.3445922')}`) return send(200, CROSSREF);
   if (req.url === `/${encodeURIComponent('10.1145/outage.1')}`) return send(503, 'upstream down', 'text/plain');
+  const redirect = (location) => { res.writeHead(302, { location }); res.end(); };
+  if (req.url === `/${encodeURIComponent('10.1145/hop.same')}`) return redirect('/transform/hop.same');
+  if (req.url === '/transform/hop.same') return send(200, '@article{Doe_2020, title={Same Origin}, author={Doe, Jane}, year={2020} }');
+  if (req.url === `/${encodeURIComponent('10.1145/hop.internal')}`) return redirect(`${internalBase}/latest/meta-data/`);
+  if (req.url === `/${encodeURIComponent('10.1145/hop.metadata')}`) return redirect('https://169.254.169.254/latest/meta-data/');
+  if (req.url === `/${encodeURIComponent('10.1145/hop.loop')}`) return redirect(req.url);
   if (req.url.startsWith('/api/query?id_list=1706.03762')) {
     return send(200, '<?xml version="1.0"?>\n<feed><title>arXiv Query</title><entry><title>Attention Is All\n  You Need</title><published>2017-06-12T00:00:00Z</published><author><name>Ashish Vaswani</name></author><author><name>Noam Shazeer</name></author></entry></feed>', 'application/atom+xml');
   }
@@ -29,13 +37,18 @@ const upstream = http.createServer((req, res) => {
   if (req.url.startsWith('/works/W222')) return send(200, JSON.stringify({ id: 'https://openalex.org/W222', doi: null, title: 'A DOI-less Paper', publication_year: 2019, authorships: [{ author: { display_name: 'Alice Smith' } }], primary_location: { source: { display_name: 'Mock Proc.' } } }), 'application/json');
   send(404, 'not found', 'text/plain');
 });
+// a service on the server's network that a DOI's registrant points its DOI at
+let internalHits = 0;
+const internal = http.createServer((req, res) => { internalHits++; res.writeHead(200, { 'content-type': 'text/plain' }); res.end('@misc{leak, note={internal-secret}}'); });
+await new Promise((r) => internal.listen(0, '127.0.0.1', r));
+const internalBase = `http://127.0.0.1:${internal.address().port}`;
 await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${upstream.address().port}`;
 process.env.DOI_API_BASE = base;
 process.env.ARXIV_API_BASE = base;
 process.env.OPENALEX_API_BASE = base;
 
-const { fetchBibEntry } = await import('../src/references.ts');
+const { fetchBibEntry, doiHopAllowed } = await import('../src/references.ts');
 
 // ---- a doi.org entry: pdflatex-safe, biber-safe month, one key rule and layout ----
 const doi = await fetchBibEntry('10.1145/3442188.3445922');
@@ -84,5 +97,22 @@ let thrown = null;
 try { await fetchBibEntry('10.1145/outage.1'); } catch (err) { thrown = err; }
 check(thrown instanceof Error && /DOI lookup failed \(HTTP 503\)/.test(thrown.message), `a 5xx is an upstream failure with its status (got ${thrown && thrown.message})`);
 
+// ---- redirects: DOI_BASE's origin and the agencies' metadata services only ----
+const same = await fetchBibEntry('10.1145/hop.same');
+check(same !== null && same.includes('Same Origin'), `a redirect within DOI_BASE's origin is followed (got ${JSON.stringify(same)})`);
+eq(await fetchBibEntry('10.1145/hop.internal'), null, 'a redirect to another host resolves to nothing');
+eq(internalHits, 0, 'the redirect target is never requested');
+eq(await fetchBibEntry('10.1145/hop.metadata'), null, 'a redirect to a link-local address resolves to nothing');
+thrown = null;
+try { await fetchBibEntry('10.1145/hop.loop'); } catch (err) { thrown = err; }
+check(thrown instanceof Error && /more than \d+ redirects/.test(thrown.message), `a redirect loop stops (got ${thrown && thrown.message})`);
+for (const u of ['https://api.crossref.org/v1/works/10.1145%2Fx/transform', 'https://data.crosscite.org/10.5281%2Fzenodo.1', 'https://data.medra.org/10.1392%2Fx', 'https://japanlinkcenter.org/data/10.11501/1', 'https://dx.doi.org/10.1145/x']) {
+  check(doiHopAllowed(new URL(u)), `an agency's metadata service is allowed: ${u}`);
+}
+for (const u of ['http://api.crossref.org/v1/works/x/transform', 'https://crossref.org.example.com/x', 'https://evilcrossref.org/x', 'https://169.254.169.254/latest/meta-data/', 'https://localhost/x', 'http://10.0.0.1/x']) {
+  check(!doiHopAllowed(new URL(u)), `refused: ${u}`);
+}
+
 upstream.close();
+internal.close();
 console.log('references tests passed');

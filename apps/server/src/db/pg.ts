@@ -293,6 +293,10 @@ export class PgStore implements DataStore {
   async revokeRefreshFamily(family: string, revokedAt: string) {
     await this.pool.query(`UPDATE refresh_tokens SET revoked_at=$2 WHERE family=$1 AND revoked_at IS NULL`, [family, revokedAt]);
   }
+  async revokeCredentialsForUser(userId: string, revokedAt: string) {
+    await this.pool.query(`UPDATE tokens SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, [userId, revokedAt]);
+    await this.pool.query(`UPDATE refresh_tokens SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, [userId, revokedAt]);
+  }
 
   // ---- project meta ----
   // Same id discipline as the JSON backend: reads treat a malformed id as

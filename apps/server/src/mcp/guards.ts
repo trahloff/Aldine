@@ -6,6 +6,7 @@ import { branchDir, readMeta, type ProjectMeta } from '../store.js';
 import { canAccess } from '../authz.js';
 import { protectedProjects } from '../collab.js';
 import { importPath, isHiddenPath, optionLikePath } from '../util.js';
+import { addressKey } from '../ratelimit.js';
 
 /**
  * Auth and shared authorization helpers for the MCP surface. Tool handlers
@@ -28,7 +29,7 @@ export interface McpIdentity {
  *  client address, else one operator bucket (stdio has no address). */
 export function compileKey(identity: McpIdentity): string {
   if (identity.user) return `u:${identity.user.id}`;
-  return identity.ip ? `mcp:ip:${identity.ip}` : 'mcp:operator';
+  return identity.ip ? `mcp:ip:${addressKey(identity.ip)}` : 'mcp:operator';
 }
 
 /** Constant-time string compare via digests — inputs may differ in length,
@@ -177,8 +178,9 @@ export function diskSpelling(projectId: string, branch: string, rel: string, opt
   let dir = branchDir(projectId, branch);
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    let entries: string[];
-    try { entries = fs.readdirSync(dir); } catch { return [...out, ...segments.slice(i)].join('/'); }
+    let dirents: fs.Dirent[];
+    try { dirents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return [...out, ...segments.slice(i)].join('/'); }
+    const entries = dirents.map((e) => e.name);
     let hit = seg;
     if (!entries.includes(seg)) {
       const lower = seg.toLowerCase();
@@ -194,6 +196,9 @@ export function diskSpelling(projectId: string, branch: string, rel: string, opt
       hit = variants[0];
     }
     out.push(hit);
+    if (dirents.find((e) => e.name === hit)?.isSymbolicLink()) {
+      throw new McpDenied(`"${out.join('/')}" is a symbolic link, which the tools neither read nor write — project_structure lists the project's files`);
+    }
     dir = path.join(dir, hit);
   }
   return out.join('/');
@@ -208,7 +213,7 @@ export function diskSpelling(projectId: string, branch: string, rel: string, opt
  * is a digest, never the raw secret — limiter keys reach logs and Redis.
  */
 export function mcpRateKeys(authorizationHeader: string | undefined, ip: string | undefined): string[] {
-  const keys = [`ip:${ip || 'unknown'}`];
+  const keys = [`ip:${ip ? addressKey(ip) : 'unknown'}`];
   const m = /^Bearer\s+(\S+)$/.exec((authorizationHeader || '').trim());
   if (m) keys.push(`t:${crypto.createHash('sha256').update(m[1]).digest('hex').slice(0, 32)}`);
   return keys;

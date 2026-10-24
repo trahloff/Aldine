@@ -10,8 +10,9 @@
  *
  * The compiler shares the projects volume (read) and an output cache volume
  * (write) with the app server, so no file transfer is needed.
- * Security: restricted shell-escape (whitelist only), nonstopmode, wall-clock
- * timeout, output confined to OUT_DIR/<hash>.
+ * Security: restricted shell-escape (whitelist only), no latexmk rc file, no
+ * symbolic link out of the project, nonstopmode, wall-clock timeout, output
+ * confined to OUT_DIR/<hash>.
  */
 const http = require('http');
 const { spawn } = require('child_process');
@@ -263,6 +264,37 @@ function invalidRootFile(rootFile) {
   return rootFile.split(/[\\/]/).some((seg) => seg.startsWith('-'));
 }
 
+/**
+ * The first symbolic link under `absDir` (project-relative) that does not
+ * resolve to a path inside it, a dangling one included, or null. openin_any
+ * and openout_any judge the name TeX was given, and every open follows
+ * links, so a link is how a name inside the project would reach a file
+ * outside it. `.git` belongs to git: it is not walked, and a link into it
+ * counts as outside. openout_any refuses the name `.git/config`, but not a
+ * write through `x.tex -> .git/config`, and the app server's next git command
+ * runs what that config names.
+ */
+function linkOutOfProject(absDir) {
+  const root = fs.realpathSync(absDir);
+  const gitDir = path.join(root, '.git');
+  const under = (p, dir) => p === dir || p.startsWith(dir + path.sep);
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        let target = null;
+        try { target = fs.realpathSync(abs); } catch { /* dangling: a write through it creates its target */ }
+        if (target === null || !under(target, root) || under(target, gitDir)) return path.relative(root, abs);
+      } else if (e.isDirectory() && e.name !== '.git') {
+        const hit = walk(abs);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  return walk(root);
+}
+
 async function compileInner(body) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false, draft = false } = body;
   if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
@@ -270,6 +302,9 @@ async function compileInner(body) {
   const absDir = path.resolve(DATA_DIR, projectDir);
   if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
+  // Before anything is written: the output directory itself may be a link.
+  const outside = linkOutOfProject(absDir);
+  if (outside) throw new Error(`Cannot typeset: ${outside} is a symbolic link to a path outside the project. Delete it from the project's repository and pull, then typeset again.`);
 
   // Root file may live in a subdirectory (e.g. paper/main.tex). -cd makes latexmk
   // chdir into that dir first, so \input{chapters/…}, \includegraphics, and bib
@@ -280,6 +315,11 @@ async function compileInner(body) {
 
   const engineFlag = engine === 'xelatex' ? '-pdfxe' : engine === 'lualatex' ? '-pdflua' : '-pdf';
   const mkArgs = (force, withFormat = usingFormat) => [
+    // No rc file is read: not the system's or the user's, and not the
+    // project's latexmkrc/.latexmkrc. An rc file is Perl that runs with this
+    // service's own rights, outside shell_escape, openin_any and openout_any,
+    // which bind TeX only. Every setting comes from this command line.
+    '-norc',
     engineFlag,
     ...(force ? ['-g'] : []), // -g: run even if latexmk thinks it's up-to-date
     // Draft: one engine pass on the previous run's .aux/.bbl, no biber/bibtex.

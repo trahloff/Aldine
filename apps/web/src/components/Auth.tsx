@@ -130,8 +130,8 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
         setBusy(false);
         return;
       } else if (mode === 'reset') {
-        await api.resetPassword(token.trim(), password);
-        setInfo('Password updated. You can sign in now.');
+        const { revokedTokens } = await api.resetPassword(token.trim(), password);
+        setInfo(revokedTokens ? 'Password updated, and agent access was revoked. Sign in, then reconnect your agents.' : 'Password updated. You can sign in now.');
         setMode('login'); setPassword(''); setBusy(false);
         return;
       }
@@ -167,7 +167,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
         {passwordAuth && (
           <>
             {mode === 'register' && (
-              <input className="input login__input" placeholder="Name (optional)" value={name} data-testid="auth-name" onChange={(e) => setName(e.target.value)} />
+              <input className="input login__input" placeholder="Name (optional)" value={name} maxLength={100} data-testid="auth-name" onChange={(e) => setName(e.target.value)} />
             )}
             {mode !== 'reset' && (
               <input className="input login__input" type="email" placeholder="Email" value={email} data-testid="auth-email" autoFocus onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />

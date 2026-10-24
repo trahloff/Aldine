@@ -1,7 +1,8 @@
 /**
  * Personal access tokens + contentVersion exposure: digest lookup, expiry,
  * revocation, the lastUsedAt throttle, the preHandler scope check, the
- * token-routes-are-session-only rule, and the PUT /file version_conflict path.
+ * token-routes-are-session-only rule, the per-project routes a token may not
+ * use, and the PUT /file version_conflict path.
  *
  * Runs against the real route table (Fastify inject) on a throwaway JSON
  * datastore — env must be set before any src import, since AUTH_ENABLED and
@@ -25,10 +26,13 @@ const { initDb, db } = await import('../src/db/index.ts');
 await initDb();
 const auth = await import('../src/auth.ts');
 const store = await import('../src/store.ts');
+const gitops = await import('../src/gitops.ts');
 const { registerRoutes } = await import('../src/routes.ts');
 const Fastify = (await import('fastify')).default;
 
 const app = Fastify();
+const registered = [];
+app.addHook('onRoute', (r) => { for (const method of [].concat(r.method)) registered.push({ method, url: r.url }); });
 await registerRoutes(app);
 
 const user = await auth.register('ada@example.com', 'password123', 'Ada');
@@ -147,6 +151,60 @@ res = await app.inject({ method: 'DELETE', url: `/api/tokens/${minted.id}`, head
 check(res.statusCode === 200 && res.json().ok === true, 'DELETE revokes via the route');
 res = await app.inject({ method: 'DELETE', url: `/api/tokens/${minted.id}`, headers: { cookie } });
 check(res.statusCode === 404, 'revoking an already-revoked token → 404');
+
+// ---- per-project routes: a token reads and edits, a session does the rest ----
+// What a credential may change (docs/AGENT_API.md, "What a credential can
+// do"). Every other per-project write, and every remote/* and github/* read,
+// answers the token refusal before its handler runs and changes nothing.
+const TOKEN_WRITES = [
+  'PATCH /api/projects/:id', 'POST /api/projects/:id/restore',
+  'PUT /api/projects/:id/file', 'POST /api/projects/:id/file/rename', 'DELETE /api/projects/:id/file',
+  'POST /api/projects/:id/compile', 'POST /api/projects/:id/synctex',
+  'POST /api/projects/:id/branches', 'POST /api/projects/:id/commit', 'POST /api/projects/:id/revert',
+  'POST /api/projects/:id/references/add', 'POST /api/projects/:id/zotero/sync',
+  'POST /api/projects/:id/comments', 'POST /api/projects/:id/comments/:cid/reply',
+  'POST /api/projects/:id/comments/:cid/resolve', 'POST /api/projects/:id/comments/:cid/accept',
+  'DELETE /api/projects/:id/comments/:cid',
+];
+const REFUSAL = 'Access tokens cannot use this route — sign in to do this';
+const guarded = await store.createProject('Guarded', { 'main.tex': 'ggg' }, user.id);
+await gitops.createBranch(guarded.id, 'side');
+const shareBefore = (await store.readMeta(guarded.id)).share;
+const perProject = registered.filter((r) => r.url.startsWith('/api/projects/:id') && r.method !== 'OPTIONS');
+const isRead = (m) => m === 'GET' || m === 'HEAD';
+const tokenRefused = perProject.filter((r) => (isRead(r.method) ? /^\/api\/projects\/:id\/(remote|github)\//.test(r.url) : !TOKEN_WRITES.includes(`${r.method} ${r.url}`)));
+for (const must of [
+  'POST /api/projects/:id/share', 'POST /api/projects/:id/claim', 'DELETE /api/projects/:id',
+  'POST /api/projects/:id/merge', 'DELETE /api/projects/:id/branches', 'POST /api/projects/:id/zotero/link',
+  'DELETE /api/projects/:id/zotero', 'POST /api/projects/:id/agent-activity/seen', 'POST /api/projects/:id/ai/fix',
+  'POST /api/projects/:id/remote/link', 'POST /api/projects/:id/remote/push', 'POST /api/projects/:id/remote/reset-to-remote',
+  'POST /api/projects/:id/remote/create-branch', 'POST /api/projects/:id/remote/change-request', 'GET /api/projects/:id/remote/status',
+  'POST /api/projects/:id/github/push', 'POST /api/projects/:id/github/link',
+]) check(tokenRefused.some((r) => `${r.method} ${r.url}` === must), `${must} is among the routes checked`);
+const concrete = (url) => url.replace(':id', guarded.id).replace(':cid', 'c0').replace(':hash', 'abcd');
+// Bodies and queries a session's call would carry, so a missing guard shows as a change.
+const body = { mode: 'link', collaborators: ['mallory@example.com'], from: 'side', into: 'main', branch: 'main', head: 'abcd', kind: 'acknowledged' };
+for (const r of tokenRefused) {
+  const url = r.method === 'DELETE' ? `${concrete(r.url)}?permanent=1&name=side` : concrete(r.url);
+  res = await app.inject({ method: r.method, url, headers: fullBearer, ...(isRead(r.method) || r.method === 'DELETE' ? {} : { payload: body }) });
+  check(res.statusCode === 403 && (r.method === 'HEAD' || res.json().error === REFUSAL), `${r.method} ${r.url} with an access token → the token refusal (got ${res.statusCode} ${res.body.slice(0, 120)})`);
+}
+const after = await store.readMeta(guarded.id);
+eq(after.share, shareBefore, 'sharing is unchanged');
+check(!after.deletedAt && fs.existsSync(store.repoDir(guarded.id)), 'the project is neither trashed nor purged');
+check((await gitops.listBranches(guarded.id)).some((b) => b.name === 'side'), 'the branch was not deleted');
+for (const key of TOKEN_WRITES) {
+  if (/\/(compile|synctex)$/.test(key)) continue; // reach the compiler; listed above
+  const [method, route] = key.split(' ');
+  res = await app.inject({ method, url: concrete(route), headers: fullBearer, ...(method === 'DELETE' ? {} : { payload: {} }) });
+  check(res.statusCode !== 403 || res.json().error !== REFUSAL, `${key} stays open to an access token (got ${res.statusCode} ${res.body.slice(0, 120)})`);
+}
+res = await app.inject({ method: 'PUT', url: `/api/projects/${guarded.id}/file`, headers: fullBearer, payload: { path: 'agent.tex', content: 'by token\n' } });
+check(res.statusCode === 200 && store.readFile(guarded.id, 'main', 'agent.tex').toString() === 'by token\n', 'a token still writes a file');
+res = await app.inject({ method: 'POST', url: `/api/projects/${guarded.id}/share`, headers: { cookie }, payload: { mode: 'link', collaborators: [] } });
+check(res.statusCode === 200 && (await store.readMeta(guarded.id)).share.mode === 'link', 'a browser session still changes sharing');
+res = await app.inject({ method: 'DELETE', url: `/api/projects/${guarded.id}/branches?name=side`, headers: { cookie } });
+check(res.statusCode === 200, 'a browser session still deletes a branch');
 
 // ---- contentVersion header + the version_conflict path ----
 res = await app.inject({ method: 'GET', url: `/api/projects/${projA.id}/file?branch=main&path=main.tex`, headers: { cookie } });
