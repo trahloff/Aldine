@@ -8,6 +8,12 @@ bundled Caddy if you don't have one — for TLS. No managed platform required.
 with backups for about €7 a month. Prefer AWS? There's a complete Terraform
 deployment — Fargate, EFS, ALB, SES — in [`deploy/aws`](aws/).)
 
+On a NAS instead of a VPS:
+
+- CasaOS and ZimaOS: import [`deploy/casaos/docker-compose.yml`](casaos/docker-compose.yml) under App Store → Custom Install.
+- TrueNAS 24.10 and later: [docs/TRUENAS.md](../docs/TRUENAS.md) (Install via YAML).
+- Unraid: [docs/UNRAID.md](../docs/UNRAID.md) (Compose Manager Plus).
+
 ## 1. Provision
 
 - A VPS with **2+ dedicated vCPUs, ≥8 GB RAM, ≥40 GB disk**. LaTeX compiles are
