@@ -15,7 +15,7 @@ import { check } from './assert.mjs';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 /** Read outside the app, so the code never names them. */
-const DEPLOY_ONLY = ['ALDINE_DOMAIN', 'ALDINE_APP_BIND', 'ALDINE_PORT', 'ALDINE_PROJECT', 'ALDINE_TEXLIVE_SCHEME', 'ALDINE_VERSION', 'ALDINE_TEXLIVE'];
+const DEPLOY_ONLY = ['ALDINE_DOMAIN', 'ALDINE_APP_BIND', 'ALDINE_PORT', 'ALDINE_PROJECT', 'ALDINE_TEXLIVE_SCHEME', 'ALDINE_VERSION', 'ALDINE_TEXLIVE', 'ALDINE_BACKUP_DB'];
 const DEPLOY_FILES = ['docker-compose.yml', 'docker-compose.full.yml', 'deploy/docker-compose.prod.yml', 'deploy/Caddyfile', 'deploy/backup.sh', 'deploy/restore.sh'];
 
 /** The variable names in the first column of the table under "## All configuration". */
