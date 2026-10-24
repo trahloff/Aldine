@@ -4,7 +4,7 @@ import { config } from './config.js';
 import { CATALOG_WAIT_MS, VENUE_PREFIX, venueClasses, venueTemplateFiles, venueTemplates } from './catalog.js';
 import { venueKit, venueKitSeed, venueKitTemplates, type VenueKitStatus } from './venuekits.js';
 import { REPO_PREFIX, listRepoTemplates, repoTemplateFiles } from './templaterepos.js';
-import { isTextFile } from './util.js';
+import { isTextFile, latexEscape } from './util.js';
 
 export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' | 'General';
 
@@ -144,11 +144,6 @@ export function templateFilesIn(base: string, id: string): Record<string, Buffer
 export interface SeedContext { projectName?: string; author?: string; now?: Date }
 
 const PLACEHOLDER_RE = /\{\{(PROJECT_NAME|AUTHOR|DATE|YEAR)\}\}/g;
-const TEX_SPECIALS: Record<string, string> = { '\\': '\\textbackslash{}', '&': '\\&', '%': '\\%', '$': '\\$', '#': '\\#', '_': '\\_', '{': '\\{', '}': '\\}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
-/** A project name is prose; inside a .tex file its specials must not typeset as commands. */
-export function latexEscape(s: string): string {
-  return s.replace(/[\\&%$#_{}~^]/g, (c) => TEX_SPECIALS[c]);
-}
 
 /**
  * Substitute the placeholders in every text file of a seed (binaries untouched,
