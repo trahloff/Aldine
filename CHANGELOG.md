@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-10-25
+
 ### Fixed
 - Files with Windows (CRLF) line endings: every edit landed one character to
   the left for each line above it, and the stored file and other people's
