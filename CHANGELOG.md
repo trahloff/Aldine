@@ -6,6 +6,8 @@ All notable changes to Aldine are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.4] — 2026-10-24
+
 ### Added
 - `ALDINE_AI_AUTOFIX=1` on the server: a failed typeset opens the Fix tab
   and runs the diagnosis without a click. It runs once per new error, so
