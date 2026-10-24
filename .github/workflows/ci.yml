@@ -86,3 +86,4 @@ jobs:
           docker compose -f docker-compose.full.yml config >/dev/null
           ALDINE_DOMAIN=x DATABASE_URL=x docker compose -f docker-compose.full.yml --profile tls --profile postgres --profile redis config >/dev/null
           ALDINE_APP_BIND=127.0.0.1 docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml config >/dev/null
+          AppID=aldine docker compose -f deploy/casaos/docker-compose.yml config >/dev/null
