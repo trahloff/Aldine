@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/overleaf-compile-timeout/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-12",
+      "dateModified": "2026-10-24",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -242,7 +242,7 @@
 <p>Aldine is an open-source, self-hosted collaborative LaTeX editor. It also has a compile timeout, because a runaway compile should not hold a server forever. The difference is that the person running the server sets it.</p>
 <ul>
 <li><strong>The setting.</strong> The compiler container reads <code>COMPILE_TIMEOUT_MS</code>, in milliseconds. The default is <code>120000</code>, which is 120 seconds.</li>
-<li><strong>What it measures.</strong> It is a wall-clock limit on the latexmk run, which covers all passes of one typeset. When it expires, the whole process group is stopped and the editor reports that typesetting timed out.</li>
+<li><strong>What it measures.</strong> It is a wall-clock limit on one latexmk run, which covers all of that run&#39;s passes. A typeset that has to run latexmk again (no PDF came out, stale auxiliary files, a precompiled preamble that failed) gives the new run the full limit too, so one typeset can take longer than the limit. When it expires, the whole process group is stopped and the editor reports that typesetting timed out.</li>
 <li><strong>Related limits.</strong> <code>MAX_CONCURRENT_COMPILES</code> (default 2) caps how many compiles run at once, and <code>ALDINE_COMPILE_QUOTA_MIN</code> can add a per-user quota if you host for a group.</li>
 <li><strong>Incremental builds.</strong> latexmk's auxiliary files are kept between compiles, so a small edit does not start from an empty build directory.</li>
 </ul>

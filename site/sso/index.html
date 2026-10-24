@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/sso/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-12",
+      "dateModified": "2026-10-24",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -137,7 +137,7 @@
 <p class="crumbs"><a href="/">Aldine</a> / <a href="/docs/">Documentation</a> / Single sign-on</p>
 <h1>Single sign-on for a self-hosted LaTeX editor</h1>
 <p class="lede">Aldine is an open-source, self-hosted collaborative LaTeX editor. It signs people in with your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID, Dex), with Google, GitHub or ORCID, or with email and password. This page has every setting, the redirect URI and a recipe per provider. It also covers single sign-on on a self-hosted Overleaf, where it is part of Server Pro.</p>
-<p class="checked">Applies to Aldine 0.11.0. Written by the Aldine project, so read it with that in mind. Statements about Overleaf are taken from the linked pages of Overleaf's own documentation. Checked on 12 October 2026.</p>
+<p class="checked">Applies to Aldine 0.14.4. Written by the Aldine project, so read it with that in mind. Statements about Overleaf are taken from the linked pages of Overleaf's own documentation. Checked on 12 October 2026.</p>
 
 <h2 id="methods">Sign-in methods</h2>
 <p>Sign-in is off by default. Without <code>AUTH_ENABLED</code> an instance is single-tenant: there is no login, and everyone who can reach it has full access. <code>AUTH_ENABLED=1</code> turns on accounts, per-project ownership and sharing (by invitation or by link).</p>
@@ -410,7 +410,7 @@ OIDC_LABEL=Dex</code></pre>
 <tr><th scope="row"><code>your account is not in a group that may use this Aldine instance</code></th><td><code>OIDC_ALLOWED_GROUPS</code> is set and the person's groups claim names none of them. Check <code>OIDC_GROUPS_CLAIM</code>, and that the provider sends groups (Keycloak needs a mapper; Authelia and Pocket ID need the <code>groups</code> scope).</td></tr>
 <tr><th scope="row"><code>OAuth state mismatch</code></th><td>The sign-in took more than 10 minutes, cookies are blocked, or the callback was opened in another browser.</td></tr>
 <tr><th scope="row"><code>An account with this email already exists</code></th><td>The address belongs to a password account or to an account from another provider. Single sign-on never takes it over; the message names the method to use.</td></tr>
-<tr><th scope="row"><code>An account with this email already belongs to a different single sign-on identity</code></th><td>Usually <code>OIDC_ISSUER</code> changed. See <a href="#issuer-change">changing the issuer</a>.</td></tr>
+<tr><th scope="row"><code>An account with this email already belongs to a different single sign-on identity</code></th><td>With <code>OIDC_LABEL</code> set, the label stands in for &ldquo;single sign-on&rdquo;. Usually <code>OIDC_ISSUER</code> changed. See <a href="#issuer-change">changing the issuer</a>.</td></tr>
 <tr><th scope="row"><code>no verified email on the Google account</code> or <code>no verified email on the GitHub account</code></th><td>The provider did not report a verified address. Verify the address there and sign in again.</td></tr>
 <tr><th scope="row"><code>Password sign-in is disabled</code></th><td><code>ALDINE_SSO_ONLY</code> is set, so the password endpoints answer 403.</td></tr>
 <tr><th scope="row"><code>[aldine] OIDC sign-in is off: OIDC_CLIENT_ID is not set</code> in the boot log</th><td>Some <code>OIDC_*</code> variables are set but not both required ones. Check the spelling.</td></tr>

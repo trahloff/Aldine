@@ -261,8 +261,13 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
   docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
     --profile postgres up -d
   ```
-  Users, sessions, project metadata, comments, and usage move to Postgres;
-  git repos stay on disk. The same test suite passes on both backends.
+  Users, sessions, tokens, project metadata, comments and usage are then
+  stored in Postgres; git repos stay on disk, and the Yjs snapshots and the
+  signing secret stay in the secrets volume. The same test suite passes on
+  both backends. Nothing copies an existing instance's JSON files into
+  Postgres: an instance switched over starts with no accounts and lists no
+  projects, so choose the backend before people use it. `deploy/backup.sh`
+  does not dump the database; back it up with `pg_dump` alongside.
   Enabling Redis works the same way: `--profile redis` plus the `REDIS_URL`
   line in `.env`.
 
@@ -323,7 +328,13 @@ same arithmetic.
 
 ## All configuration
 
-Everything is env-gated; blank/unset means "off" or the listed default.
+Everything is env-gated; blank/unset means "off" or the listed default. The
+compose files hand a variable to a container only when they name it:
+`docker-compose.full.yml` passes most of the table through from `.env`. For
+`ALDINE_ADMIN_EMAILS`, `ALDINE_TRASH_DAYS`, `PG_POOL_MAX`, `LOG_LEVEL`,
+`CACHE_DIR`, `PLUGINS_DIR`, the `RL_*` limits and the compiler's
+`ALDINE_PREAMBLE_CACHE`, add the line under `environment:` of the `app` (or
+`compiler`) service in an override file.
 
 | Variable | Purpose |
 |---|---|
@@ -353,11 +364,8 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `GITLAB_DEFAULT_GROUP` | Full path of the root group new projects are created in (`research/latex`); users may pick any subgroup of it in the new-project dialog, or create one. Deleting a project deletes the GitLab project only when Aldine created it, an imported repository is never touched; GitLab's delayed deletion is handled (a purge is requested, otherwise the scheduled date is reported), and restoring the project re-creates it in the same namespace |
 | `GITLAB_DEFAULT_VISIBILITY` | Visibility of provisioned GitLab projects: `private` (default), `internal` or `public` |
 | `AUTOPUSH_DEBOUNCE_MS` | Quiet period after an autosave commit on `main` before the server pushes a provisioned project (default `30000`). Failed pushes back off exponentially, capped at 15 minutes, and stop after 8 attempts until the next commit |
-| `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
-| `GITEA_API_BASE` | Tests only: replaces `<instance>/api/v1` for every Gitea/Forgejo call and lets a pasted instance URL be http. Never set in production |
 | `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
-| `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP) |
-| `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |
+| `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP); `AWS_DEFAULT_REGION` is read when `AWS_REGION` is unset |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `OPENAI_API_KEY` | AI error-fix; precedence OpenRouter > OpenAI > Anthropic |
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
 | `ALDINE_AI_AUTOFIX` | `1` = a failed typeset opens the Fix tab and diagnoses without a click (default off) |
@@ -371,14 +379,45 @@ Everything is env-gated; blank/unset means "off" or the listed default.
 | `TRUST_PROXY` | `1` = trust `X-Forwarded-For` (set by the prod overlay; needed behind any proxy) |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST` | Rate-limit tuning (sane defaults) |
-| `RL_COMPILE_CONCURRENCY` | Max concurrent compiles the app forwards (default 2) |
+| `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
+| `ALDINE_COMPILE_PER_MIN` | Typesets per minute per client (default: no limit). Meant for a public demo under launch traffic |
+| `ALDINE_PROTECTED_PROJECTS` | Comma-separated project ids that every visitor may read and typeset and nobody may change (a public demo's sample papers) |
+| `LOG_LEVEL` | Server log level (default `info`; `warn` keeps only warnings and errors) |
+| `DATA_DIR` | Project git repositories, their branch worktrees and each branch's `.aldine-out` compile output. The image sets `/data`. The compiler's `DATA_DIR` must be the same volume |
+| `META_DIR` | Secrets and metadata: the JSON datastore, the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
+| `CACHE_DIR` | Template-repository checkouts and downloaded venue kits (default `.cache/latex` in the install directory, which in the image is not on a volume: the cache starts empty when the container is recreated) |
+| `COMPILER_URL` | Where the app reaches the compiler (default `http://localhost:4020`; the image sets `http://compiler:4020`) |
+| `PORT` | Port inside the container: the app listens on `3000`, the compiler on `4020` |
+| `PLUGINS_DIR` | Folder of plugins the app serves (the image sets `/srv/plugins`, the built-in three) |
+| `ALDINE_MCP_CLIENT_TOKEN` | For the stdio MCP entry point (`dist/mcp/stdio.js`): the value of `ALDINE_MCP_TOKEN`, which it must present when that is set (or pass `--token`) |
+| `RL_COMPILE_CONCURRENCY` | Typesets one client (the signed-in user, else the IP address) may have in flight on an app node (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PREAMBLE_CACHE` | Compiler container. `0` turns off the precompiled preamble (pdfLaTeX projects load their packages from a format built in the background, rebuilt when the preamble or a file it reads changes). On by default |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
-| `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, ~4.3 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
+| `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, about 5 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
 | `ALDINE_VERSION`, `ALDINE_TEXLIVE` | Prebuilt images (`docker-compose.yml`): the release to run (default: the current release, pinned in the file) and the compiler variant, empty (medium TeX Live plus the common collections) or `-full` (all of TeX Live, from 0.4.0). Single extra packages: a derived image with `RUN tlmgr install <pkg>`, see the root README, "Need a package it does not have?" |
 | `ALDINE_TRASH_DAYS` | Days deleted projects stay restorable in the trash before the daily sweep purges them (default `30`) |
 | `TEMPLATE_REPOS` / `TEMPLATE_REPOS_FILE` | Git repositories whose template folders join the gallery under their label: a JSON array of `{ id, label?, url, ref?, path?, tokenEnv?, user? }`, inline or in the file `TEMPLATE_REPOS_FILE` names. Read once at boot; a bad entry is logged and skipped. Checkouts live in `CACHE_DIR/template-repos/<id>`. Field reference in `templates/README.md` |
 | *(per repository)* the variable `tokenEnv` names | Read token for a private template repository, e.g. `TEMPLATE_REPO_LAB_TOKEN`. Any name; injected per git operation, never written to the checkout's `.git/config` |
 | `TEMPLATE_REPOS_REFRESH_MS` | How often template repositories are fetched again (default `600000` = 10 min; values below `60000` are raised to it). "Refresh templates" in the new-project dialog fetches on demand |
 | `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |
+
+### Tests and internals
+
+These exist for the test suites, for development and for tuning. They may
+change or go away in any release, and none of them belongs in a production
+`.env`.
+
+| Variable | Purpose |
+|---|---|
+| `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |
+| `ALDINE_TEST_HOOKS`, `ALDINE_TEST_ALLOW_LOOPBACK_CIMD` | `1` = test-only routes, and http or loopback URLs for template repositories, venue kits and OAuth client metadata. Never set in production |
+| `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
+| `GITEA_API_BASE` | Tests only: replaces `<instance>/api/v1` for every Gitea/Forgejo call and lets a pasted instance URL be http. Never set in production |
+| `GITHUB_API_BASE`, `ZOTERO_API_BASE`, `OPENALEX_API_BASE`, `DOI_API_BASE`, `ARXIV_API_BASE`, `ORCID_API_BASE`, `ORCID_PUB_API_BASE` | Tests only: point that client at a mock server |
+| `ALDINE_AUTOCOMMIT_MS` | Quiet period after an edit before it is committed (default `20000`) |
+| `ALDINE_AGENT_PRESENCE_TTL_MS` | How long Claude's presence in a document outlives its last write (default `60000`) |
+| `REMOTE_STATUS_TTL_MS` | How long one fetch of a remote serves every editor's ahead/behind status (default `30000`) |
+| `VENUE_KIT_TIMEOUT_MS` | Shortens the 20-second download limit for a venue kit |
+| `TEMPLATES_DIR`, `VENUES_FILE`, `WEB_DIST`, `ALDINE_PDF_VIEWER_HTML` | Where the app finds the folder templates, the venue-kit registry, the built web app and the in-chat PDF viewer (the defaults point into the install) |
+| `TEXLIVE_SCHEME_FILE` | Compiler: the file it reads its TeX Live scheme name from (the image writes it) |

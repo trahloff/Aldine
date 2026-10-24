@@ -21,6 +21,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ALDINE_AI_MODEL: ${ALDINE_AI_MODEL:-}
       ALDINE_AI_BASE_URL: ${ALDINE_AI_BASE_URL:-}
+      ALDINE_AI_AUTOFIX: ${ALDINE_AI_AUTOFIX:-}
       # Optional multi-user auth. AUTH_ENABLED=1 turns on login + per-project access.
       AUTH_ENABLED: ${AUTH_ENABLED:-}
       # ALDINE_SSO_ONLY=1 disables password sign-in entirely (SSO only; no SMTP needed).
@@ -127,7 +128,7 @@ services:
     build:
       context: apps/compiler
       args:
-        # medium (default, ~1 GB + pinned extras) or full (all of CTAN, ~9 GB on disk):
+        # medium (default, about 5 GB on disk) or full (all of TeX Live, ~9 GB on disk):
         #   ALDINE_TEXLIVE_SCHEME=full docker compose up -d --build
         TEXLIVE_SCHEME: ${ALDINE_TEXLIVE_SCHEME:-medium}
     environment:

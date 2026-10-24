@@ -128,9 +128,9 @@ That is the whole setup. The connection appears under **Connections** on the
 Agent access card with the client's name, its project scope and a "via
 Connect" badge; **Revoke**
 there ends it (and its refresh token) at the next call. Under the hood the
-access token rotates daily and the connection renews itself for up to 30
-days while in use — the card shows the connection's creation and last use,
-not the rotations; you only see the consent page again after a revoke or a
+access token rotates daily and the connection renews itself as long as it
+is used, lapsing after 30 days unused — the card shows the connection's
+creation and last use, not the rotations; you only see the consent page again after a revoke or a
 reconnect. Writes prompt for approval in Claude unless you allow
 the tool; the read-only tools are marked as such so Claude can allow them
 without asking.
@@ -324,16 +324,17 @@ configuration file, using the command from the previous section.
 | `compile` | Typesets with latexmk: errors before warnings (file, line, message, the source line as `context`, the tool behind a warning as `source`; every engine row names a file, a biber row names the `.bib` and its line; `errorsTotal` and `warningsTotal` count them), on failure 4 KB of the log around the first error, page count, a signed PDF link, a deep link into the editor; a missing package or a character pdflatex cannot typeset is reported as a `hint`. A project with no `.tex` file is told so. | no |
 | `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling, whoever typeset it; it does not contain edits made since, so Claude is told to `compile` when it has written since its last run. | yes |
 | `commit` | Commits any agent work still waiting on the branch (a write whose own commit git refused), as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Every write commits on its own as it lands, so the normal answer is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | no |
-| `references_add` | Resolves a DOI, arXiv or OpenAlex id (`query`) to BibTeX — one key rule (`surname2021`) and layout whatever the upstream, made typesettable under pdflatex and biber — and appends it to the project's `.bib` (`bibFile?`, created with its folders when missing — `created:true`); a `note` says when no `.tex` on the branch loads that file. An id the upstream does not know is "No reference found"; only a 5xx is a lookup failure. | no |
+| `references_add` | Resolves a DOI, arXiv or OpenAlex id (`query`) to BibTeX — one key rule (`surname2021`) and layout whatever the upstream, made typesettable under pdflatex and biber — and appends it to the project's `.bib` (`bibFile?`, created with its folders when missing — `created:true`); a `note` says when no `.tex` on the branch loads that file. An id the upstream does not know (404 or 410) is "No reference found"; any other error answer, a 5xx or a rate limit, is a lookup failure. | no |
 | `list_citations` | Citation keys in the project's `.bib` files, with title, author, year. | yes |
 | `list_labels` | `\label` targets across the project's `.tex` files. | yes |
 | `wordcount` | Words in the root file and its `\input`/`\include` graph; an error, not 0, while the project has no main document. | yes |
 | `trash_project` | Moves a project to the workspace trash, where its owner restores it for `ALDINE_TRASH_DAYS` (30 by default); the tool never purges. Accepts only projects made with `create_project` (`agentCreated:true` in `list_projects`) and only for their owner — a person's project is refused and Claude is told to ask them to delete it in Aldine. Its description tells Claude to use it only when asked. | no |
-| `create_project` | A new project, blank or from a template — a folder template (`article`, `beamer`, `report`, `iac-paper`) or a venue kit (`venue:<id>`, the publisher's class files downloaded on first use; an unknown id is refused with the full list). Returns the id, the seeded `files` and `contentVersion` for the first write. Refused for a project-scoped credential. | no |
+| `create_project` | A new project, blank or from a template — a folder template (`article`, `beamer`, `report`, `iac-paper`) or a venue (`venue:<id>`: a publisher class installed in the compiler image, or a kit downloaded from the publisher when the project is created; an unknown id is refused with the full list). Returns the id, the seeded `files` and `contentVersion` for the first write. Refused for a project-scoped credential. | no |
 
 Every tool that works inside a project takes `project` (optional for a
 single-project token) and `branch` (default `main`) — `ping`, `list_projects`
-and `create_project` take neither. Every structured result — the error
+and `create_project` take neither, and `trash_project` takes a required
+`project` and no `branch`. Every structured result — the error
 bodies `version_conflict`, `stale_anchor` and `ambiguous_anchor` included —
 echoes `branch` and `head` (after a write, the commit that write made), and
 a file tool's result names its `path`; a plain refusal is one sentence of text. The exact argument names live in the

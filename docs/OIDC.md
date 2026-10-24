@@ -4,8 +4,10 @@ Aldine can use any OpenID Connect provider for sign-in: Keycloak, Authentik,
 Authelia, Pocket ID, Dex, or a hosted one. It shows up on the sign-in page as one
 more button next to Google, GitHub and ORCID. One OIDC provider per instance.
 
-It needs multi-user mode (`AUTH_ENABLED=1`) and `ALDINE_PUBLIC_URL`. With
-`ALDINE_SSO_ONLY=1` the OIDC button is the only way in.
+It needs multi-user mode (`AUTH_ENABLED=1`), and `ALDINE_PUBLIC_URL` should be
+set (see below). `ALDINE_SSO_ONLY=1` turns password sign-in off, so the OIDC
+button and any Google, GitHub or ORCID button you configured are the only
+ways in.
 
 ## The redirect URI
 
@@ -411,7 +413,7 @@ with it.
 | `… your account is not in a group that may use this Aldine instance` | `OIDC_ALLOWED_GROUPS` is set and the person's groups claim (checked in the ID token, then userinfo) names none of them. Check `OIDC_GROUPS_CLAIM`, and that the IdP sends groups (Keycloak needs a mapper; Authelia and Pocket ID need the `groups` scope). |
 | `OAuth state mismatch — please try again` | The sign-in took more than 10 minutes, cookies are blocked, or the callback was opened in another browser. |
 | `An account with this email already exists — sign in with your password instead.` | The address belongs to a password account; single sign-on never takes it over. |
-| `An account with this email already belongs to a different single sign-on identity — ask the administrator for help.` | Usually `OIDC_ISSUER` changed. See [Changing `OIDC_ISSUER`](#changing-oidc_issuer) for how to move the account. |
+| `An account with this email already belongs to a different single sign-on identity — ask the administrator for help.` (with `OIDC_LABEL` set, the label replaces "single sign-on") | Usually `OIDC_ISSUER` changed. See [Changing `OIDC_ISSUER`](#changing-oidc_issuer) for how to move the account. |
 | `This account signs in with single sign-on, which manages its password.` | Someone tried to set a password on an OIDC account through the API. Single sign-on accounts have no password. |
 | `[aldine] OIDC sign-in is off: OIDC_CLIENT_ID is not set` in the boot log | Some `OIDC_*` variables are set but not both required ones. Check the spelling. |
 | The IdP reports `redirect_uri` mismatch | The redirect URI at the IdP differs from `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback` (check the path prefix and trailing slashes). |

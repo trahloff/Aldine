@@ -1,5 +1,15 @@
 # Venue kits fetched from the publisher (spec)
 
+> **Status: built.** Shipped in 0.4.0 with 25 venues. This is the brief it
+> was built from, kept for its reasoning. Where the two differ, the code is
+> right: `apps/server/src/venuekits.ts` holds the load-time rules and
+> `templates/venues.json` the entries. The shipped schema also has `urls`
+> (bare files instead of an archive), `flatten`, `icon`, `classOptions` and
+> `classSetsBibStyle`; `category` is one of Journals, Conferences, Theses,
+> Slides or General; an archive's `take` list needs at least one exact file
+> name and must include `main`. Elsevier CAS, SAGE and PLOS did not make the
+> registry.
+
 Context: issue #9 asked for "as many journal and conference templates as
 possible". The gallery in PR #22 covers the fifteen venue classes TeX Live
 actually installs. Every remaining venue (NeurIPS, ICLR, ICML, ACL, CVPR,

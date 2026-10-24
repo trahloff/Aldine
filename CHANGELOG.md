@@ -22,6 +22,22 @@ All notable changes to Aldine are documented here. The format follows
   corrupt data still ship at once. The rule is in CONTRIBUTING.md,
   "Releasing".
 
+### Fixed
+- The upgrade command in the README and on aldine.dev set `ALDINE_VERSION`
+  for `docker compose pull` only, so the `up -d` after it started the old
+  version again. Both now put the version in `.env`.
+- `docker-compose.full.yml` did not pass `ALDINE_AI_AUTOFIX` to the app, so
+  setting it in `.env` did nothing.
+- The README and aldine.dev said the gallery had 4 templates. It has
+  4 starter templates, one per publisher class in the compiler's TeX Live (15
+  in the published images) and 25 conference and journal kits. The
+  compiler image is about 2.4 GB to download and about 5 GB on disk, not
+  1.1 GB and 4.3 GB.
+- `deploy/README.md` now lists every variable the server and compiler read,
+  with the test and tuning ones in a table of their own, and says that an
+  instance switched to Postgres starts without its JSON data and that
+  `deploy/backup.sh` does not dump the database.
+
 ## [0.14.4] — 2026-10-24
 
 ### Added

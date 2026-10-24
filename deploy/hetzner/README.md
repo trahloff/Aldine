@@ -31,8 +31,8 @@ On your machine, next to nothing public. The keys are the ones in
 `deploy/README.md`, plus three the box needs:
 
 ```dotenv
-ALDINE_VERSION=0.11.0
-ALDINE_TEXLIVE=-full              # blank = medium scheme (~1 GB), -full = all of CTAN
+ALDINE_VERSION=0.14.4
+ALDINE_TEXLIVE=-full              # blank = medium scheme (~5 GB on disk), -full = all of TeX Live
 ALDINE_DOMAIN=aldine.example.com  # Caddy requests the certificate for this name
 ALDINE_PUBLIC_URL=https://aldine.example.com
 AUTH_ENABLED=1
