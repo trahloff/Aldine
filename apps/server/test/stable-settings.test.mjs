@@ -66,7 +66,8 @@ const code = [...sources(path.join(repo, 'apps/server/src'), /\.ts$/), ...source
   .map((f) => codeOf(f, /^\s*(\/\/|\/\*|\*)/)).join('\n');
 const deploy = DEPLOY_FILES.map((f) => codeOf(path.join(repo, f), /^\s*#/)).join('\n');
 
-const readInCode = (name) => new RegExp(`\\benv(\\.${name}\\b|\\[['"\`]${name}['"\`]\\])`).test(code);
+// env.NAME, env['NAME'], or either side of a rename: envWithFallback('NAME', ['OLD'])
+const readInCode = (name) => new RegExp(`\\benv(\\.${name}\\b|\\[['"\`]${name}['"\`]\\])|\\benvWithFallback\\([^)]*['"]${name}['"]`).test(code);
 // ${NAME}, ${NAME:-x}, ${NAME-x}, ${NAME:?x} in compose and sh; {$NAME} in the Caddyfile
 const readInDeploy = (name) => new RegExp(`\\$\\{${name}[}:?-]|\\{\\$${name}\\}`).test(deploy);
 

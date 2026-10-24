@@ -177,6 +177,11 @@ working for at least one further minor release, logs a warning when it is
 used, and is listed under "Deprecated" in the CHANGELOG with what replaces
 it. It goes away no earlier than the next major release.
 
+A renamed setting is read with `envWithFallback(new, [old])` from
+`apps/server/src/config.ts`: the new name wins, the old one keeps working,
+and each old name in use logs one warning per process that names both. No
+setting has been renamed so far, so nothing logs this warning today.
+
 ## Not covered
 
 - The web interface: layout, wording, default keyboard shortcuts.
@@ -197,4 +202,4 @@ it. It goes away no earlier than the next major release.
 | MCP tool names and parameters | `apps/server/test/mcp-contract.test.mjs` compares `tools/list` with the snapshot in `test/fixtures/mcp-contract.json` and fails on a removed or renamed tool or parameter, a parameter made required or a changed type; it also calls the tools for the three error names | in place |
 | Plugin API | `e2e/tests/06-plugins.spec.ts` loads a plugin and registers a panel | covers loading, not every member |
 | Stable settings keep their names | `apps/server/test/stable-settings.test.mjs` reads the main table of `deploy/README.md` and fails on a variable that the server, the compiler or (for the deployment's own) the compose files no longer read | in place |
-| Deprecations warn | none yet | to be added |
+| Deprecations warn | settings: `apps/server/test/env-fallback.test.mjs` checks that an old name read through `envWithFallback` still works and warns once. MCP tools: none, no tool is deprecated | in place for settings |
