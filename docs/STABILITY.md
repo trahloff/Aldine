@@ -194,7 +194,7 @@ it. It goes away no earlier than the next major release.
 | Upgrades start on older data, JSON and Postgres | the upgrade check in the release workflow (`lifecycle.yml`), from the previous release and from 0.14.4 | in place |
 | Both datastores behave the same | the datastore conformance suite, in CI on every pull request and release | in place |
 | Released images boot and typeset | the smoke test in the release workflow, against the published digests | in place |
-| MCP tool names and parameters | a snapshot of `tools/list` that fails on a removed or renamed tool or parameter | to be added |
+| MCP tool names and parameters | `apps/server/test/mcp-contract.test.mjs` compares `tools/list` with the snapshot in `test/fixtures/mcp-contract.json` and fails on a removed or renamed tool or parameter, a parameter made required or a changed type; it also calls the tools for the three error names | in place |
 | Plugin API | `e2e/tests/06-plugins.spec.ts` loads a plugin and registers a panel | covers loading, not every member |
 | Stable settings keep their names | none yet | to be added |
 | Deprecations warn | none yet | to be added |
