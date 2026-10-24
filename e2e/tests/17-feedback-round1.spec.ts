@@ -168,13 +168,20 @@ test.describe('compile to completion', () => {
       await expect.poll(async () => (await (await request.get(`/api/projects/${id}`)).json()).stopOnFirstError).toBe(true);
       await page.keyboard.press('Escape');
 
+      // an edit, so latexmk runs TeX again instead of repeating the last run's error
+      const errored = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex',
+        content: errored.replace('\\thisMacroDoesNotExist', '\\thisMacroDoesNotExistEither') } });
       const third = compileResponse(page);
       await page.getByTestId('typeset-button').click();
       const halted = await (await third).json();
       expect(halted.ok).toBe(false);
       expect(halted.pdfStale).toBe(true);
-      expect(halted.pdfUrl).toBe(withErrors.pdfUrl);
+      // pdfTeX deletes an output it had opened when it halts (hyperref opens it
+      // before the first page); the previous link survives only with the file
+      expect([withErrors.pdfUrl, null]).toContain(halted.pdfUrl);
       await expect(page.getByTestId('pdf-stale')).toBeVisible();
+      await expect.poll(() => page.locator('canvas.pdf-page').count()).toBe(pagesBefore);
     } finally { await cleanup(request, id); }
   });
 
