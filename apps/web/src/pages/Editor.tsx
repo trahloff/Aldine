@@ -9,6 +9,7 @@ import ShareModal from '../components/ShareModal';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
+import { setVisualFiles } from '../editor/visual/context';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import BranchMenu from '../components/BranchMenu';
 import HistoryPanel from '../components/HistoryPanel';
@@ -36,6 +37,7 @@ import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
 import { toggleTheme } from '../theme';
 import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
+import { shortcut } from '../platform';
 import { usePopover } from '../util/usePopover';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
@@ -51,6 +53,8 @@ const AGENT_REVIEW_MAX_COMMITS = 20;
  *  included, sits in the More menu. */
 const PINNED_PANELS = ['plugin:references'];
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
+/** Source or Visual, the last one this browser chose; Source until then. */
+const EDITOR_MODE = 'aldine.editorMode';
 
 /** A text field that is not the code editor. */
 function inTextField(target: EventTarget | null): boolean {
@@ -157,13 +161,21 @@ export default function Editor() {
     try { if (!window.matchMedia('(max-width: 640px)').matches) localStorage.setItem(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* storage off: this visit only */ }
   }, []);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
-  // Visual mode is gated by an experimental flag until it graduates.
-  const visualEnabled = localStorage.getItem('aldine.experimental.visualEditor') === '1';
-  // Agent-edit fade highlights are gated the same way (presence chip is not).
+  // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
   const agentPresenceEnabled = localStorage.getItem('aldine.experimental.agentPresence') === '1';
-  const [mode, setMode] = useState<EditorMode>(() =>
-    visualEnabled && localStorage.getItem('aldine.editorMode') === 'visual' ? 'visual' : 'source');
-  const switchMode = (m: EditorMode) => { localStorage.setItem('aldine.editorMode', m); setMode(m); };
+  const [mode, setMode] = useState<EditorMode>(() => {
+    try { return localStorage.getItem(EDITOR_MODE) === 'visual' ? 'visual' : 'source'; } catch { return 'source'; }
+  });
+  const switchMode = (m: EditorMode) => {
+    setMode(m);
+    try { localStorage.setItem(EDITOR_MODE, m); } catch { /* storage off: this visit only */ }
+    // after the palette that ran it has closed, or off the button that was clicked
+    requestAnimationFrame(() => codeRef.current?.focus());
+  };
+  // Visual renders LaTeX documents: a .bib, .sty or .cls opens as source, and
+  // the remembered choice applies again at the next .tex
+  const visualFile = !!activeFile && /\.tex$/i.test(activeFile);
+  const paneMode: EditorMode = visualFile ? mode : 'source';
   const [comments, setComments] = useState<Comment[]>([]);
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
   const codeRef = useRef<CodePaneHandle>(null);
@@ -749,6 +761,11 @@ export default function Editor() {
     toast(`${activeFile} was removed from the project by someone else`);
   }, [files]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // figure previews in Visual mode ask only for files that exist
+  useEffect(() => {
+    setVisualFiles(id, branch, files.filter((f) => f.type === 'file').map((f) => f.path));
+  }, [id, branch, files]);
+
   // push this file's comment ranges into the editor as highlight decorations
   useEffect(() => {
     if (!activeFile) return;
@@ -975,9 +992,20 @@ export default function Editor() {
       { id: 'share', group: 'File', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
-      ...(visualEnabled
+      ...(visualFile
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
-        : [{ id: 'experimental-visual', group: 'View', title: 'Enable experimental Visual editor', run: () => { localStorage.setItem('aldine.experimental.visualEditor', '1'); location.reload(); } }]),
+        : []),
+      ...(paneMode === 'visual'
+        ? [{
+          id: 'edit-at-cursor', group: 'Action', title: 'Edit the formula or table at the cursor', hint: shortcut('Enter'),
+          run: () => {
+            const opened = codeRef.current?.editAtCursor();
+            if (opened === 'source') toast('This formula opens as source: the formula editor would rewrite its \\label, alignment, comments or line breaks');
+            else if (!opened) toast('Put the cursor in a formula or a table first');
+            if (opened !== 'opened') requestAnimationFrame(() => codeRef.current?.focus());
+          },
+        }]
+        : []),
       ...(agentPresenceEnabled
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
@@ -1037,7 +1065,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1102,10 +1130,10 @@ export default function Editor() {
             onPublish={!project.remote && isProjectOwner ? () => setPublishOpen(true) : undefined}
           />
         )}
-        {visualEnabled && (
-          <div className="seg" role="tablist" aria-label="Editing mode" data-testid="mode-toggle">
-            <button role="tab" aria-selected={mode === 'source'} className={`seg__btn ${mode === 'source' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('source')}>Source</button>
-            <button role="tab" aria-selected={mode === 'visual'} className={`seg__btn ${mode === 'visual' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('visual')}>Visual</button>
+        {visualFile && (
+          <div className="seg" role="group" aria-label="Editing mode" data-testid="mode-toggle">
+            <button aria-pressed={mode === 'source'} className={`seg__btn ${mode === 'source' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('source')} data-testid="mode-source">Source</button>
+            <button aria-pressed={mode === 'visual'} className={`seg__btn ${mode === 'visual' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('visual')} data-testid="mode-visual">Visual</button>
           </div>
         )}
         <div className="toolbar__spacer" />
@@ -1288,7 +1316,7 @@ export default function Editor() {
             <>
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
-                {visualEnabled && mode === 'visual' && <FormatToolbar target={codeRef} />}
+                {paneMode === 'visual' && <FormatToolbar target={codeRef} />}
               </div>
               <CodePane
                 key={`${id}::${branch}::${activeFile}`}
@@ -1301,7 +1329,7 @@ export default function Editor() {
                 onDocChanged={onDocChanged}
                 onStats={setStats}
                 spellcheck={spellcheck}
-                mode={mode}
+                mode={paneMode}
                 identity={identity}
               />
             </>

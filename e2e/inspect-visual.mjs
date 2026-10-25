@@ -42,7 +42,6 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, c
 await ctx.addInitScript(() => {
   localStorage.setItem('aldine.onboarded', '1');
   localStorage.setItem('aldine.theme', 'dark');
-  localStorage.setItem('aldine.experimental.visualEditor', '1');
   localStorage.setItem('aldine.editorMode', 'visual');
 });
 
@@ -90,7 +89,7 @@ await page.waitForTimeout(300);
 await page.screenshot({ path: `${OUT}/4-reveal.png` });
 
 // source mode for contrast
-await page.getByTestId('mode-toggle').getByRole('tab', { name: 'Source' }).click();
+await page.getByTestId('mode-source').click();
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/5-source.png` });
 

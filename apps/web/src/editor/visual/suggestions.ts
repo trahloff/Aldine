@@ -31,27 +31,54 @@ class SuggestionWidget extends WidgetType {
       b.className = 'cm-vis-suggest__btn';
       b.textContent = label;
       b.title = title;
+      b.setAttribute('aria-label', title);
       b.setAttribute('data-testid', `vis-suggest-${action}`);
-      b.onmousedown = (e) => {
+      // mousedown keeps the editor's selection; click (also Enter and Space
+      // on a focused button) acts
+      b.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+      b.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
         window.dispatchEvent(new CustomEvent('aldine:suggestion', { detail: { id: this.id, action } }));
       };
       el.appendChild(b);
     };
-    mk('✓', 'Accept suggestion', 'accept');
-    mk('✕', 'Dismiss', 'resolve');
+    mk('✓', `Accept suggestion: ${this.text}`, 'accept');
+    mk('✕', 'Dismiss suggestion', 'resolve');
     return el;
   }
 
-  ignoreEvent(): boolean {
-    return false;
+  /** The buttons handle their own events; CodeMirror must not turn their Enter into a newline. */
+  ignoreEvent(event: Event): boolean {
+    return !!(event.target as HTMLElement | null)?.closest?.('button');
   }
 }
 
 const strike = Decoration.mark({ class: 'cm-vis-strike' });
 
-interface SuggestState { ranges: CommentRange[]; deco: DecorationSet }
+/**
+ * The review-comment ranges the pane last pushed, mapped through every edit
+ * since. Lives outside the mode compartment (CodePane includes it in Source
+ * mode too), so switching to Visual finds the suggestions already there.
+ */
+export const commentRangesField = StateField.define<CommentRange[]>({
+  create: () => [],
+  update(ranges, tr) {
+    for (const e of tr.effects) if (e.is(setComments)) ranges = e.value;
+    if (!tr.docChanged) return ranges;
+    // Ranges can arrive before the Yjs doc has synced (doc still empty);
+    // leave anything that doesn't fit the pre-change doc unmapped — build()
+    // only renders ranges valid for the current doc, so they light up once
+    // the content lands instead of crashing the changeset mapping.
+    // Typing at either end stays outside, like the comment highlight's marks.
+    const startLen = tr.startState.doc.length;
+    return ranges.map((r) => {
+      if (r.from > startLen || r.to > startLen) return r;
+      const from = tr.changes.mapPos(r.from, 1);
+      return { ...r, from, to: Math.max(from, tr.changes.mapPos(r.to, -1)) };
+    });
+  },
+});
 
 function build(ranges: CommentRange[], docLen: number): DecorationSet {
   const active = ranges
@@ -65,33 +92,14 @@ function build(ranges: CommentRange[], docLen: number): DecorationSet {
   return Decoration.set(decos, true);
 }
 
-export const suggestField = StateField.define<SuggestState>({
-  create() {
-    return { ranges: [], deco: Decoration.none };
+export const suggestField = StateField.define<{ ranges: CommentRange[]; deco: DecorationSet }>({
+  create(state) {
+    const ranges = state.field(commentRangesField, false) ?? [];
+    return { ranges, deco: build(ranges, state.doc.length) };
   },
   update(value, tr) {
-    let ranges = value.ranges;
-    let changed = false;
-    for (const e of tr.effects) {
-      if (e.is(setComments)) {
-        ranges = e.value;
-        changed = true;
-      }
-    }
-    if (tr.docChanged) {
-      // Ranges can arrive before the Yjs doc has synced (doc still empty);
-      // leave anything that doesn't fit the pre-change doc unmapped — build()
-      // only renders ranges valid for the current doc, so they light up once
-      // the content lands instead of crashing the changeset mapping.
-      const startLen = tr.startState.doc.length;
-      ranges = ranges.map((r) =>
-        r.from <= startLen && r.to <= startLen
-          ? { ...r, from: tr.changes.mapPos(r.from), to: tr.changes.mapPos(r.to, 1) }
-          : r,
-      );
-      changed = true;
-    }
-    if (!changed) return value;
+    const ranges = tr.state.field(commentRangesField, false) ?? [];
+    if (ranges === value.ranges) return value;
     return { ranges, deco: build(ranges, tr.state.doc.length) };
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.deco),

@@ -1264,14 +1264,14 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
   transition: transform 220ms var(--ease-out);
 }
 .seg:not(:has(.seg__btn--active))::before { display: none; }
-.seg__btn { position: relative; border: 0; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); padding: 4px 12px; border-radius: var(--radius-s); cursor: pointer; white-space: nowrap; transition: color 150ms var(--ease); }
+.seg__btn { position: relative; border: 0; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); padding: 4px 12px; min-height: 24px; border-radius: var(--radius-s); cursor: pointer; white-space: nowrap; transition: color 150ms var(--ease); }
 .seg__btn:hover { color: var(--text); }
 .seg__btn:active:not(.seg__btn--active) { background: var(--bg-active); }
 .seg__btn--active { color: var(--text); }
 
 /* visual-mode formatting toolbar */
 .fmt { display: inline-flex; gap: 2px; margin-left: 10px; align-items: center; }
-.fmt__btn { border: 1px solid transparent; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); width: 26px; height: 22px; border-radius: var(--radius-s); cursor: pointer; }
+.fmt__btn { border: 1px solid transparent; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); width: 26px; height: 24px; border-radius: var(--radius-s); cursor: pointer; }
 .fmt__btn:hover { background: var(--bg-hover); color: var(--text); }
 .fmt__btn:active { background: var(--bg-active); }
 .fmt__btn--b { font-weight: 800; }
@@ -1283,6 +1283,13 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 .vis-math-popover { z-index: 60; background: var(--bg-panel); border: 1px solid var(--hairline); border-radius: var(--radius-l); box-shadow: var(--shadow-pop); padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 300px; }
 .vis-math-popover math-field { font-size: var(--text-xl); border: 1px solid var(--hairline); border-radius: var(--radius-s); padding: 4px 8px; background: var(--bg-inset); color: var(--text); }
 .vis-math-popover__bar { display: flex; gap: 8px; justify-content: flex-end; }
+.vis-math-popover__notice { max-width: 360px; color: var(--text-2); font: var(--text-s) var(--font-ui); line-height: 1.4; }
+/* thumbs on the visual editor's own controls: the 24px minimum is a desktop size */
+@media (pointer: coarse) {
+  .seg__btn { min-height: 36px; }
+  .fmt__btn { width: 36px; height: 36px; }
+  .vis-math-popover__btn { min-height: 40px; }
+}
 
 /* 404 */
 .notfound { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 24px; }

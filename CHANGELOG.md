@@ -18,13 +18,121 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   links and files over 1 MB are not searched.
 - The keyboard shortcuts in settings say when two of them are on the same
   keys, such as one you set to ⇧⌘F before search took it.
+- Visual editor: "Edit the formula or table at the cursor" in the command
+  palette opens the formula editor or moves into the table's grid, the same
+  as Ctrl+Enter or ⌘Enter in the formula's or table's source. Hovering a
+  formula says so, or says why it opens as source.
 
 ### Changed
+- The visual editor is no longer experimental: the Source/Visual switch is
+  in the toolbar for everyone, and the command palette offers "Switch to
+  Visual editing" and "Switch to Source editing" in place of "Enable
+  experimental Visual editor". A document opens as source until you pick
+  Visual, and your browser remembers your last choice; one that had the
+  experimental flag on keeps the choice it had. Visual applies to `.tex`
+  files only: a `.bib`, `.sty` or `.cls` opens as source, without the switch
+  or the formatting toolbar, and your choice applies again at the next `.tex`
+  file.
+- Visual editor: the "TeX" buttons of the formula editor and of tables are
+  called "Edit source".
 - Upgrading the default compiler image downloads only the layers that
   changed, about 100 MB, instead of TeX Live again (about 1.4 GB). The
   release that brings this still downloads TeX Live one last time; the
   smaller upgrades start with the release after it. A release that moves the
   compiler to a newer TeX Live downloads it again, and says so here.
+
+### Fixed
+- Typing `\begin{itemize}` left a stray `}` after the `\end{itemize}` the
+  editor inserts, an "Extra }" error at the next typeset.
+- Visual editor: after any edit above them, yours or a collaborator's, table
+  cell edits, "+ row" and the formula editor's Done wrote to where the table
+  or formula had been when it was first drawn, overwriting unrelated text,
+  and a click on a citation chip put the caret there. They now act where the
+  table, formula or chip is when you use them. An open cell or formula
+  editor follows edits above it, and an open cell keeps what you typed, and
+  stays the same cell, when someone else edits another cell of the same
+  table or adds or removes a row above it. When someone else changes the
+  cell you are typing in, the grid says so, and only the next Enter replaces
+  their text with yours; a change that cannot be written says so, with your
+  text, instead of disappearing.
+- Visual editor: the formula editor's Done wrote the whole formula back the
+  way MathLive spells it, dropping comments and line breaks, escaping or
+  merging `&` and `\\`, and moving `\label`. Done now writes only what you
+  changed; the spacing and the rest of the formula stay as written. A
+  formula MathLive cannot write back as it is (one with a comment, a line
+  break inside, `&` or `\\`, a `\label`, `\tag` or `\ref`, an environment,
+  or a macro it would spell differently) opens as source instead; an
+  equation whose formula sits on lines of its own between `\begin{equation}`
+  and `\end{equation}` opens in MathLive.
+- Visual editor: the first formula you clicked on a visit opened its editor
+  only once MathLive (about 800 KB) had loaded, and what you typed until then
+  went into the text where the caret had been. It now goes into the formula
+  editor; Escape, a click elsewhere or the command palette while it loads
+  leaves the formula editor closed. MathLive also loads in the background
+  once Visual is on, so the formula editor usually opens at once.
+- Visual editor: `$$…$$` display math showed as a red error instead of the
+  formula.
+- Visual editor tables: Escape in a cell saved it, and Enter saved it twice
+  and left the keyboard focus nowhere. Escape now cancels, Enter saves once
+  and returns to the text, Tab moves to the next cell. %-comment lines and
+  the `[2pt]` of `\\[2pt]` no longer show up as cells, and "+ col", which
+  did nothing, adds the column to the column spec and to every row.
+- Visual editor tables: a cell written over two source lines lost its line
+  break, and the words on either side ran together, as soon as it was
+  clicked and left, or passed with Tab, with nothing typed. Such a cell now
+  opens in the source. "+ row" added its cells to the last row when that row
+  had no `\\` (the next typeset failed with "Extra alignment tab"), and for a
+  table on one line, as in `Name: \begin{tabular}{@{}l@{}}a\\b\end{tabular}`,
+  wrote outside the table, before the start of the line. The new row now
+  goes right after the last one, inside the table and above a closing rule.
+- Visual editor: End on the last item of a list or on a heading put what you
+  typed after `\end{itemize}` or after the heading's closing brace. After a
+  heading level chosen in the toolbar, Enter wrote the next paragraph into
+  the heading, and after a heading with a `\label` on its line it indented
+  the new paragraph. Enter at the end of a heading now starts the next
+  paragraph below it (after the `\label`), without an indent. Text after a
+  run-in heading such as `\paragraph{…}` no longer looks like part of the
+  heading.
+- Visual editor: citation chips left out the page and the prenote;
+  `\cite[see][p.~12]{key}` now reads "see Knuth 1984, p. 12".
+- Visual editor: suggested changes from review were missing after a switch
+  from Source to Visual, including in a file that had opened in Source.
+- Visual editor: pasting from Google Docs made one `\textbf{…}` across
+  paragraphs, which stopped the typeset, and lost italics. Bold and italic
+  runs now come across as written. A link to a place on the same page
+  (`#section`) keeps its text.
+- Visual editor on long files: formulas, headings and figures past the first
+  100 KB or so stayed as source until the next edit, and each keystroke cost
+  more the longer the file and the more people typed in it. An edit now
+  redraws only what it touched.
+- Visual editor figures: `\includegraphics{plot}` without an extension
+  showed no preview and cost a failed request, PDF graphics showed no
+  preview either, and a figure with subfigures showed the first subfigure's
+  caption. Both now show their preview, and the chip shows the figure's own
+  caption.
+- Visual editor with the keyboard: the formula editor, the table buttons and
+  the suggestion buttons needed a mouse, and Enter on a focused "accept
+  suggestion" button typed a line break. The formula editor is now a dialog
+  (Escape closes it and returns to the text, Tab stays inside, Ctrl+Enter or
+  ⌘Enter in a formula's source opens it). The table buttons work with Enter
+  and Space, a cell opens with Enter, Ctrl+Enter or ⌘Enter in a table's
+  source moves into its grid, and Enter on a suggestion button accepts or
+  dismisses it. A table whose column spec cannot be found keeps "+ col" in
+  the Tab order and says next to it why it does nothing. Switching between
+  Source and Visual left the keyboard focus on the switch, or nowhere when
+  switched from the command palette; it now goes back to the text, with the
+  caret where it was.
+- Visual editor with a screen reader: formulas are read out as math, chips
+  say what they are and the suggestion buttons have names. The editor, in
+  both modes, says which file it holds. The Source/Visual switch is a pair of
+  toggle buttons rather than tabs whose arrow keys did nothing, the formula
+  editor is a modal dialog, and a figure's preview no longer repeats its
+  caption.
+- Visual editor on phones: the on-screen math keyboard covered the formula
+  editor and ignored the dark theme, table cells broke inside words, and the
+  editor's buttons were too small to tap. The formula editor now stays above
+  the keyboard, which follows the theme; cells wrap between words; the
+  buttons are large enough to tap.
 
 ## [0.15.1] — 2026-10-25
 

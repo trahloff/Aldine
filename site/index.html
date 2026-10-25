@@ -353,14 +353,6 @@
                 line-height: 1.25;
                 margin-bottom: 18px;
             }
-            h2.sec-title .sec-note {
-                font-family: var(--sans);
-                font-size: 0.8125rem;
-                font-weight: 400;
-                color: var(--text-3);
-                letter-spacing: 0;
-                margin-left: 8px;
-            }
 
             /* demo */
             .demo-frame {
@@ -854,11 +846,7 @@
             </section>
 
             <section class="wrap" id="visual">
-                <h2 class="sec-title">
-                    Visual editing, done right<span class="sec-note"
-                        >(experimental)</span
-                    >
-                </h2>
+                <h2 class="sec-title">Visual editing, done right</h2>
                 <div class="honest">
                     <p>
                         Aldine's visual mode is a rendering layer over the
@@ -882,9 +870,11 @@
                         <div class="cell">
                             <h3>WYSIWYG math</h3>
                             <p>
-                                Click an equation to edit it in a real math
+                                Click a formula to edit it in a real math
                                 editor; your changes write back as precise
-                                LaTeX.
+                                LaTeX. One the editor would rewrite (a
+                                <code>\label</code>, alignment, a comment or a
+                                line break inside) opens as source.
                             </p>
                         </div>
                         <div class="cell">
@@ -918,10 +908,12 @@
                             </p>
                         </div>
                         <div class="cell">
-                            <h3>One keystroke away</h3>
+                            <h3>One click away</h3>
                             <p>
-                                Toggle Source / Visual instantly, no reload. Off
-                                by default; enable it from the command palette.
+                                Switch between Source and Visual in the toolbar,
+                                instantly, with no reload. Documents open as
+                                source until you pick Visual; your browser
+                                remembers the last choice.
                             </p>
                         </div>
                     </div>

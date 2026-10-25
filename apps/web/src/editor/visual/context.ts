@@ -8,27 +8,45 @@ import { pokeViews } from './refresh';
  * pane mounts; decoration building itself stays pure.
  */
 let ctx: { projectId: string; branch: string; rootDir: string } | null = null;
-let bib: BibEntry[] | null = null;
+let bib: Map<string, BibEntry> | null = null;
 let bibKey = '';
+let files: { key: string; paths: Set<string> } | null = null;
+let notify: ((text: string) => void) | null = null;
 
-export function setVisualContext(projectId: string, branch: string, rootFile?: string): void {
+export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string) => void): void {
   const rootDir = rootFile && rootFile.includes('/') ? rootFile.slice(0, rootFile.lastIndexOf('/')) : '';
   ctx = { projectId, branch, rootDir };
+  notify = onNotice ?? null;
   const key = `${projectId}::${branch}`;
   if (key !== bibKey) {
     bibKey = key;
     bib = null;
     api.bib(projectId, branch)
-      .then((entries) => { bib = entries; pokeViews(); })
-      .catch(() => { bib = []; });
+      .then((entries) => { bib = new Map(entries.map((e) => [e.key, e])); pokeViews(); })
+      .catch(() => { bib = new Map(); });
   }
+}
+
+/** Tells the person what a widget could not do, once the widget that would say so is gone. */
+export function visualNotice(text: string): void {
+  notify?.(text);
+}
+
+/** The project's file paths, so figure previews only ask for files that exist. */
+export function setVisualFiles(projectId: string, branch: string, paths: string[]): void {
+  const key = `${projectId}::${branch}`;
+  const next = new Set(paths);
+  const prev = files;
+  if (prev && prev.key === key && prev.paths.size === next.size && paths.every((p) => prev.paths.has(p))) return;
+  files = { key, paths: next };
+  pokeViews();
 }
 
 /** "(Knuth 1984; Lamport 1994)" for a comma-separated key list, best effort. */
 export function citeLabel(keys: string): string | null {
   if (!bib) return null;
   const parts = keys.split(',').map((k) => k.trim()).filter(Boolean).map((key) => {
-    const e = bib!.find((b) => b.key === key);
+    const e = bib!.get(key);
     if (!e) return key;
     // authorLabel keeps corporate names ({Growth Market Reports}) and compound
     // surnames whole — the last-word heuristic is only the legacy fallback.
@@ -52,19 +70,26 @@ function joinPath(dir: string, p: string): string {
   return out.join('/');
 }
 
+/** The extensions pdfLaTeX's graphicx tries for a name written without one, in its order. */
+const GRAPHIC_EXTS = ['.pdf', '.png', '.jpg', '.jpeg', '.PDF', '.PNG', '.JPG', '.JPEG'];
+
 /**
- * Raw file URL inside the current project (for figure image previews).
- * \includegraphics paths are relative to the root file's dir (latexmk -cd),
- * so resolve against it — the bare project-relative form is offered as a
- * fallback for projects that write paths from the project root.
+ * The project file an \includegraphics path names, or null when none exists.
+ * Paths are relative to the root file's dir (latexmk -cd); the project root is
+ * the fallback for projects that write them from there.
  */
-export function fileUrl(path: string): string | null {
-  if (!ctx) return null;
-  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath(ctx.rootDir, path))}`);
+export function figureFile(path: string): string | null {
+  if (!ctx || !files || files.key !== `${ctx.projectId}::${ctx.branch}`) return null;
+  for (const base of new Set([joinPath(ctx.rootDir, path), joinPath('', path)])) {
+    for (const candidate of [base, ...GRAPHIC_EXTS.map((ext) => base + ext)]) {
+      if (files.paths.has(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
-/** Same file URL without root-dir resolution (fallback for fileUrl misses). */
-export function projectFileUrl(path: string): string | null {
-  if (!ctx || !ctx.rootDir) return null; // identical to fileUrl when the root is top-level
-  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(joinPath('', path))}`);
+/** Raw file URL for a project-relative path. */
+export function fileUrl(path: string): string | null {
+  if (!ctx) return null;
+  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(path)}`);
 }
