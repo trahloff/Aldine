@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { useToast } from './Toast';
+import { safeSession } from '../util/safeStorage';
 
 const dismissKey = (id: string) => `aldine.remotePendingDismissed.${id}`;
 
@@ -8,9 +9,7 @@ const dismissKey = (id: string) => `aldine.remotePendingDismissed.${id}`;
  *  retry re-runs it into the same group; dismiss hides it for this tab
  *  session only, since the project stays local until a retry succeeds. */
 export default function RemotePendingBanner({ projectId, namespace, onProvisioned }: { projectId: string; namespace: string; onProvisioned(): unknown }) {
-  const [dismissed, setDismissed] = useState(() => {
-    try { return sessionStorage.getItem(dismissKey(projectId)) === '1'; } catch { return false; }
-  });
+  const [dismissed, setDismissed] = useState(() => safeSession.get(dismissKey(projectId)) === '1');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
@@ -28,7 +27,7 @@ export default function RemotePendingBanner({ projectId, namespace, onProvisione
     setBusy(false);
   };
   const dismiss = () => {
-    try { sessionStorage.setItem(dismissKey(projectId), '1'); } catch { /* private mode */ }
+    safeSession.set(dismissKey(projectId), '1');
     setDismissed(true);
   };
 

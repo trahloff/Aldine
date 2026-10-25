@@ -46,6 +46,33 @@ test.describe('auth', () => {
     await expect(page.getByTestId('project-grid')).toContainText('My Private Paper', { timeout: 15_000 });
   });
 
+  test('sign-in is a labelled form a password manager can fill', async ({ page }) => {
+    const email = uniq();
+    await register(page, email);
+    await page.goto('/');
+    await page.getByTestId('logout').click();
+    await expect(page).toHaveTitle('Sign in – Aldine');
+    await expect(page.getByRole('main')).toBeVisible();
+    const emailField = page.getByLabel('Email');
+    const password = page.getByLabel('Password');
+    await expect(emailField).toHaveAttribute('autocomplete', 'username');
+    await expect(emailField).toHaveAttribute('type', 'email');
+    await expect(password).toHaveAttribute('autocomplete', 'current-password');
+    await expect(password).toHaveAttribute('type', 'password');
+
+    await emailField.fill(email);
+    await password.fill('wrongpassword');
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route('**/api/auth/login', async (route) => { await held; await route.continue(); });
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('auth-submit')).toHaveText('Signing in…');
+    await expect(page.getByTestId('auth-submit')).toBeDisabled();
+    release();
+    await expect(page.getByRole('alert')).toContainText(/incorrect/i);
+    await expect(page.getByTestId('auth-submit')).toHaveText('Sign in');
+  });
+
   test('wrong password is rejected', async ({ page }) => {
     const email = uniq();
     await register(page, email);

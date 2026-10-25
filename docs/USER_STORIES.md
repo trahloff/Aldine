@@ -287,8 +287,10 @@ that guards VIS-9.*
 *No single suite owns these; they are asserted in passing across the others and
 checked by hand before a release.*
 
-- **X-1** — Light/dark theme: dark is the default; the toggle flips instantly
-  and the choice persists.
+- **X-1** — Appearance: Match system, Light or Dark, from the toolbar menu or
+  the command palette. Dark is the default when nothing is chosen; a choice
+  applies instantly and persists, and Match system follows the OS as it
+  changes.
 - **X-2** — The UI is responsive and has no horizontal overflow at common
   widths.
 - **X-3** — Keyboard access: visible focus, palette-first operation, no traps.

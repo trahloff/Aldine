@@ -27,7 +27,6 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-math': { cursor: 'pointer', borderRadius: '4px', padding: '0 1px', position: 'relative' },
   // KaTeX's visually hidden MathML copy (for screen readers) sits inside the formula's box
   '.cm-vis-math .katex-mathml': { top: '0', left: '0' },
-  '.cm-vis-math:hover': { background: 'var(--accent-soft)' },
   '.cm-vis-math--display': { display: 'block', textAlign: 'center', padding: '8px 0' },
   '.cm-vis-math--raw': { fontFamily: 'var(--font-mono)', fontSize: '0.85em', color: 'var(--syn-command)' },
 
@@ -36,7 +35,6 @@ export const visualTheme = EditorView.theme({
     border: '1px solid var(--hairline)', borderRadius: '6px', padding: '1px 8px',
     background: 'var(--bg-inset)', fontFamily: 'var(--font-ui)', fontSize: '0.8em',
   },
-  '.cm-vis-chip:hover': { borderColor: 'var(--hairline-strong)', background: 'var(--bg-hover)' },
   '.cm-vis-chip__kind': { textTransform: 'uppercase', fontSize: '0.75em', fontWeight: '700', color: 'var(--text-3)', letterSpacing: '0.06em' },
   '.cm-vis-chip--cite': { color: 'var(--accent)' },
   '.cm-vis-chip--ref': { color: 'var(--accent)' },
@@ -55,7 +53,6 @@ export const visualTheme = EditorView.theme({
     borderRadius: '5px', fontSize: '11px', width: '24px', height: '24px', lineHeight: '1',
     cursor: 'pointer', padding: '0',
   },
-  '.cm-vis-suggest__btn:hover': { color: 'var(--text)', borderColor: 'var(--hairline-strong)' },
 
   '.cm-vis-figure__img': { display: 'block', maxHeight: '140px', maxWidth: '100%', borderRadius: '4px', margin: '2px 0' },
   '.cm-vis-figure__cap': { display: 'block', fontSize: '0.85em', fontStyle: 'italic', color: 'var(--text-2)' },
@@ -72,13 +69,11 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-table__grid td:focus-visible': { outline: '2px solid var(--accent)', outlineOffset: '-2px' },
   // an empty cell (a new row's) keeps a line's height, so it can still be hit
   '.cm-vis-table__grid td:empty::before': { content: '"\\200b"' },
-  '.cm-vis-table__grid td:hover': { background: 'var(--bg-hover)' },
   '.cm-vis-table__bar': { display: 'flex', gap: '4px', marginTop: '3px' },
   '.cm-vis-table__btn': {
     border: '1px solid var(--hairline)', background: 'var(--bg-inset)', color: 'var(--text-2)',
     borderRadius: '5px', fontSize: '10.5px', fontFamily: 'var(--font-ui)', padding: '1px 7px', minHeight: '24px', cursor: 'pointer',
   },
-  '.cm-vis-table__btn:hover': { color: 'var(--text)', borderColor: 'var(--hairline-strong)' },
   '.cm-vis-table__btn[aria-disabled="true"]': { opacity: '0.5', cursor: 'default', color: 'var(--text-2)', borderColor: 'var(--hairline)' },
   '.cm-vis-table__note': { alignSelf: 'center', fontFamily: 'var(--font-ui)', fontSize: '10.5px', color: 'var(--text-3)' },
   '.cm-vis-table__notice': { display: 'block', maxWidth: '40em', fontFamily: 'var(--font-ui)', fontSize: '0.8em', color: 'var(--text-2)', whiteSpace: 'normal' },
@@ -86,6 +81,14 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-table__input': {
     font: 'inherit', color: 'inherit', background: 'var(--bg-panel)', border: '1px solid var(--accent)',
     borderRadius: '3px', padding: '1px 4px', width: '100%', boxSizing: 'border-box',
+  },
+  // a tap leaves :hover stuck on touch screens, so hover styles need a real pointer
+  '@media (hover: hover) and (pointer: fine)': {
+    '.cm-vis-math:hover': { background: 'var(--accent-soft)' },
+    '.cm-vis-chip:hover': { borderColor: 'var(--hairline-strong)', background: 'var(--bg-hover)' },
+    '.cm-vis-suggest__btn:hover': { color: 'var(--text)', borderColor: 'var(--hairline-strong)' },
+    '.cm-vis-table__grid td:hover': { background: 'var(--bg-hover)' },
+    '.cm-vis-table__btn:not([aria-disabled="true"]):hover': { color: 'var(--text)', borderColor: 'var(--hairline-strong)' },
   },
   // thumbs: the desktop sizes above are too small to hit reliably
   '@media (pointer: coarse)': {

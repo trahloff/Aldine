@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type JSX } from 'react';
 import { withBase } from '../basePath';
 import { api, AuthUser, OAuthProviderInfo } from '../api';
+import Wordmark from './Wordmark';
+import { useDocumentTitle } from '../util/documentTitle';
 
 interface AuthState {
   loading: boolean;
@@ -117,7 +119,9 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
     }
   }, []);
 
-  const submit = async () => {
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (busy) return;
     reset();
     setBusy(true);
     try {
@@ -145,12 +149,18 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
     : mode === 'register' ? (registerHeading ?? 'Create an account to get started.')
     : mode === 'forgot' ? 'Reset your password.'
     : 'Set a new password.';
+  useDocumentTitle(mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create an account' : 'Reset password');
+  const submitLabel = mode === 'login' ? (busy ? 'Signing in…' : 'Sign in')
+    : mode === 'register' ? (busy ? 'Creating account…' : 'Create account')
+    : mode === 'forgot' ? (busy ? 'Sending…' : 'Send reset link')
+    : (busy ? 'Setting password…' : 'Set password');
 
   return (
-    <div className="login">
+    <main className="login">
       <div className="login__card">
-        <h1 className="home__brand" style={{ fontSize: 'var(--text-3xl)', marginBottom: 2 }}>aldine<em>.</em></h1>
-        <p className="home__tag" style={{ marginBottom: 18 }}>{title}</p>
+        <h1 className="home__brand"><Wordmark height={24} /></h1>
+        <p className="login__tagline">Write LaTeX together. Fast, versioned, yours.</p>
+        <h2 className="home__tag login__title">{title}</h2>
 
         {providers.map((p) => (
           <a key={p.id} className="btn login__oauth" href={withBase(`/api/auth/oauth/${p.id}`)} data-testid={`oauth-${p.id}`}>
@@ -161,45 +171,70 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
         {providers.length > 0 && passwordAuth && <div className="login__or">or</div>}
 
         {!passwordAuth && providers.length === 0 && (
-          <p className="login__error">No sign-in method is configured. Contact the administrator.</p>
+          <p className="login__error" role="alert">No sign-in method is configured. Contact the administrator.</p>
         )}
 
         {passwordAuth && (
           <>
-            {mode === 'register' && (
-              <input className="input login__input" placeholder="Name (optional)" value={name} maxLength={100} data-testid="auth-name" onChange={(e) => setName(e.target.value)} />
-            )}
-            {mode !== 'reset' && (
-              <input className="input login__input" type="email" placeholder="Email" value={email} data-testid="auth-email" autoFocus onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
-            )}
-            {mode === 'reset' && (
-              <input className="input login__input" placeholder="Reset token" value={token} data-testid="auth-token" onChange={(e) => setToken(e.target.value)} />
-            )}
-            {mode !== 'forgot' && (
-              <input className="input login__input" type="password" placeholder={mode === 'reset' ? 'New password (min 8)' : 'Password (min 8 characters)'} value={password} data-testid="auth-password" onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
-            )}
+            <form className="login__form" onSubmit={submit} noValidate aria-label={title}>
+              {mode === 'register' && (
+                <div className="login__field">
+                  <label className="field__label" htmlFor="auth-name">Name <span className="login__optional">(optional)</span></label>
+                  <input id="auth-name" className="input login__input" name="name" autoComplete="name" value={name} maxLength={100} data-testid="auth-name" onChange={(e) => setName(e.target.value)} />
+                </div>
+              )}
+              {mode !== 'reset' && (
+                <div className="login__field">
+                  <label className="field__label" htmlFor="auth-email">Email</label>
+                  <input id="auth-email" className="input login__input" type="email" name="email" autoComplete="username" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} data-testid="auth-email" autoFocus onChange={(e) => setEmail(e.target.value)} />
+                </div>
+              )}
+              {mode === 'reset' && (
+                <div className="login__field">
+                  <label className="field__label" htmlFor="auth-token">Reset token</label>
+                  <input id="auth-token" className="input login__input" name="token" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={token} data-testid="auth-token" onChange={(e) => setToken(e.target.value)} />
+                </div>
+              )}
+              {mode !== 'forgot' && (
+                <div className="login__field">
+                  <label className="field__label" htmlFor="auth-password">{mode === 'reset' ? 'New password' : 'Password'}</label>
+                  <input
+                    id="auth-password"
+                    className="input login__input"
+                    type="password"
+                    name="password"
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    aria-describedby={mode === 'login' ? undefined : 'auth-password-hint'}
+                    value={password}
+                    data-testid="auth-password"
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  {mode !== 'login' && <p className="login__hint" id="auth-password-hint">At least 8 characters.</p>}
+                </div>
+              )}
 
-            {error && <p className="login__error" data-testid="auth-error">{error}</p>}
-            {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} data-testid="auth-info">{info}</p>}
+              {error && <p className="login__error" role="alert" data-testid="auth-error">{error}</p>}
+              {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} role="status" data-testid="auth-info">{info}</p>}
 
-            <button className="btn btn--primary login__submit" onClick={submit} disabled={busy} aria-busy={busy || undefined} data-testid="auth-submit">
-              {busy ? '…' : mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : 'Set password'}
-            </button>
+              <button type="submit" className="btn btn--primary login__submit" disabled={busy} aria-busy={busy || undefined} data-testid="auth-submit">
+                {submitLabel}
+              </button>
+            </form>
 
             {(mode === 'login' || mode === 'register') && (
-              <button className="btn btn--ghost login__switch" data-testid="auth-switch" onClick={() => { reset(); setMode(mode === 'login' ? 'register' : 'login'); }}>
+              <button type="button" className="btn btn--ghost login__switch" data-testid="auth-switch" onClick={() => { reset(); setMode(mode === 'login' ? 'register' : 'login'); }}>
                 {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
               </button>
             )}
             {mode === 'login' && (
-              <button className="btn btn--ghost login__switch" data-testid="auth-forgot" onClick={() => { reset(); setMode('forgot'); }}>Forgot password?</button>
+              <button type="button" className="btn btn--ghost login__switch" data-testid="auth-forgot" onClick={() => { reset(); setMode('forgot'); }}>Forgot password?</button>
             )}
             {(mode === 'forgot' || mode === 'reset') && (
-              <button className="btn btn--ghost login__switch" onClick={() => { reset(); setMode('login'); }}>Back to sign in</button>
+              <button type="button" className="btn btn--ghost login__switch" onClick={() => { reset(); setMode('login'); }}>Back to sign in</button>
             )}
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }

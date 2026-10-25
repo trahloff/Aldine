@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { isMac } from '../platform';
+import { safeStorage } from './safeStorage';
 
 /**
  * A key chord. `mod` is ⌘ on a Mac and Ctrl elsewhere; the handlers accept
@@ -44,14 +45,13 @@ function isChord(v: unknown): v is Chord {
 }
 
 function read(): Partial<Record<ShortcutId, Chord>> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORE) || '{}');
-    const out: Partial<Record<ShortcutId, Chord>> = {};
-    for (const s of SHORTCUTS) if (isChord(raw?.[s.id])) out[s.id] = raw[s.id];
-    return out;
-  } catch {
-    return {};
+  const raw = safeStorage.getJSON<Record<string, unknown> | null>(STORE, {});
+  const out: Partial<Record<ShortcutId, Chord>> = {};
+  for (const s of SHORTCUTS) {
+    const c = raw && typeof raw === 'object' ? raw[s.id] : undefined;
+    if (isChord(c)) out[s.id] = c;
   }
+  return out;
 }
 
 let overrides = read();
@@ -75,7 +75,8 @@ export function setChord(id: ShortcutId, chord: Chord | null): void {
   if (!chord || sameChord(chord, defaultChord(id))) delete next[id];
   else next[id] = chord;
   overrides = next;
-  try { localStorage.setItem(STORE, JSON.stringify(next)); } catch { /* private window: this tab keeps it */ }
+  // Without storage this tab keeps it.
+  safeStorage.setJSON(STORE, next);
   notify();
 }
 

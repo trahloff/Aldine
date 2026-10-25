@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import Modal from './Modal';
 import { useShortcutLabel } from '../util/shortcuts';
 import { remoteDescriptor, RemoteProviderId } from '../remotes';
+import Wordmark from './Wordmark';
 /** First-run welcome shown once (localStorage-gated by the parent). One
  *  import tile per git host the server offers. */
 export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onClose }: {
@@ -16,22 +17,22 @@ export default function Onboarding({ onNew, onRemote, remotes, onImportZip, onCl
   return (
     <Modal onClose={onClose} label="Welcome to Aldine" testId="onboarding" wide>
       <div className="onboard">
-        <h1 className="home__brand" style={{ fontSize: 'var(--text-3xl)', marginBottom: 2 }}>aldine<em>.</em></h1>
-        <p className="home__tag" style={{ marginBottom: 20 }}>Write LaTeX together — fast, versioned, yours.</p>
+        <h2 className="home__brand onboard__brand"><Wordmark height={24} title="Welcome to Aldine" /></h2>
+        <p className="home__tag" style={{ marginBottom: 20 }}>Write LaTeX together. Fast, versioned, yours.</p>
 
         <div className="onboard__tiles">
           <button className="onboard__tile" onClick={() => start(onNew)} data-testid="onboard-new">
-            <span className="onboard__tile-title">Start a paper</span>
+            <span className="onboard__tile-title">New project…</span>
             <span className="onboard__tile-sub">A blank doc or a template.</span>
           </button>
           {remotes.map((id) => (
             <button key={id} className="onboard__tile onboard__tile--gh" onClick={() => start(() => onRemote(id))} data-testid={`onboard-${id}`}>
-              <span className="onboard__tile-title">Import from {remoteDescriptor(id).label}</span>
+              <span className="onboard__tile-title">Clone from {remoteDescriptor(id).label}…</span>
               <span className="onboard__tile-sub">Clone a repository, then push &amp; pull as you write.</span>
             </button>
           ))}
           <button className="onboard__tile" data-testid="onboard-zip" onClick={() => zipInput.current?.click()}>
-            <span className="onboard__tile-title">Import a ZIP</span>
+            <span className="onboard__tile-title">Import a ZIP…</span>
             <span className="onboard__tile-sub">Bring a project over from Overleaf.</span>
           </button>
           <input ref={zipInput} type="file" accept=".zip" hidden aria-hidden="true" tabIndex={-1}

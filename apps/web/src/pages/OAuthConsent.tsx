@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { api, AuthUser, OAuthApiError, OAuthClientInfo, ProjectSummary } from '../api';
 import { LoginScreen, useAuth } from '../components/Auth';
 import { consentBody, OAUTH_RESUME_KEY, readAuthorizeParams } from '../util/oauthParams';
+import { safeSession } from '../util/safeStorage';
+import Wordmark from '../components/Wordmark';
+import { useDocumentTitle } from '../util/documentTitle';
 
 type ClientState =
   | { status: 'loading' }
@@ -42,6 +45,7 @@ export default function OAuthConsent() {
   const [client, setClient] = useState<ClientState>({ status: 'loading' });
   // Why the sign-in form is back (a session that expired mid-consent).
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  useDocumentTitle('Connect an app');
 
   useEffect(() => {
     if (!authEnabled) {
@@ -64,10 +68,10 @@ export default function OAuthConsent() {
 
   if (client.status === 'error') {
     return (
-      <div className="login">
+      <main className="login">
         <div className="login__card consent" data-testid="oauth-error">
-          <h1 className="home__brand" style={{ fontSize: 'var(--text-3xl)', marginBottom: 2 }}>aldine<em>.</em></h1>
-          <p className="home__tag" style={{ marginBottom: 14 }}>This connection request can’t continue.</p>
+          <h1 className="home__brand"><Wordmark height={24} /></h1>
+          <p className="home__tag" style={{ margin: '8px 0 14px' }}>This connection request can’t continue.</p>
           <p className="consent__error" title={client.detail}>{client.message}</p>
           <p className="consent__hint">Nothing was granted. Go back to the app that sent you here and start the connection again.</p>
           {client.detail && (
@@ -78,7 +82,7 @@ export default function OAuthConsent() {
           )}
           <Link className="btn consent__back" to="/">Back to your projects</Link>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -91,7 +95,7 @@ function SignInStep({ client, onAuthed, notice }: { client: OAuthClientInfo; onA
   // An SSO provider's callback lands on "/"; Home reads this key and brings
   // the user straight back here with the same request.
   useEffect(() => {
-    try { sessionStorage.setItem(OAUTH_RESUME_KEY, window.location.search); } catch { /* private mode */ }
+    safeSession.set(OAUTH_RESUME_KEY, window.location.search);
   }, []);
   return (
     <LoginScreen
@@ -118,7 +122,7 @@ function ConsentStep({ client, params, onSessionEnded }: { client: OAuthClientIn
   const [error, setError] = useState('');
 
   useEffect(() => {
-    try { sessionStorage.removeItem(OAUTH_RESUME_KEY); } catch { /* private mode */ }
+    safeSession.remove(OAUTH_RESUME_KEY);
     api.listProjects().then(setProjects).catch(() => setProjects('error'));
   }, []);
 
@@ -147,10 +151,10 @@ function ConsentStep({ client, params, onSessionEnded }: { client: OAuthClientIn
   const allowDisabled = busy !== null || (scope === 'pick' && (projectList === null || picked.length === 0));
 
   return (
-    <div className="login">
+    <main className="login">
       <div className="login__card consent" data-testid="oauth-consent">
-        <h1 className="home__brand" style={{ fontSize: 'var(--text-3xl)', marginBottom: 2 }}>aldine<em>.</em></h1>
-        <p className="home__tag" style={{ marginBottom: 18 }}>Connect an app to your projects.</p>
+        <h1 className="home__brand"><Wordmark height={24} /></h1>
+        <p className="home__tag" style={{ margin: '8px 0 18px' }}>Connect an app to your projects.</p>
 
         <h2 className="consent__title">
           <span className="consent__client" data-testid="oauth-client-name">{client.name}</span> wants to work in your Aldine projects
@@ -219,6 +223,6 @@ function ConsentStep({ client, params, onSessionEnded }: { client: OAuthClientIn
           <button className="btn btn--ghost btn--small" data-testid="oauth-switch-account" onClick={async () => { await api.logout().catch(() => {}); setUser(null); }}>Not you? Switch account</button>
         </p>
       </div>
-    </div>
+    </main>
   );
 }

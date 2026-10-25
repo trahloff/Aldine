@@ -5,6 +5,7 @@ import { useToast } from './Toast';
 import { useExitGhost } from '../exitGhost';
 import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './BranchMenu';
 import { usePopover } from '../util/usePopover';
+import { safeStorage } from '../util/safeStorage';
 
 /** The branch pill of a project linked to a git host. The host's branches are
  *  the project's branches: local `main` tracks one of them, and push, pull
@@ -15,7 +16,7 @@ import { usePopover } from '../util/usePopover';
  *  server-side. The provider comes from the link; the server never takes it
  *  from the request for these routes. */
 // e2e shortens the interval through localStorage; nothing else sets it.
-const REMOTE_POLL_MS = Number(localStorage.getItem('aldine.remotePollMs')) || 90_000;
+const REMOTE_POLL_MS = Number(safeStorage.get('aldine.remotePollMs')) || 90_000;
 
 export default function RemoteSync({ projectId, link, autopush, isOwner, current, onSwitch, onChanged, onPulled, onAutopushChange }: {
   projectId: string;

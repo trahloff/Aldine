@@ -629,7 +629,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   app.post<{ Body: { name?: string; files?: Record<string, string> | null; template?: string; namespace?: string } }>('/api/projects', async (req, reply) => {
     // With accounts on, an ownerless project would be every user's (isMember).
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    const { name = 'Untitled Project', files, template, namespace } = req.body || {};
+    const { name = 'Untitled project', files, template, namespace } = req.body || {};
     let seed: Record<string, string | Buffer> | undefined;
     let resolved: TemplateSeed | undefined;
     if (files !== undefined && files !== null) {

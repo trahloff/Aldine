@@ -34,6 +34,44 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   outside the image uses Ghostscript or poppler's pdftoppm when installed and
   typesets as before without either. Rendering never delays the typeset, and
   `ALDINE_THUMBNAILS=0` on the compiler turns it off.
+- Appearance offers Match system next to Light and Dark, in the toolbar's
+  appearance menu and in the command palette. Match system follows your
+  operating system as it changes. Dark stays the default.
+- Menus answer the keyboard: arrow keys, Home and End, typing a letter to
+  jump to an item, Escape to close. The file tree's menu also opens with
+  Shift+F10 or the Menu key, and with a long press on a touch screen.
+- Each tab says where it is: "Projects – Aldine", the project's name in the
+  editor, "Sign in – Aldine" on the sign-in page.
+
+### Changed
+- The project list loads without the editor's code (CodeMirror, pdf.js,
+  KaTeX, Yjs), so it appears sooner; the editor loads in the background.
+- One name per action: "New project…", "Import a ZIP…" and "Clone from
+  GitHub…" (or GitLab, Gitea / Forgejo) on Home, in the welcome dialog and in
+  the command palette. A project created without a name is called "Untitled
+  project".
+- The command palette lists your newest projects before commands, under
+  one heading per group, and typing searches all of them; "op" no longer
+  matches every project. It opens without
+  animation from the keyboard and gives focus back to where it was opened.
+- On a phone, dialogs rise from the bottom edge as a sheet, and the page
+  behind them does not scroll.
+- Sign-in is a form your password manager recognises, with visible labels,
+  and says "Signing in…" while it works.
+- The New project dialog labels the name field, Enter in the template search
+  creates the project, and a long template name no longer runs out of its
+  tile.
+- Moving a project to the trash shows a neutral notification instead of a
+  success.
+- Light theme: tertiary text is a little darker, for contrast.
+
+### Fixed
+- A browser that blocks site storage (some private windows) no longer stops
+  the app from starting, and an unexpected error shows a Reload button
+  instead of a blank page.
+- Touch screens no longer leave buttons looking hovered after a tap, focus
+  rings on filled buttons are visible against the fill, and Windows contrast
+  themes show the chosen palette row, menu item and template.
 
 ## [0.16.0] — 2026-10-25
 

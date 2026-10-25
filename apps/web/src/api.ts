@@ -1,4 +1,5 @@
 import { withBase } from './basePath';
+import { safeStorage } from './util/safeStorage';
 
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
 export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
@@ -542,16 +543,16 @@ const PRESENCE_PALETTE = ['#e8554d', '#f0a202', '#2e933c', '#2e62e9', '#d63384',
 /** Local identity for presence + commit attribution — the fallback without
  *  accounts; a signed-in person is `accountIdentity(user)`. */
 export function localUser(): { name: string; color: string } {
-  let name = localStorage.getItem('aldine.name');
+  let name = safeStorage.get('aldine.name');
   if (!name) {
     name = `Writer ${Math.floor(100 + Math.random() * 900)}`;
-    localStorage.setItem('aldine.name', name);
+    safeStorage.set('aldine.name', name);
   }
-  let color = localStorage.getItem('aldine.color');
+  let color = safeStorage.get('aldine.color');
   if (!color || !PRESENCE_PALETTE.includes(color)) {
     // re-roll colors picked before the violet reservation (e.g. legacy #8f3ec9)
     color = PRESENCE_PALETTE[Math.floor(Math.random() * PRESENCE_PALETTE.length)];
-    localStorage.setItem('aldine.color', color);
+    safeStorage.set('aldine.color', color);
   }
   return { name, color };
 }

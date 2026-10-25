@@ -38,7 +38,7 @@ test.describe('served under a base path (#27)', () => {
     const { failed, sockets } = watch(page);
 
     await page.goto(BASE); // no trailing slash, as a portal link would be typed
-    await expect(page.locator('.home__brand').first()).toContainText('aldine');
+    await expect(page.getByRole('img', { name: 'Aldine' }).first()).toBeVisible();
     await page.getByTestId('new-project').click();
     await page.getByTestId('new-project-name').fill('Sub-path paper');
     await page.getByTestId('create-project').click();

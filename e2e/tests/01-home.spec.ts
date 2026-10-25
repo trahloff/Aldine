@@ -3,12 +3,15 @@ import { test, expect } from '../fixtures';
 test.describe('home', () => {
   test('create a project from the home screen', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('.home__brand')).toContainText('aldine');
+    await expect(page.getByRole('img', { name: 'Aldine' })).toBeVisible();
+    await expect(page).toHaveTitle('Projects – Aldine');
+    await expect(page.getByRole('heading', { level: 1, name: 'Projects' })).toBeAttached();
     await page.getByTestId('new-project').click();
     await page.getByTestId('new-project-name').fill('My First Paper');
     await page.getByTestId('create-project').click();
     await expect(page.getByTestId('editor-shell')).toBeVisible();
     await expect(page.getByTestId('project-name')).toContainText('My First Paper');
+    await expect(page).toHaveTitle('My First Paper – Aldine');
     // seeded files are present
     await expect(page.getByTestId('file-main.tex')).toBeVisible();
     await expect(page.getByTestId('file-references.bib')).toBeVisible();

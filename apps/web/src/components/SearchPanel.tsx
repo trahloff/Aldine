@@ -3,22 +3,19 @@ import { api, ApiError, ReplaceResult, SearchMatch, SearchQuery, SearchResult } 
 import { useDialogs } from './Dialogs';
 import { useToast } from './Toast';
 import { fileIcon, IconChevronRight, IconRefresh, IconReplace, IconX } from './Icons';
+import { safeStorage } from '../util/safeStorage';
 
 /** Match case / whole word / regex, remembered per browser; the query is not. */
 const STORE = 'aldine.search';
 type Toggles = Pick<SearchQuery, 'caseSensitive' | 'wholeWord' | 'regex'>;
 
 function loadToggles(): Toggles {
-  try {
-    const v = JSON.parse(localStorage.getItem(STORE) || '{}');
-    return { caseSensitive: v?.case === true, wholeWord: v?.word === true, regex: v?.regex === true };
-  } catch {
-    return { caseSensitive: false, wholeWord: false, regex: false };
-  }
+  const v = safeStorage.getJSON<{ case?: unknown; word?: unknown; regex?: unknown } | null>(STORE, {});
+  return { caseSensitive: v?.case === true, wholeWord: v?.word === true, regex: v?.regex === true };
 }
 
 function saveToggles(t: Toggles): void {
-  try { localStorage.setItem(STORE, JSON.stringify({ case: t.caseSensitive, word: t.wholeWord, regex: t.regex })); } catch { /* storage off: this visit only */ }
+  safeStorage.setJSON(STORE, { case: t.caseSensitive, word: t.wholeWord, regex: t.regex });
 }
 
 const DEBOUNCE_MS = 300;

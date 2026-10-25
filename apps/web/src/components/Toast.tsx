@@ -59,7 +59,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
+      {/* A named landmark: a screen reader can jump straight to the notifications and their Undo. */}
+      <section className="toasts" role="region" aria-label="Notifications" aria-live="polite" data-testid="toasts">
         {toasts.map((t) => (
           <div
             key={t.id}
@@ -100,7 +101,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             )}
           </div>
         ))}
-      </div>
+      </section>
     </ToastCtx.Provider>
   );
 }
