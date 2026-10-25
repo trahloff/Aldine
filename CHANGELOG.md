@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Page 1 of 30 of the 40 journal and conference templates in the New
+  project chooser. The other ten keep their placeholder until their kits
+  typeset (#172).
+
 ## [1.0.0] — 2026-10-25
 
 Aldine 1.0. Apart from a new logo and previews of the journal and conference
@@ -28,10 +33,10 @@ Coming from 0.14 or earlier? Read the 0.15.0 notes first: they fix security
 problems.
 
 ### Added
-- The New project chooser shows page 1 of the journal and conference
-  templates too, not only of the four general ones. Venues are typeset in CI
-  with the full TeX Live image; one that does not typeset keeps its title-page
-  placeholder.
+- The New project chooser can show page 1 of the journal and conference
+  templates, not only of the four general ones. The images are typeset in CI
+  with the full TeX Live image and were not ready for this release, so these
+  tiles still show their title-page placeholder; they arrive in the next one.
 
 ### Changed
 - A new logo: "aldine." set in Geist SemiBold, and an app icon with a
