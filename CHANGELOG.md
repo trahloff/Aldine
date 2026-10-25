@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-10-25
+
 ### Added
 - Page 1 of 30 of the 40 journal and conference templates in the New
   project chooser. The other ten keep their placeholder until their kits
