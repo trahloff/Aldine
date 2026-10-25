@@ -318,18 +318,23 @@ export async function commitSnapshotHeld(id: string, branch: string, files: File
 }
 
 /**
- * The commit pair every agent write makes, from the snapshots the tool held
- * while it applied the edit: first whatever a person had in those files that
- * HEAD does not (typing that landed after the working-tree checkpoint, an
- * out-of-band write), as an anonymous autosave; then the agent's result under
- * Claude and the intent. By construction the Claude commit's diff is the
- * agent's delta and nothing else, whatever lands on disk meanwhile. `before`
+ * The commit pair a server-side write makes, from the snapshots the caller
+ * held while it applied the edit: first whatever a person had in those files
+ * that HEAD does not (typing that landed after the working-tree checkpoint,
+ * an out-of-band write), as an anonymous autosave; then the result under
+ * `author` and `message`. By construction the named commit's diff is the
+ * write's delta and nothing else, whatever lands on disk meanwhile. `before`
  * null = the file did not exist. Callers hold the repo lock.
  */
-export async function commitAgentWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export async function commitWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   const typed = files.filter((f) => f.before !== null).map((f) => ({ path: f.path, content: f.before as string | Buffer }));
   if (typed.length) await commitSnapshotHeld(id, branch, typed, 'aldine: autosave');
-  return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, AGENT_COMMIT_AUTHOR);
+  return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, author);
+}
+
+/** commitWriteHeld under Claude: the commit pair every agent write makes. */
+export function commitAgentWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  return commitWriteHeld(id, branch, files, message, AGENT_COMMIT_AUTHOR);
 }
 
 /**

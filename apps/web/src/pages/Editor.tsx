@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, localUser, accountIdentity } from '../api';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
@@ -13,10 +13,11 @@ import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import BranchMenu from '../components/BranchMenu';
 import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
+import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
-import { IconChevronLeft, IconChevronRight, IconSidebar } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconSearch, IconSidebar } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -132,7 +133,8 @@ export default function Editor() {
   // more than one plugin panel folds them all into a "More" tab
   const morePanels = usePopover();
   const [settingsOpen, setSettingsOpen] = useState<boolean | 'shortcuts'>(false);
-  const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump') };
+  const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump'), search: useShortcutLabel('search') };
+  const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
@@ -781,6 +783,40 @@ export default function Editor() {
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.revealPos(c.anchor.from), 80));
   }, [activeFile]);
 
+  // ---- project search ----
+  /** The Search tab, with its query (or replace) field focused and selected;
+   *  a one-line selection in the editor becomes the query. */
+  const openSearch = useCallback((seed?: string, field: SearchFocus['field'] = 'query') => {
+    setTab('search');
+    setSidebar(false);
+    setSearchFocus((f) => ({ n: (f?.n ?? 0) + 1, seed, field }));
+  }, [setSidebar]);
+
+  const openMatch = useCallback((path: string, m: SearchMatch, focusEditor: boolean) => {
+    if (activeFile !== path) setActiveFile(path);
+    // The phone's sidebar is an overlay over the code the match is in. Enter
+    // in the list keeps focus on the row, so the sidebar stays.
+    if (focusEditor && window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
+    // The preview's text around the match tells two occurrences apart once
+    // edits have moved the offsets.
+    const { text, start, end } = m.preview;
+    const context = { before: text.slice(0, start).replace(/^…/, ''), after: text.slice(end).replace(/…$/, '') };
+    requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(m.from, m.to, { quote: m.text, focus: focusEditor, context }), 60));
+  }, [activeFile]);
+
+  const onReplaced = useCallback((res: ReplaceResult, deleted: boolean) => {
+    bumpHistory();
+    if (!res.replaced) { toast(`Nothing to ${deleted ? 'delete' : 'replace'} — the text changed since the search`); return; }
+    // Arms auto-typeset the way the person's own typing would.
+    onDocChanged(true);
+    const changed = res.files.filter((f) => f.replaced > 0);
+    const n = (k: number, one: string, many: string) => `${k.toLocaleString('en-US')} ${k === 1 ? one : many}`;
+    const where = changed.length === 1 ? changed[0].path : n(changed.length, 'file', 'files');
+    const pending = res.pending ? ` — commit ${res.replaced === 1 ? 'it' : 'them'} from History` : '';
+    const skipped = res.skipped ? `; ${res.skipped.toLocaleString('en-US')} changed while replacing and ${res.skipped === 1 ? 'was' : 'were'} left alone` : '';
+    toast(`${deleted ? 'Deleted' : 'Replaced'} ${n(res.replaced, 'match', 'matches')} in ${where}${pending}${skipped}`, 'ok');
+  }, [bumpHistory, onDocChanged, toast]);
+
   // Accept happens server-side against the LIVE collab doc — a client-side
   // read-replace-write of the disk copy silently reverted every collaborator's
   // unflushed edits and failed on freshly typed (not yet autosaved) text.
@@ -876,6 +912,15 @@ export default function Editor() {
       } else if (matchesShortcut(e, 'palette')) {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+      } else if (matchesShortcut(e, 'search')) {
+        // An open dialog keeps the keys: the panel's field would take focus
+        // behind its backdrop.
+        if (document.querySelector('[aria-modal="true"]')) return;
+        e.preventDefault();
+        // The editor's selection becomes the query only when the keys were
+        // pressed there; from the results it would replace what was typed.
+        const fromEditor = e.target instanceof Element && !!e.target.closest('.cm-editor');
+        openSearch(fromEditor ? codeRef.current?.getSelection()?.quote : undefined);
       } else if (matchesShortcut(e, 'jump') && !e.defaultPrevented && !inTextField(e.target)) {
         // Text fields other than the code editor (comment composer, dialogs,
         // palette) keep the keystroke: a jump against the editor's cursor
@@ -886,7 +931,7 @@ export default function Editor() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doCompile, jumpToPdf, startComment]);
+  }, [doCompile, jumpToPdf, startComment, openSearch]);
 
   const pluginCtx = useMemo(() => ({
     projectId: id,
@@ -916,6 +961,8 @@ export default function Editor() {
       },
       { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
       { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
+      { id: 'search', group: 'Action', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
+      { id: 'replace', group: 'Action', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
@@ -990,7 +1037,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, sidebarHidden, setSidebar]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1102,6 +1149,17 @@ export default function Editor() {
         <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" aria-selected={tab === 'files'} data-testid="tab-files">Files</button>
+            <button
+              className={`sidebar__tab sidebar__tab--icon ${tab === 'search' ? 'sidebar__tab--active' : ''}`}
+              onClick={() => openSearch()}
+              role="tab"
+              aria-selected={tab === 'search'}
+              aria-label="Search"
+              title={`Search the project (${keys.search})`}
+              data-testid="tab-search"
+            >
+              <IconSearch />
+            </button>
             {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => (
               <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} data-testid={`tab-${p.id}`}>
                 {p.title}
@@ -1205,6 +1263,20 @@ export default function Editor() {
                 onAccept={acceptSuggestion}
               />
             )}
+            {/* Always mounted, like the plugin panels: the query, the toggles
+                and the results survive a trip to another tab. */}
+            <div className="sidebar__panel" style={{ display: tab === 'search' ? 'block' : 'none' }}>
+              <SearchPanel
+                projectId={id}
+                branch={branch}
+                rootFile={project.rootFile}
+                manual={!!project.manualCommits}
+                author={identity.name}
+                focus={searchFocus}
+                onOpenMatch={openMatch}
+                onReplaced={onReplaced}
+              />
+            </div>
             {pluginPanels.map((p) => (
               <div key={p.id} className="sidebar__panel" style={{ display: tab === p.id ? 'block' : 'none' }} ref={(el) => { if (el && !el.hasChildNodes()) p.mount(el); }} />
             ))}

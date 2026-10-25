@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, matchesChord, setChord } from '../shortcuts';
+import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, matchesChord, setChord } from '../shortcuts';
 
 const key = (k: string, code: string, mods: Partial<Record<'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey', boolean>> = {}, altGraph = false) =>
   ({ key: k, code, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods, getModifierState: (m: string) => m === 'AltGraph' && altGraph }) as unknown as KeyboardEvent;
@@ -12,6 +12,24 @@ describe('shortcut labels', () => {
     expect(formatChord(optionP, true)).toBe('⌥⇧⌘P');
     expect(formatChord(optionP, false)).toBe('Ctrl+Alt+Shift+P');
     expect(formatChord({ mod: true, shift: false, alt: false, key: 'Enter' }, true)).toBe('⌘↩');
+  });
+
+  it('searches the project on Shift+Mod+F, which nothing else takes', () => {
+    const search = chordFor('search');
+    expect(chordProblem(search, 'search', true)).toBeNull();
+    expect(chordProblem(search, 'search', false)).toBeNull();
+    expect(formatChord(search, true)).toBe('⇧⌘F');
+    expect(formatChord(search, false)).toBe('Ctrl+Shift+F');
+    expect(matchesChord(key('F', 'KeyF', { metaKey: true, shiftKey: true }), search)).toBe(true);
+  });
+
+  it('names the clash when a chord saved earlier is a new default too', () => {
+    expect(chordConflict('jump')).toBeNull();
+    setChord('jump', { mod: true, shift: true, alt: false, key: 'f', code: 'KeyF' });
+    expect(chordConflict('jump')).toBe('Search the project');
+    expect(chordConflict('search')).toBe('Jump the PDF to the cursor');
+    setChord('jump', null);
+    expect(chordConflict('search')).toBeNull();
   });
 });
 

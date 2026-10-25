@@ -27,29 +27,47 @@ export type EditorMode = 'source' | 'visual';
  * Re-anchor a comment by its stored quote when its saved offset has drifted
  * (edits above it made while it wasn't being live-tracked — reload, another
  * user's edits). Uses the occurrence of the quote nearest the saved offset;
- * falls back to the clamped saved offset when the quote can't be found.
+ * falls back to the clamped saved offset when the quote can't be found. With
+ * `context` (a search match), an occurrence whose surrounding text still
+ * reads the same is preferred: an insert above moves an earlier occurrence
+ * onto the saved offset, and the nearest one is then the wrong one.
  */
-function reanchor(doc: Text, r: CommentRange): CommentRange {
+function reanchor<R extends { from: number; to: number; quote?: string }>(doc: Text, r: R, context?: MatchContext): R {
   const len = doc.length;
   const from = Math.min(Math.max(0, r.from), len);
   const to = Math.min(Math.max(from, r.to), len);
-  if (!r.quote) return { ...r, from, to };
-  if (doc.sliceString(from, to) === r.quote) return { ...r, from, to }; // still exact
+  const quote = r.quote;
+  if (!quote) return { ...r, from, to };
+  const fits = (i: number) => !context
+    || (doc.sliceString(Math.max(0, i - context.before.length), i) === context.before
+      && doc.sliceString(i + quote.length, Math.min(len, i + quote.length + context.after.length)) === context.after);
+  if (doc.sliceString(from, to) === quote && fits(from)) return { ...r, from, to }; // still exact
   const text = doc.toString();
   let best = -1, bestDist = Infinity;
-  for (let i = text.indexOf(r.quote); i !== -1; i = text.indexOf(r.quote, i + 1)) {
-    const d = Math.abs(i - r.from);
-    if (d < bestDist) { best = i; bestDist = d; }
+  for (const strict of context ? [true, false] : [false]) {
+    for (let i = text.indexOf(quote); i !== -1; i = text.indexOf(quote, i + 1)) {
+      if (strict && !fits(i)) continue;
+      const d = Math.abs(i - r.from);
+      if (d < bestDist) { best = i; bestDist = d; }
+    }
+    if (best !== -1) break;
   }
   if (best === -1) return { ...r, from, to }; // quote gone — keep clamped offset
-  return { ...r, from: best, to: best + r.quote.length };
+  return { ...r, from: best, to: best + quote.length };
 }
+
+/** The text a search showed on either side of a match, on its line. */
+export interface MatchContext { before: string; after: string }
 
 export interface CodePaneHandle {
   /** Deferred until the collab doc has synced: a fresh pane holds an empty
    *  document until then, and line N of nothing is line 1. */
   /** onClamped fires (with the line count) when `line` is past the end of the doc. */
   gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }): void;
+  /** Select from..to, re-anchored by `quote` (and the text around it) when
+   *  edits moved it, and scroll it into view; deferred like gotoLine.
+   *  Selection only: no document change. */
+  selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }): void;
   insertAtCursor(text: string): void;
   currentLine(): number | null;
   getSelection(): { from: number; to: number; quote: string } | null;
@@ -187,8 +205,18 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
   const syncedRef = useRef(false);
-  const pendingGoto = useRef<{ line: number; flash: boolean; onClamped?: (lines: number) => void } | null>(null);
+  const pendingGoto = useRef<
+    | { kind: 'line'; line: number; flash: boolean; onClamped?: (lines: number) => void }
+    | { kind: 'range'; from: number; to: number; quote: string; focus: boolean; context?: MatchContext }
+    | null
+  >(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyRange = (view: EditorView, from: number, to: number, quote: string, focus: boolean, context?: MatchContext) => {
+    const r = reanchor(view.state.doc, { from, to, quote }, context);
+    view.dispatch({ selection: { anchor: r.from, head: r.to }, effects: EditorView.scrollIntoView(r.from, { y: 'center' }) });
+    if (focus) view.focus();
+  };
 
   const applyGoto = (view: EditorView, line: number, flash: boolean, onClamped?: (lines: number) => void) => {
     const l = Math.min(Math.max(1, line), view.state.doc.lines);
@@ -211,8 +239,13 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const view = viewRef.current;
       // Before the view exists (handle is live from the first commit, the
       // view from the mount effect) or before the doc has synced: queue it.
-      if (!view || !syncedRef.current) { pendingGoto.current = { line, flash: !!opts?.flash, onClamped: opts?.onClamped }; return; }
+      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'line', line, flash: !!opts?.flash, onClamped: opts?.onClamped }; return; }
       applyGoto(view, line, !!opts?.flash, opts?.onClamped);
+    },
+    selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }) {
+      const view = viewRef.current;
+      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'range', from, to, quote: opts.quote, focus: opts.focus, context: opts.context }; return; }
+      applyRange(view, from, to, opts.quote, opts.focus, opts.context);
     },
     insertAtCursor(text: string) {
       const view = viewRef.current;
@@ -386,7 +419,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       syncedRef.current = true;
       const goto = pendingGoto.current;
       pendingGoto.current = null;
-      if (goto) applyGoto(view, goto.line, goto.flash, goto.onClamped);
+      if (goto?.kind === 'line') applyGoto(view, goto.line, goto.flash, goto.onClamped);
+      else if (goto?.kind === 'range') applyRange(view, goto.from, goto.to, goto.quote, goto.focus, goto.context);
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.

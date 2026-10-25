@@ -69,6 +69,21 @@ test.describe('keyboard shortcut settings', () => {
     } finally { await cleanup(request, id); }
   });
 
+  test('two shortcuts on the same keys are flagged on both rows', async ({ page, request }) => {
+    const id = await createProject(request, 'Shortcut Clash');
+    try {
+      // ⇧⌘F saved for jump before search took it as its default
+      await page.addInitScript(() => localStorage.setItem('aldine.shortcuts', JSON.stringify({ jump: { mod: true, shift: true, alt: false, key: 'f', code: 'KeyF' } })));
+      await openProject(page, id);
+      await page.getByTestId('project-settings-open').click();
+      await expect(page.getByTestId('shortcut-hint-jump')).toContainText('is also Search the project — change one of them');
+      await expect(page.getByTestId('shortcut-hint-search')).toContainText('is also Jump the PDF to the cursor — change one of them');
+      await page.getByTestId('shortcut-reset-jump').click();
+      await expect(page.getByTestId('shortcut-hint-jump')).toHaveCount(0);
+      await expect(page.getByTestId('shortcut-hint-search')).toHaveCount(0);
+    } finally { await cleanup(request, id); }
+  });
+
   test('the palette opens the shortcuts', async ({ page, request }) => {
     const id = await createProject(request, 'Shortcut Palette');
     try {

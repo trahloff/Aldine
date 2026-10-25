@@ -605,6 +605,35 @@ export function applySuggestionToDoc(
   return 'applied';
 }
 
+/**
+ * Apply several edits to the LIVE collab doc as one transaction, back to
+ * front so each offset still means what it did in the text the caller read,
+ * then write the doc to disk like applySuggestionToDoc. The caller verified
+ * the edits against openDocContent in the same tick, so there is no stale
+ * outcome; 'no-doc' when the file has no loaded doc.
+ */
+export function applyEditsToDoc(
+  projectId: string,
+  branch: string,
+  filePath: string,
+  edits: Array<{ from: number; to: number; insert: string }>,
+  origin?: unknown,
+): 'applied' | 'no-doc' {
+  const name = docName(projectId, branch, filePath);
+  const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
+  if (!doc) return 'no-doc';
+  const ytext = doc.getText(TEXT_KEY);
+  const order = [...edits].sort((a, b) => b.from - a.from);
+  doc.transact(() => {
+    for (const e of order) {
+      if (e.to > e.from) ytext.delete(e.from, e.to - e.from);
+      if (e.insert) ytext.insert(e.from, e.insert);
+    }
+  }, origin);
+  writeDocToDisk(name, doc);
+  return 'applied';
+}
+
 /** Live content of a loaded collab doc, or null when no doc is open — the
  *  reader edit_file uses to choose CRDT-apply over disk-splice. The returned
  *  string is only trustworthy for offsets within the same synchronous tick

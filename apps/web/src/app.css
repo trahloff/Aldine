@@ -657,6 +657,8 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 .sidebar__tab:hover { background: var(--bg-hover); }
 .sidebar__tab:active { background: var(--bg-active); }
 .sidebar__tab--active { background: var(--bg-active); color: var(--text); font-weight: 600; }
+/* a fourth text tab would not fit the 230px row beside "Review (3)" and More */
+.sidebar__tab--icon { flex: none; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 /* History and the panels that are not pinned share one "More" tab with a menu */
 .sidebar__more { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
 .sidebar__more > .sidebar__tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
@@ -1146,6 +1148,87 @@ a.branch-menu__repo:hover { background: var(--bg-hover); }
 /* Per-commit headings in the agent review dialog carry Claude's own message
    (file names, LaTeX tokens) — no case transform, unlike the section label above. */
 .review__commit { font-size: var(--text-s); font-weight: 600; color: var(--text); margin: 14px 0 6px; overflow-wrap: anywhere; }
+
+/* project search: the fields stay put while the results scroll under them */
+.search { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
+/* the screen reader's copy of the outcome: always in the tree, never on screen */
+.search__live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.search__field { position: relative; display: flex; }
+.search__input { width: 100%; min-width: 0; font-size: var(--text-s); }
+.search__field .search__input { padding-right: 80px; }
+.search__toggles { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); display: flex; gap: 1px; }
+.search__toggle { width: 24px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); font: 600 var(--text-xs) var(--font-ui); cursor: pointer; }
+.search__toggle:hover { background: var(--bg-hover); color: var(--text); }
+.search__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.search__toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+.search__toggle--word { text-decoration: underline; text-underline-offset: 2px; }
+.search__toggle--mono { font-family: var(--font-mono); }
+.search__replace { display: flex; align-items: center; gap: 4px; }
+.search__replace .btn { flex: none; height: 28px; }
+/* aria-disabled keeps the button focusable; it looks like .btn:disabled */
+.search__replace .btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.search__replace .btn[aria-disabled="true"]:active { transform: none; background: var(--bg-panel); }
+.search__status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 0 2px; color: var(--text-2); font-size: var(--text-xs); }
+.search__summary { flex: 1; min-width: 0; }
+.search__link { flex: none; padding: 0 2px; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.search__link:hover { text-decoration: underline; }
+.search__link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-xs); }
+.search__refresh, .search__icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); cursor: pointer; }
+.search__refresh:hover, .search__icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+.search__refresh:focus-visible, .search__icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.search__icon-btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.search__error { padding: 0 2px; color: var(--error); font-size: var(--text-s); line-height: 1.4; overflow-wrap: anywhere; }
+.search__note { padding: 0 2px; color: var(--text-3); font-size: var(--text-xs); line-height: 1.4; }
+.search__large > summary { cursor: pointer; }
+.search__large > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-xs); }
+.search__large ul { margin: 2px 0 0; padding-left: 16px; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.search__empty { margin: 0; padding: 4px 2px; color: var(--text-3); font-size: var(--text-s); line-height: 1.45; overflow-wrap: anywhere; }
+.search__results { flex: 1; min-height: 0; overflow: auto; }
+/* the file is the treeitem; its header shows the focus ring, not the whole group */
+.search__file:focus { outline: none; }
+.search__file-head { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 0 0 4px; border-radius: var(--radius-s); color: var(--text); font-size: var(--text-s); white-space: nowrap; cursor: pointer; user-select: none; }
+.search__file-head:hover { background: var(--bg-hover); }
+.search__file:focus-visible > .search__file-head { outline: 2px solid var(--accent); outline-offset: -2px; }
+.search__chev { flex: none; display: inline-flex; color: var(--text-3); transition: transform 150ms var(--ease-out); }
+.search__chev--open { transform: rotate(90deg); }
+.search__file-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.search__file-dir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-size: var(--text-xs); }
+.search__file-count { flex: none; margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--bg-active); color: var(--text-2); font-size: var(--text-xs); text-align: center; font-variant-numeric: tabular-nums; }
+.search__file-dismiss { opacity: 0; }
+.search__file-head:hover .search__file-dismiss, .search__file:focus-visible > .search__file-head .search__file-dismiss { opacity: 1; }
+.search__match { position: relative; display: flex; align-items: baseline; gap: 6px; padding: 3px 4px 3px 22px; border-radius: var(--radius-s); color: var(--text); font-size: var(--text-s); cursor: pointer; }
+.search__match:hover { background: var(--bg-hover); }
+.search__match:focus { outline: none; background: var(--accent-soft); }
+.search__match:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.search__line { flex: none; min-width: 2ch; color: var(--text-3); font-size: var(--text-xs); text-align: right; font-variant-numeric: tabular-nums; }
+.search__preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--text-xs); }
+.search__preview mark { border-radius: 2px; background: color-mix(in srgb, var(--warn) 32%, transparent); color: inherit; }
+.search__preview del { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); }
+.search__preview ins { background: rgba(40, 167, 69, 0.12); color: var(--ok-text); text-decoration: none; }
+/* an empty replacement deletes: the row shows it once its button is pointed at */
+.search__match:has(.search__replace-one:hover, .search__replace-one:focus-visible) .search__mark--delete { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); text-decoration: line-through; }
+.search__replace-one { position: absolute; top: 50%; right: 2px; transform: translateY(-50%); background: var(--bg-inset); opacity: 0; }
+.search__match:hover .search__replace-one, .search__match:focus-within .search__replace-one { opacity: 1; }
+/* no hover on a touch screen (a tablet is wider than the phone rule): the
+   buttons are always there and take the row's end instead of covering it */
+@media (hover: none) {
+  .search__file-dismiss { opacity: 1; }
+  .search__match { align-items: center; }
+  .search__replace-one { position: static; transform: none; opacity: 1; }
+}
+@media (max-width: 640px) {
+  /* 16px keeps iOS from zooming into a focused field */
+  .search__input { height: 44px; font-size: 16px; }
+  .search__field .search__input { padding-right: 128px; }
+  .search__toggle { width: 40px; height: 40px; }
+  .search__replace .btn { height: 44px; }
+  .search__refresh, .search__icon-btn { width: 40px; height: 40px; }
+  .search__file-head { height: 40px; }
+  .search__file-dismiss { opacity: 1; }
+  /* no hover on a touch screen: the row's button is always there */
+  .search__match { align-items: center; padding-left: 12px; }
+  .search__replace-one { position: static; transform: none; opacity: 1; }
+}
 
 /* sidebar panels (history, plugins) */
 .panel-list { display: flex; flex-direction: column; }

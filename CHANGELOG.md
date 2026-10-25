@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Search and replace across the project: a Search tab in the sidebar
+  (⇧⌘F / Ctrl+Shift+F, changeable in settings) finds text in every file on
+  the branch, open or not, with match case, whole word and regular
+  expressions. Results are grouped by file with their line; a click opens
+  the file with the match selected. Replace one match or all of them: a
+  file a collaborator has open changes in front of them, and Replace all
+  lands as one commit under your name. Build output, hidden files, symbolic
+  links and files over 1 MB are not searched.
+- The keyboard shortcuts in settings say when two of them are on the same
+  keys, such as one you set to ⇧⌘F before search took it.
+
 ## [0.15.1] — 2026-10-25
 
 ### Fixed

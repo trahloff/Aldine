@@ -151,6 +151,51 @@ export interface Comment {
   replies: CommentReply[];
 }
 
+/** What the Search panel asks for; the toggles go along with every replace too. */
+export interface SearchQuery { q: string; caseSensitive: boolean; wholeWord: boolean; regex: boolean }
+/** Offsets are UTF-16 units into the file's text when the search ran (the
+ *  live document for an open file); `preview.start..end` highlights it in
+ *  `preview.text`, an excerpt of its line. */
+export interface SearchMatch {
+  from: number;
+  to: number;
+  line: number;
+  column: number;
+  text: string;
+  preview: { text: string; start: number; end: number };
+}
+export interface SearchFile { path: string; open: boolean; matches: SearchMatch[] }
+export interface SearchResult {
+  files: SearchFile[];
+  total: number;
+  /** The search stopped at 2,000 matches, or at 8 MB of text. */
+  truncated: null | 'matches' | 'bytes';
+  /** `largeCount` files over 1 MB, the first 20 named in `large`; `longMatches`: matches over 1,000 characters, not shown. */
+  skipped: { large: string[]; largeCount: number; longMatches: number };
+}
+/** The one match a Replace (one) means: its text and preview as the search
+ *  showed them, its place among its file's matches of the same text, and how
+ *  many of those had the same preview (itself included). Offsets are not
+ *  sent: an edit above it moves them onto another occurrence. */
+export interface ReplaceTarget {
+  path: string;
+  text: string;
+  preview: SearchMatch['preview'];
+  ordinal: number;
+  count: number;
+  alike: number;
+}
+/** `skipped`: matches a collaborator changed while the replace ran, left as they are. */
+export interface ReplaceResult {
+  replaced: number;
+  skipped: number;
+  files: Array<{ path: string; replaced: number; skipped: number }>;
+  /** Short hash of the one commit; null when nothing changed or the project commits by hand. */
+  commit: string | null;
+  /** The edits wait in History for a commit (manual commits). */
+  pending: boolean;
+}
+
 /** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
 export class ApiError extends Error {
@@ -330,6 +375,19 @@ export const api = {
   log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
   changes: (id: string, branch: string) => req<{ paths: string[] }>(`/api/projects/${id}/changes?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
+  search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
+    const qs = new URLSearchParams({ branch, q: query.q });
+    if (query.caseSensitive) qs.set('case', '1');
+    if (query.wholeWord) qs.set('word', '1');
+    if (query.regex) qs.set('regex', '1');
+    return req<SearchResult>(`/api/projects/${id}/search?${qs}`, { signal });
+  },
+  /** `match` replaces that one match; `paths` every match in those files. */
+  replace: (id: string, branch: string, query: SearchQuery, replace: string, target: { match: ReplaceTarget } | { paths: string[] }, author?: string) =>
+    req<ReplaceResult>(`/api/projects/${id}/replace`, {
+      method: 'POST',
+      body: JSON.stringify({ branch, q: query.q, case: query.caseSensitive, word: query.wholeWord, regex: query.regex, replace, ...target, author }),
+    }),
   revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
     req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
   // The mark travels in the query only without accounts; with a signed-in

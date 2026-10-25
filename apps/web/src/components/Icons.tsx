@@ -95,6 +95,22 @@ export const IconSpark = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** Text in, text out: a search row's "Replace this match". */
+export const IconReplace = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={13} height={13}>
+    <path d="M2.5 5.5h9l-2.5-2.5" />
+    <path d="M13.5 10.5h-9l2.5 2.5" />
+  </svg>
+);
+
+/** A circular arrow: run the same thing again. */
+export const IconRefresh = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={13} height={13}>
+    <path d="M13 8a5 5 0 1 1-1.46-3.54" />
+    <path d="M13 2.5v3h-3" />
+  </svg>
+);
+
 export const IconX = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={11} height={11}>
     <path d="M3 3l10 10M13 3 3 13" />
