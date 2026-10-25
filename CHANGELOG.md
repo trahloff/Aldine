@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-10-25
+
 ### Added
 - The project list puts the most recently edited project first and says when
   each one was last edited and by whom (the agent's name for edits made
