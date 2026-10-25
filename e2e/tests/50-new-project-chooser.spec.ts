@@ -181,6 +181,12 @@ test.describe('New project chooser', () => {
     expect(res.status()).toBe(200);
     expect(res.headers()['content-type']).toBe('image/jpeg');
     expect(res.headers()['cache-control']).toContain('max-age=31536000, immutable');
+    // Venue tiles rendered in CI: whichever the catalog lists with an image is served.
+    for (const t of list.filter((x) => x.id.startsWith('venue:') && x.preview)) {
+      const v = await request.get(`/api/templates/preview?id=${encodeURIComponent(t.id)}&v=${t.preview!.v}`);
+      expect(v.status(), `${t.id} serves the page it names`).toBe(200);
+      expect(v.headers()['content-type']).toBe('image/jpeg');
+    }
 
     await openChooser(page);
     const img = page.getByTestId('template-preview-article');

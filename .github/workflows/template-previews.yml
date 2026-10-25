@@ -1,0 +1,122 @@
+name: Template previews
+
+# Page 1 of every venue tile in the New project chooser, rendered with the
+# full TeX Live compiler image and proposed as a pull request. Fetched kits
+# are downloaded from their publishers here, on the runner, exactly as
+# creating a project from one does. A venue that does not typeset keeps its
+# title-page placeholder, is recorded in known-failures.json and listed in
+# the run summary; it never fails the run.
+#
+# Pull requests opened with GITHUB_TOKEN start no workflows, and this
+# repository may not allow Actions to open them at all: when the PR cannot
+# be opened, the branch is pushed and the summary links it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Render every template again, not only the missing or outdated ones
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - templates/**
+      - apps/server/src/catalog.ts
+      - apps/server/src/venuekits.ts
+      - apps/server/src/templates.ts
+      - apps/server/src/templatepreviews.ts
+      - apps/server/scripts/render-template-previews.ts
+      - apps/compiler/catalog.js
+      - apps/compiler/thumbnail.js
+      - .github/workflows/template-previews.yml
+
+concurrency:
+  group: template-previews
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  BRANCH: bot/template-previews
+
+jobs:
+  render:
+    name: Render template previews
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free runner disk (the full TeX Live image is large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af >/dev/null
+          df -h / | tail -1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start the compiler (full TeX Live, this checkout's apps/compiler)
+        env:
+          DATA: ${{ runner.temp }}/previews-data
+          IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-compiler:latest-full
+        run: |
+          set -euo pipefail
+          docker pull --quiet "$IMAGE"
+          mkdir -p "$DATA"
+          mounts=()
+          for f in apps/compiler/*.js; do mounts+=(-v "$PWD/$f:/srv/${f##*/}:ro"); done
+          docker run -d --name aldine-compiler --network host --init \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e PORT=4020 -e DATA_DIR="$DATA" -v "$DATA:$DATA" "${mounts[@]}" \
+            "$IMAGE" >/dev/null
+          for _ in $(seq 60); do
+            curl -fsS http://localhost:4020/health && break
+            sleep 1
+          done
+          echo
+          curl -fsS http://localhost:4020/health >/dev/null
+          docker exec aldine-compiler biber --version >/dev/null
+      - name: Render
+        env:
+          DATA_DIR: ${{ runner.temp }}/previews-data
+          META_DIR: ${{ runner.temp }}/previews-meta
+          CACHE_DIR: ${{ runner.temp }}/previews-cache
+          COMPILER_URL: http://localhost:4020
+          FORCE: ${{ inputs.force && '--force' || '' }}
+        run: npm run templates:previews -- --venues --kits $FORCE --summary "$GITHUB_STEP_SUMMARY"
+      - name: Check the shipped previews
+        run: npx tsx apps/server/test/template-previews-shipped.test.mjs
+      - name: Compiler log
+        if: always()
+        run: docker logs aldine-compiler 2>&1 | tail -200 || true
+      - name: Propose the new previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- apps/server/assets/template-previews)" ]; then
+            echo "Every preview is current; nothing to propose." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -A -- apps/server/assets/template-previews
+          git commit -q -m "templates: page-1 previews of the venue tiles" \
+            -m "Rendered by the Template previews workflow (run ${{ github.run_id }}) with the full TeX Live compiler image."
+          git push -f origin "$BRANCH"
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "Updated the open previews pull request." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          body="Page 1 of the venue tiles, rendered by [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). Venues that did not typeset are in known-failures.json and the run summary."
+          if url=$(gh pr create --base main --head "$BRANCH" --title "templates: page-1 previews of the venue tiles" --body "$body" 2>&1); then
+            echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::Could not open the pull request ($url)"
+            echo "Pushed \`$BRANCH\`; open the pull request: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+          fi

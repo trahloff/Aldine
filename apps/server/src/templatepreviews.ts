@@ -7,6 +7,8 @@ import { REPO_PREFIX, listRepoTemplates, onTemplateRepoSynced } from './template
 import { guessRoot } from './root.js';
 import { detectEngine } from './detect.js';
 import { readThumbMeta, thumbFiles, thumbVersion } from './thumbnail.js';
+import { INSTALLED_VENUES, VENUE_PREFIX, cachedVenueClasses, installedVenueFiles, type CatalogClass } from './catalog.js';
+import { venueKit, type VenueKitEntry } from './venuekits.js';
 
 /**
  * Page-1 previews for the New project chooser.
@@ -28,6 +30,13 @@ import { readThumbMeta, thumbFiles, thumbVersion } from './thumbnail.js';
  * A version key hashes the template's raw files, before placeholders, plus its
  * id and name: {{DATE}} in a template does not make a new version every day.
  * The preview is typeset with a fixed date for the same reason.
+ *
+ * Venue tiles are rendered before release too, in CI (.github/workflows/
+ * template-previews.yml), with the compiler image: an installed class into
+ * venues/<id>, keyed by the files Aldine seeds from the image's catalog row;
+ * a fetched kit into kits/<id>, keyed by its registry entry, so a new URL or
+ * take list is a new version. known-failures.json names the venues that
+ * have no image and why.
  *
  * The work directory sits under DATA_DIR because that is the only volume the
  * compiler reads. Repository images live in CACHE_DIR/template-previews/<repo>,
@@ -127,6 +136,7 @@ export function loadShippedPreviews(): Map<string, TemplatePreview> {
   }
   if (stale.length) console.warn(`[templates] no current preview for ${stale.join(', ')}: the chooser shows a title page (npm run templates:previews renders them)`);
   shipped = found;
+  venueSeen.clear();
   return found;
 }
 
@@ -189,8 +199,64 @@ export function rekeyRepo(repoId: string): void {
   }
 }
 
+// ---- venues ----
+
+/** Subdirectory of TEMPLATE_PREVIEWS_DIR per kind of venue tile. */
+export const VENUE_PREVIEW_DIRS = { venue: 'venues', kit: 'kits' } as const;
+export type VenueKind = keyof typeof VENUE_PREVIEW_DIRS;
+export const KNOWN_FAILURES_FILE = 'known-failures.json';
+
+/** The version of a fetched kit: every field of its registry entry that decides what a project is seeded with. */
+export function kitVersionKey(e: VenueKitEntry): string {
+  const k = e.kit;
+  const def = {
+    url: k.url ?? null, urls: k.urls ?? null, host: k.host, take: k.take ?? null, rename: k.rename ?? null, flatten: !!k.flatten,
+    documentClass: e.documentClass, classOptions: e.classOptions ?? null, preamble: e.preamble ?? null,
+    bibStyle: e.bibStyle ?? null, classSetsBibStyle: !!e.classSetsBibStyle, main: e.main ?? null,
+  };
+  return templateVersionKey({ id: VENUE_PREFIX + e.id, name: e.name }, { 'kit.json': Buffer.from(JSON.stringify(def)) });
+}
+
+/** Seed files and version key of an installed class, or null for one the gallery does not list. */
+export function installedVersion(c: CatalogClass): { raw: Record<string, Buffer>; key: string; name: string } | null {
+  const raw = installedVenueFiles(c);
+  if (!raw) return null;
+  const name = INSTALLED_VENUES[c.id].name;
+  return { raw, key: templateVersionKey({ id: VENUE_PREFIX + c.id, name }, raw), name };
+}
+
+/** Which tile `venue:<id>` is listed as, the way listAllTemplates decides it: the installed class wins. */
+function venueVersion(id: string): { dir: string; base: string; key: string } | null {
+  const base = id.slice(VENUE_PREFIX.length);
+  if (!SHIPPED_ID_RE.test(base)) return null;
+  const cls = cachedVenueClasses().find((c) => c.id === base);
+  const installed = cls ? installedVersion(cls) : null;
+  if (installed) return { dir: path.join(config.templatePreviewsDir, VENUE_PREVIEW_DIRS.venue), base, key: installed.key };
+  const entry = venueKit(base);
+  return entry ? { dir: path.join(config.templatePreviewsDir, VENUE_PREVIEW_DIRS.kit), base, key: kitVersionKey(entry) } : null;
+}
+
+/** dir/base:key → its preview, or null when that version has no image on disk. */
+const venueSeen = new Map<string, TemplatePreview | null>();
+
+function venuePreview(id: string): { preview: TemplatePreview; file: string } | null {
+  const ver = venueVersion(id);
+  if (!ver) return null;
+  const file = path.join(ver.dir, `${ver.base}.jpg`);
+  const memo = `${file}:${ver.key}`;
+  let hit = venueSeen.get(memo);
+  if (hit === undefined) {
+    const side = readSidecar(path.join(ver.dir, `${ver.base}.json`));
+    const bytes = side?.key === ver.key ? readJpeg(file) : null;
+    hit = side && bytes && thumbVersion(bytes) === side.v ? { w: side.w, h: side.h, v: side.v } : null;
+    venueSeen.set(memo, hit);
+  }
+  return hit ? { preview: hit, file } : null;
+}
+
 /** The current preview of `id`, or null when its version has none (yet). */
 export function templatePreview(id: string): TemplatePreview | null {
+  if (id.startsWith(VENUE_PREFIX)) return venuePreview(id)?.preview ?? null;
   const repoId = repoOf(id);
   if (!repoId) return shippedPreviews().get(id) ?? null;
   const k = keys.get(id);
@@ -207,6 +273,11 @@ export function withPreviews(list: TemplateInfo[]): TemplateInfo[] {
 
 /** The image bytes of `id`'s current preview, or null. */
 export function readTemplatePreview(id: string): { bytes: Buffer; v: string } | null {
+  if (id.startsWith(VENUE_PREFIX)) {
+    const hit = venuePreview(id);
+    const bytes = hit ? readJpeg(hit.file) : null;
+    return bytes ? { bytes, v: thumbVersion(bytes) } : null;
+  }
   if (!templatePreview(id)) return null;
   const repoId = repoOf(id);
   const file = repoId
