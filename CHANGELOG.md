@@ -23,6 +23,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Zotero link. Projects over 256 MB are not duplicated; download them as a
   ZIP instead.
 - The trash says when each project in it will be deleted for good.
+- Page-1 thumbnails for the project list. After every successful typeset,
+  from the editor or through the API, the compiler renders the first page
+  into a small image beside the PDF. A typeset that logged errors but still
+  wrote a fresh PDF gets an image too, matching what the editor shows; one
+  that halted, timed out or wrote no PDF keeps the previous image. The project list and the trash name each project's image (its
+  branch, size and version), and `GET /api/projects/:id/thumbnail` serves it
+  to whoever may open the PDF, cacheable for good once the version is in the
+  link. The compiler image already ships Ghostscript for this; a compiler run
+  outside the image uses Ghostscript or poppler's pdftoppm when installed and
+  typesets as before without either. Rendering never delays the typeset, and
+  `ALDINE_THUMBNAILS=0` on the compiler turns it off.
 
 ## [0.16.0] — 2026-10-25
 

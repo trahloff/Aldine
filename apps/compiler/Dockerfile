@@ -66,6 +66,11 @@ RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" \
 # compile — and the killed half-extracted cache then wedges every compile after.
 RUN biber --version
 
+# Ghostscript renders the page-1 thumbnails (thumbnail.js). Both bases
+# install it (texlive/texlive pulls it in for epstopdf); a base without it
+# fails here instead of typesetting with no thumbnails.
+RUN gs --version
+
 # Restricted (partial) shell-escape: allow only the vetted whitelist (epstopdf,
 # kpsewhich, bibtex, …) so EPS auto-conversion works and the epstopdf warning
 # goes away — but arbitrary \write18 commands stay blocked. Same posture as
@@ -73,7 +78,7 @@ RUN biber --version
 RUN tlmgr conf texmf shell_escape p
 
 WORKDIR /srv
-COPY server.js catalog.js preamble.js ./
+COPY server.js catalog.js preamble.js thumbnail.js ./
 # server.js reports the scheme at GET /health; the ARG must be re-declared
 # after FROM to be visible in this stage.
 ARG TEXLIVE_SCHEME

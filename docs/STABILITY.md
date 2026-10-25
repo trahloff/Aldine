@@ -42,7 +42,7 @@ releases, not a build of `main`.
 |---|---|---|
 | Projects | `DATA_DIR/projects/<id>`: one git repository per project, with `main` checked out | git |
 | Other branches | `DATA_DIR/worktrees/<id>/<branch>`: a git worktree each | git |
-| Compile output | `.aldine-out/` beside the root file, kept out of git | rebuilt on the next typeset |
+| Compile output, the page-1 thumbnail included (`.<root>.thumb.jpg` and `.json`) | `.aldine-out/` beside the root file, kept out of git | rebuilt on the next typeset |
 | Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`) and each project's last edit and typesets (`activity.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
 | The same, with `DATABASE_URL` set | the Postgres database | tables Aldine creates |
 | Collaboration state | `META_DIR/yjs/`, one `.ybin` file per document | Yjs binary update |

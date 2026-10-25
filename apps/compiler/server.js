@@ -5,7 +5,8 @@
  * Contract:
  *   POST /compile  { projectDir, rootFile, engine? }  ->
  *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs }
- *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' } }
+ *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' },
+ *                        thumbnails: 'gs' | 'pdftoppm' | 'none' }
  *   GET  /catalog  -> { ok, generatedAt, classes: [{ id, cls, kind, license, sample }] }
  *
  * The compiler shares the projects volume (read) and an output cache volume
@@ -13,6 +14,8 @@
  * Security: restricted shell-escape (whitelist only), no latexmk rc file, no
  * symbolic link out of the project, nonstopmode, wall-clock timeout, output
  * confined to OUT_DIR/<hash>.
+ * After a successful typeset, page 1 is rendered beside the PDF in the
+ * background (thumbnail.js).
  */
 const http = require('http');
 const { spawn } = require('child_process');
@@ -21,6 +24,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { getCatalog } = require('./catalog.js');
 const preamble = require('./preamble.js');
+const thumbnail = require('./thumbnail.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4020;
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../.data');
@@ -374,6 +378,8 @@ async function compileInner(body) {
   // the full run after one must force the cycle or it keeps the draft's ??.
   const draftMark = path.join(outAbs, '.aldine-draft');
   const afterDraft = !draft && fs.existsSync(draftMark);
+  // The previous run's thumbnail render reads the PDF this run rewrites.
+  await thumbnail.cancel(outAbs);
   const t0 = Date.now();
   let { code, out, timedOut } = await run('latexmk', mkArgs(afterDraft), runOpts, TIMEOUT_MS);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {
@@ -475,6 +481,12 @@ async function compileInner(body) {
   // in either log falls back to latexmk's own summary.
   if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
   if (!usingFormat && pre.status === 'miss' && !timedOut && documentBodyReached(log)) preamble.scheduleBuild(pre);
+  // The thumbnail follows the PDF pane: a run that went to the end of the
+  // document and wrote a fresh PDF is shown even when it logged errors, so it
+  // is rendered too. A run that halted, timed out or wrote nothing keeps the
+  // previous image.
+  const complete = ok || (!haltOnError && !timedOut && isFresh(pdfPath) && !/no output PDF file produced|No pages of output/i.test(log));
+  if (complete) thumbnail.schedule(outAbs, base);
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
@@ -540,7 +552,7 @@ async function synctex(body) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive });
+  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive, thumbnails: thumbnail.rendererName() });
   if (req.method === 'GET' && (req.url === '/catalog' || req.url.startsWith('/catalog?'))) {
     return getCatalog().then((c) => json(res, 200, c), (err) => json(res, 500, { ok: false, error: String(err && err.message || err) }));
   }
@@ -564,10 +576,10 @@ const server = http.createServer(async (req, res) => {
 
 // The log parsers are pure and worth testing without a TeX Live image; the
 // server only starts when this file is run directly (the image's CMD).
-module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, clipLog, preambleIdle: preamble.idle };
+module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, clipLog, preambleIdle: preamble.idle, thumbnailsIdle: thumbnail.idle };
 
 if (require.main === module) {
-  probeTexLive().finally(() => {
-    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme})`));
+  Promise.allSettled([probeTexLive(), thumbnail.probe()]).then(() => {
+    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme}), thumbnails=${thumbnail.rendererName()}`));
   });
 }
