@@ -114,6 +114,29 @@ test.describe('keyboard', () => {
       await page.keyboard.press('Escape');
     } finally { for (const id of ids) await cleanup(page.request, id); }
   });
+
+  test('each notice keeps its own undo: Undo on the first leaves Mod+Z for the second', async ({ page }) => {
+    const prefix = `Two Undos ${Date.now()}`;
+    const ids = await trio(page, prefix);
+    try {
+      await page.goto('/');
+      await page.getByTestId('home-search').fill(prefix);
+      await page.getByTestId(`open-${ids[2]}`).focus();
+      await page.keyboard.press('Delete');
+      await expect(page.getByTestId(`project-card-${ids[2]}`)).toHaveCount(0);
+      await expect.poll(() => focusedTestId(page)).toBe(`open-${ids[1]}`);
+      await page.keyboard.press('Delete');
+      await expect(page.getByTestId(`project-card-${ids[1]}`)).toHaveCount(0);
+      // the first notice's Undo brings back the first only
+      await page.locator('.toast', { hasText: `Moved ${prefix} charlie to the trash` }).getByTestId('undo-trash').click();
+      await expect(page.getByTestId(`project-card-${ids[2]}`)).toBeVisible();
+      await expect(page.getByTestId(`project-card-${ids[1]}`)).toHaveCount(0);
+      // and Mod+Z still undoes the second, whose notice is up
+      await page.getByTestId(`open-${ids[2]}`).focus();
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(page.getByTestId(`project-card-${ids[1]}`)).toBeVisible();
+    } finally { for (const id of ids) await cleanup(page.request, id); }
+  });
 });
 
 test.describe('menus', () => {
@@ -303,6 +326,8 @@ test.describe('on a phone', () => {
       await expect(sheet).toBeVisible();
       await expect(sheet).toHaveAttribute('role', 'dialog');
       await expect(page.getByTestId('project-menu-title')).toHaveText('Long Press Paper');
+      // opened by touch: the sheet holds focus, not its first row, so no ring marks "Open"
+      await expect(sheet).toBeFocused();
       await expect(page.getByTestId('menu-trash')).toHaveText('Move to Trash');
       await expect(page.locator('.menu__hint')).toHaveCount(0);
       // the press did not open the project
@@ -330,7 +355,8 @@ test.describe('importing several ZIPs', () => {
     const bad = path.join(dir, `multi-broken-${stamp}.zip`);
     fs.writeFileSync(bad, 'not a zip at all');
     try {
-      await page.goto('/');
+      // started from the trash: the placeholders are drawn in the list of all projects, so it goes there
+      await page.goto('/?show=trash');
       // The first upload is held before it reaches the server, so Cancel still calls it off.
       let release!: () => void;
       const held = new Promise<void>((r) => { release = r; });
@@ -341,9 +367,10 @@ test.describe('importing several ZIPs', () => {
         await route.continue();
       });
       await page.getByTestId('import-input').setInputFiles([...files, bad]);
+      await expect(page).toHaveURL(/\/$/);
       const sheet = page.locator('.sheet--import', { hasText: `multi-first-${stamp}` });
       await expect(sheet).toContainText('Uploading');
-      await sheet.getByRole('button', { name: 'Cancel' }).click();
+      await sheet.getByRole('button', { name: `Cancel import of multi-first-${stamp}` }).click();
       await expect(sheet).toHaveCount(0);
       release();
       await expect(page.locator('.toast', { hasText: 'Imported 1 project · 1 failed' })).toBeVisible({ timeout: 60_000 });
@@ -381,7 +408,65 @@ test.describe('accessibility', () => {
         await expect(page.getByTestId('start-more')).toBeVisible();
         const empty = await new AxeBuilder({ page }).analyze();
         expect(empty.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
+        // the starting points are one Tab stop with arrows
+        await expect(page.getByTestId('start-blank')).toHaveAttribute('tabindex', '0');
+        await expect(page.getByTestId('start-more')).toHaveAttribute('tabindex', '-1');
+        await page.getByTestId('start-blank').focus();
+        await page.keyboard.press('End');
+        await expect(page.getByTestId('start-more')).toBeFocused();
+        await expect(page.getByTestId('start-more')).toHaveAttribute('tabindex', '0');
+        await page.keyboard.press('Home');
+        await expect(page.getByTestId('start-blank')).toBeFocused();
       } finally { await cleanup(request, id); }
     });
   }
+
+  test('axe finds nothing in the trash or at phone width', async ({ page, request }) => {
+    const id = await createProject(request, 'Axe Trash Paper');
+    try {
+      await request.delete(`/api/projects/${id}`);
+      await page.goto('/?show=trash');
+      await expect(page.getByTestId(`trash-${id}`)).toBeVisible();
+      await expect(page.getByTestId('trash-note')).toHaveText(/^Projects in the trash are deleted \d+ days? after you move them there\.$/);
+      const trash = await new AxeBuilder({ page }).analyze();
+      expect(trash.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
+      await request.post(`/api/projects/${id}/restore`);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto('/');
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible();
+      const phone = await new AxeBuilder({ page }).analyze();
+      expect(phone.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('in forced colors the current filter is still marked', async ({ page }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await page.goto('/');
+    await expect(page.getByTestId('filter-all')).toHaveAttribute('aria-current', 'page');
+    const fill = (id: string) => page.getByTestId(id).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(await fill('filter-all')).not.toBe(await fill('open-trash'));
+  });
+});
+
+test.describe('the list kept for the tab', () => {
+  test('a return draws the list before the server answers, and keeps no addresses', async ({ page, request }) => {
+    const id = await createProject(request, `Cached Paper ${Date.now()}`);
+    try {
+      await page.goto('/');
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible();
+      await page.getByTestId(`open-${id}`).click();
+      await expect(page).toHaveURL(new RegExp(`/p/${id}`));
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      await page.route(/\/api\/projects$/, async (route) => { if (route.request().method() === 'GET') await held; await route.continue(); });
+      await page.goBack();
+      // drawn from the cache while the list request is still held
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible();
+      const kept = await page.evaluate(() => sessionStorage.getItem('aldine.home.list:local'));
+      expect(kept).not.toContain('@');
+      const rows = JSON.parse(kept!) as { zotero: unknown; remote?: { fullName: string } | null }[];
+      expect(rows.every((r) => r.zotero === null && (!r.remote || r.remote.fullName === ''))).toBe(true);
+      release();
+    } finally { await cleanup(request, id); }
+  });
 });

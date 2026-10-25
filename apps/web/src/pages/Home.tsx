@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError, ProjectSummary, RemoteInfo, RemoteProviderId, TemplateInfo, TrashedProject } from '../api';
 import { withBase } from '../basePath';
@@ -34,7 +34,7 @@ import { useMediaQuery, prefersReducedMotion } from '../util/useMediaQuery';
 import { useFlip } from '../util/useFlip';
 import { isMac } from '../platform';
 import {
-  isSharedWithMe, matchSentence, matchesQuery, parseShow, parseSort, pdfOutputPath, projectHref, sectionsOf, SORT_KEY, SORTS,
+  isSharedWithMe, matchSentence, matchesQuery, parseShow, parseSort, pdfBranch, pdfOutputPath, projectHref, sectionsOf, SORT_KEY, SORTS,
   sortProjects, type ShelfSection, type Show, type SortKey,
 } from '../util/homeList';
 
@@ -59,6 +59,10 @@ const SKELETON_DELAY_MS = 300;
 const BLANK_SHEET_MAX = 3;
 
 const PHONE = '(max-width: 640px)';
+/** The shelf's column track and gap (.shelf__grid in home.css): the columns are counted from the width, not read back. */
+const COL_MIN = 168;
+const COL_GAP = 32;
+const columnsFor = (width: number, phone: boolean) => (phone ? 2 : Math.max(1, Math.floor((width + COL_GAP) / (COL_MIN + COL_GAP))));
 
 /** The starting points the empty list offers, in this order, when the server has them. */
 const STARTERS: { match: (t: TemplateInfo) => boolean; name: (t: TemplateInfo) => string; title: string; detail: string; kind: TemplateKind }[] = [
@@ -157,36 +161,43 @@ export default function Home() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [addSheet, setAddSheet] = useState(false);
+  const [addSheet, setAddSheet] = useState<{ keyboard: boolean } | null>(null);
+  const [emptying, setEmptying] = useState(false);
+  const [startKey, setStartKey] = useState<string | null>(null);
   usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
 
   const zipInput = useRef<HTMLInputElement>(null);
+  const startRef = useRef<HTMLUListElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const shelfRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null | 'title'>(null);
-  const undo = useRef<{ key: string; run(): void } | null>(null);
+  /** Mod+Z: each notice that can be undone, by its key, newest last. */
+  const undos = useRef(new Map<string, () => void>());
   /** Items on their way out: a second Delete on one is not a second request. */
   const busy = useRef(new Set<string>());
   /** Bumped by every change made here, so a list fetched before it does not undo it. */
   const edits = useRef(0);
   const loads = useRef(0);
   const flip = useFlip(shelfRef);
-  /** Columns of the shelf's grid as laid out: the rows each sheet's stage is sized by. */
-  const [cols, setCols] = useState(1);
-  useEffect(() => {
-    const el = shelfRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
+  const mainRef = useRef<HTMLElement>(null);
+  /** The shelf's width; its columns are the rows each sheet's stage is sized by. Measured before the first paint. */
+  const [shelfWidth, setShelfWidth] = useState(() => (typeof window === 'undefined' ? 1168 : Math.min(1168, window.innerWidth - 48)));
+  useLayoutEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
     const measure = () => {
-      const g = el.querySelector('.shelf__grid');
-      if (g) setCols(getComputedStyle(g).gridTemplateColumns.split(' ').filter(Boolean).length || 1);
+      const cs = getComputedStyle(el);
+      setShelfWidth(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
     };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    measure();
     return () => ro.disconnect();
-  }, [show, projects === null]);
+  }, []);
+  const cols = columnsFor(shelfWidth, compact);
   const dragDepth = useRef(0);
 
   const setSort = (s: SortKey) => { setSortState(s); safeStorage.set(SORT_KEY, s); };
@@ -359,9 +370,11 @@ export default function Home() {
 
   /** Mod+Z does `run` for as long as the notice with `key` is up. */
   const armUndo = (key: string, run: () => void) => {
-    undo.current = { key, run };
+    undos.current.delete(key);
+    undos.current.set(key, run);
   };
-  const expireUndo = (key: string) => () => { if (undo.current?.key === key) undo.current = null; };
+  const disarm = (key: string) => { undos.current.delete(key); };
+  const expireUndo = (key: string) => () => disarm(key);
 
   /** Runs `work` for `id` unless it is already under way for it. */
   const once = async (id: string, work: () => Promise<void>) => {
@@ -371,7 +384,7 @@ export default function Home() {
   };
 
   const restoreFromTrash = async (id: string, name: string, original?: ProjectSummary) => {
-    undo.current = null;
+    disarm(`undo-trash-${id}`);
     try {
       if (show === 'trash') {
         // From its own menu in the trash: the item leaves like any other, and focus moves on.
@@ -398,7 +411,7 @@ export default function Home() {
     }
     const key = `undo-trash-${p.id}`;
     const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, p); };
-    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => { undo.current = null; restoreFromTrash(p.id, p.name, p); } });
+    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => restoreFromTrash(p.id, p.name, p) });
     armUndo(key, run);
     loadTrash();
   });
@@ -412,7 +425,7 @@ export default function Home() {
     }
     const key = `undo-remove-${p.id}`;
     const back = async () => {
-      undo.current = null;
+      disarm(key);
       // Back as it was: the same open, so a change not seen yet stays marked.
       try { await api.restoreListing(p.id, p.opened); reinsert(p); } catch (err: any) { toast(err.message, 'error'); }
     };
@@ -428,25 +441,34 @@ export default function Home() {
     } catch (err: any) { toast(err.message, 'error'); }
   });
 
+  const emptying$ = useRef(false);
   const emptyTrash = async () => {
     const list = trash ?? [];
-    if (!list.length) return;
-    const n = list.length;
-    if (!(await dialogs.confirm({
-      title: `Delete ${n === 1 ? `“${list[0].name}”` : `all ${n} projects in the trash`} forever?`,
-      body: 'This cannot be undone.',
-      confirmLabel: 'Empty trash',
-      danger: true,
-    }))) return;
-    let failed = 0;
-    for (const t of list) {
-      try { await api.deleteProject(t.id, true); } catch { failed += 1; }
+    if (!list.length || emptying$.current) return;
+    emptying$.current = true;
+    setEmptying(true);
+    try {
+      const n = list.length;
+      if (!(await dialogs.confirm({
+        title: `Delete ${n === 1 ? `“${list[0].name}”` : `all ${n} projects in the trash`} forever?`,
+        body: 'This cannot be undone.',
+        confirmLabel: 'Empty trash',
+        danger: true,
+      }))) return;
+      let failed = 0;
+      for (const t of list) {
+        // Gone already (deleted from another tab): not a failure.
+        try { await api.deleteProject(t.id, true); } catch (err) { if (!(err instanceof ApiError && err.status === 404)) failed += 1; }
+      }
+      flip();
+      // Its own button goes with the last project in the trash.
+      pendingFocus.current = 'title';
+      await loadTrash();
+      toast(failed ? `Emptied the trash · ${failed} could not be deleted` : 'Emptied the trash', failed ? 'error' : 'ok');
+    } finally {
+      emptying$.current = false;
+      setEmptying(false);
     }
-    flip();
-    // Its own button goes with the last project in the trash.
-    pendingFocus.current = 'title';
-    await loadTrash();
-    toast(failed ? `Emptied the trash · ${failed} could not be deleted` : 'Emptied the trash', failed ? 'error' : 'ok');
   };
 
   const claim = async (p: ProjectSummary) => {
@@ -477,8 +499,7 @@ export default function Home() {
   };
 
   const downloadPdf = (p: ProjectSummary) => {
-    const branch = p.thumb?.branch ?? p.compile?.branch ?? p.opened?.branch ?? 'main';
-    download(api.pdfUrl(p.id, branch, pdfOutputPath(p.rootFile)), `${p.name.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
+    download(api.pdfUrl(p.id, pdfBranch(p), pdfOutputPath(p.rootFile)), `${p.name.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
   };
 
   const canManage = (p: ProjectSummary) => !authEnabled || !!p.isOwner;
@@ -542,6 +563,8 @@ export default function Home() {
       j.error = `the ZIP is ${(j.file.size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`;
     }
     if (single && tooBig.length) { toast(`ZIP is ${(zips[0].size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
+    // The placeholders and the new projects are drawn in the list of all projects.
+    if (!single && show !== 'all') navigate('/');
     setImports((cur) => [...jobs.map(({ file: _f, ...j }) => j), ...cur]);
     // Progress arrives many times a second: one state update per frame.
     const pending = new Map<string, Partial<ImportJob>>();
@@ -635,11 +658,11 @@ export default function Home() {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z') {
-        const u = undo.current;
-        if (!u || isTyping(e.target) || overlayOpen()) return;
+        const last = [...undos.current].pop();
+        if (!last || isTyping(e.target) || overlayOpen()) return;
         e.preventDefault();
-        undo.current = null;
-        u.run();
+        undos.current.delete(last[0]);
+        last[1]();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || overlayOpen()) return;
@@ -733,16 +756,36 @@ export default function Home() {
     onFocus: (id) => setActiveKey(id),
   }), [ctx.bind]);
 
+  // The counts arrive together: one answering before the other would push the segments sideways twice.
+  const counted = projects !== null && trash !== null;
   const filters: { show: Show; label: string; count?: number; testId: string; to: string }[] = [
     { show: 'all', label: 'All', testId: 'filter-all', to: '/' },
-    ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: sharedCount || undefined, testId: 'filter-shared', to: '/?show=shared' }] : []),
-    { show: 'trash', label: 'Trash', count: trash?.length || undefined, testId: 'open-trash', to: '/?show=trash' },
+    ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: (counted && sharedCount) || undefined, testId: 'filter-shared', to: '/?show=shared' }] : []),
+    { show: 'trash', label: 'Trash', count: (counted && trash?.length) || undefined, testId: 'open-trash', to: '/?show=trash' },
   ];
   const sortLabel = SORTS.find((s) => s.id === sort)!.label;
   const searching = !!query.trim();
   const listed = show === 'trash' ? trashVisible.length : visible.length;
+  /** What happens to what is in the trash, in the days the server keeps it (ALDINE_TRASH_DAYS). */
+  const trashNote = (() => {
+    const t = trash?.find((x) => x.purgeAt);
+    if (!t) return null;
+    const days = Math.round((Date.parse(t.purgeAt!) - Date.parse(t.deletedAt)) / 86_400_000);
+    return days > 0 ? `Projects in the trash are deleted ${days === 1 ? '1 day' : `${days} days`} after you move them there.` : null;
+  })();
 
   // ---------- the shelf ----------
+  const blankRatio = visible.length ? ratioOf(visible[visible.length - 1]) : pageRatio(null);
+  /** Each sheet's stage, per section, recomputed only when the rows can change. */
+  const stages = useMemo(() => ({
+    trash: rowStages(trashVisible.map((t) => pageRatio(t.thumb)), cols),
+    sections: sections.map((s, si) => {
+      const lead = si === 0 ? imports.length : 0;
+      const withBlank = si === sections.length - 1 && blankSheet;
+      return rowStages([...Array.from({ length: lead }, () => pageRatio(null)), ...s.items.map(ratioOf), ...(withBlank ? [blankRatio] : [])], cols);
+    }),
+  }), [trashVisible, sections, imports.length, blankSheet, blankRatio, cols]);
+
   const renderShelf = () => {
     if (projects === null) {
       if (loadError) return null;
@@ -752,7 +795,7 @@ export default function Home() {
           {skeleton && (
             <div className="shelf__section" aria-hidden="true">
               <span className="shelf__heading--placeholder" />
-              <ul role="list" className="shelf__grid shelf__grid--skeleton">{Array.from({ length: 6 }, (_, i) => <SkeletonSheet key={i} />)}</ul>
+              <ul role="list" className="shelf__grid shelf__grid--skeleton">{Array.from({ length: cols * 2 }, (_, i) => <SkeletonSheet key={i} />)}</ul>
             </div>
           )}
         </div>
@@ -771,11 +814,9 @@ export default function Home() {
       return (
         <section aria-labelledby="sec-trash" className="shelf__section">
           <h2 id="sec-trash" className="visually-hidden">Trash</h2>
+          {trashNote && <p className="shelf-note shelf-note--trash" data-testid="trash-note">{trashNote}</p>}
           <ul role="list" className="shelf__grid" data-testid="trash-grid">
-            {(() => {
-              const stage = rowStages(trashVisible.map((t) => pageRatio(t.thumb)), cols);
-              return trashVisible.map((t, i) => <TrashSheet key={t.id} t={t} now={now} tabIndex={tabIndexOf(t.id)} actions={actions} stage={stage[i]} />);
-            })()}
+            {trashVisible.map((t, i) => <TrashSheet key={t.id} t={t} now={now} tabIndex={tabIndexOf(t.id)} actions={actions} stage={stages.trash[i]} />)}
           </ul>
         </section>
       );
@@ -793,7 +834,7 @@ export default function Home() {
     return sections.map((s, si) => {
       const lead = si === 0 ? imports : [];
       const withBlank = si === sections.length - 1 && blankSheet;
-      const stage = rowStages([...lead.map(() => pageRatio(null)), ...s.items.map(ratioOf), ...(withBlank ? [blankRatio] : [])], cols);
+      const stage = stages.sections[si];
       return (
       <section key={s.key} aria-labelledby={`sec-${s.key}`} className="shelf__section">
         <h2 id={`sec-${s.key}`} className={s.label ? 'shelf__heading' : 'visually-hidden'}>{s.label ?? (show === 'shared' ? 'Shared with me' : 'All projects')}</h2>
@@ -803,7 +844,7 @@ export default function Home() {
               onCancel={() => { j.ctrl.abort(); setImports((cur) => cur.filter((x) => x.key !== j.key)); }} />
           ))}
           {s.items.map((p, i) => (
-              <ProjectSheet key={p.id} leaving={leaving.has(p.id)} p={p} accounts={authEnabled} myId={myId} now={now} tabIndex={tabIndexOf(p.id)} actions={actions} stage={stage[lead.length + i]} />
+              <ProjectSheet key={p.id} leaving={leaving.has(p.id)} p={p} accounts={authEnabled} myId={myId} now={now} compact={compact} tabIndex={tabIndexOf(p.id)} actions={actions} stage={stage[lead.length + i]} />
           ))}
           {withBlank && (
             <BlankSheet
@@ -824,26 +865,41 @@ export default function Home() {
     });
   };
 
-  const blankRatio = visible.length ? ratioOf(visible[visible.length - 1]) : pageRatio(null);
 
   const starterSheets = (() => {
     const list = starters ?? [];
     const picked = STARTERS.map((s) => ({ s, t: list.find(s.match) })).filter((x) => x.t);
     return picked as { s: (typeof STARTERS)[number]; t: TemplateInfo }[];
   })();
+  /** The starting points are one Tab stop too, with arrows by position. */
+  const startKeys = ['start-blank', ...starterSheets.map(({ t }) => startTestId(t)), 'start-more'];
+  const startTab = startKey && startKeys.includes(startKey) ? startKey : startKeys[0];
+  const startRoving = (key: string) => ({
+    tabIndex: key === startTab ? 0 : -1,
+    onFocus: () => setStartKey(key),
+    onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => {
+      if (!isGridKey(e.key) || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      const links = [...(startRef.current?.querySelectorAll<HTMLElement>('.sheet__link') ?? [])];
+      const boxes = links.map((l) => { const r = (l.closest('.sheet') as HTMLElement).getBoundingClientRect(); return { top: r.top, left: r.left, width: r.width }; });
+      const to = gridMove(boxes, links.indexOf(e.currentTarget), e.key);
+      e.preventDefault();
+      const el = links[to];
+      if (el && el !== e.currentTarget) { setStartKey(startKeys[to]); el.focus(); }
+    },
+  });
 
   return (
     <div className="shelf-page" {...dropHandlers}>
       <a className="skip-link" href="#projects">Skip to projects</a>
       <div ref={sentinel} className="shelf-page__sentinel" aria-hidden="true" />
-      <HomeToolbar compact={compact} scrolled={scrolled} titleInBar={titleUnder} start={start} account={account} onOpenAddSheet={() => setAddSheet(true)} search={search} />
+      <HomeToolbar compact={compact} scrolled={scrolled} titleInBar={titleUnder} start={start} account={account} onOpenAddSheet={(keyboard) => setAddSheet({ keyboard })} search={search} />
       <input ref={zipInput} type="file" accept=".zip,application/zip" multiple hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
         onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) importFiles(files); }} />
 
-      <main className="shelf-page__main" id="projects" tabIndex={-1}>
+      <main className="shelf-page__main" id="projects" tabIndex={-1} ref={mainRef}>
         <div className="shelf-page__title-row">
           <h1 className="shelf-page__title" ref={titleRef} tabIndex={-1}>Projects</h1>
-          {(projects === null || projects.length > BLANK_SHEET_MAX) && show !== 'trash' && (
+          {show !== 'trash' && !empty && (
             <MenuButton
               items={() => SORTS.map((s) => ({ id: s.id, label: s.label, checked: sort === s.id, onSelect: () => setSort(s.id), testId: `sort-${s.id}` }))}
               label="Sort by"
@@ -857,7 +913,7 @@ export default function Home() {
             </MenuButton>
           )}
           {show === 'trash' && !!trash?.length && (
-            <button type="button" className="home-sort" onClick={emptyTrash} data-testid="empty-trash">Empty trash…</button>
+            <button type="button" className="home-sort" onClick={emptyTrash} disabled={emptying} aria-busy={emptying || undefined} data-testid="empty-trash">Empty trash…</button>
           )}
         </div>
         {authEnabled && <EmailConfirmBanner />}
@@ -882,12 +938,13 @@ export default function Home() {
           <div className="shelf-start" data-testid="projects-empty">
             <h2 className="shelf-start__title">Start your first project</h2>
             <p className="shelf-start__text">Pick a starting point. You can change everything later.</p>
-            <ul role="list" className="shelf__grid">
-              <BlankSheet testId="start-blank" title="Blank project" detail="No files yet" onActivate={() => setCreating({ template: starters?.some((t) => t.id === 'blank') ? 'blank' : undefined })} />
-              {starterSheets.map(({ s, t }) => (
-                <TemplateSheet key={t.id} testId={`start-${t.id.replace(/[^a-z0-9-]/gi, '-')}`} title={s.title} name={s.name(t)} detail={s.detail} kind={s.kind} onActivate={() => setCreating({ template: t.id })} />
-              ))}
-              <TemplateSheet testId="start-more" title={(() => { const n = (starters?.length ?? 0) - starterSheets.length - 1; return n > 0 ? `${n} more templates` : 'More templates'; })()} name="More templates…" detail="Journals, conferences, theses" onActivate={() => setCreating({})} />
+            <ul role="list" className="shelf__grid" ref={startRef}>
+              <BlankSheet testId="start-blank" title="Blank project" detail="No files yet" {...startRoving('start-blank')} onActivate={() => setCreating({ template: starters?.some((t) => t.id === 'blank') ? 'blank' : undefined })} />
+              {starterSheets.map(({ s, t }) => {
+                const testId = startTestId(t);
+                return <TemplateSheet key={t.id} testId={testId} title={s.title} name={s.name(t)} detail={s.detail} kind={s.kind} {...startRoving(testId)} onActivate={() => setCreating({ template: t.id })} />;
+              })}
+              <TemplateSheet testId="start-more" title={(() => { const n = (starters?.length ?? 0) - starterSheets.length - 1; return n > 0 ? `${n} more templates` : 'More templates'; })()} name="More templates…" detail="Journals, conferences, theses" {...startRoving('start-more')} onActivate={() => setCreating({})} />
             </ul>
             <p className="shelf-start__import">
               Or bring one over: <button type="button" className="link-button" onClick={() => zipInput.current?.click()} data-testid="empty-import-zip">Import a ZIP from Overleaf</button>
@@ -926,7 +983,8 @@ export default function Home() {
           testId="home-add-sheet"
           primaryId="new"
           details
-          onClose={() => setAddSheet(false)}
+          keyboard={addSheet.keyboard}
+          onClose={() => setAddSheet(null)}
           items={[
             { id: 'new', label: 'New project…', icon: <IconPlus width={15} height={15} strokeWidth={1.8} />, onSelect: () => setCreating({}), testId: 'new-project' },
             { kind: 'separator' },
@@ -959,6 +1017,8 @@ function rowStages(ratios: number[], cols: number): number[] {
   const n = Math.max(1, cols);
   return ratios.map((_, i) => { const start = i - (i % n); return stageRatio(ratios.slice(start, start + n)); });
 }
+
+const startTestId = (t: TemplateInfo) => `start-${t.id.replace(/[^a-z0-9-]/gi, '-')}`;
 
 function NoMatches({ query, onClear }: { query: string; onClear(): void }) {
   return (

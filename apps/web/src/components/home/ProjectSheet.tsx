@@ -5,7 +5,7 @@ import { Menu, MenuButton, sheetFits, type MenuEntry } from '../Menu';
 import ActionSheet from '../ActionSheet';
 import { IconBranch, IconEllipsis, IconLink, IconPeople, IconPlus } from '../Icons';
 import { REMOTES } from '../../remotes';
-import { errorLabel, initials, isUnread, metaLine, ownerNamedInMeta, projectHref } from '../../util/homeList';
+import { errorLabel, firstName, initials, isUnread, metaLine, ownerChipShown, projectHref } from '../../util/homeList';
 import { dayAgo, shortDate } from '../../util/dates';
 
 /** Height to width of an A4 page: the tallest stage a section gets. */
@@ -23,10 +23,18 @@ export function stageRatio(ratios: number[]): number {
   return Math.min(A4, Math.max(0.3, ...ratios));
 }
 
-/** The paper's box on its stage: full width, bottom-aligned; a page taller than A4 narrows instead of growing. */
-/** `--stage-ratio` for an item of the grid. */
-const stageVar = (stage: number | undefined): CSSProperties | undefined => (stage ? ({ '--stage-ratio': stage.toFixed(5) } as CSSProperties) : undefined);
+/** An item's stage and where its paper sits on it: `--paper-top` and `--paper-inset` (from the right) as fractions of
+ *  the item's width, for what is drawn on the paper's corner from outside it. */
+function sheetVars(stage: number | undefined, ratio: number): CSSProperties {
+  const s = stage ?? A4;
+  return {
+    '--stage-ratio': s.toFixed(5),
+    '--paper-top': Math.max(0, s - Math.min(ratio, A4)).toFixed(5),
+    '--paper-inset': (ratio > A4 ? 1 - A4 / ratio : 0).toFixed(5),
+  } as CSSProperties;
+}
 
+/** The paper's box on its stage: full width, bottom-aligned; a page taller than A4 narrows instead of growing. */
 function paperStyle(ratio: number): CSSProperties {
   if (ratio > A4) return { width: `${(A4 / ratio) * 100}%`, aspectRatio: `1 / ${ratio}` };
   return { width: '100%', aspectRatio: `1 / ${ratio}` };
@@ -142,13 +150,19 @@ function chipsFor(p: ProjectSummary, accounts: boolean, myId: string | null): { 
   const branch = p.opened?.branch;
   if (branch && branch !== 'main') out.push({ sr: `Opens on ${branch}`, node: <Chip key="branch" title={`Opens on ${branch}`}><IconBranch width={11} height={11} /><span className="chip__text">{branch}</span></Chip> });
   if (accounts && p.ownerId) {
-    const shared = p.access ? p.access !== 'owner' : p.isOwner === false;
-    if (shared) {
-      // The line above names the owner already when they made the last edit.
-      if (!ownerNamedInMeta(p, myId)) {
-        const t = `${p.ownerName || 'Someone'}’s project`;
-        out.push({ sr: t, node: <Chip key="owner" title={t} testId={`owner-${p.id}`}><Avatar name={p.ownerName} size={14} /><span className="chip__text">{p.ownerName || 'Shared'}</span></Chip> });
-      }
+    if (ownerChipShown(p, accounts)) {
+      const owner = p.ownerName || 'someone';
+      const t = p.access === 'link' ? `Opened through a link from ${owner}` : `${p.ownerName || 'Someone'}’s project`;
+      out.push({
+        sr: t,
+        node: (
+          <Chip key="owner" title={t} testId={`owner-${p.id}`}>
+            <Avatar name={p.ownerName} size={14} />
+            <span className="chip__text">{firstName(p.ownerName) || 'Shared'}</span>
+            {p.access === 'link' && <IconLink width={11} height={11} />}
+          </Chip>
+        ),
+      });
     } else if (p.share?.mode === 'link') {
       const t = 'Anyone signed in with the link can edit';
       out.push({ sr: t, node: <Chip key="link" title={t} testId={`shared-link-${p.id}`}><IconLink width={11} height={11} /><span className="chip__text">Link</span></Chip> });
@@ -160,7 +174,8 @@ function chipsFor(p: ProjectSummary, accounts: boolean, myId: string | null): { 
   }
   if (p.remote && REMOTES[p.remote.provider]) {
     const d = REMOTES[p.remote.provider];
-    const t = `Synced with ${d.label}: ${p.remote.fullName}`;
+    // A row from the tab's cache carries no repository name.
+    const t = p.remote.fullName ? `Synced with ${d.label}: ${p.remote.fullName}` : `Synced with ${d.label}`;
     out.push({ sr: t, node: <Chip key="host" title={t}>{d.icon}</Chip> });
   }
   return out.slice(0, 2);
@@ -180,6 +195,8 @@ interface SheetProps {
   accounts: boolean;
   myId: string | null;
   now: number;
+  /** A phone: the meta line in short units, with the editor's first name. */
+  compact?: boolean;
   /** The roving tab stop: exactly one item in the collection is 0. */
   tabIndex: number;
   actions: SheetActions;
@@ -189,14 +206,17 @@ interface SheetProps {
   stage?: number;
 }
 
-export const ProjectSheet = memo(function ProjectSheet({ p, accounts, myId, now, tabIndex, actions, leaving, stage }: SheetProps) {
+export const ProjectSheet = memo(function ProjectSheet({ p, accounts, myId, now, compact, tabIndex, actions, leaving, stage }: SheetProps) {
   const metaId = useId();
   const link = useRef<HTMLAnchorElement>(null);
   const [thumbFailed, setThumbFailed] = useState(false);
   const thumb = !thumbFailed ? p.thumb : null;
   const unread = isUnread(p, myId);
   const failing = p.compile?.status === 'error';
-  const meta = metaLine(p, myId, now);
+  const ownerChip = ownerChipShown(p, accounts);
+  const meta = metaLine(p, myId, now, { ownerOnChip: ownerChip });
+  const shown = compact ? metaLine(p, myId, now, { ownerOnChip: ownerChip, short: true }) : meta;
+  const sentence = meta.who ? `${meta.who} ${meta.text}` : meta.text;
   const when = p.lastEdit?.at ?? p.createdAt;
   const chips = chipsFor(p, accounts, myId);
   const ctx = useMemo(() => actions.bind(() => actions.menu(p.id), p.name), [actions, p.id, p.name]);
@@ -204,7 +224,7 @@ export const ProjectSheet = memo(function ProjectSheet({ p, accounts, myId, now,
   // Chips and the editor's name sit above the link's cover for their titles; a click on them still opens the project.
   const forward = () => link.current?.click();
   return (
-    <li className={`sheet${leaving ? ' is-leaving' : ''}${unread ? ' sheet--unread' : ''}`} data-testid={`project-card-${p.id}`} data-id={p.id} style={stageVar(stage)}>
+    <li className={`sheet${leaving ? ' is-leaving' : ''}${unread ? ' sheet--unread' : ''}`} data-testid={`project-card-${p.id}`} data-id={p.id} style={sheetVars(stage, pageRatio(thumb))}>
       <div className="sheet__stage">
         <span className={`sheet__paper${thumb ? ' sheet__paper--typeset' : ''}`} style={paperStyle(pageRatio(thumb))}>
           {thumb ? <Thumbnail id={p.id} thumb={thumb} onFail={() => setThumbFailed(true)} /> : <TitlePage title={p.name} />}
@@ -213,20 +233,20 @@ export const ProjectSheet = memo(function ProjectSheet({ p, accounts, myId, now,
               <span className="dot dot--error" aria-hidden="true" />{errorLabel(p.compile!.errors)}
             </span>
           )}
-          <MenuButton
-            items={menu}
-            label={`Actions for ${p.name}`}
-            ariaLabel={`Actions for ${p.name}`}
-            className="sheet__more"
-            testId={`project-menu-${p.id}`}
-            menuTestId="project-menu"
-            tabIndex={-1}
-            sheetTitle={p.name}
-          >
-            <IconEllipsis width={14} height={14} />
-          </MenuButton>
         </span>
       </div>
+      <MenuButton
+        items={menu}
+        label={`Actions for ${p.name}`}
+        ariaLabel={`Actions for ${p.name}`}
+        className="sheet__more"
+        testId={`project-menu-${p.id}`}
+        menuTestId="project-menu"
+        tabIndex={-1}
+        sheetTitle={p.name}
+      >
+        <IconEllipsis width={14} height={14} />
+      </MenuButton>
       <Link
         ref={link}
         to={projectHref(p)}
@@ -246,25 +266,40 @@ export const ProjectSheet = memo(function ProjectSheet({ p, accounts, myId, now,
         data-context-menu=""
         draggable={false}
       >
-        {unread && <span className="sheet__unread" data-testid={`unread-${p.id}`} />}
-        <span className="sheet__name">{p.name}</span>
+        <span className="sheet__label">
+          {unread && <span className="sheet__unread" data-testid={`unread-${p.id}`} />}
+          <span className="sheet__name">{p.name}</span>
+        </span>
         {unread && <span className="visually-hidden">, changed since you opened it</span>}
         {failing && <span className="visually-hidden">, {errorLabel(p.compile!.errors)}</span>}
       </Link>
-      <p className="sheet__meta" id={metaId}>
-        {meta.who && <span className="sheet__who" title={meta.who} onClick={forward}>{meta.who}&nbsp;</span>}
-        <time className="sheet__when" dateTime={when}>{meta.text}</time>
+      <p className="sheet__meta" id={metaId} title={compact ? sentence : undefined}>
+        {compact && <span className="visually-hidden">{sentence}</span>}
+        {shown.who && <span className="sheet__who" title={meta.who ?? undefined} onClick={forward} aria-hidden={compact || undefined}>{shown.who}&nbsp;</span>}
+        <time className="sheet__when" dateTime={when} aria-hidden={compact || undefined}>{shown.text}</time>
         {chips.length > 0 && <span className="visually-hidden">. {chips.map((c) => c.sr).join('. ')}</span>}
       </p>
       {chips.length > 0 && <p className="sheet__chips" aria-hidden="true" onClick={forward}>{chips.map((c) => c.node)}</p>}
     </li>
   );
-});
+}, (a, b) => sameExceptNow(a, b) && (a.now === b.now || sheetMeta(a) === sheetMeta(b)));
+
+/** Props equal but for the minute tick. */
+function sameExceptNow<T extends { now: number }>(a: T, b: T): boolean {
+  for (const k of Object.keys(b) as (keyof T)[]) if (k !== 'now' && a[k] !== b[k]) return false;
+  return Object.keys(a).length === Object.keys(b).length;
+}
+/** What a sheet shows that the clock changes; a tick that leaves it as it was re-renders nothing. */
+const sheetMeta = ({ p, myId, now, accounts, compact }: SheetProps) => {
+  const m = metaLine(p, myId, now, { ownerOnChip: ownerChipShown(p, accounts), short: compact });
+  return `${m.who} ${m.text}`;
+};
+const trashMeta = (t: TrashedProject, now: number) => `Deleted ${dayAgo(t.deletedAt, now)}${t.purgeAt ? ` · gone ${shortDate(t.purgeAt, now)}` : ''}`;
 
 /** A project in the trash: faded, with the day it goes for good. Activating it opens its menu. */
-export const TrashSheet = memo(function TrashSheet({ t, now, tabIndex, actions, stage }: {
-  t: TrashedProject; now: number; tabIndex: number; actions: SheetActions; stage?: number;
-}) {
+interface TrashProps { t: TrashedProject; now: number; tabIndex: number; actions: SheetActions; stage?: number }
+
+export const TrashSheet = memo(function TrashSheet({ t, now, tabIndex, actions, stage }: TrashProps) {
   const metaId = useId();
   const menuId = useId();
   const btn = useRef<HTMLButtonElement>(null);
@@ -272,28 +307,28 @@ export const TrashSheet = memo(function TrashSheet({ t, now, tabIndex, actions, 
   const [open, setOpen] = useState<{ items: MenuEntry[]; rect: DOMRect; keyboard: boolean; sheet: boolean } | null>(null);
   const [thumbFailed, setThumbFailed] = useState(false);
   const thumb = !thumbFailed ? t.thumb : null;
-  const text = `Deleted ${dayAgo(t.deletedAt, now)}${t.purgeAt ? ` · gone ${shortDate(t.purgeAt, now)}` : ''}`;
+  const text = trashMeta(t, now);
   const ctx = useMemo(() => actions.bind(() => actions.menu(t.id), t.name), [actions, t.id, t.name]);
   const menu = useMemo(() => () => actions.menu(t.id), [actions, t.id]);
   return (
-    <li className="sheet sheet--trashed" data-testid={`trash-${t.id}`} data-id={t.id} style={stageVar(stage)}>
+    <li className="sheet sheet--trashed" data-testid={`trash-${t.id}`} data-id={t.id} style={sheetVars(stage, pageRatio(thumb))}>
       <div className="sheet__stage">
         <span className="sheet__paper" style={paperStyle(pageRatio(thumb))}>
           {thumb ? <Thumbnail id={t.id} thumb={thumb} onFail={() => setThumbFailed(true)} /> : <TitlePage title={t.name} />}
-          <MenuButton
-            items={menu}
-            label={`Actions for ${t.name}`}
-            ariaLabel={`Actions for ${t.name}`}
-            className="sheet__more"
-            testId={`trash-menu-${t.id}`}
-            menuTestId="project-menu"
-            tabIndex={-1}
-            sheetTitle={t.name}
-          >
-            <IconEllipsis width={14} height={14} />
-          </MenuButton>
         </span>
       </div>
+      <MenuButton
+        items={menu}
+        label={`Actions for ${t.name}`}
+        ariaLabel={`Actions for ${t.name}`}
+        className="sheet__more"
+        testId={`trash-menu-${t.id}`}
+        menuTestId="project-menu"
+        tabIndex={-1}
+        sheetTitle={t.name}
+      >
+        <IconEllipsis width={14} height={14} />
+      </MenuButton>
       <button
         ref={btn}
         type="button"
@@ -340,7 +375,7 @@ export const TrashSheet = memo(function TrashSheet({ t, now, tabIndex, actions, 
       )}
     </li>
   );
-});
+}, (a, b) => sameExceptNow(a, b) && (a.now === b.now || trashMeta(a.t, a.now) === trashMeta(b.t, b.now)));
 
 /** The blank page that ends a short shelf, or starts an empty one. */
 export function BlankSheet({ title, detail, tabIndex, testId, ratio = A4, stage, onActivate, onKeyDown, onFocus }: {
@@ -349,7 +384,7 @@ export function BlankSheet({ title, detail, tabIndex, testId, ratio = A4, stage,
 }) {
   const metaId = useId();
   return (
-    <li className="sheet sheet--blank" data-testid={`${testId}-item`} style={stageVar(stage)}>
+    <li className="sheet sheet--blank" data-testid={`${testId}-item`} style={sheetVars(stage, ratio)}>
       <div className="sheet__stage">
         <span className="sheet__paper sheet__paper--blank" style={paperStyle(ratio)}>
           <IconPlus width={28} height={28} strokeWidth={1.4} aria-hidden="true" />
@@ -370,7 +405,7 @@ export function TemplateSheet({ title, name, detail, kind, testId, onActivate, t
 }) {
   const metaId = useId();
   return (
-    <li className="sheet" data-testid={`${testId}-item`}>
+    <li className="sheet" data-testid={`${testId}-item`} style={sheetVars(A4, kind === 'slides' ? 9 / 16 : A4)}>
       <div className="sheet__stage">
         <span className="sheet__paper" style={paperStyle(kind === 'slides' ? 9 / 16 : A4)}>
           {kind ? <TemplatePage kind={kind} title={title} /> : <TitlePage title={title} />}
@@ -393,7 +428,7 @@ export function ImportSheet({ name, state, progress, error, onCancel, testId, st
     : state === 'importing' ? 'Importing…'
       : pct === null ? 'Uploading…' : `Uploading ${pct}%`;
   return (
-    <li className={`sheet sheet--import${state === 'failed' ? ' sheet--failed' : ''}`} data-testid={testId} style={stageVar(stage)}>
+    <li className={`sheet sheet--import${state === 'failed' ? ' sheet--failed' : ''}`} data-testid={testId} style={sheetVars(stage, A4)}>
       <div className="sheet__stage">
         <span className="sheet__paper" style={paperStyle(A4)}>
           <TitlePage title={name} />
@@ -409,7 +444,7 @@ export function ImportSheet({ name, state, progress, error, onCancel, testId, st
       {/* Once the server has the whole upload it creates the project whatever the page does. */}
       {state !== 'importing' && (
         <p className="sheet__chips">
-          <button type="button" className="btn btn--small btn--ghost" onClick={onCancel} data-testid={`${testId}-cancel`}>{state === 'failed' ? 'Dismiss' : 'Cancel'}</button>
+          <button type="button" className="btn btn--small btn--ghost" onClick={onCancel} aria-label={`${state === 'failed' ? 'Dismiss' : 'Cancel'} import of ${name}`} data-testid={`${testId}-cancel`}>{state === 'failed' ? 'Dismiss' : 'Cancel'}</button>
         </p>
       )}
     </li>
@@ -419,7 +454,7 @@ export function ImportSheet({ name, state, progress, error, onCancel, testId, st
 /** A sheet-shaped silhouette while the list loads, Letter-shaped like most first pages. */
 export function SkeletonSheet() {
   return (
-    <li className="sheet sheet--skeleton" aria-hidden="true">
+    <li className="sheet sheet--skeleton" aria-hidden="true" style={sheetVars(LETTER, LETTER)}>
       <div className="sheet__stage"><span className="sheet__paper" style={paperStyle(LETTER)} /></div>
       <span className="skeleton-line" />
       <span className="skeleton-line skeleton-line--short" />

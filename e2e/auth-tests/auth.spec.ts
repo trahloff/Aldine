@@ -748,9 +748,17 @@ test.describe('ownerless legacy projects', () => {
     const ownerPage = await owner.newPage();
     await register(ownerPage, uniq(), 'password123', 'Grace Owner');
     const { id } = await (await ownerPage.request.post('/api/projects', { data: { name: 'Link Shared Paper' } })).json();
-    expect((await ownerPage.request.post(`/api/projects/${id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+    expect((await ownerPage.request.post(`/api/projects/${id}/share`, { data: { mode: 'link', collaborators: ['invited-reader@example.com'] } })).ok()).toBeTruthy();
     await ownerPage.goto('/');
     await expect(ownerPage.getByTestId(`shared-link-${id}`)).toHaveText('Link');
+    // the list the tab keeps holds no invite addresses, and a refused list takes it away
+    const ownerCache = () => ownerPage.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('aldine.home.list:')).map((k) => sessionStorage.getItem(k)));
+    await expect.poll(async () => (await ownerCache()).length).toBe(1);
+    expect((await ownerCache())[0]).not.toContain('invited-reader');
+    await ownerPage.route(/\/api\/projects$/, (route) => route.fulfill({ status: 401, json: { error: 'sign in' } }));
+    await ownerPage.reload();
+    await expect.poll(async () => (await ownerCache()).length).toBe(0);
+    await ownerPage.unroute(/\/api\/projects$/);
 
     const visitor = await browser.newContext();
     const page = await visitor.newPage();
@@ -762,8 +770,10 @@ test.describe('ownerless legacy projects', () => {
     await expect(page.getByTestId('filter-shared')).toHaveAttribute('aria-current', 'page');
     const card = page.getByTestId(`project-card-${id}`);
     await expect(card).toBeVisible();
-    // the owner is named once: on the line under the sheet when they edited it last, else on a chip
-    await expect(card).toContainText('Grace Owner');
+    // a recipient's sheet names the owner on a chip, with the link it came through
+    await expect(page.getByTestId(`owner-${id}`).locator('.chip__text')).toHaveText('Grace');
+    await expect(page.getByTestId(`owner-${id}`)).toHaveAttribute('title', 'Opened through a link from Grace Owner');
+    await expect(page.getByTestId(`open-${id}`)).toHaveAccessibleDescription(/Opened through a link from Grace Owner/);
     // a recipient's menu: no rename, share or trash, but a way off the list
     await page.getByTestId(`project-menu-${id}`).click();
     await expect(page.getByTestId('menu-trash')).toHaveCount(0);
@@ -784,7 +794,7 @@ test.describe('ownerless legacy projects', () => {
     await expect(page.getByTestId('account-menu-list')).toBeVisible();
     await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
     // An open menu is drawn over the page, outside its landmarks, as a popup belongs to its button.
-    const axe = await new AxeBuilder({ page }).disableRules(['region']).analyze();
+    const axe = await new AxeBuilder({ page }).exclude('[data-testid="account-menu-list"]').analyze();
     expect(axe.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
     await page.keyboard.press('Escape');
 
@@ -795,6 +805,14 @@ test.describe('ownerless legacy projects', () => {
     await expect(page.getByTestId('shared-empty')).toBeVisible();
     const mine = (await (await page.request.get('/api/projects')).json()) as { id: string }[];
     expect(mine.some((p) => p.id === id)).toBe(false);
+
+    // the list kept for the tab: no addresses, and gone with the session
+    const cacheKeys = () => page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('aldine.home.list:')));
+    expect(await cacheKeys()).toHaveLength(1);
+    expect(await page.evaluate((k) => sessionStorage.getItem(k), (await cacheKeys())[0])).not.toContain('@');
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('logout').click();
+    await expect.poll(cacheKeys).toEqual([]);
 
     await owner.close();
     await visitor.close();

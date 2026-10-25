@@ -8,6 +8,11 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 describe('timeAgo', () => {
+  it('has short units for a phone', () => {
+    expect(timeAgo(ago(3 * MIN + 40_000), NOW, { short: true })).toBe('3 min ago');
+    expect(timeAgo(ago(20_000), NOW, { short: true })).toBe('just now');
+  });
+
   it('reads like a document browser', () => {
     expect(`Edited ${timeAgo(ago(20_000), NOW)}`).toBe('Edited just now');
     expect(`Edited ${timeAgo(ago(1 * MIN), NOW)}`).toBe('Edited 1 minute ago');

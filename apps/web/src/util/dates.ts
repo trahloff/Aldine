@@ -23,6 +23,9 @@ const DAY = 24 * HOUR;
 // The sentences around these ("Edited …", "gone …") are English, so the
 // phrases inside them are too.
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+// "3 min. ago" in ICU; the periods go, as in "3 min ago".
+const rtfShort = new Intl.RelativeTimeFormat('en', { numeric: 'auto', style: 'short' });
+const shortRel = (n: number, unit: Intl.RelativeTimeFormatUnit) => rtfShort.format(n, unit).replace(/\./g, '');
 const monthDay = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' });
 const monthDayYear = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' });
 const monthName = new Intl.DateTimeFormat('en', { month: 'long' });
@@ -51,15 +54,16 @@ export function shortDate(iso: string, now: number = Date.now()): string {
  * date after that ("on Sep 3"). A time in the future (a clock that runs
  * ahead) reads "just now".
  */
-export function timeAgo(iso: string, now: number = Date.now()): string {
+export function timeAgo(iso: string, now: number = Date.now(), { short = false }: { short?: boolean } = {}): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
+  const rel = short ? shortRel : (n: number, unit: Intl.RelativeTimeFormatUnit) => rtf.format(n, unit);
   const diff = Math.max(0, now - t);
   if (diff < MINUTE) return 'just now';
-  if (diff < HOUR) return rtf.format(-Math.floor(diff / MINUTE), 'minute');
+  if (diff < HOUR) return rel(-Math.floor(diff / MINUTE), 'minute');
   const days = daysAgo(t, now);
-  if (days === 0 || diff < 6 * HOUR) return rtf.format(-Math.floor(diff / HOUR), 'hour');
-  if (days < 30) return rtf.format(-days, 'day');
+  if (days === 0 || diff < 6 * HOUR) return rel(-Math.floor(diff / HOUR), 'hour');
+  if (days < 30) return rel(-days, 'day');
   return `on ${shortDate(iso, now)}`;
 }
 

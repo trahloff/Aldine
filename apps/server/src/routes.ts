@@ -1040,6 +1040,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { meta = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
     const user = reqUser(req);
     if (isOwner(meta, user)) return { ok: true };
+    // Each call may look up a branch in git and writes the datastore: the same budget as an open.
+    if (!(await visitLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
     const userId = listUserId(user);
     const prev = await store.getProjectOpen(userId, meta.id);
     let at = prev?.at ?? null;

@@ -87,17 +87,35 @@ export function isUnread(p: ProjectSummary, myId: string | null): boolean {
   return time(p.lastEdit!.at) > time(p.opened.at);
 }
 
-/** "Edited 3 minutes ago", "Grace Hopper edited yesterday", "Created 2 days ago". The name truncates, the time does not. */
-export function metaLine(p: ProjectSummary, myId: string | null, now: number): { who: string | null; text: string } {
-  if (!p.lastEdit) return { who: null, text: `Created ${timeAgo(p.createdAt, now)}` };
-  const ago = timeAgo(p.lastEdit.at, now);
-  if (editedByOther(p, myId)) return { who: p.lastEdit.byName, text: `edited ${ago}` };
+/** The first word of a name: "Grace" for "Grace Hopper". */
+export function firstName(name: string | null | undefined): string {
+  return (name || '').trim().split(/\s+/)[0] ?? '';
+}
+
+/** A recipient's sheet always names the owner on a chip. */
+export function ownerChipShown(p: ProjectSummary, accounts: boolean): boolean {
+  return accounts && !!p.ownerId && isSharedWithMe(p);
+}
+
+/**
+ * "Edited 3 minutes ago", "Grace Hopper edited yesterday", "Created 2 days ago". The name truncates, the time does
+ * not. `ownerOnChip`: the owner is named on a chip already, so their own edit reads "Edited …". `short`, for a
+ * phone: "Grace · 3 hr ago", "Edited 3 min ago".
+ */
+export function metaLine(p: ProjectSummary, myId: string | null, now: number, opts: { ownerOnChip?: boolean; short?: boolean } = {}): { who: string | null; text: string } {
+  const short = !!opts.short;
+  if (!p.lastEdit) return { who: null, text: `Created ${timeAgo(p.createdAt, now, { short })}` };
+  const ago = timeAgo(p.lastEdit.at, now, { short });
+  if (editedByOther(p, myId) && !(opts.ownerOnChip && p.lastEdit.byId === p.ownerId)) {
+    return short ? { who: firstName(p.lastEdit.byName), text: `· ${ago}` } : { who: p.lastEdit.byName, text: `edited ${ago}` };
+  }
   return { who: null, text: `Edited ${ago}` };
 }
 
-/** The owner made the last edit: the line under the sheet already names them. */
-export function ownerNamedInMeta(p: ProjectSummary, myId: string | null): boolean {
-  return !!p.ownerId && editedByOther(p, myId) && p.lastEdit?.byId === p.ownerId;
+/** The branch whose PDF "Download PDF" fetches: the finished typeset's, which a thumbnail fallen back to main's does not name. */
+export function pdfBranch(p: Pick<ProjectSummary, 'compile' | 'thumb' | 'opened'>): string {
+  if (p.compile?.status === 'ok') return p.compile.branch;
+  return p.thumb?.branch ?? p.opened?.branch ?? 'main';
 }
 
 /** Time sections appear from this many projects up, and only under a date sort. */

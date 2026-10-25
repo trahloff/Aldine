@@ -49,6 +49,12 @@
   display: flex;
   align-items: center;
   --bar-fill: var(--material-pop);
+  --bar-blur: var(--material-blur);
+}
+/* Bright sheets pass under the bar in dark: the material has to hold them back. */
+:root[data-theme="dark"] .home-bar { --bar-fill: rgba(28, 28, 30, 0.86); --bar-blur: blur(30px) saturate(180%); }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .home-bar, :root[data-theme="dark"] .home-bar { --bar-fill: var(--bg-app); --bar-blur: none; }
 }
 /* The material is a layer of its own that only fades: a backdrop-filter that
    switches on mid-scroll leaves text behind it unfiltered in Chromium. */
@@ -58,14 +64,30 @@
   inset: 0;
   z-index: -1;
   background: var(--bar-fill);
-  backdrop-filter: var(--material-blur);
-  -webkit-backdrop-filter: var(--material-blur);
-  box-shadow: 0 0.5px 0 var(--hairline-strong);
+  backdrop-filter: var(--bar-blur);
+  -webkit-backdrop-filter: var(--bar-blur);
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms var(--ease);
 }
-.home-bar.is-scrolled::before { opacity: 1; }
+/* The scroll edge: the bar's fill fading out over the content below it. */
+.home-bar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+  z-index: -1;
+  background: linear-gradient(to bottom, var(--bar-fill), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms var(--ease);
+}
+.home-bar.is-scrolled::before, .home-bar.is-scrolled::after { opacity: 1; }
+/* Once scrolled, the field is solid: the shelf does not show through two translucent layers. */
+.home-bar.is-scrolled .home-search { background: color-mix(in srgb, var(--bg-app) 70%, #c8c8cc); }
+:root[data-theme="dark"] .home-bar.is-scrolled .home-search { background: color-mix(in srgb, var(--bg-app) 70%, #3a3a3e); }
 .home-bar__inner { position: relative; width: 100%; max-width: var(--shelf-max); margin: 0 auto; display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .home-bar__brand { display: inline-flex; align-items: center; flex: none; color: var(--text); line-height: 0; padding: 4px 2px; margin: 0 -2px; border-radius: var(--radius-s); }
 .home-bar__spacer { flex: 1; min-width: 0; }
@@ -169,7 +191,7 @@
   .home-search__kbd:hover .kbd { color: var(--text); border-color: var(--hairline-strong); }
   .home-search__clear:hover { color: var(--text); background: var(--bg-hover); }
 }
-.home-search__clear { width: 24px; }
+.home-search__clear { position: relative; width: 24px; }
 
 /* New project | ▾ */
 .split { display: inline-flex; flex: none; height: var(--control-h); }
@@ -203,7 +225,7 @@
 /* ---------- title, sort, filters ---------- */
 
 .shelf-page__main {
-  flex: 1 0 auto;
+  flex: none;
   width: 100%;
   max-width: calc(var(--shelf-max) + 2 * var(--gutter));
   margin: 0 auto;
@@ -230,6 +252,7 @@
 .home-filter .seg__btn--active { background: var(--seg-thumb); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.04); }
 :root[data-theme="dark"] .home-filter .seg__btn--active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 .home-filter__count { color: inherit; font-variant-numeric: tabular-nums; font-weight: 500; }
+.shelf-note { margin: 0 0 20px; font-size: var(--text-s); color: var(--text-2); }
 
 /* ---------- the shelf ---------- */
 
@@ -243,16 +266,24 @@
   margin: 0;
   padding: 0;
   display: grid;
-  /* A sheet never grows past twice the size its thumbnail is rendered for
-     (720px at 2x); the spare width goes into the gaps. */
-  grid-template-columns: repeat(auto-fill, minmax(168px, 196px));
-  justify-content: space-between;
-  column-gap: clamp(24px, 2.2vw, 32px);
+  /* Mirrors COL_MIN and COL_GAP in Home.tsx, which counts the columns from the same numbers. */
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  column-gap: 32px;
   row-gap: 28px;
   --stage-ratio: 1.41421;
 }
 
-.sheet { position: relative; min-width: 0; display: flex; flex-direction: column; }
+.sheet {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* The "…" is the link's sibling, outside the paper: it finds the paper's corner from
+     --paper-top and --paper-inset (fractions of the sheet's width, set by the sheet). */
+  container-type: inline-size;
+  --paper-top: 0;
+  --paper-inset: 0;
+}
 .sheet.is-leaving { opacity: 0; transform: scale(0.96); pointer-events: none; transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out); }
 
 /* Every sheet of a section stands on a stage as tall as the section's
@@ -422,6 +453,8 @@
   -webkit-touch-callout: none;
 }
 .sheet__link::after { content: ''; position: absolute; inset: 0; z-index: 1; }
+/* The unread dot hangs left of the name, so every name in a row starts on one edge. */
+.sheet__label { position: relative; display: block; min-width: 0; }
 /* above the link's cover, so their titles can be read; a click on them opens the project too */
 .sheet__who, .sheet__chips .chip { position: relative; z-index: 2; cursor: pointer; }
 .sheet__name {
@@ -433,7 +466,7 @@
   overflow-wrap: anywhere;
 }
 .sheet__name--static { margin-top: 11px; font-size: var(--text-m); font-weight: 600; line-height: 17px; }
-.sheet__unread { flex: none; width: 8px; height: 8px; margin-top: 4.5px; border-radius: 50%; background: var(--accent-fill); }
+.sheet__unread { position: absolute; left: -14px; top: 4.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fill); }
 .sheet__meta {
   display: flex;
   min-width: 0;
@@ -476,16 +509,17 @@
   justify-content: center;
   border-radius: 50%;
   background: var(--accent-soft);
-  color: var(--accent);
+  /* the accent alone is too faint on its own soft fill at this size */
+  color: color-mix(in srgb, var(--accent) 55%, var(--text));
   font-weight: 700;
   line-height: 1;
 }
 
-/* "…": on hover and focus with a pointer, always (dimmed) on touch */
+/* "…": on the paper's corner on hover and focus with a pointer; on touch, ink at the end of the name row */
 .sheet__more {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: calc(var(--paper-top) * 100cqw + 6px);
+  right: calc(var(--paper-inset) * 100cqw + 6px);
   z-index: 3;
   display: inline-flex;
   align-items: center;
@@ -510,14 +544,26 @@
 .sheet__more:active { transform: scale(0.94); transition-duration: 0ms; }
 .sheet__more:focus-visible { opacity: 1; outline: 2px solid transparent; box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--accent); }
 @media (hover: none), (pointer: coarse) {
-  .sheet__more { opacity: 0.6; }
-  .sheet__more::before { inset: -10px -6px -10px -12px; }
+  .sheet__more {
+    top: calc(var(--stage-ratio) * 100cqw + 7px);
+    right: -5px;
+    width: 28px;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    color: var(--text-2);
+    opacity: 1;
+  }
+  .sheet__more::before { inset: -10px -8px; }
+  .sheet__more:focus-visible { box-shadow: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--accent); }
+  .sheet:has(.sheet__more) .sheet__link { padding-right: 24px; }
 }
 
-/* Set aside: the page faded as a whole (paper and ink together), its "…" left at full strength. */
-.sheet--trashed .sheet__paper { background: transparent; box-shadow: none; outline: 0.5px solid var(--hairline); }
-.sheet--trashed .sheet__paper::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--paper); opacity: 0.5; }
-.sheet--trashed :is(.sheet__img, .titlepage) { opacity: 0.5; filter: saturate(0); }
+/* Set aside: the page dimmed as a whole, paper and ink together; its "…" sits outside it at full strength.
+   On dark a faded page would turn into a grey slab, so it is darkened instead. */
+.sheet--trashed .sheet__paper { opacity: 0.6; filter: saturate(0); }
+:root[data-theme="dark"] .sheet--trashed .sheet__paper { opacity: 1; filter: saturate(0) brightness(0.6); }
 .sheet--trashed .sheet__name { color: var(--text-2); }
 
 .sheet__paper--blank {
@@ -605,6 +651,8 @@
 /* ---------- the phone's + sheet ---------- */
 
 .action-sheet { display: flex; flex-direction: column; gap: 2px; }
+/* opened by touch, the sheet itself holds focus: it is not a control and draws no ring */
+.modal:has(> .action-sheet):focus { outline: none; }
 .action-sheet__header { margin: 2px 12px 6px; font-size: var(--text-s); font-weight: 600; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-sheet__hint { margin: 6px 12px; font-size: var(--text-s); color: var(--text-2); }
 .action-sheet__sep { height: 1px; margin: 3px 12px; background: var(--hairline); flex: none; }
@@ -637,7 +685,10 @@
 @media (pointer: coarse) {
   .home-sort { min-height: 44px; }
   .home-avatar { width: 44px; height: 44px; }
-  .home-filter .seg__btn { min-height: 36px; }
+  /* 36px drawn, 44px to a finger */
+  .home-filter .seg__btn { position: relative; min-height: 36px; }
+  .home-filter .seg__btn::after { content: ''; position: absolute; inset: -4px 0; }
+  .home-search__clear::before { content: ''; position: absolute; inset: -10px; }
 }
 
 @media (max-width: 640px) {
@@ -657,6 +708,8 @@
   .shelf__section { margin-top: 18px; }
   .shelf__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; column-gap: var(--space-4); row-gap: 22px; }
   .sheet__link { margin-top: 9px; font-size: 0.875rem; line-height: 18px; }
+  .sheet__unread { top: 5px; }
+  .sheet__more { top: calc(var(--stage-ratio) * 100cqw + 6px); }
   .shelf-start { margin-top: 28px; }
   .shelf-page__colophon { margin-top: 40px; }
 }
@@ -671,9 +724,8 @@
   .chip, .sheet__status, .sheet__more, .home-search { border: 1px solid CanvasText; }
   .sheet__unread { forced-color-adjust: none; background: Highlight; }
   .shelf-page :is(.home-tool, .home-avatar, .home-sort, .split__main, .split__more, .home-bar__brand, .link-button, .seg__btn):focus-visible { outline: 2px solid Highlight; }
+  /* the fill and shadow that mark the current place are gone here */
+  .home-filter .seg__btn--active { forced-color-adjust: none; background: Highlight; color: HighlightText; }
   .home-bar.is-scrolled::before { border-bottom: 1px solid CanvasText; }
 }
 
-/* Starting points are drawn, not thumbnails: they may share the width out evenly so all of them fit in one row. */
-.shelf-start .shelf__grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); justify-content: stretch; }
-@media (max-width: 640px) { .shelf-start .shelf__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

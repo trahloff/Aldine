@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import type { MenuEntry } from './Menu';
 
@@ -8,7 +9,7 @@ import type { MenuEntry } from './Menu';
  * shortcuts are left out (there is no keyboard to press them with) unless
  * they are `details`, and a submenu's items are listed in its place.
  */
-export default function ActionSheet({ label, title, items, onClose, testId, primaryId, details }: {
+export default function ActionSheet({ label, title, items, onClose, testId, primaryId, details, keyboard = false }: {
   label: string;
   title?: string | null;
   items: MenuEntry[];
@@ -18,6 +19,8 @@ export default function ActionSheet({ label, title, items, onClose, testId, prim
   primaryId?: string;
   /** The `shortcut` field holds a detail to show ("from Overleaf"), not keys. */
   details?: boolean;
+  /** Opened with a key: focus goes onto the first row. Opened by touch, onto the sheet itself. */
+  keyboard?: boolean;
 }) {
   const rows: ReactNode[] = [];
   const flat = items.flatMap((e) => (e.kind === 'submenu' ? e.items : [e]));
@@ -59,13 +62,15 @@ export default function ActionSheet({ label, title, items, onClose, testId, prim
       </button>,
     );
   });
-  return (
-    <Modal onClose={onClose} label={label} testId={testId}>
+  // On the body: an item of the shelf is a container, which would hold a fixed sheet inside its own box.
+  return createPortal(
+    <Modal onClose={onClose} label={label} testId={testId} initialFocus={keyboard ? 'first' : 'panel'}>
       <div className="action-sheet">
         {title && <div className="action-sheet__header" data-testid={testId ? `${testId}-title` : undefined}>{title}</div>}
         {rows}
         <button type="button" className="action-sheet__item action-sheet__cancel" onClick={onClose} data-testid={testId ? `${testId}-cancel` : undefined}>Cancel</button>
       </div>
-    </Modal>
+    </Modal>,
+    document.body,
   );
 }

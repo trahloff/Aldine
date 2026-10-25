@@ -145,7 +145,8 @@ interface ToolbarProps {
   titleInBar?: boolean;
   start: StartActions;
   account: AccountActions;
-  onOpenAddSheet(): void;
+  /** `keyboard`: opened with a key, so focus goes onto its first row. */
+  onOpenAddSheet(keyboard: boolean): void;
   search: React.ReactNode;
 }
 
@@ -180,7 +181,7 @@ export default function HomeToolbar({ compact, scrolled, titleInBar, start, acco
         )}
         <AccountButton {...account} />
         {compact && (
-          <button type="button" className="home-tool home-tool--icon home-tool--add" onClick={onOpenAddSheet} aria-label="New project" aria-haspopup="dialog" data-testid="home-add">
+          <button type="button" className="home-tool home-tool--icon home-tool--add" onClick={(e) => onOpenAddSheet(e.detail === 0)} aria-label="New project" aria-haspopup="dialog" data-testid="home-add">
             <IconPlus width={22} height={22} strokeWidth={1.8} />
           </button>
         )}

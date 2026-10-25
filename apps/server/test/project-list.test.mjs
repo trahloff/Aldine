@@ -263,6 +263,13 @@ try {
   eq(codes.slice(0, 4), [200, 200, 200, 200], 'Carol copies until her burst is spent');
   eq(codes.slice(4), [429, 429], 'then the copy route refuses');
 
+  // ---- undoing a removal shares the budget of an open ----
+  codes = [];
+  for (let i = 0; i < 70; i++) codes.push((await send('PUT', `/api/projects/${p2.id}/listing`, 'dana', { opened: null })).statusCode);
+  eq(codes[0], 200, 'Dana puts it back on her list');
+  check(codes.includes(429), `then the listing route refuses (${[...new Set(codes)].join(', ')})`);
+  check(codes.every((c) => c === 200 || c === 429), 'with nothing but 200 and 429');
+
   // ---- trash: purgeAt ----
   eq((await send('DELETE', `/api/projects/${p1.id}`, 'ada')).statusCode, 200, 'P1 goes to the trash');
   const trashed = (await send('GET', '/api/projects/trash', 'ada')).json().find((t) => t.id === p1.id);

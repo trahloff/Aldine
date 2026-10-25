@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectSummary } from '../../api';
 import {
-  errorLabel, initials, isUnread, matchSentence, matchesQuery, metaLine, parseShow, parseSort, pdfOutputPath,
-  projectHref, sectionsOf, sortProjects,
+  errorLabel, firstName, initials, isUnread, matchSentence, matchesQuery, metaLine, ownerChipShown, parseShow, parseSort, pdfBranch,
+  pdfOutputPath, projectHref, sectionsOf, sortProjects,
 } from '../homeList';
 
 const NOW = new Date(2026, 9, 25, 15, 30).getTime();
@@ -75,6 +75,26 @@ describe('the line under a project', () => {
     expect(metaLine(p('old'), 'me', NOW).text).toMatch(/^Created on /);
   });
 
+  it('on a phone: short units and the first name', () => {
+    const mine = p('m', { lastEdit: { at: iso(3 * MIN), byId: 'me', byName: 'Ada Lovelace', branch: 'main' } });
+    expect(metaLine(mine, 'me', NOW, { short: true })).toEqual({ who: null, text: 'Edited 3 min ago' });
+    const theirs = p('t', { lastEdit: { at: iso(3 * 3600_000), byId: 'grace', byName: 'Grace Hopper', branch: 'main' } });
+    expect(metaLine(theirs, 'me', NOW, { short: true })).toEqual({ who: 'Grace', text: '· 3 hr ago' });
+  });
+
+  it('a recipient sees the owner on a chip, so the owner\'s own edit does not name them twice', () => {
+    const edit = { at: iso(3 * 3600_000), byId: 'grace', byName: 'Grace Hopper', branch: 'main' };
+    const shared = p('s', { ownerId: 'grace', ownerName: 'Grace Hopper', access: 'link', lastEdit: edit });
+    expect(ownerChipShown(shared, true)).toBe(true);
+    expect(ownerChipShown(shared, false)).toBe(false);
+    expect(ownerChipShown({ ...shared, access: 'owner' }, true)).toBe(false);
+    expect(metaLine(shared, 'me', NOW, { ownerOnChip: true })).toEqual({ who: null, text: 'Edited 3 hours ago' });
+    // someone else's edit still names them
+    const bob = { ...shared, lastEdit: { ...edit, byId: 'bob', byName: 'Bob Barker' } };
+    expect(metaLine(bob, 'me', NOW, { ownerOnChip: true })).toEqual({ who: 'Bob Barker', text: 'edited 3 hours ago' });
+    expect(firstName('  Grace  Hopper ')).toBe('Grace');
+  });
+
   it('marks a change made since the last open as unread', () => {
     const edit = { at: iso(10 * MIN), byId: 'grace', byName: 'Grace Hopper', branch: 'main' };
     expect(isUnread(p('a', { lastEdit: edit, opened: { at: iso(20 * MIN), branch: 'main' } }), 'me')).toBe(true);
@@ -94,6 +114,15 @@ describe('small helpers', () => {
     expect(matchesQuery(x, 'advisor')).toBe(true);
     expect(matchesQuery(x, 'poster')).toBe(false);
     expect(matchesQuery(x, '  ')).toBe(true);
+  });
+
+  it('downloads the PDF of the branch that typeset, not the one its thumbnail fell back to', () => {
+    const at = iso(MIN);
+    // the branch's typeset is fine, but its thumbnail render was skipped: the image is main's
+    expect(pdfBranch({ compile: { status: 'ok', errors: 0, at, branch: 'revision-2' }, thumb: { branch: 'main', w: 1, h: 1, v: 'x' }, opened: { at, branch: 'revision-2' } })).toBe('revision-2');
+    expect(pdfBranch({ compile: { status: 'error', errors: 2, at, branch: 'revision-2' }, thumb: { branch: 'main', w: 1, h: 1, v: 'x' }, opened: { at, branch: 'revision-2' } })).toBe('main');
+    expect(pdfBranch({ compile: null, thumb: null, opened: { at, branch: 'revision-2' } })).toBe('revision-2');
+    expect(pdfBranch({ compile: null, thumb: null, opened: null })).toBe('main');
   });
 
   it('opens a project on the branch it was last open on', () => {

@@ -26,9 +26,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const WIDTH = 720;
+// A sheet on the list is at most about 234 CSS px wide on a desktop and 171 on a
+// phone: 512px covers both at 2x and a phone at 3x.
+const WIDTH = 512;
 // A page taller than 3:1 is scaled to this height and comes out narrower.
-const MAX_HEIGHT = 2160;
+const MAX_HEIGHT = 1536;
 const QUALITY = 75;
 const RENDER_TIMEOUT_MS = Number(process.env.THUMBNAIL_TIMEOUT_MS || 10_000);
 // One renderer process at a time beside the TeX runs; a burst beyond

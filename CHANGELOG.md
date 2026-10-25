@@ -24,8 +24,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The welcome dialog is gone: an empty list offers templates and imports
   instead. On a phone Home has a compact bar, two columns, and project menus
   open as a sheet from the bottom.
-- Page-1 thumbnails are rendered at twice the width, so they stay sharp on
-  large and high-density screens.
+- Page-1 thumbnails are rendered 512px wide, enough to stay sharp on a
+  high-density desktop and on a phone, without sending more than a sheet shows.
+- The shelf fits six projects across at 1440px and five at 1024px, in the
+  same sheet size as the empty list's starting points. Names in a row start on
+  one edge (the unread dot hangs to their left), and on a phone the "…" sits
+  at the end of the name instead of on the page, and the line under it uses
+  short units ("Grace · 3 hr ago").
+- A project shared with you always names its owner on a chip, with the link
+  it came through. The trash says how long it keeps projects, and a page in it
+  is dimmed rather than greyed out. The colophon follows the list, and the
+  filter's counts appear together, so nothing moves sideways while loading.
+- Each "Moved to the trash" notice keeps its own undo: Cmd/Ctrl+Z undoes the
+  newest one still on screen. Empty trash can't be started twice. Several ZIPs
+  dropped on the trash or Shared with me import into the list of all
+  projects, where their progress shows. Download PDF fetches the branch that
+  typeset. The starting points are one Tab stop with arrow keys, and the
+  current filter stays marked in forced colors.
+- Light theme: secondary text is darker than tertiary again, and sheets have
+  a stronger edge. `PUT /api/projects/:id/listing` shares the rate limit of
+  `POST /api/projects/:id/opened`.
 - Undo after "Remove from my list" puts the project back as it was: a change
   you had not opened yet stays marked.
 
