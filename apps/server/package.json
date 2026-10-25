@@ -15,7 +15,8 @@
     "test:gitlab:delete": "tsx test/gitlab-delete.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
     "test:unit": "node test/run-unit.mjs",
-    "build:viewer": "node viewer/build.mjs"
+    "build:viewer": "node viewer/build.mjs",
+    "templates:previews": "tsx scripts/render-template-previews.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

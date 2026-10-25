@@ -29,7 +29,6 @@ interface VenueMeta {
   name: string;
   category: TemplateCategory;
   description: string;
-  icon?: string;
   /** Class options for the generated skeleton. */
   options?: string;
   /** BibTeX style for the generated skeleton; omitted when the venue uses biblatex. */
@@ -64,34 +63,34 @@ interface VenueMeta {
  * the same submission with nothing to choose between them.
  */
 export const INSTALLED_VENUES: Record<string, VenueMeta> = {
-  elsarticle: { name: 'Elsevier journal', category: 'Journals', description: 'Elsevier submission with the elsarticle class.', icon: '📗', options: 'preprint,review,12pt', bibStyle: 'elsarticle-num', front: 'frontmatter' },
-  ieeetran: { name: 'IEEE Transactions', category: 'Journals', description: 'IEEE journal submission with the IEEEtran class.', icon: '📘', options: 'journal', bibStyle: 'IEEEtran' },
-  ieeeconf: { name: 'IEEE conference', category: 'Conferences', description: 'IEEE conference paper with the IEEEconf class.', icon: '📙', bibStyle: 'IEEEtran' },
-  acmart: { name: 'ACM article', category: 'Conferences', description: 'ACM proceedings or journal paper with the acmart class.', icon: '📕', options: 'sigconf', bibStyle: 'ACM-Reference-Format', front: 'acm' },
-  revtex: { name: 'APS and AIP (REVTeX)', category: 'Journals', description: 'Physics journals (Physical Review, AIP) with REVTeX.', icon: '⚛️', options: 'aps,pra,twocolumn', bibStyle: 'apsrev4-2', front: 'inbody' },
-  agujournal: { name: 'AGU journal', category: 'Journals', description: 'American Geophysical Union submission.', icon: '🌍', options: 'draft', bibStyle: 'agufull08' },
-  copernicus: { name: 'Copernicus journal', category: 'Journals', description: 'Copernicus Publications submission.', icon: '🛰', options: 'manuscript', bibStyle: 'copernicus' },
-  llncs: { name: 'Springer LNCS', category: 'Conferences', description: 'Lecture Notes in Computer Science proceedings paper.', icon: '📓', bibStyle: 'splncs04' },
-  svjour3: { name: 'Springer journal', category: 'Journals', description: 'Springer journal submission with svjour3.', icon: '📔', options: 'twocolumn', bibStyle: 'spmpsci' },
-  mdpi: { name: 'MDPI journal', category: 'Journals', description: 'MDPI submission (Sensors, Applied Sciences and siblings).', icon: '📗', bibStyle: 'mdpi' },
-  jmlr: { name: 'JMLR', category: 'Journals', description: 'Journal of Machine Learning Research submission.', icon: '🤖', classSetsBibStyle: true },
-  amsart: { name: 'AMS article', category: 'Journals', description: 'American Mathematical Society article.', icon: '➗', bibStyle: 'amsplain', front: 'abstract-first' },
-  siamart: { name: 'SIAM journal', category: 'Journals', description: 'Society for Industrial and Applied Mathematics submission.', icon: '📐', bibStyle: 'siamplain' },
-  jfm: { name: 'Journal of Fluid Mechanics', category: 'Journals', description: 'Cambridge JFM submission.', icon: '🌊', bibStyle: 'jfm' },
-  aastex: { name: 'AAS journals', category: 'Journals', description: 'American Astronomical Society journals (ApJ, AJ).', icon: '🔭', options: 'twocolumn', bibStyle: 'aasjournal', front: 'inbody' },
-  mnras: { name: 'MNRAS', category: 'Journals', description: 'Monthly Notices of the Royal Astronomical Society.', icon: '✨', options: 'usenatbib', bibStyle: 'mnras' },
-  apa7: { name: 'APA 7 manuscript', category: 'Journals', description: 'APA 7th edition manuscript for psychology journals.', icon: '🧠', options: 'man', biblatexStyle: 'apa' },
-  achemso: { name: 'ACS journals', category: 'Journals', description: 'American Chemical Society journals (JACS and siblings).', icon: '⚗️', classSetsBibStyle: true },
-  aiaa: { name: 'AIAA', category: 'Conferences', description: 'American Institute of Aeronautics and Astronautics paper.', icon: '🚀', bibStyle: 'aiaa' },
-  ascelike: { name: 'ASCE journals', category: 'Journals', description: 'American Society of Civil Engineers submission.', icon: '🌉', options: 'Journal', classSetsBibStyle: true },
-  asmeconf: { name: 'ASME conference', category: 'Conferences', description: 'ASME conference proceedings paper.', icon: '🔧', bibStyle: 'asmeconf' },
-  spie: { name: 'SPIE', category: 'Conferences', description: 'SPIE proceedings paper.', icon: '🔬', bibStyle: 'spiebib' },
-  neurips: { name: 'NeurIPS', category: 'Conferences', description: 'Neural Information Processing Systems submission.', icon: '🧠', bibStyle: 'plainnat' },
-  iclr: { name: 'ICLR', category: 'Conferences', description: 'International Conference on Learning Representations submission.', icon: '🧩', bibStyle: 'plainnat' },
-  acl: { name: 'ACL', category: 'Conferences', description: 'ACL, EMNLP and NAACL submission.', icon: '💬', bibStyle: 'acl_natbib' },
-  aaai: { name: 'AAAI', category: 'Conferences', description: 'AAAI conference submission.', icon: '🎓', bibStyle: 'aaai' },
-  usenix: { name: 'USENIX', category: 'Conferences', description: 'USENIX ATC, OSDI, NSDI and FAST submission.', icon: '🔐', bibStyle: 'plain' },
-  cvpr: { name: 'CVPR', category: 'Conferences', description: 'CVPR submission.', icon: '👁', bibStyle: 'ieee_fullname' },
+  elsarticle: { name: 'Elsevier journal', category: 'Journals', description: 'Elsevier submission with the elsarticle class.', options: 'preprint,review,12pt', bibStyle: 'elsarticle-num', front: 'frontmatter' },
+  ieeetran: { name: 'IEEE Transactions', category: 'Journals', description: 'IEEE journal submission with the IEEEtran class.', options: 'journal', bibStyle: 'IEEEtran' },
+  ieeeconf: { name: 'IEEE conference', category: 'Conferences', description: 'IEEE conference paper with the IEEEconf class.', bibStyle: 'IEEEtran' },
+  acmart: { name: 'ACM article', category: 'Conferences', description: 'ACM proceedings or journal paper with the acmart class.', options: 'sigconf', bibStyle: 'ACM-Reference-Format', front: 'acm' },
+  revtex: { name: 'APS and AIP (REVTeX)', category: 'Journals', description: 'Physics journals (Physical Review, AIP) with REVTeX.', options: 'aps,pra,twocolumn', bibStyle: 'apsrev4-2', front: 'inbody' },
+  agujournal: { name: 'AGU journal', category: 'Journals', description: 'American Geophysical Union submission.', options: 'draft', bibStyle: 'agufull08' },
+  copernicus: { name: 'Copernicus journal', category: 'Journals', description: 'Copernicus Publications submission.', options: 'manuscript', bibStyle: 'copernicus' },
+  llncs: { name: 'Springer LNCS', category: 'Conferences', description: 'Lecture Notes in Computer Science proceedings paper.', bibStyle: 'splncs04' },
+  svjour3: { name: 'Springer journal', category: 'Journals', description: 'Springer journal submission with svjour3.', options: 'twocolumn', bibStyle: 'spmpsci' },
+  mdpi: { name: 'MDPI journal', category: 'Journals', description: 'MDPI submission (Sensors, Applied Sciences and siblings).', bibStyle: 'mdpi' },
+  jmlr: { name: 'JMLR', category: 'Journals', description: 'Journal of Machine Learning Research submission.', classSetsBibStyle: true },
+  amsart: { name: 'AMS article', category: 'Journals', description: 'American Mathematical Society article.', bibStyle: 'amsplain', front: 'abstract-first' },
+  siamart: { name: 'SIAM journal', category: 'Journals', description: 'Society for Industrial and Applied Mathematics submission.', bibStyle: 'siamplain' },
+  jfm: { name: 'Journal of Fluid Mechanics', category: 'Journals', description: 'Cambridge JFM submission.', bibStyle: 'jfm' },
+  aastex: { name: 'AAS journals', category: 'Journals', description: 'American Astronomical Society journals (ApJ, AJ).', options: 'twocolumn', bibStyle: 'aasjournal', front: 'inbody' },
+  mnras: { name: 'MNRAS', category: 'Journals', description: 'Monthly Notices of the Royal Astronomical Society.', options: 'usenatbib', bibStyle: 'mnras' },
+  apa7: { name: 'APA 7 manuscript', category: 'Journals', description: 'APA 7th edition manuscript for psychology journals.', options: 'man', biblatexStyle: 'apa' },
+  achemso: { name: 'ACS journals', category: 'Journals', description: 'American Chemical Society journals (JACS and siblings).', classSetsBibStyle: true },
+  aiaa: { name: 'AIAA', category: 'Conferences', description: 'American Institute of Aeronautics and Astronautics paper.', bibStyle: 'aiaa' },
+  ascelike: { name: 'ASCE journals', category: 'Journals', description: 'American Society of Civil Engineers submission.', options: 'Journal', classSetsBibStyle: true },
+  asmeconf: { name: 'ASME conference', category: 'Conferences', description: 'ASME conference proceedings paper.', bibStyle: 'asmeconf' },
+  spie: { name: 'SPIE', category: 'Conferences', description: 'SPIE proceedings paper.', bibStyle: 'spiebib' },
+  neurips: { name: 'NeurIPS', category: 'Conferences', description: 'Neural Information Processing Systems submission.', bibStyle: 'plainnat' },
+  iclr: { name: 'ICLR', category: 'Conferences', description: 'International Conference on Learning Representations submission.', bibStyle: 'plainnat' },
+  acl: { name: 'ACL', category: 'Conferences', description: 'ACL, EMNLP and NAACL submission.', bibStyle: 'acl_natbib' },
+  aaai: { name: 'AAAI', category: 'Conferences', description: 'AAAI conference submission.', bibStyle: 'aaai' },
+  usenix: { name: 'USENIX', category: 'Conferences', description: 'USENIX ATC, OSDI, NSDI and FAST submission.', bibStyle: 'plain' },
+  cvpr: { name: 'CVPR', category: 'Conferences', description: 'CVPR submission.', bibStyle: 'ieee_fullname' },
 };
 
 /** TeX Live license ids → the text everyone links to. */
@@ -248,7 +247,6 @@ export function venueTemplateInfo(c: CatalogClass): TemplateInfo | null {
     source: { kind: 'venue' },
     name: meta.name,
     description: `${meta.description} Uses the ${c.cls} ${c.kind === 'style' ? 'style' : 'class'} installed in the compiler image.`,
-    icon: meta.icon || '📄',
     category: meta.category,
     documentClass: c.cls,
   };

@@ -2,7 +2,6 @@
   "id": "report",
   "name": "Report / Thesis",
   "description": "Chapters, table of contents, and a bibliography — for longer documents.",
-  "icon": "📚",
   "order": 4,
   "category": "General",
   "license": "MIT",

@@ -70,6 +70,8 @@ export const config = {
   /** Built-in + user plugins */
   pluginsDir: process.env.PLUGINS_DIR || path.join(repoRoot, 'plugins'),
   templatesDir: process.env.TEMPLATES_DIR || path.join(repoRoot, 'templates'),
+  /** Page-1 previews of the shipped templates, rendered before release (`npm run templates:previews`). */
+  templatePreviewsDir: process.env.TEMPLATE_PREVIEWS_DIR || path.join(repoRoot, 'apps/server/assets/template-previews'),
   /**
    * Registry of venue kits fetched from publishers. Deliberately not derived
    * from templatesDir: the e2e suite and the unit tests point it at a fixture

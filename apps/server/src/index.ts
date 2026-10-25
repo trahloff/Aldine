@@ -15,6 +15,7 @@ import { ensureSigningSecret } from './output-signing.js';
 import { AUTH_ENABLED } from './auth.js';
 import { backfillMissingLastEdits, flushActivity } from './activity.js';
 import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings } from './oidc.js';
+import { startTemplatePreviews } from './templatepreviews.js';
 
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
@@ -32,6 +33,8 @@ initProjectEvents({ onAccessChanged: closeProjectConnections });
 const app = await buildApp();
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
+// After listen: reading the shipped previews and hashing checkouts never delays it.
+startTemplatePreviews();
 
 // Yjs collaboration over WebSocket at <basePath>/collab
 const wss = new WebSocketServer({ noServer: true });

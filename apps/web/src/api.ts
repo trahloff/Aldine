@@ -292,6 +292,8 @@ export interface TemplateInfo {
   source?: { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string };
   /** Fetched-kit venues: where the official kit is downloaded from at create time. */
   kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+  /** Page 1 of the template, typeset once per version by the server. Absent until rendered, and for venues. */
+  preview?: { w: number; h: number; v: string };
 }
 
 /** One configured template repository (TEMPLATE_REPOS). `ok: false` with
@@ -339,6 +341,8 @@ export const api = {
     req<CreatedProject>('/api/projects', { method: 'POST', body: JSON.stringify({ name, files, template, namespace }) }),
   templates: () => req<TemplateInfo[]>('/api/templates'),
   templateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos'),
+  /** The image for a template's `preview`; with `v` in it the browser keeps it for good. */
+  templatePreviewUrl: (id: string, v: string) => withBase(`/api/templates/preview?id=${encodeURIComponent(id)}&v=${encodeURIComponent(v)}`),
   refreshTemplateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos/refresh', { method: 'POST' }),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */

@@ -68,10 +68,10 @@ test.describe('first visit', () => {
     // a template's sheet opens New project with that template chosen, ready for Enter
     await page.getByTestId('start-article').click();
     await expect(page.getByTestId('new-project-name')).toBeFocused();
-    await expect(page.getByTestId('template-article')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('template-article')).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Escape');
     await page.getByTestId('start-beamer').click();
-    await expect(page.getByTestId('template-beamer')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('template-beamer')).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Escape');
     // nothing is stored to remember a welcome by
     expect(await page.evaluate(() => localStorage.getItem('aldine.onboarded'))).toBeNull();

@@ -7,6 +7,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- New project opens a template chooser: a large sheet (a bottom sheet on a
+  phone) with categories down the side, a search, page 1 of each template and
+  the project name in the footer, filled in and selected so Enter creates the
+  project. Arrow keys move through the templates and the categories, typing
+  on a template searches, and Escape closes. On a phone the sheet opens
+  without raising the keyboard. Page 1 of each shipped template is rendered
+  before release (`npm run templates:previews`, checked by the unit tests)
+  and ships in the app image; a template from a template repository is
+  typeset by the compiler after a sync that changed it, once per version, and
+  retried later when that fails. Both are served with a long cache. Venues
+  whose kit is downloaded at create time, and templates not rendered yet,
+  show a title page with their name instead. The gallery no longer uses emoji
+  icons; the `icon` field of `template.json` is ignored.
+  `ALDINE_TEMPLATE_PREVIEWS=0` stops the typesetting of repository templates.
+
 ### Changed
 - The project list is a new Home: a shelf of first pages, each with when it
   was last edited and by whom, a dot when someone else changed it since you

@@ -16,7 +16,7 @@ import HomeToolbar, { HomeSearch, startItems, type AccountActions, type StartAct
 import {
   BlankSheet, ImportSheet, pageRatio, ProjectSheet, SkeletonSheet, stageRatio, TemplateSheet, TrashSheet, type SheetActions, type TemplateKind,
 } from '../components/home/ProjectSheet';
-import NewProjectDialog from '../components/NewProjectDialog';
+import NewProjectSheet from '../components/NewProjectSheet';
 import { useAppearance } from '../theme';
 import { useDocumentTitle } from '../util/documentTitle';
 import RemoteImport from '../components/RemoteImport';
@@ -1007,7 +1007,7 @@ export default function Home() {
       {importFrom && (
         <RemoteImport key={importFrom} provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
-      {creating && <NewProjectDialog remotes={remotes} initialTemplate={creating.template} onClose={() => setCreating(null)} />}
+      {creating && <NewProjectSheet template={creating.template} provisioning={remotes.some((r) => r.provisioning)} onClose={() => setCreating(null)} />}
     </div>
   );
 }

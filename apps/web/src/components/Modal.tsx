@@ -1,4 +1,4 @@
-import { useEffect, useRef, ReactNode } from 'react';
+import { useEffect, useRef, ReactNode, type RefObject } from 'react';
 import { useExitGhost } from '../exitGhost';
 
 interface Props {
@@ -9,9 +9,11 @@ interface Props {
   /** Panel width in px (padding included) — overrides the 440px default. */
   width?: number;
   testId?: string;
-  /** Where focus goes on open: the first control, or the panel itself (a sheet opened by touch, where a ring on its
-   *  first row would read as a selection). */
-  initialFocus?: 'first' | 'panel';
+  /** Extra class on the panel, for a dialog that sets its own size. */
+  className?: string;
+  /** Where focus goes on open: the first control, the panel itself (a sheet opened by touch, where a ring on its
+   *  first row would read as a selection), or a given element (an input's text is selected). */
+  initialFocus?: 'first' | 'panel' | RefObject<HTMLElement | null>;
 }
 
 /**
@@ -23,7 +25,7 @@ interface Props {
  *  so a confirmation opened from inside a dialog does not close both. */
 const openStack: symbol[] = [];
 
-export default function Modal({ onClose, children, label, wide, width, testId, initialFocus = 'first' }: Props) {
+export default function Modal({ onClose, children, label, wide, width, testId, className, initialFocus = 'first' }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const leave = useExitGhost();
   const self = useRef(Symbol('modal'));
@@ -46,7 +48,9 @@ export default function Modal({ onClose, children, label, wide, width, testId, i
     const focusables = () => Array.from(
       panel?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [],
     );
-    ((initialFocus === 'first' ? focusables()[0] : null) ?? panel)?.focus({ preventScroll: true });
+    const chosen = typeof initialFocus === 'object' ? initialFocus.current : null;
+    (chosen ?? (initialFocus === 'panel' ? null : focusables()[0]) ?? panel)?.focus({ preventScroll: true });
+    if (chosen instanceof HTMLInputElement) chosen.select();
 
     const onKey = (e: KeyboardEvent) => {
       if (openStack[openStack.length - 1] !== id) return;
@@ -73,7 +77,7 @@ export default function Modal({ onClose, children, label, wide, width, testId, i
     <div ref={leave} className="modal-backdrop" onClick={onClose}>
       <div
         ref={panelRef}
-        className={`modal${wide ? ' modal--wide' : ''}`}
+        className={`modal${wide ? ' modal--wide' : ''}${className ? ` ${className}` : ''}`}
         style={width ? { width } : undefined}
         role="dialog"
         aria-modal="true"

@@ -35,13 +35,25 @@ Hidden directories (`.git`, `.github`, …) are skipped. `template.json` and
 `template.json` that is not valid JSON is skipped with a warning in the server
 log, and the rest of the folder keeps listing.
 
+## Page-1 previews
+
+The gallery shows page 1 of each template. For the shipped templates it is
+rendered before release into `apps/server/assets/template-previews`: after
+editing anything here, start a compiler and run `npm run templates:previews`
+(instructions at the top of `apps/server/scripts/render-template-previews.ts`),
+then commit the images. The server unit tests fail while a preview is missing
+or older than its template. A template from a repository is typeset by the
+compiler after a sync that changed it. Previews are typeset with the
+template's name as `{{PROJECT_NAME}}`, "Author name" as `{{AUTHOR}}` and
+1 January 2026 as `{{DATE}}`, so a date in a template never makes a new
+version.
+
 ## The manifest, `template.json`
 
 ```json
 {
   "name": "Article",
   "description": "A clean article with biblatex — the right default for most papers.",
-  "icon": "📄",
   "order": 1,
   "category": "General",
   "license": "MIT",
@@ -57,7 +69,7 @@ log, and the rest of the folder keeps listing.
 |---|---|
 | `name` | Tile title. Defaults to the folder name |
 | `description` | One sentence under the title |
-| `icon` | An emoji for the tile |
+| `icon` | Ignored. The gallery shows page 1 of the template, typeset once per version |
 | `order` | Sort key within its group (ascending, then by name; unset sorts last) |
 | `category` | One of `Journals`, `Conferences`, `Theses`, `Slides`, `General` (the default). Shipped templates are grouped by it; templates from a repository are grouped under the repository's label instead |
 | `license`, `licenseUrl` | What the files in the folder are licensed as, and where that text lives. Shown on the tile; without them the tile shows no licence badge |

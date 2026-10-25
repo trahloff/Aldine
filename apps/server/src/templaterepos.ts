@@ -215,6 +215,7 @@ function stateOf(entry: TemplateRepoEntry): TemplateRepoState {
 
 async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
   const s = stateOf(entry);
+  const before = s.head;
   const dir = templateRepoDir(entry.id);
   const url = tokenUrl(entry);
   try {
@@ -246,6 +247,9 @@ async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
     s.syncedAt = new Date().toISOString();
     delete s.error;
     if (failing.delete(entry.id)) console.log(`[templates] repository "${entry.id}" is reachable again`);
+    for (const fn of syncListeners) {
+      try { fn(entry.id, s.head !== before); } catch (err) { console.warn('[templates] sync listener failed', err); }
+    }
   } catch (err: any) {
     s.ok = false;
     s.available = fs.existsSync(path.join(dir, '.git'));
@@ -257,6 +261,18 @@ async function doSync(entry: TemplateRepoEntry): Promise<TemplateRepoState> {
     }
   }
   return { ...s };
+}
+
+const syncListeners = new Set<(repoId: string, headMoved: boolean) => void>();
+
+/**
+ * Called after every successful sync of a repository, with its id and
+ * whether HEAD differs from the last sync in this process (always true on
+ * the first).
+ */
+export function onTemplateRepoSynced(fn: (repoId: string, headMoved: boolean) => void): () => void {
+  syncListeners.add(fn);
+  return () => syncListeners.delete(fn);
 }
 
 /** Sync one repository; a sync already running for it is joined, not doubled. */

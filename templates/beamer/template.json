@@ -2,7 +2,6 @@
   "id": "beamer",
   "name": "Presentation",
   "description": "Beamer slides with a restrained metropolis-like look.",
-  "icon": "🎞",
   "order": 3,
   "category": "General",
   "license": "MIT",
