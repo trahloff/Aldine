@@ -12,8 +12,8 @@ Suites live in `e2e/tests/` (main), `e2e/auth-tests/` (auth),
 `e2e/base-path-tests/` (served under a path prefix), `e2e/remote-tests/` (a
 deployed instance) and `apps/server/test/` (API-level integration).
 
-Legend: **[auth]** needs `AUTH_ENABLED=1`; **[flag]** behind an experimental
-flag; everything else works in the default single-tenant deploy.
+Legend: **[auth]** needs `AUTH_ENABLED=1`; everything else works in the
+default single-tenant deploy.
 
 ---
 
@@ -256,19 +256,23 @@ Forgejo (Codeberg) share one API, so one provider covers both.*
   the collab socket is access-checked.
 - **AUTH-6** — Per-user compile quota returns HTTP 402 past the limit.
 
-## Visual editor (VIS) [flag]
+## Visual editor (VIS)
 
 *Automated in `13-visual.spec.ts`, including the byte-stability cursor tour
 that guards VIS-9.*
 
-- **VIS-1** — I enable the experimental visual editor and toggle Source|Visual;
-  the switch is instant with no flicker or lost cursor.
+- **VIS-1** — I toggle Source|Visual in the toolbar; the switch is instant with
+  no flicker or lost cursor. A fresh browser opens a `.tex` file as source, and
+  my last choice sticks after a reload.
 - **VIS-2** — Headings, bold/italic/underline, and lists render as formatted
   text; markup hides.
 - **VIS-3** — The construct under my caret (and a remote caret) reveals its raw
   source; leaving re-renders.
-- **VIS-4** — Math renders via KaTeX; clicking opens a MathLive editor that
-  writes back precise source.
+- **VIS-4** — Math renders via KaTeX; clicking a formula opens a MathLive
+  editor that writes back only what I changed. A formula MathLive can't write
+  back unchanged (a `\label`, alignment, a comment or a line break inside)
+  opens as source instead. Ctrl+Enter (⌘Enter) in a formula's source opens the
+  editor from the keyboard.
 - **VIS-5** — Tables render as an editable grid (cell edit, add row/column);
   figures show the image; cites show author-year.
 - **VIS-6** — A review suggestion renders as an inline tracked change I can

@@ -44,6 +44,15 @@ export function computeRevealRanges(state: EditorState, remote: readonly number[
   const out: RevealRange[] = [];
   const atPos = (pos: number) => {
     for (const side of [-1, 1] as const) pushUnique(out, unitFor(tree.resolveInner(pos, side)));
+    // A list's \begin/\end line is hidden whole, indentation included: a
+    // caret in that indentation is on the hidden line.
+    const line = state.doc.lineAt(pos);
+    const start = line.from + (line.text.length - line.text.trimStart().length);
+    const end = line.to - (line.text.length - line.text.trimEnd().length);
+    if (start > end || (start === line.from && end === line.to) || (pos > start && pos < end)) return;
+    for (let n: SyntaxNode | null = tree.resolveInner(start, 1); n && n.from === start; n = n.parent) {
+      if ((n.name === 'BeginEnv' || n.name === 'EndEnv') && n.to === end) pushUnique(out, { from: n.from, to: n.to });
+    }
   };
   for (const r of state.selection.ranges) {
     atPos(r.head);

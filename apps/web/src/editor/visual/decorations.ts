@@ -1,11 +1,11 @@
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, Range, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, DecorationSet, WidgetType } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNode } from '@lezer/common';
 import { RevealRange, intersectsReveal } from './reveal';
 import { MathWidget } from './widgets/math';
 import { figureChip, tableChip, citeChip, refChip } from './widgets/chips';
-import { TableWidget, parseTabular } from './widgets/table';
+import { TableWidget, tableModel } from './widgets/table';
 import { ItemMarkerWidget } from './widgets/listMarker';
 
 /** Copied from codemirror-lang-latex (internal SECTION_RANK, not exported). */
@@ -23,11 +23,42 @@ const STYLE_CLASS: Record<string, string> = {
   TextSmallCapsCommand: 'cm-vis-sc',
 };
 
+const MATH_NODES = ['DollarMath', 'BracketMath', 'ParenMath', 'EquationEnvironment', 'EquationArrayEnvironment'];
+
+/**
+ * Every node the walk below decorates, plus the containers whose extent its
+ * output depends on (list numbering, verbatim, comments). An edit inside one
+ * of these may change decorations anywhere inside it.
+ */
+export const CONSTRUCT_NODES = new Set([
+  'ListEnvironment', 'TableEnvironment', 'BeginEnv', 'EndEnv', 'Item', 'Caption',
+  'FigureEnvironment', 'TabularEnvironment', 'Cite', 'Ref', 'SectioningCommand',
+  'VerbatimEnvironment', 'Comment',
+  ...MATH_NODES,
+  ...Object.keys(STYLE_CLASS),
+]);
+
 const hide = Decoration.replace({});
+/** The closing brace of a heading that ends its line: End and clicks past the
+ *  heading land before it, inside the heading (the filter in index.ts). */
+export const hideHeadingCloser = Decoration.replace({ headingCloser: true });
+/** A \begin/\end line of a list, hidden whole so the items keep their own lines. */
+const hideLine = Decoration.replace({ block: true });
 const styleMarks = Object.fromEntries(
   Object.entries(STYLE_CLASS).map(([k, cls]) => [k, Decoration.mark({ class: cls })]),
 ) as Record<string, Decoration>;
 const headingLines = [1, 2, 3, 4].map((n) => Decoration.line({ class: `cm-vis-h cm-vis-h${n}` }));
+/** A heading sharing its line with body text (\paragraph{Para} text): only the argument is styled. */
+const headingRun = Decoration.mark({ class: 'cm-vis-hrun' });
+
+/**
+ * Whether `rest`, the text after a heading's `}` up to the end of its line,
+ * still leaves the heading on a line of its own: whitespace, a \label{…} and
+ * a comment are not body text.
+ */
+export function headingLineTail(rest: string): boolean {
+  return /^\s*(?:\\label\s*\{[^{}]*\}\s*)*(?:%.*)?$/.test(rest);
+}
 
 export interface WalkEmit {
   /** Decoration.replace/widget material + atomic ranges (full-doc StateField). */
@@ -36,18 +67,24 @@ export interface WalkEmit {
   mark(from: number, to: number, deco: Decoration): void;
 }
 
+type Doc = { sliceString(from: number, to: number): string };
+
 /**
  * Extract renderable math from a math node, or null if `name` isn't math or
  * the construct is incomplete. Equation-array content is wrapped in `aligned`
- * so KaTeX can typeset the `&`/`\\` alignment.
+ * so KaTeX can typeset the `&`/`\\` alignment. `innerFrom`/`innerTo` bound
+ * the formula exactly as written, which is what the formula editor edits.
  */
-function mathParts(name: string, node: SyntaxNode, doc: { sliceString(from: number, to: number): string }): { source: string; display: boolean; innerFrom: number; innerTo: number } | null {
+export function mathParts(name: string, node: SyntaxNode, doc: Doc): { source: string; display: boolean; innerFrom: number; innerTo: number } | null {
   const slice = (a: number, b: number) => doc.sliceString(a, b).trim();
   if (name === 'DollarMath') {
-    const inner = node.getChild('InlineMath') ?? node.getChild('DisplayMath');
-    const dollars = node.getChildren('Dollar');
-    if (!inner || dollars.length < 2) return null;
-    return { source: slice(inner.from, inner.to), display: inner.name === 'DisplayMath', innerFrom: inner.from, innerTo: inner.to };
+    if (node.getChildren('Dollar').length < 2) return null;
+    const inline = node.getChild('InlineMath');
+    // $$…$$ nests: DollarMath[$, DisplayMath[$, Math, $], $]
+    const display = node.getChild('DisplayMath');
+    const inner = inline ?? (display && display.getChildren('Dollar').length === 2 ? display.getChild('Math') : null);
+    if (!inner) return null;
+    return { source: slice(inner.from, inner.to), display: !inline, innerFrom: inner.from, innerTo: inner.to };
   }
   if (name === 'BracketMath' || name === 'ParenMath') {
     const open = node.getChild(name === 'BracketMath' ? 'OpenBracketMath' : 'OpenParenMath');
@@ -83,14 +120,8 @@ function wrapperParts(node: SyntaxNode, argName: string) {
   return { openEnd: open.to, closeFrom: close.from, closeTo: close.to };
 }
 
-/**
- * Single tree walk over [from,to] emitting visual decorations. Whitelist-only:
- * anything not positively matched (unknown commands, ⚠ errors, unclosed
- * constructs) stays raw source. Verbatim subtrees are never entered. Nodes
- * intersecting a reveal range are skipped (their source shows).
- */
 /** First braced-argument interior text of a node (e.g. a caption), trimmed. */
-function argText(node: SyntaxNode, doc: { sliceString(from: number, to: number): string }): string {
+function argText(node: SyntaxNode, doc: Doc): string {
   const arg = node.getChild('TextArgument') ?? node.getChild('ShortTextArgument');
   const open = arg?.getChild('OpenBrace');
   const close = arg?.getChild('CloseBrace');
@@ -106,9 +137,26 @@ function findDescendant(node: SyntaxNode, name: string): SyntaxNode | null {
   return null;
 }
 
+/** First `name` descendant that belongs to `node` itself, not to a nested `skip` (a subfigure's caption). */
+function ownDescendant(node: SyntaxNode, name: string, skip: string): SyntaxNode | null {
+  for (let c = node.firstChild; c; c = c.nextSibling) {
+    if (c.name === name) return c;
+    if (c.name === skip) continue;
+    const hit = ownDescendant(c, name, skip);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 const itemLine = Decoration.line({ class: 'cm-vis-li' });
 const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
 
+/**
+ * Single tree walk over [from,to] emitting visual decorations. Whitelist-only:
+ * anything not positively matched (unknown commands, ⚠ errors, unclosed
+ * constructs) stays raw source. Verbatim subtrees are never entered. Nodes
+ * intersecting a reveal range are skipped (their source shows).
+ */
 export function walk(state: EditorState, reveals: readonly RevealRange[], from: number, to: number, emit: WalkEmit): void {
   const doc = state.doc;
   // enumerate counters per list nesting depth
@@ -131,8 +179,13 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       if (n.name === 'BeginEnv' || n.name === 'EndEnv') {
         const inList = listStack.length > 0;
         if (!inList || intersectsReveal(reveals, n.from, n.to)) return;
-        // hide the \begin{...}/\end{...} line including one adjacent newline so
-        // the list reads as a block; bail out near doc edges or odd layouts.
+        const line = doc.lineAt(n.from);
+        if (n.to <= line.to && !doc.sliceString(line.from, n.from).trim() && !doc.sliceString(n.to, line.to).trim()) {
+          emit.atomic(line.from, line.to, hideLine);
+          return;
+        }
+        // \begin{...}/\end{...} sharing its line with content: hide it with one
+        // adjacent newline so the list still reads as a block
         let hideFrom = n.from;
         let hideTo = n.to;
         if (n.name === 'BeginEnv' && hideTo < doc.length && doc.sliceString(hideTo, hideTo + 1) === '\n') hideTo += 1;
@@ -167,7 +220,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         if (intersectsReveal(reveals, n.from, n.to)) return; // revealed: show raw source
         const end = n.node.getChild('EndEnv');
         if (!end || end.to !== n.to) return; // incomplete env stays raw
-        const caption = findDescendant(n.node, 'Caption');
+        const caption = ownDescendant(n.node, 'Caption', 'FigureEnvironment') ?? findDescendant(n.node, 'Caption');
         const label = caption ? argText(caption, doc) : '';
         let image: string | null = null;
         const ig = findDescendant(n.node, 'IncludeGraphics');
@@ -177,7 +230,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
           const close = igArg.getChild('CloseBrace');
           image = open && close ? doc.sliceString(open.to, close.from).trim() : doc.sliceString(igArg.from, igArg.to).trim();
         }
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: figureChip(label, n.from, image) }));
+        emit.atomic(n.from, n.to, Decoration.replace({ widget: figureChip(label, image) }));
         return false;
       }
 
@@ -186,39 +239,9 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         const begin = n.node.getChild('BeginEnv');
         const end = n.node.getChild('EndEnv');
         if (!begin || !end || end.to !== n.to) return;
-        // column spec is the tabular's argument group right after \begin{tabular}
-        const argNode = n.node.getChild('TabularArgument') ?? n.node.getChild('TextArgument') ?? n.node.getChild('NonEmptyGroup');
-        const bodyFrom = argNode ? argNode.to : begin.to;
-        const parsed = parseTabular(doc.sliceString(bodyFrom, end.from), bodyFrom);
-        if (!parsed) {
-          emit.atomic(n.from, n.to, Decoration.replace({ widget: tableChip('', n.from) }));
-          return false;
-        }
-        const cols = Math.max(...parsed.rows.map((r) => r.length));
-        // New rows go above any trailing rule (\bottomrule/\hline) — inserting
-        // at the \end{tabular} line puts them below the table's closing rule.
-        let insertLine = doc.lineAt(end.from);
-        for (let ln = insertLine.number - 1; ln >= 1; ln--) {
-          const t = doc.line(ln).text.trim();
-          if (!t) continue;
-          if (/^(?:\\bottomrule|\\hline)\s*$/.test(t)) insertLine = doc.line(ln);
-          break;
-        }
-        // The spec range comes from the argument node's own bounds, not brace
-        // children — findDescendant('CloseBrace') hits the inner brace of
-        // @{}-style specs and truncates (or nulls) the range.
-        const specOk = argNode
-          && doc.sliceString(argNode.from, argNode.from + 1) === '{'
-          && doc.sliceString(argNode.to - 1, argNode.to) === '}';
-        emit.atomic(n.from, n.to, Decoration.replace({
-          widget: new TableWidget({
-            rows: parsed.rows,
-            rowEnds: parsed.rowEnds,
-            cols,
-            rowInsertAt: insertLine.from,
-            colSpec: specOk ? { from: argNode!.from + 1, to: argNode!.to - 1 } : null,
-          }, doc.sliceString(n.from, n.to), n.from),
-        }));
+        const model = tableModel(doc, n.node);
+        const source = doc.sliceString(n.from, n.to);
+        emit.atomic(n.from, n.to, Decoration.replace({ widget: model ? new TableWidget(model, source) : tableChip('') }));
         return false;
       }
 
@@ -231,7 +254,12 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         const close = inner?.getChild('CloseBrace');
         if (!inner || !open || !close || close.to !== n.to) return;
         const keys = doc.sliceString(open.to, close.from).trim();
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: n.name === 'Cite' ? citeChip(keys, n.from) : refChip(keys, n.from) }));
+        if (n.name === 'Cite') {
+          const notes = n.node.getChildren('OptionalArgument').map((o) => doc.sliceString(o.from + 1, o.to - 1));
+          emit.atomic(n.from, n.to, Decoration.replace({ widget: citeChip(keys, notes) }));
+        } else {
+          emit.atomic(n.from, n.to, Decoration.replace({ widget: refChip(keys) }));
+        }
         return false;
       }
 
@@ -241,16 +269,21 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         if (!cmd || intersectsReveal(reveals, cmd.from, cmd.to)) return;
         const parts = wrapperParts(cmd, 'SectioningArgument');
         if (!parts || parts.closeTo !== cmd.to) return;
+        const line = doc.lineAt(cmd.from);
+        const rest = doc.sliceString(parts.closeTo, line.to);
+        const ownLine = !doc.sliceString(line.from, cmd.from).trim() && headingLineTail(rest);
         emit.atomic(cmd.from, parts.openEnd, hide);
-        emit.atomic(parts.closeFrom, parts.closeTo, hide);
-        emit.mark(doc.lineAt(cmd.from).from, doc.lineAt(cmd.from).from, headingLines[rank - 1]);
+        emit.atomic(parts.closeFrom, parts.closeTo, ownLine && !rest.trim() ? hideHeadingCloser : hide);
+        if (ownLine) emit.mark(line.from, line.from, headingLines[rank - 1]);
+        else if (parts.openEnd < parts.closeFrom) emit.mark(parts.openEnd, parts.closeFrom, headingRun);
         return; // children of the heading argument render as plain heading text
       }
 
       const math = mathParts(n.name, n.node, doc);
       if (math) {
         if (intersectsReveal(reveals, n.from, n.to)) return false;
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: new MathWidget(math.source, math.display, n.from, math.innerFrom, math.innerTo) }));
+        const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from);
+        emit.atomic(n.from, n.to, Decoration.replace({ widget }));
         return false; // math interior is the widget's business
       }
 
@@ -268,17 +301,19 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
   });
 }
 
-/** Full-document atomic set (replace decorations). */
-export function buildAtomic(state: EditorState, reveals: readonly RevealRange[]): DecorationSet {
-  const ranges: Array<{ from: number; to: number; deco: Decoration }> = [];
-  walk(state, reveals, 0, state.doc.length, {
-    atomic: (from, to, deco) => { if (from < to) ranges.push({ from, to, deco }); },
+/** Atomic (replace) decorations for [from,to] as ranges, unsorted. */
+export function atomicRangesIn(state: EditorState, reveals: readonly RevealRange[], from: number, to: number): Range<Decoration>[] {
+  const ranges: Range<Decoration>[] = [];
+  walk(state, reveals, from, to, {
+    atomic: (a, b, deco) => { if (a < b) ranges.push(deco.range(a, b)); },
     mark: () => {},
   });
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-  const b = new RangeSetBuilder<Decoration>();
-  for (const r of ranges) b.add(r.from, r.to, r.deco);
-  return b.finish();
+  return ranges;
+}
+
+/** Full-document atomic set (replace decorations). */
+export function buildAtomic(state: EditorState, reveals: readonly RevealRange[]): DecorationSet {
+  return Decoration.set(atomicRangesIn(state, reveals, 0, state.doc.length), true);
 }
 
 /** Viewport mark/line set for the given visible ranges. */

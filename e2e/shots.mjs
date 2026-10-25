@@ -38,11 +38,8 @@ for (const scheme of ['light', 'dark']) {
     await p.waitForTimeout(600);
   });
   await shoot(ctx, `visual-${scheme}`, async (p) => {
-    // enable the experimental flag for this page only, and load straight into visual mode
-    await p.addInitScript(() => {
-      window.localStorage.setItem('aldine.experimental.visualEditor', '1');
-      window.localStorage.setItem('aldine.editorMode', 'visual');
-    });
+    // load straight into visual mode
+    await p.addInitScript(() => window.localStorage.setItem('aldine.editorMode', 'visual'));
     await p.goto(`${BASE}/p/${id}`);
     await p.waitForSelector('.cm-content');
     await p.waitForSelector('.katex', { timeout: 30000 });

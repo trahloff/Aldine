@@ -80,13 +80,19 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
 <details>
 <summary><strong>Everything else</strong>: visual editor, review mode, AI error fix, SyncTeX, plugins, auth, scaling…</summary>
 
-- **Visual editing mode** (experimental): LaTeX renders as formatted text
-  while the source stays authoritative and **byte-stable** (it never rewrites
-  source you didn't deliberately edit). WYSIWYG math (click an equation to edit
-  it in a MathLive popover), editable tables, inline tracked changes from review
-  suggestions, paste-rich-text-to-LaTeX, image-previewing figure chips, and an
-  outline. Cursor-reveal shows raw source under the caret, including a remote
-  collaborator's. Enable it in the command palette (⌘K), off by default.
+- **Visual editing mode**: LaTeX renders as formatted text while the source
+  stays authoritative and **byte-stable** (it never rewrites source you didn't
+  deliberately edit). WYSIWYG math (click a formula to edit it in a MathLive
+  popover; a formula MathLive would rewrite, such as one with a `\label`,
+  alignment, a comment or a line break inside, opens as source), editable
+  tables, inline tracked changes from review suggestions,
+  paste-rich-text-to-LaTeX, image-previewing figure chips, and an outline.
+  From the keyboard, Ctrl+Enter (⌘Enter on a Mac) with the caret in a
+  formula's or a table's source opens its editor. Cursor-reveal shows raw
+  source under the caret, including a remote collaborator's. Switch between
+  Source and Visual in the toolbar or the command palette (⌘K); a `.tex` file
+  opens as source until you pick Visual, and your browser remembers the last
+  choice.
 - **Review mode**: select text and leave an anchored, threaded comment;
   optionally attach a suggested replacement the author accepts with one click.
   Comments highlight in the editor, resolve/reopen, and track edits.
@@ -275,7 +281,7 @@ what `deploy/backup.sh` looks for.
 | Warm recompile | ~2s (persistent latexmk cache) | Not measured | Local |
 | Templates gallery | 4 starter templates, one per publisher class in the compiler's TeX Live (15 in the published images), 25 conference and journal kits fetched from the publisher, plus your own from git repositories | ❌ private template management is Server Pro only ([source][ol-cmp]) | CTAN / your own |
 | Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (about 5 GB on disk); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | Minimal TeX Live in the image; full with `tlmgr install scheme-full` ([source][ol-tl]) | Whatever you install |
-| Rich-text / visual editing | ✅ experimental: byte-stable, WYSIWYG math, editable tables, review suggestions shown inline (accept/dismiss) | ✅ Visual Editor; its code is in the open-source repository ([source][ol-visual]) | ❌ |
+| Rich-text / visual editing | ✅ byte-stable, WYSIWYG math, editable tables, review suggestions shown inline (accept/dismiss) | ✅ Visual Editor; its code is in the open-source repository ([source][ol-visual]) | ❌ |
 | Maturity | Young (v0.x, 2026) | Overleaf dates from 2011 ([source][ol-about]) | Very mature |
 | License | AGPL-3.0 | AGPL-3.0 ([source][ol-repo]) | MIT/varies |
 
@@ -306,7 +312,7 @@ comparison is at
   <img alt="Visual editing mode: the same LaTeX paper rendered as formatted text with typeset math, next to the live PDF" src="e2e/shots/visual-light.png">
 </picture>
 
-*Visual editing (experimental): the source rendered as formatted text, byte-stable, with math and tables editable in place. Enable via ⌘K.*
+*Visual editing: the source rendered as formatted text, byte-stable, with math and tables editable in place. Switch with Source/Visual in the toolbar.*
 
 | | |
 |---|---|

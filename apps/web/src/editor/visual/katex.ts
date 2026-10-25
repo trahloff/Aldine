@@ -42,7 +42,8 @@ export function renderMath(source: string, displayMode: boolean): string | null 
     // would render them as red fallback text, so strip them (rendering only —
     // the source is never touched).
     const cleaned = source.replace(/\\label\s*\{[^}]*\}/g, '');
-    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, output: 'html' });
+    // MathML is what screen readers read; KaTeX hides its HTML copy from them
+    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, output: 'htmlAndMathml' });
   } catch {
     return ''; // signals render failure → widget falls back to raw source
   }

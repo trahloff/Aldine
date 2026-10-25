@@ -1,8 +1,9 @@
 import { EditorView } from '@codemirror/view';
 import { EditorSelection } from '@codemirror/state';
-import type { EditorState } from '@codemirror/state';
+import type { EditorState, StateCommand } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNode } from '@lezer/common';
+import { headingLineTail } from './decorations';
 
 /**
  * All formatting is expressed as ordinary CodeMirror text dispatches, so it
@@ -102,6 +103,45 @@ export function setSectionLevel(level: 1 | 2 | 3 | 4) {
     return true;
   };
 }
+
+/** The closing brace of the last heading whose argument ends on `line`. */
+function headingCloserOn(state: EditorState, line: { from: number; to: number }): SyntaxNode | null {
+  let close: SyntaxNode | null = null;
+  syntaxTree(state).iterate({
+    from: line.from,
+    to: line.to,
+    enter(n) {
+      if (n.name !== 'SectioningCommand') return;
+      const c = n.node.getChild('SectioningArgument')?.getChild('CloseBrace');
+      if (c && c.to === n.to && c.from >= line.from && c.to <= line.to) close = c;
+      return false;
+    },
+  });
+  return close;
+}
+
+/**
+ * Enter with the caret at the closing brace of a heading that ends its line
+ * (End, a click past the heading and the Heading menu all leave it there),
+ * or at the end of that line: the new line starts after the heading, not
+ * inside its braces. It goes at the end of the line, so a same-line \label
+ * or comment stays with the heading, and it takes no indentation.
+ */
+export const breakAfterHeading: StateCommand = ({ state, dispatch }) => {
+  const sel = state.selection.main;
+  if (!sel.empty || state.selection.ranges.length > 1) return false;
+  const line = state.doc.lineAt(sel.head);
+  const close = headingCloserOn(state, line);
+  if (!close || (sel.head !== close.from && sel.head !== line.to)) return false;
+  if (!headingLineTail(state.doc.sliceString(close.to, line.to))) return false;
+  dispatch(state.update({
+    changes: { from: line.to, insert: state.lineBreak },
+    selection: { anchor: line.to + 1 },
+    scrollIntoView: true,
+    userEvent: 'input',
+  }));
+  return true;
+};
 
 /** Wrap the selected lines in an itemize (or unwrap the enclosing list). */
 export function toggleItemize(view: EditorView): boolean {

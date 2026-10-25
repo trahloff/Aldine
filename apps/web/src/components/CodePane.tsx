@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { wsUrl } from '../basePath';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
-import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
+import { EditorState, StateField, StateEffect, Compartment, Prec } from '@codemirror/state';
 import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
@@ -14,11 +14,14 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { setComments, CommentRange } from '../editor/commentsEffect';
-import { visualExtensions, type VisualDeps } from '../editor/visual';
+import { visualExtensions, editAtCursor, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
+import { commentRangesField } from '../editor/visual/suggestions';
+import { closeBeginBrace } from '../editor/beginEnv';
 import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
+import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
 
 export type EditorMode = 'source' | 'visual';
@@ -75,6 +78,11 @@ export interface CodePaneHandle {
   revealPos(pos: number): void;
   format(action: 'bold' | 'italic' | 'list' | { section: 1 | 2 | 3 | 4 }): void;
   getOutline(): OutlineEntry[];
+  /** Keyboard focus back to the text, the caret where it was. */
+  focus(): void;
+  /** Visual mode: opens the formula editor or the table grid at the caret. 'source': a formula
+   *  that edits only as source, which the caret is already in; null: neither is at the caret. */
+  editAtCursor(): 'opened' | 'source' | null;
 }
 
 /** Comment highlight decorations, updatable via an effect and tracking edits. */
@@ -201,6 +209,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats });
   cbRef.current = { onDocChanged, onStats };
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
@@ -291,6 +302,13 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const view = viewRef.current;
       return view ? documentOutline(view.state) : [];
     },
+    focus() {
+      viewRef.current?.focus();
+    },
+    editAtCursor() {
+      const view = viewRef.current;
+      return view ? editAtCursor(view) : null;
+    },
   }), []);
 
   useEffect(() => {
@@ -323,7 +341,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const awareness = provider.awareness!;
     const modeComp = new Compartment();
     const spellComp = new Compartment();
-    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness };
+    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text) => toastRef.current(text, 'error') };
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
     // session (same server-side clientID) gets a fresh start time. A start
@@ -369,6 +387,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           // its builtin command completions still register via languageData.
           // enableTooltips:false so our richer \cite hover (reference preview) is the only hover
           latex({ autoCloseTags: true, enableLinting: false, enableAutocomplete: false, enableTooltips: false }),
+          Prec.high(keymap.of([{ key: '}', run: closeBeginBrace }])),
           citeCompletionSource(projectId, branch),
           refCompletionSource(projectId, branch, () => filePath),
           citeHoverTooltip(projectId, branch),
@@ -397,11 +416,14 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             }
           }),
           commentField,
+          // outside the mode compartment: Visual's inline suggestions read it when they mount
+          commentRangesField,
           flashField,
           aldineTheme,
           EditorView.lineWrapping,
           // browser-native spellcheck on prose (only meaningful for .tex/.md)
           spellComp.of(spellcheckAttrs(spellcheck, filePath)),
+          EditorView.contentAttributes.of({ 'aria-label': `Text of ${filePath}` }),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, provider.awareness),
           // after yCollab on purpose — see agentHighlight's ordering contract
