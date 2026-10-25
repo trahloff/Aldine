@@ -39,6 +39,7 @@ import { searchProject, replaceInProject, SearchError, type ReplaceBody } from '
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
+import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -153,6 +154,7 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
       lastSyncedAt: z.lastSyncedAt,
       username: z.username,
     } : null,
+    thumb: await projectThumb(meta),
   };
 }
 
@@ -172,6 +174,7 @@ async function projectRow(meta: store.ProjectMeta, user: auth.PublicUser | null,
     lastEdit: activity?.lastEdit ?? null,
     opened,
     compile: mark ? { ...mark, branch } : null,
+    thumb: await projectThumb(meta, branch),
     access,
   };
 }
@@ -463,7 +466,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (reqId !== undefined) {
       let m: store.ProjectMeta | null = null;
       try { m = await store.readMeta(reqId); } catch { /* handled below / by the route */ }
-      if (m?.deletedAt && !(route === '/api/projects/:id/restore' || (req.method === 'DELETE' && route === '/api/projects/:id'))) {
+      // The trash shows its owner each project's thumbnail.
+      const trashView = (meta: store.ProjectMeta) => route === '/api/projects/:id/thumbnail' && isOwner(meta, reqUser(req));
+      if (m?.deletedAt && !(route === '/api/projects/:id/restore' || (req.method === 'DELETE' && route === '/api/projects/:id') || trashView(m))) {
         return reply.code(404).send({ error: 'project not found' });
       }
     }
@@ -597,10 +602,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const user = reqUser(req);
     const mine = (await store.listProjects()).filter((m) => !!m.deletedAt && (auth.AUTH_ENABLED ? isOwner(m, user) : true));
     mine.sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
-    return mine.map((m) => {
+    return Promise.all(mine.map(async (m) => {
       const at = Date.parse(m.deletedAt!);
-      return { id: m.id, name: m.name, deletedAt: m.deletedAt, purgeAt: Number.isNaN(at) ? null : restorableUntil(new Date(at)) };
-    });
+      return { id: m.id, name: m.name, deletedAt: m.deletedAt, purgeAt: Number.isNaN(at) ? null : restorableUntil(new Date(at)), thumb: await projectThumb(m) };
+    }));
   });
 
   // Auto-provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP): a new project is
@@ -1247,6 +1252,29 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     } catch {
       return reply.code(404).send({ error: 'artifact not found' });
     }
+  });
+
+  /**
+   * Page 1 of the branch's last successful typeset (thumbnail.ts). Authorized
+   * like an unsigned /output link, by the global guard alone: no signed link
+   * reaches this route. A `v` that is not the version of the bytes on disk
+   * (a render landed after the list was read) is answered uncacheable, so a
+   * year-long cache entry always holds the image its `v` names.
+   */
+  app.get<{ Params: { id: string }; Querystring: { branch?: string; v?: string } }>('/api/projects/:id/thumbnail', async (req, reply) => {
+    let img: Awaited<ReturnType<typeof readThumbImage>> = null;
+    try {
+      const meta = await store.readMeta(req.params.id);
+      img = await readThumbImage(meta.id, req.query.branch || 'main', meta.rootFile);
+    } catch { /* an unknown project or branch has no thumbnail */ }
+    if (!img) return reply.code(404).send({ error: 'No thumbnail: this branch has no successful typeset yet' });
+    const etag = `"${img.v}"`;
+    reply
+      .header('etag', etag)
+      .header('cache-control', req.query.v === img.v ? 'private, max-age=31536000, immutable' : 'private, no-cache')
+      .header('x-content-type-options', 'nosniff');
+    if (etagMatches(req.headers['if-none-match'], etag)) return reply.code(304).send();
+    return reply.type('image/jpeg').send(img.bytes);
   });
 
   // CORS preflight for signed links only: pdf.js probes with a Range header,

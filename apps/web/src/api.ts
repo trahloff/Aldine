@@ -3,6 +3,9 @@ import { withBase } from './basePath';
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
 export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
 export interface OAuthProviderInfo { id: string; label: string }
+/** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
+ *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
+export interface ProjectThumb { branch: string; w: number; h: number; v: string }
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -37,6 +40,9 @@ export interface ProjectSummary {
   compile?: { status: 'ok' | 'error'; errors: number; at: string; branch: string } | null;
   /** Why the caller sees it: owner, invited member, or listed because they opened it through a share link. */
   access?: 'owner' | 'member' | 'link';
+  /** The caller's last-opened branch's thumbnail, falling back to main's when
+   *  that branch has none. Absent from servers that predate thumbnails. */
+  thumb?: ProjectThumb | null;
 }
 
 /** Last change to a project's files on any branch, by anyone: a collab edit,
@@ -46,7 +52,7 @@ export interface ProjectSummary {
 export interface LastEdit { at: string; byId: string | null; byName: string | null; branch: string }
 
 /** A project in the trash. `purgeAt` is when it stops being restorable. */
-export interface TrashedProject { id: string; name: string; deletedAt: string; purgeAt: string | null }
+export interface TrashedProject { id: string; name: string; deletedAt: string; purgeAt: string | null; thumb?: ProjectThumb | null }
 
 export type RemoteProviderId = 'github' | 'gitlab' | 'gitea';
 /** A provider the server offers (honours its REMOTE_PROVIDERS allowlist). */
@@ -357,6 +363,9 @@ export const api = {
   /** Duplicate: the caller owns the copy of the source's main branch files. Name defaults to "<name> copy". */
   copyProject: (id: string, name?: string) =>
     req<CreatedProject>(`/api/projects/${id}/copy`, { method: 'POST', body: JSON.stringify(name === undefined ? {} : { name }) }),
+  /** The image for a row's `thumb`; with `v` in it the browser keeps it for good. */
+  thumbnailUrl: (id: string, thumb: ProjectThumb) =>
+    withBase(`/api/projects/${id}/thumbnail?branch=${encodeURIComponent(thumb.branch)}&v=${encodeURIComponent(thumb.v)}`),
 
   listFiles: (id: string, branch: string) =>
     req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),

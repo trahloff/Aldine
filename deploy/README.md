@@ -367,8 +367,9 @@ compose files hand a variable to a container only when they name it:
 `docker-compose.full.yml` passes most of the table through from `.env`. For
 `ALDINE_ADMIN_EMAILS`, `ALDINE_TRASH_DAYS`, `PG_POOL_MAX`, `LOG_LEVEL`,
 `CACHE_DIR`, `PLUGINS_DIR`, the `RL_*` limits and the compiler's
-`ALDINE_PREAMBLE_CACHE`, add the line under `environment:` of the `app` (or
-`compiler`) service in an override file.
+`ALDINE_PREAMBLE_CACHE`, `ALDINE_THUMBNAILS` and `THUMBNAIL_TIMEOUT_MS`, add
+the line under `environment:` of the `app` (or `compiler`) service in an
+override file.
 
 | Variable | Purpose |
 |---|---|
@@ -429,6 +430,7 @@ compose files hand a variable to a container only when they name it:
 | `RL_COMPILE_CONCURRENCY` | Typesets one client (the signed-in user, else the IP address) may have in flight on an app node (default 2) |
 | `COMPILE_TIMEOUT_MS`, `MAX_CONCURRENT_COMPILES` | Compiler-container limits: per-compile timeout (default 120000 ms) and compiles in flight (default 2). `docker-compose.full.yml` passes both through from `.env` |
 | `ALDINE_PREAMBLE_CACHE` | Compiler container. `0` turns off the precompiled preamble (pdfLaTeX projects load their packages from a format built in the background, rebuilt when the preamble or a file it reads changes). On by default |
+| `ALDINE_THUMBNAILS`, `THUMBNAIL_TIMEOUT_MS` | Compiler container. After each successful typeset, page 1 is rendered with Ghostscript into a small image for the project list. `0` turns that off; the timeout (default 10000 ms) bounds one render, which runs after the typeset has answered. On by default |
 | `ALDINE_PROJECT` | Compose project name for `backup.sh`/`restore.sh` (default `aldine`) |
 | `ALDINE_BACKUP_DB` | `skip` = `deploy/backup.sh` writes a backup without the database when `DATABASE_URL` points outside the stack (back that database up with its own tools); unset, it refuses |
 | `ALDINE_TEXLIVE_SCHEME` | Compiler image build (`docker-compose.full.yml`): `medium` (default; scheme-medium + pictures/latexextra/bibtexextra + publisher classes + Arabic/Cyrillic/Greek scripts, no CJK, about 5 GB on disk) or `full` (all of TeX Live, ~9 GB). Prebuilt images: set `ALDINE_TEXLIVE=-full` instead |
