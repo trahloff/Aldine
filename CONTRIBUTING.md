@@ -102,11 +102,23 @@ One release a week, cut on Sunday evening, Berlin time, from whatever is on
 wait: a security fix, and a fix for a bug that loses or corrupts data, go out
 as a patch release as soon as they are merged.
 
-Each release asks every self-hoster to pull new images (about 1.5 GB of the
-default compiler image changes each time), which is why there is one a week
-and not one per merge. An install pinned with `ALDINE_VERSION` moves only
-when its owner changes the pin, and `latest` moves only after the maintainer
-approves the `promote` job described below.
+Each release asks every self-hoster to pull new images, which is why there is
+one a week and not one per merge. An install pinned with `ALDINE_VERSION`
+moves only when its owner changes the pin, and `latest` moves only after the
+maintainer approves the `promote` job described below.
+
+Of the default compiler image, an upgrade downloads about 100 MB: Node.js,
+biber's warmed cache and the compile service, which every release rebuilds to
+pick up Debian's security fixes. The TeX Live layers (about 2.3 GB compressed)
+come from the release build cache, the `buildcache-*` tags in each image's
+GHCR package, and keep their digests from one release to the next.
+
+Every instance downloads TeX Live again (1.4 GB or more) in two cases. The
+first is a release that bumps the base image digest or the tlnet snapshot
+date in `apps/compiler/Dockerfile`, so batch those bumps and say so in the
+CHANGELOG. The second is a release built without the cache: the first one
+built after the cache was introduced, or the first after someone deletes a
+`buildcache-*` tag.
 
 A version tag ships to nobody. Pushing one runs `.github/workflows/release.yml`,
 which checks the tag is on main and every version pin agrees with it, runs the

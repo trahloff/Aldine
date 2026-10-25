@@ -19,6 +19,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The keyboard shortcuts in settings say when two of them are on the same
   keys, such as one you set to ⇧⌘F before search took it.
 
+### Changed
+- Upgrading the default compiler image downloads only the layers that
+  changed, about 100 MB, instead of TeX Live again (about 1.4 GB). The
+  release that brings this still downloads TeX Live one last time; the
+  smaller upgrades start with the release after it. A release that moves the
+  compiler to a newer TeX Live downloads it again, and says so here.
+
 ## [0.15.1] — 2026-10-25
 
 ### Fixed

@@ -101,6 +101,11 @@ traces as the `playwright-<suite>` artifact.
   `latest` for every release semver. `docker-compose.yml` pins
   `${ALDINE_VERSION:-x.y.z}` on purpose. Do not "simplify" either back to
   `latest`.
+- The `buildcache-<variant>-<arch>` tags in the GHCR packages are the release
+  layer cache, not images. Deleting one, or moving `build-image.yml` back to
+  `type=gha`, makes every instance re-download TeX Live (1.4 GB) on the next
+  release. OS package steps in the Dockerfiles go below `ARG
+  PACKAGES_REFRESH`, or a cached layer freezes them without security fixes.
 - `test:unit` discovers `apps/server/test/*.test.mjs`; never enumerate test
   files in package.json again (two branches adding tests conflicted on that
   line and the merge silently dropped one side's tests).

@@ -5,8 +5,9 @@ name: Build image
 # and the commit. Called by release.yml for the app and the compiler.
 #
 # A version tag is immutable: the merge job refuses to overwrite one that
-# already resolves. The only tag that ever moves is `latest`, and only
-# promote.yml touches it.
+# already resolves. The only release tags that ever move are `latest` and the
+# `x.y` alias, and only promote.yml touches them. The `buildcache-*` tags each
+# build overwrites hold BuildKit's layer cache, not an image.
 on:
   workflow_call:
     inputs:
@@ -85,9 +86,12 @@ jobs:
             echo "::error::$IMAGE:$VERSION_TAG already exists; version tags are immutable. Cut a new version instead."
             exit 1
           fi
-      - name: Platform slug
+      - name: Platform slug and cache tag
         id: slug
-        run: echo "value=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
+        run: |
+          slug="${PLATFORM//\//-}"
+          echo "value=$slug" >> "$GITHUB_OUTPUT"
+          echo "cache=$IMAGE:buildcache-$VARIANT-$slug" >> "$GITHUB_OUTPUT"
         env:
           PLATFORM: ${{ matrix.platform }}
       - name: Build and push by digest
@@ -97,12 +101,26 @@ jobs:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           platforms: ${{ matrix.platform }}
-          build-args: ${{ inputs.build-args }}
+          # PACKAGES_REFRESH changes every release, so the Dockerfiles rerun
+          # their OS package steps (and all later steps) instead of reusing a
+          # cached layer without the latest security fixes.
+          build-args: |
+            ${{ inputs.build-args }}
+            PACKAGES_REFRESH=${{ inputs.version }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ env.VARIANT }}-${{ steps.slug.outputs.value }}
-          # mode=max of a full TeX Live layer set exceeds the 10 GB repo cache
-          # and evicts itself every run; min keeps only the final layers.
-          cache-to: type=gha,scope=${{ env.VARIANT }}-${{ steps.slug.outputs.value }},mode=min
+          # The layer cache lives in the image's own package, one tag per
+          # variant and architecture (aldine-compiler:buildcache-compiler-full-linux-arm64).
+          # A cached layer keeps its digest, so instances skip it on upgrade.
+          # Not type=gha: four TeX Live builds overflow its 10 GB, and it
+          # drops entries unused for 7 days, longer than a release cycle.
+          # Not a separate package: the cache's blobs are the image's own and
+          # are already in this one, so writing the cache uploads little.
+          # The tag starts with a letter, so nothing that looks for x.y.z,
+          # x.y, latest or sha- tags treats it as a release, and it cannot be
+          # pulled as an image. ignore-error: failing to write the cache must
+          # not fail a release; the previous cache tag then stays in place.
+          cache-from: type=registry,ref=${{ steps.slug.outputs.cache }}
+          cache-to: type=registry,ref=${{ steps.slug.outputs.cache }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
