@@ -50,8 +50,10 @@ Issuer = `publicBase(req)` (the existing helper; honours ALDINE_PUBLIC_URL).
    the bearer allowlist in routes.ts (tokens cannot mint tokens).
 5. `POST /oauth/token` (form-encoded, public client, no client auth):
    - `grant_type=authorization_code`: verify code (single use, 10-minute TTL,
-     bound to client_id, redirect_uri, code_challenge, resource, userId,
-     projectIds), verify PKCE S256 (`code_verifier` required, 43–128 chars),
+     bound to client_id, redirect_uri, code_challenge, userId, projectIds; a
+     `resource` parameter is checked only when present and must name this
+     server's `/mcp`, otherwise the code's own resource applies, RFC 8707),
+     verify PKCE S256 (`code_verifier` required, 43–128 chars),
      then mint an access token = a normal `aldn_` TokenRecord (name = client
      name, `projectIds` from consent, `expiresAt` = now + 24 h) and a refresh
      token (opaque `aldr_…`, stored hashed, 30-day TTL, one family per

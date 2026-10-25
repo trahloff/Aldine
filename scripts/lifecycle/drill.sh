@@ -73,6 +73,9 @@ start() {
   APP_IMAGE="$1" COMPILER_IMAGE="$2"
   step "start $APP_IMAGE + $COMPILER_IMAGE ($DATASTORE datastore, project $PROJECT, port $PORT)"
   dc up -d --wait --wait-timeout 600 --quiet-pull
+  # data.mjs reads confirmation links from this container's log (no mail here).
+  LIFECYCLE_APP_CONTAINER="$(dc ps -q app)"
+  export LIFECYCLE_APP_CONTAINER
 }
 volumes() { docker volume ls -q | grep "^${PROJECT}_" || true; }
 

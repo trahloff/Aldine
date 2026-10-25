@@ -4,6 +4,7 @@ import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateIn
 import { useToast } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
+import EmailConfirmBanner from '../components/EmailConfirmBanner';
 import Modal from '../components/Modal';
 import ShareModal from '../components/ShareModal';
 import { IconDoc, IconLink, IconX } from '../components/Icons';
@@ -131,6 +132,12 @@ export default function Home() {
       .catch(() => { setLoadFailed(true); setProjects((cur) => cur ?? []); });
   };
   useEffect(() => { load(); }, []);
+  // Confirming the address brings in the projects shared with it.
+  const wasPending = useRef(!!user?.emailPending);
+  useEffect(() => {
+    if (wasPending.current && !user?.emailPending) load();
+    wasPending.current = !!user?.emailPending;
+  }, [user?.emailPending]);
   // Signed in through an SSO provider while an app was waiting on
   // /oauth/authorize: the provider callback lands here, so resume the consent.
   useEffect(() => {
@@ -335,6 +342,8 @@ export default function Home() {
 
         <main>
         <h1 className="visually-hidden">Projects</h1>
+
+        {authEnabled && <EmailConfirmBanner />}
 
         {projects === null ? (
           <div className="empty" role="status"><div className="spinner" style={{ margin: '0 auto' }} /><span className="visually-hidden">Loading projects…</span></div>

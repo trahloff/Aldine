@@ -24,7 +24,16 @@ export interface User {
   provider?: string;
   /** Stable provider-scoped identity, `orcid:0000-0002-1825-0097`. Unique. */
   subject?: string;
+  /** Set on a password sign-up until its address is confirmed. Absent means
+   *  confirmed: every account from before the field and every single
+   *  sign-on account. Invites by email and ALDINE_ADMIN_EMAILS skip an
+   *  account while it is set. */
+  emailPending?: EmailPending;
 }
+
+/** The one-time confirmation link of a pending address: `hash` is the
+ *  SHA-256 digest of the link's secret, which is never stored. */
+export interface EmailPending { hash: string; expiresAt: string }
 
 /** `author` is the display name shown with the text; `authorId` is the
  *  account that wrote it (absent without accounts and on older rows). Names
@@ -225,6 +234,9 @@ export interface DataStore {
   /** Record activity without a read-modify-write of the whole row, so a
    *  heartbeat racing a password change can never resurrect the old hash. */
   touchUser(id: string, lastSeenAt: string): Promise<void>;
+  /** Set (a new link) or clear (confirmed) emailPending alone, for the same
+   *  reason as touchUser. */
+  setEmailPending(id: string, pending: EmailPending | null): Promise<void>;
 
   // sessions (revocable)
   createSession(sid: string, userId: string, exp: number): Promise<void>;

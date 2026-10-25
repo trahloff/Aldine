@@ -30,6 +30,18 @@ you in the fix's release notes unless you prefer otherwise.
   scrypt-hashed. They carry the Secure flag when `ALDINE_PUBLIC_URL` starts
   with `https`; behind HTTPS without it, set `COOKIE_SECURE=1` (the prod
   overlay does).
+- Password sign-up is open to anyone who can reach the instance, and the
+  typed address starts unconfirmed: projects shared with that address and
+  `ALDINE_ADMIN_EMAILS` ignore the account until it follows the one-time link
+  sent to the address (logged for the operator when no email transport is
+  set) or completes a password reset. Accounts from before this check and
+  single sign-on accounts count as confirmed (deploy/README.md, "Sign-up and
+  invites").
+- Password sign-in is limited per client address and, with exponential
+  backoff, per account across all addresses (unknown addresses alike). A
+  browser that signed in to the account before carries a signed device
+  cookie that exempts it from the per-account wait, so knowing an address is
+  not enough to lock its owner out.
 - Single sign-on never signs into an existing account that merely shares an
   email address: not a password account, not another provider's, not another
   OIDC identity. With OpenID Connect the address is used only when the IdP

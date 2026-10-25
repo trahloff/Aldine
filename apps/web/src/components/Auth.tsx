@@ -1,8 +1,11 @@
 import { createContext, useContext, useEffect, useState, type JSX } from 'react';
 import { withBase } from '../basePath';
-import { api, AuthUser, OAuthProviderInfo } from '../api';
+import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
 import Wordmark from './Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
+
+/** The outcome of following a confirmation link, for the banner to show. */
+export interface EmailNotice { tone: 'ok' | 'error'; text: string }
 
 interface AuthState {
   loading: boolean;
@@ -17,11 +20,24 @@ interface AuthState {
   mcpEnabled: boolean;
   /** ALDINE_PUBLIC_URL as the server knows it (null when unset). */
   publicUrl: string | null;
+  /** Confirmation links go out by mail (otherwise the operator relays them from the log). */
+  sendsEmail: boolean;
+  emailNotice: EmailNotice | null;
+  clearEmailNotice(): void;
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, sendsEmail: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {} });
+
+const CONFIRM_PARAM = 'confirm_email';
+/** Drop the confirmation token from the address bar, keeping everything else. */
+function stripConfirmParam() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(CONFIRM_PARAM)) return;
+  url.searchParams.delete(CONFIRM_PARAM);
+  window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+}
 
 /** The OAuth consent page validates the requesting client BEFORE asking for
  *  credentials and renders the sign-in form itself, so the provider's gate
@@ -39,6 +55,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [passwordAuth, setPasswordAuth] = useState(true);
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [sendsEmail, setSendsEmail] = useState(false);
+  const [emailNotice, setEmailNotice] = useState<EmailNotice | null>(null);
+  // Arriving from a confirmation link (…/?confirm_email=…). The token stays in
+  // the address bar until it is used, so a reload on the sign-in form keeps it.
+  const [confirmToken, setConfirmToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get(CONFIRM_PARAM));
 
   const refresh = async () => {
     try {
@@ -50,6 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setPasswordAuth(me.passwordAuth !== false);
       setMcpEnabled(me.mcpEnabled === true);
       setPublicUrl(me.publicUrl || null);
+      setSendsEmail(me.sendsEmail === true);
     } catch {
       setAuthEnabled(false);
       setUser(null);
@@ -60,15 +82,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { refresh(); }, []);
 
+  // The server confirms only for the account the link was sent for, so this
+  // waits until someone is signed in.
+  useEffect(() => {
+    if (!confirmToken || !user) return;
+    const token = confirmToken;
+    setConfirmToken(null);
+    stripConfirmParam();
+    if (!user.emailPending) { setEmailNotice({ tone: 'ok', text: 'Your email address is already confirmed.' }); return; }
+    api.confirmEmail(token).then(
+      (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: 'Your email address is confirmed. Projects shared with it are in your list now.' }); },
+      (err: any) => setEmailNotice({ tone: 'error', text: err.message }),
+    );
+  }, [confirmToken, user]);
+
   if (loading) return <div style={{ height: '100%' }} />;
 
   // Show the login/reset screen when signed out, OR when a reset link was opened
   // in an already-signed-in session (otherwise the ?reset_token= link does nothing).
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
   const selfGated = typeof window !== 'undefined' && SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p));
-  if (authEnabled && (!user || hasResetToken) && !selfGated) return <LoginScreen providers={providers} passwordAuth={passwordAuth} onAuthed={(u) => setUser(u)} />;
+  if (authEnabled && (!user || hasResetToken) && !selfGated) {
+    return (
+      <LoginScreen
+        providers={providers}
+        passwordAuth={passwordAuth}
+        onAuthed={(u) => setUser(u)}
+        notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
+      />
+    );
+  }
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, sendsEmail, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';
@@ -101,8 +146,20 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
   const [error, setError] = useState('');
   const [info, setInfo] = useState(notice ?? '');
   const [busy, setBusy] = useState(false);
+  // A throttled sign-in: the button waits out the server's Retry-After.
+  const [waitUntil, setWaitUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const waitLeft = Math.max(0, Math.ceil((waitUntil - now) / 1000));
+  useEffect(() => {
+    if (!waitUntil) return;
+    const t = window.setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= waitUntil) { setWaitUntil(0); window.clearInterval(t); }
+    }, 250);
+    return () => window.clearInterval(t);
+  }, [waitUntil]);
 
-  const reset = () => { setError(''); setInfo(''); };
+  const reset = () => { setError(''); setInfo(''); setWaitUntil(0); };
 
   // Arriving from a password-reset email link (…/?reset_token=…): pre-fill the
   // token and jump straight to the "set a new password" step.
@@ -121,7 +178,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
 
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (busy) return;
+    if (busy || waitLeft > 0) return;
     reset();
     setBusy(true);
     try {
@@ -141,6 +198,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
       }
     } catch (err: any) {
       setError(err.message);
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setNow(Date.now()); setWaitUntil(Date.now() + err.retryAfter * 1000); }
       setBusy(false);
     }
   };
@@ -216,8 +274,8 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
               {error && <p className="login__error" role="alert" data-testid="auth-error">{error}</p>}
               {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} role="status" data-testid="auth-info">{info}</p>}
 
-              <button type="submit" className="btn btn--primary login__submit" disabled={busy} aria-busy={busy || undefined} data-testid="auth-submit">
-                {submitLabel}
+              <button type="submit" className="btn btn--primary login__submit" disabled={busy || waitLeft > 0} aria-busy={busy || undefined} data-testid="auth-submit">
+                {waitLeft > 0 && !busy ? `Try again in ${waitLeft} s` : submitLabel}
               </button>
             </form>
 

@@ -31,7 +31,7 @@ delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
 delete process.env.ALDINE_PROTECTED_PROJECTS;
 
-const { initDb } = await import('../src/db/index.ts');
+const { initDb, db } = await import('../src/db/index.ts');
 await initDb();
 const auth = await import('../src/auth.ts');
 const store = await import('../src/store.ts');
@@ -56,7 +56,12 @@ function plant(id, branch, rootFile, bytes, side = {}) {
   return thumbVersion(bytes);
 }
 
-const session = async (email, name) => `aldine_session=${await auth.createSession((await auth.register(email, 'password123', name)).id)}`;
+// Invites by email count once the address is confirmed (email-confirmation.test.mjs).
+const session = async (email, name) => {
+  const u = await auth.register(email, 'password123', name);
+  await db().setEmailPending(u.id, null);
+  return `aldine_session=${await auth.createSession(u.id)}`;
+};
 const owner = await session('owner@example.com', 'Ada Owner');
 const member = await session('member@example.com', 'Grace Member');
 const visitor = await session('visitor@example.com', 'Vic Visitor');

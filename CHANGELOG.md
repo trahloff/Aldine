@@ -73,6 +73,30 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   rings on filled buttons are visible against the fill, and Windows contrast
   themes show the chosen palette row, menu item and template.
 
+### Security
+- Password sign-ups confirm their address. Until then, projects shared with
+  that address by email stay hidden from the account and
+  `ALDINE_ADMIN_EMAILS` does not count it, so someone who signs up first
+  with an invited address no longer gets the invitation. Sign-up sends a
+  one-time link (valid 7 days); without an email transport the link is in
+  the server log for the operator to pass on, like a reset link. A banner on
+  the project list asks for the confirmation and sends a new link, and a
+  completed password reset also confirms the address (not with
+  `ALDINE_RESET_ECHO=1`). Shares apply as soon as the address is confirmed.
+  Existing accounts and single sign-on accounts count as confirmed; `/admin`
+  marks pending ones "not confirmed".
+- Password sign-in is also limited per account, across every client
+  address: after 5 failed tries in a row each further try waits 1, 2, 4 …
+  seconds, at most 60, and the sign-in form counts down. Unknown addresses
+  are counted the same way. A browser that signed in to the account before
+  keeps a signed cookie that exempts it from this wait, so someone who knows
+  your address cannot lock you out. With `REDIS_URL` the count holds across
+  app nodes.
+- Starting a branch on the git host from `main` is for the project owner
+  only, like switching the tracked branch, because the new branch becomes
+  the one the project tracks for everyone. Collaborators see why the action
+  is unavailable.
+
 ## [0.16.0] — 2026-10-25
 
 ### Added

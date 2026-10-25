@@ -567,6 +567,10 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .home__tag { color: var(--text-2); margin: 2px 0 0; font-size: var(--text-m); }
 .admin__title { margin-top: 6px; font-weight: 400; }
 .home__bar { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; gap: 16px; flex-wrap: wrap; }
+.email-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -12px 0 20px; padding: 10px 14px; font-size: var(--text-s); line-height: 1.45; color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); border: 1px solid var(--hairline); border-radius: var(--radius-s); }
+.email-banner__text { flex: 1; min-width: 14em; overflow-wrap: anywhere; }
+.email-banner--ok { background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
+.email-banner--error { background: color-mix(in srgb, var(--error) 8%, var(--bg-panel)); }
 .home__section { margin: 26px 0 10px; font-size: var(--text-m); font-weight: 600; color: var(--text-2); }
 
 .projects {

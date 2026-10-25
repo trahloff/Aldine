@@ -3,7 +3,7 @@ import { ProjectMeta } from './store.js';
 
 /**
  * Is this user a member of the project — its owner or someone the owner
- * invited by email or ORCID iD? Membership is the basis for listing and for anything
+ * invited by email (once the account confirmed it) or ORCID iD? Membership is the basis for listing and for anything
  * that reaches the owner's linked accounts (Zotero, GitHub remote): a link
  * grants entry to the document, it does not make the visitor part of the team.
  */
@@ -12,7 +12,8 @@ export function isMember(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (!meta.ownerId) return true;      // legacy project created before auth
   if (!user) return false;
   if (meta.ownerId === user.id) return true;
-  const email = user.email?.toLowerCase();
+  // An address nobody confirmed is whatever the person typed at sign-up.
+  const email = user.emailPending ? undefined : user.email?.toLowerCase();
   return !!meta.share?.collaborators?.some((c) => (email && c.toLowerCase() === email) || (user.orcid && c === user.orcid));
 }
 
@@ -64,7 +65,7 @@ export function isOwner(meta: ProjectMeta, user: PublicUser | null): boolean {
  */
 export function isAdmin(user: PublicUser | null): boolean {
   if (!AUTH_ENABLED) return true;
-  return !!user?.email && ADMIN_EMAILS.has(user.email.toLowerCase());
+  return !!user?.email && !user.emailPending && ADMIN_EMAILS.has(user.email.toLowerCase());
 }
 
 /** Resolve the owner's display name for listings (best-effort). A lookup

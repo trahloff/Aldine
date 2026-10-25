@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { db } from './db/index.js';
-import type { TokenRecord, User } from './db/types.js';
+import type { EmailPending, TokenRecord, User } from './db/types.js';
 import { config } from './config.js';
 import { providers, type OAuthProfile } from './oauth.js';
 import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
 import { discardCodesForUser } from './oauth/codes.js';
+import { subkey } from './output-signing.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -39,15 +40,18 @@ export const COOKIE = 'aldine_session';
 export const COOKIE_PATH = config.basePath || '/';
 const SESSION_DAYS = 30;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+export const CONFIRM_TTL_DAYS = 7;
 
 export type { User } from './db/types.js';
-export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
+/** `emailPending` is present (true) only while a password sign-up has not
+ *  confirmed its address; isMember and isAdmin then ignore the address. */
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';
 
 export function pub(u: User): PublicUser {
-  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u) };
+  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}) };
 }
 /** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
 export function orcidOf(u: { subject?: string }): string | undefined {
@@ -78,13 +82,34 @@ function cleanName(name: unknown): string {
   return name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, NAME_MAX).replace(/[\ud800-\udbff]$/, '').trim();
 }
 
+/** A fresh one-time confirmation link: the secret for the link, the digest for the store. */
+function newConfirmation(now = Date.now()): { token: string; pending: EmailPending } {
+  const token = crypto.randomBytes(24).toString('base64url');
+  return { token, pending: { hash: tokenDigest(token), expiresAt: new Date(now + CONFIRM_TTL_DAYS * 864e5).toISOString() } };
+}
+
+/** Create an account. A password account starts with its address pending;
+ *  signUp() is the entry point that also hands back the link's secret. */
 export async function register(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<PublicUser> {
+  return pub((await createAccount(email, password, name, provider, subject)).user);
+}
+
+/** Password sign-up. `confirmToken` goes into the confirmation link only,
+ *  never into a response. */
+export async function signUp(email: string, password: string, name?: string): Promise<{ user: PublicUser; confirmToken: string }> {
+  const r = await createAccount(email, password, name);
+  return { user: pub(r.user), confirmToken: r.confirmToken! };
+}
+
+async function createAccount(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<{ user: User; confirmToken: string | null }> {
   email = email ? email.trim().toLowerCase() : null;
   if (email === null && !(provider && subject)) throw new Error('Enter a valid email address');
   if (email !== null && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address');
   if (!provider && password.length < 8) throw new Error('Password must be at least 8 characters');
   if (email !== null && await db().findUserByEmail(email)) throw new Error('An account with that email already exists');
   const salt = crypto.randomBytes(16).toString('hex');
+  // Anyone can type any address at sign-up; a provider vouches for its own.
+  const confirm = provider ? null : newConfirmation();
   const user: User = {
     id: crypto.randomBytes(9).toString('base64url'),
     email,
@@ -94,8 +119,36 @@ export async function register(email: string | null, password: string, name?: st
     createdAt: new Date().toISOString(),
     provider,
     subject,
+    ...(confirm ? { emailPending: confirm.pending } : {}),
   };
   await db().createUser(user);
+  return { user, confirmToken: confirm?.token ?? null };
+}
+
+/** A new link for an address still pending; the previous link stops
+ *  working. Null when the account has nothing to confirm. */
+export async function reissueConfirmation(userId: string): Promise<{ token: string; user: PublicUser } | null> {
+  const user = await db().getUser(userId);
+  if (!user?.emailPending || !user.email) return null;
+  const c = newConfirmation();
+  await db().setEmailPending(user.id, c.pending);
+  return { token: c.token, user: pub(user) };
+}
+
+/** Confirm the address of `userId` (the signed-in account) with the link's
+ *  secret. Confirming an address already confirmed is not an error. */
+export async function confirmEmail(userId: string, token: string): Promise<PublicUser> {
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  const p = user.emailPending;
+  if (!p) return pub(user);
+  const a = Buffer.from(p.hash, 'hex');
+  const b = Buffer.from(tokenDigest(token), 'hex');
+  if (!token || a.length !== b.length || !crypto.timingSafeEqual(a, b) || !(Date.parse(p.expiresAt) > Date.now())) {
+    throw new Error('This confirmation link has expired, was replaced by a newer one, or belongs to another account.');
+  }
+  await db().setEmailPending(user.id, null);
+  delete user.emailPending;
   return pub(user);
 }
 
@@ -121,9 +174,9 @@ export function getUser(id: string): Promise<User | null> {
 /**
  * Find an OAuth user or create one: by provider subject first, then by email.
  * Only merges into an existing account created by the SAME provider — never
- * into a password account, which (registration doesn't verify email) an
- * attacker could pre-create for the victim's address. Prevents
- * pre-account-hijacking. A subject-less provider with no email is a bug in
+ * into a password account, which an attacker could pre-create for the
+ * victim's address (confirming it does not make the password the victim's).
+ * Prevents pre-account-hijacking. A subject-less provider with no email is a bug in
  * the provider entry, not a sign-in path.
  */
 export async function findOrCreateOAuth(profile: OAuthProfile, provider: string): Promise<PublicUser> {
@@ -198,6 +251,10 @@ export async function resetPassword(token: string, next: string): Promise<number
   refuseSsoAccount(user);
   user.salt = crypto.randomBytes(16).toString('hex');
   user.hash = await hashPassword(next, user.salt);
+  // The reset link reached the person through the address (or through the
+  // operator, from the log), so following it proves the address. Not when
+  // ALDINE_RESET_ECHO=1 handed the token to whoever asked.
+  if (process.env.ALDINE_RESET_ECHO !== '1') delete user.emailPending;
   await db().updateUser(user);
   await db().deleteReset(token);
   await revokeUser(user.id);
@@ -362,6 +419,54 @@ export function sessionCookie(sid: string): string {
 export function clearCookie(): string {
   return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=0${SECURE_COOKIES ? '; Secure' : ''}`;
 }
+
+// ---------- device cookie (per-account sign-in backoff) ----------
+// OWASP's device-cookie pattern: a browser that signed in to an account
+// before proves it with an entry signed for that account's email, and its
+// failed tries count on the entry's own key instead of the account's. Someone
+// who knows only the address can then slow down every other browser, but
+// never the ones its owner uses.
+export const DEVICE_COOKIE = 'aldine_device';
+const DEVICE_DAYS = 365;
+/** Accounts one browser stays trusted for; the oldest entry drops out. */
+const DEVICE_ENTRIES = 5;
+const NONCE_RE = /^[A-Za-z0-9_-]{16}$/;
+
+function deviceSig(email: string, nonce: string): Buffer {
+  return crypto.createHmac('sha256', subkey('device-cookie')).update(JSON.stringify([email, nonce])).digest();
+}
+function deviceEntries(cookieHeader: string | undefined): string[] {
+  const raw = parseCookies(cookieHeader)[DEVICE_COOKIE];
+  return raw ? raw.split('~').slice(0, DEVICE_ENTRIES) : [];
+}
+/** The entry's nonce when it is a valid entry for `email`. */
+function entryFor(entry: string, email: string): string | null {
+  const [nonce, sig, extra] = entry.split('.');
+  if (extra !== undefined || !nonce || !sig || !NONCE_RE.test(nonce)) return null;
+  let got: Buffer;
+  try { got = Buffer.from(sig, 'base64url'); } catch { return null; }
+  const want = deviceSig(email, nonce);
+  return got.length === want.length && crypto.timingSafeEqual(got, want) ? nonce : null;
+}
+/** The nonce of this browser's entry for `email` (as typed), or null. */
+export function trustedDevice(cookieHeader: string | undefined, email: string): string | null {
+  const e = email.trim().toLowerCase();
+  for (const entry of deviceEntries(cookieHeader)) {
+    const nonce = entryFor(entry, e);
+    if (nonce) return nonce;
+  }
+  return null;
+}
+/** Set-Cookie after a correct sign-in: a fresh entry for `email` first, the
+ *  browser's entries for its other accounts after it. */
+export function deviceCookie(cookieHeader: string | undefined, email: string): string {
+  const e = email.trim().toLowerCase();
+  const nonce = crypto.randomBytes(12).toString('base64url');
+  const others = deviceEntries(cookieHeader).filter((entry) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(entry) && !entryFor(entry, e));
+  const value = [`${nonce}.${deviceSig(e, nonce).toString('base64url')}`, ...others].slice(0, DEVICE_ENTRIES).join('~');
+  return `${DEVICE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${DEVICE_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
+}
+
 export function sidFromRequest(cookieHeader: string | undefined): string | undefined {
   return parseCookies(cookieHeader)[COOKIE];
 }

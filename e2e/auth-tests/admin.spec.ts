@@ -11,7 +11,12 @@ const ADMIN_EMAIL = 'admin@test.com';
  *  page shares the request context's cookie jar, so the UI is signed in after. */
 async function signIn(page: import('@playwright/test').Page, email: string, name: string) {
   const reg = await page.request.post('/api/auth/register', { data: { email, password: 'password123', name } });
-  if (!reg.ok()) {
+  if (reg.ok()) {
+    // The admin list ignores an address until it is confirmed (ALDINE_TEST_HOOKS hands over the logged link).
+    const { link } = await (await page.request.get(`/api/test/confirmation-link?email=${encodeURIComponent(email)}`)).json();
+    const token = new URL(link, 'http://x').searchParams.get('confirm_email');
+    expect((await page.request.post('/api/auth/confirm-email', { data: { token } })).ok()).toBeTruthy();
+  } else {
     const login = await page.request.post('/api/auth/login', { data: { email, password: 'password123' } });
     expect(login.ok()).toBeTruthy();
   }

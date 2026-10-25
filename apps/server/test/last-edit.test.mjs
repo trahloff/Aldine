@@ -87,6 +87,9 @@ const wsUrl = `ws://127.0.0.1:${wsServer.address().port}/collab`;
 const people = {};
 for (const [who, name] of [['ada', 'Ada'], ['bob', 'Bob']]) {
   const u = await auth.register(`${who}@example.com`, 'password123', name);
+  // Invites by email count once the address is confirmed (email-confirmation.test.mjs).
+  await db().setEmailPending(u.id, null);
+  delete u.emailPending;
   people[who] = { user: u, cookie: `aldine_session=${await auth.createSession(u.id)}` };
 }
 const send = (method, url, who, payload) => app.inject({ method, url, headers: { cookie: people[who].cookie }, payload });

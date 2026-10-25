@@ -104,7 +104,8 @@ export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete }: {
 }
 
 /** "+ New branch from X", then a name field in its place. */
-export function NewBranch({ from, onCreate }: { from: string; onCreate(name: string): Promise<boolean> }) {
+/** `blocked` is the sentence that says why this person cannot start one here. */
+export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(name: string): Promise<boolean>; blocked?: string }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const submit = async () => {
@@ -112,6 +113,16 @@ export function NewBranch({ from, onCreate }: { from: string; onCreate(name: str
     if (!n) return;
     if (await onCreate(n)) { setName(''); setCreating(false); }
   };
+  if (blocked) {
+    return (
+      <>
+        <button className="menu__item" disabled aria-describedby="new-branch-blocked" data-testid="new-branch">
+          <span className="branch-menu__check">+</span>New branch from {from}
+        </button>
+        <p className="branch-menu__note" id="new-branch-blocked" data-testid="new-branch-blocked">{blocked}</p>
+      </>
+    );
+  }
   if (!creating) {
     return (
       <button className="menu__item" onClick={() => setCreating(true)} data-testid="new-branch">

@@ -50,9 +50,12 @@ console.warn = warn;
 // ---- the login limiter behind a proxy ----
 await auth.register('ada@example.com', 'password123', 'Ada');
 const app = await buildApp();
+// A new email per try: these count address buckets, and five failures on one
+// account would bring in the per-account backoff (signin-backoff.test.mjs).
+let tries = 0;
 const login = (xff) => app.inject({
   method: 'POST', url: '/api/auth/login', remoteAddress: '127.0.0.1',
-  headers: { 'x-forwarded-for': xff }, payload: { email: 'ada@example.com', password: 'wrong-password' },
+  headers: { 'x-forwarded-for': xff }, payload: { email: `try${++tries}@example.com`, password: 'wrong-password' },
 });
 const statuses = async (xffs) => { const out = []; for (const x of xffs) out.push((await login(x)).statusCode); return out; };
 const five = (f) => Array.from({ length: 5 }, (_, i) => f(i));

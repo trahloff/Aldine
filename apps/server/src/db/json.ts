@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
 
 /**
  * OAuth-minted (family set) and revoked before `cutoff` (ms epoch). An
@@ -128,6 +128,13 @@ export class JsonStore implements DataStore {
     const m = this.users();
     if (!m[id]) return;
     m[id].lastSeenAt = lastSeenAt;
+    this.write(this.usersPath, m);
+  }
+  async setEmailPending(id: string, pending: EmailPending | null) {
+    const m = this.users();
+    if (!m[id]) return;
+    if (pending) m[id].emailPending = this.clone(pending);
+    else delete m[id].emailPending;
     this.write(this.usersPath, m);
   }
   async getUser(id: string) { return this.clone(this.users()[id] || null); }

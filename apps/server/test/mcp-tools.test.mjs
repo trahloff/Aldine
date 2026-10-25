@@ -735,6 +735,7 @@ check(body.some((p) => p.id === agentMade), 'a restored project is back for the 
 // A collaborator can reach the project but is not its owner: trash is refused
 // for them exactly as the REST delete is.
 const collab = await auth.register('bob@example.com', 'password123', 'Bob');
+await (await import('../src/db/index.ts')).db().setEmailPending(collab.id, null); // invited by a confirmed address
 const { token: collabTok } = await auth.createAccessToken(collab.id, 'Bob agent', null, null);
 {
   const m = await store.readMeta(agentMade);

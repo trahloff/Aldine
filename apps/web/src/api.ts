@@ -2,7 +2,9 @@ import { withBase } from './basePath';
 import { safeStorage } from './util/safeStorage';
 
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
-export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string }
+/** `emailPending`: a password sign-up whose address is not confirmed yet;
+ *  projects shared with that address stay hidden until it is. */
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true }
 export interface OAuthProviderInfo { id: string; label: string }
 /** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
  *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
@@ -84,6 +86,7 @@ export interface AdminUserRow {
   provider?: string;
   createdAt: string;
   lastSeenAt?: string;
+  emailPending?: boolean;
   admin: boolean;
   projects: number;
   compileSecondsThisMonth: number;
@@ -223,8 +226,9 @@ export interface ReplaceResult {
 
 /** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
+/** `retryAfter`: seconds from a 429's Retry-After header, when it sent one. */
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly retryAfter?: number) { super(message); }
 }
 
 /** OAuth routes answer in RFC 6749 shape (`error` is a code such as
@@ -266,7 +270,8 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep */ }
-    throw new ApiError(msg, res.status);
+    const retryAfter = Number(res.headers.get('retry-after'));
+    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined);
   }
   return res.json() as Promise<T>;
 }
@@ -507,7 +512,11 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean }>('/api/auth/me'),
+  confirmEmail: (token: string) =>
+    req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
+  resendConfirmation: () =>
+    req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', { method: 'POST' }),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   changePassword: (currentPassword: string, newPassword: string) =>
