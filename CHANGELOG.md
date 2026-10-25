@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-25
+
 ### Added
 - Search and replace across the project: a Search tab in the sidebar
   (⇧⌘F / Ctrl+Shift+F, changeable in settings) finds text in every file on
