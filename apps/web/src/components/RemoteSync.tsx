@@ -12,8 +12,8 @@ import { safeStorage } from '../util/safeStorage';
  *  and autopush act on `main` only, so they show only while main is open.
  *  Branches that exist only on this server are listed apart. Ahead/behind
  *  ride on the pill, with Pull or Push beside it only when commits wait.
- *  Switching the tracked branch and autopush are the owner's calls
- *  server-side. The provider comes from the link; the server never takes it
+ *  Switching the tracked branch, starting a host branch (which switches to
+ *  it) and autopush are the owner's calls server-side. The provider comes from the link; the server never takes it
  *  from the request for these routes. */
 // e2e shortens the interval through localStorage; nothing else sets it.
 const REMOTE_POLL_MS = Number(safeStorage.get('aldine.remotePollMs')) || 90_000;
@@ -260,7 +260,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
             </>
           )}
           <div className="menu__sep" />
-          <NewBranch from={label} onCreate={onMain ? createOnHost : local.create} />
+          <NewBranch
+            from={label}
+            onCreate={onMain ? createOnHost : local.create}
+            blocked={onMain && !isOwner ? `Only the project owner can start a branch on ${d.label}, because it becomes the branch this project tracks for everyone.` : undefined}
+          />
           {onMain && branchInfo && tracked !== branchInfo.default && (
             <button className="menu__item" onClick={() => { pop.setOpen(false); setCrTitle(`Update ${tracked}`); setShowCr(true); }} data-testid={`${p}-open-pr`}>
               <span className="branch-menu__check" />Open {d.changeRequest}…

@@ -198,8 +198,13 @@ export async function copyProject(source: ProjectMeta, name: string, ownerId?: s
 
 /** Permanently remove a project — repo, worktrees, and metadata. */
 export async function deleteProject(id: string): Promise<void> {
-  fs.rmSync(repoDir(id), { recursive: true, force: true });
-  fs.rmSync(path.join(worktreesDir, id), { recursive: true, force: true });
+  // The compiler renders the page-1 thumbnail into .aldine-out after the
+  // typeset answered, so a file can appear while the tree is being removed
+  // (ENOTEMPTY); a retry removes it. The renderer never recreates the
+  // directory, so once it is gone it stays gone.
+  const rm = (dir: string) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  rm(repoDir(id));
+  rm(path.join(worktreesDir, id));
   await db().deleteMeta(id);
   await db().deleteProjectVisits(id);
   await db().deleteProjectOpens(id);

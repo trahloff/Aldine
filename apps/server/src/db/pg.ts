@@ -1,5 +1,5 @@
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
 
 /**
  * Postgres DataStore — the horizontally-scalable backend. Multiple app nodes
@@ -121,19 +121,21 @@ export class PgStore implements DataStore {
       CREATE TABLE IF NOT EXISTS project_activity (
         project_id text PRIMARY KEY, last_edit jsonb, compile jsonb NOT NULL DEFAULT '{}'::jsonb
       );
+      -- 1.0: NULL = confirmed, so every row from before the column is.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_pending jsonb;
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
 
   // ---- users ----
   private rowToUser(r: any): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: r.email_pending } : {}) };
   }
   async createUser(u: User) {
     try {
       await this.pool.query(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null],
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null],
       );
     } catch (err: any) {
       // Same messages as the JSON backend, so register() surfaces one
@@ -147,8 +149,8 @@ export class PgStore implements DataStore {
   }
   async updateUser(u: User) {
     await this.pool.query(
-      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8,last_seen_at=$9 WHERE id=$1`,
-      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null],
+      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8,last_seen_at=$9,email_pending=$10 WHERE id=$1`,
+      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null],
     );
   }
   async listUsers() {
@@ -157,6 +159,9 @@ export class PgStore implements DataStore {
   }
   async touchUser(id: string, lastSeenAt: string) {
     await this.pool.query(`UPDATE users SET last_seen_at=$2 WHERE id=$1`, [id, lastSeenAt]);
+  }
+  async setEmailPending(id: string, pending: EmailPending | null) {
+    await this.pool.query(`UPDATE users SET email_pending=$2 WHERE id=$1`, [id, pending ? jsonb(pending) : null]);
   }
   async getUser(id: string) {
     const { rows } = await this.pool.query(`SELECT * FROM users WHERE id=$1`, [id]);

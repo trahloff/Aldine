@@ -95,9 +95,10 @@ OPENROUTER_API_KEY=sk-or-...
 # new error (each one is a model call)
 #ALDINE_AI_AUTOFIX=1
 
-# password-reset email: SMTP (any provider) or AWS SES — set one transport.
-# Without one, reset tokens are logged server-side (or echoed in the API
-# response when ALDINE_RESET_ECHO=1 — dev only).
+# email for sign-up confirmation and password-reset links: SMTP (any provider)
+# or AWS SES — set one transport (plus ALDINE_PUBLIC_URL). Without one, both
+# kinds of link are logged server-side for you to pass on (reset tokens are
+# echoed in the API response when ALDINE_RESET_ECHO=1 — dev only).
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USER=...
@@ -274,6 +275,46 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
 # (append --profile tls if you use the bundled Caddy, plus any other profiles you run)
 ```
 
+## Sign-up and invites
+
+With `AUTH_ENABLED=1` and password sign-in on, anyone who can reach the
+instance can create an account, and nobody checks the address they type. So a
+new password account starts with its address **not confirmed**:
+
+- Sign-up sends a one-time confirmation link (valid 7 days) through the email
+  transport. Without a transport, or without `ALDINE_PUBLIC_URL`, the server
+  logs the link (`[aldine] email confirmation for <address>: <link>`) for you
+  to pass on, the way it logs password-reset links. The banner on the project
+  list offers a new link. A mailed new link replaces the previous one; a
+  logged one does not, so a link you already passed on keeps working until
+  it expires.
+- Until the address is confirmed, the account signs in and works on its own
+  projects, but projects shared with that address do not appear, and
+  `ALDINE_ADMIN_EMAILS` does not count it. Once it is confirmed, the shares
+  apply at once; no invite has to be sent again.
+- The link confirms only while the account it was sent for is signed in.
+- A completed password reset from an emailed (or logged) link also confirms
+  the address. With `ALDINE_RESET_ECHO=1` it does not, because the API hands
+  the reset token to whoever asks.
+- Accounts from before this check, and every single sign-on account, count as
+  confirmed: the identity provider vouches for its addresses (see
+  `OIDC_EMAIL_VERIFIED` in [docs/OIDC.md](../docs/OIDC.md)). `/admin` marks
+  pending accounts "not confirmed".
+
+Password sign-in is limited per client address (`RL_LOGIN_BURST`) and per
+account across all addresses: after 5 failed tries in a row, each further try
+must wait 1, 2, 4 ... seconds, at most 60, and a correct sign-in resets the
+count. Unknown addresses are counted the same way, so the answer never shows
+whether an account exists. A browser that has signed in to the account before
+carries a signed cookie (`aldine_device`, one year) that keeps it out of the
+per-account wait, so someone who only knows the address cannot lock its owner
+out; it still counts against the per-address limit. Both counters live in
+Redis when `REDIS_URL` is set, so they hold across app nodes. The cookie is
+signed with `ALDINE_SIGNING_SECRET` and bound to the account's current
+password: rotating the secret, or changing or resetting the password, makes
+every browser sign in once more before it is exempt again (the browser that
+changes the password keeps its exemption).
+
 ## Scaling notes
 
 - **Scale vertically first** — a bigger box absorbs a lot of users before you
@@ -377,12 +418,12 @@ override file.
 | `ALDINE_PUBLIC_URL` | The public URL of the instance — origin plus the path prefix when Aldine is served under one (`https://aldine.example.com` or `https://server/internal/aldine`). Used in OAuth callbacks, reset links, and by the MCP connector (OAuth issuer, PDF links, the in-chat viewer's fetch allowlist) — required for SSO, email and the connector |
 | `ALDINE_MCP` | `1` = serve the MCP endpoint at `/mcp` for Claude (see [docs/AGENT_API.md](../docs/AGENT_API.md)). Needs a credential: `AUTH_ENABLED=1` (Connect button or personal access tokens) or `ALDINE_MCP_TOKEN`; with neither, every request is 401. `RL_MCP_BURST` tunes its rate limit (default 60) |
 | `ALDINE_MCP_TOKEN` | Static bearer for `/mcp` when `AUTH_ENABLED` is off (single-tenant); ignored with auth on. Sent as `Authorization: Bearer …` or `X-Aldine-Token` |
-| `ALDINE_SIGNING_SECRET` | Signs the connector's 15-minute PDF links; at least 32 characters (`openssl rand -base64 32`), shorter refuses to boot. Blank = generated once into `META_DIR`; set it when app nodes do not share that volume, rotate it to expire every outstanding link |
+| `ALDINE_SIGNING_SECRET` | Signs the connector's 15-minute PDF links and the browser cookie that exempts a known browser from the per-account sign-in wait; at least 32 characters (`openssl rand -base64 32`), shorter refuses to boot. Blank = generated once into `META_DIR`; set it when app nodes do not share that volume, rotate it to expire every outstanding link (and that exemption) |
 | `ALDINE_BASE_PATH` | URL prefix to serve under (`/internal/aldine`) when Aldine shares a host with other apps. Defaults to the path of `ALDINE_PUBLIC_URL`, else the root. The proxy passes the prefix through unchanged; `/api/health` also answers at the root for healthchecks. The Claude connector URL is `<ALDINE_PUBLIC_URL>/mcp`; OAuth discovery also lives at the origin root with the prefix inserted (`/.well-known/oauth-authorization-server<prefix>`, `/.well-known/oauth-protected-resource<prefix>/mcp`), so the proxy must forward those two paths to Aldine as well as the prefix itself |
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `ALDINE_PORT` | Host port for the app in `docker-compose.full.yml` (default `8080`). The bundled Caddy reaches the container directly and ignores it; if you run the nginx sample, change its two `proxy_pass` upstreams to match, and use the same port in a local `ALDINE_PUBLIC_URL` |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
-| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time). Metadata only; needs `AUTH_ENABLED=1` to mean anything |
+| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time). Metadata only; needs `AUTH_ENABLED=1` to mean anything. A password account counts only once it has confirmed its address (see [Sign-up and invites](#sign-up-and-invites)) |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
@@ -399,8 +440,8 @@ override file.
 | `GITLAB_DEFAULT_GROUP` | Full path of the root group new projects are created in (`research/latex`); users may pick any subgroup of it in the new-project dialog, or create one. Deleting a project deletes the GitLab project only when Aldine created it, an imported repository is never touched; GitLab's delayed deletion is handled (a purge is requested, otherwise the scheduled date is reported), and restoring the project re-creates it in the same namespace |
 | `GITLAB_DEFAULT_VISIBILITY` | Visibility of provisioned GitLab projects: `private` (default), `internal` or `public` |
 | `AUTOPUSH_DEBOUNCE_MS` | Quiet period after an autosave commit on `main` before the server pushes a provisioned project (default `30000`). Failed pushes back off exponentially, capped at 15 minutes, and stop after 8 attempts until the next commit |
-| `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Password-reset email via SMTP |
-| `SES_FROM` + `AWS_REGION` | Password-reset email via AWS SES (instead of SMTP); `AWS_DEFAULT_REGION` is read when `AWS_REGION` is unset |
+| `SMTP_HOST/PORT/USER/PASS/FROM`, `SMTP_SECURE` | Sign-up confirmation and password-reset email via SMTP |
+| `SES_FROM` + `AWS_REGION` | Sign-up confirmation and password-reset email via AWS SES (instead of SMTP); `AWS_DEFAULT_REGION` is read when `AWS_REGION` is unset |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `OPENAI_API_KEY` | AI error-fix; precedence OpenRouter > OpenAI > Anthropic |
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
 | `ALDINE_AI_AUTOFIX` | `1` = a failed typeset opens the Fix tab and diagnoses without a click (default off) |
@@ -449,7 +490,7 @@ away in any release; none of them belongs in a production `.env`.
 
 | Variable | Purpose |
 |---|---|
-| `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod) |
+| `ALDINE_RESET_ECHO` | `1` = echo reset tokens in the API response (dev only, never in prod). A reset completed this way does not confirm the account's address |
 | `ALDINE_TEST_HOOKS`, `ALDINE_TEST_ALLOW_LOOPBACK_CIMD` | `1` = test-only routes, and http or loopback URLs for template repositories, venue kits and OAuth client metadata. Never set in production |
 | `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
 | `GITEA_API_BASE` | Tests only: replaces `<instance>/api/v1` for every Gitea/Forgejo call and lets a pasted instance URL be http. Never set in production |

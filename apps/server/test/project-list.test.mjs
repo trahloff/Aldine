@@ -54,6 +54,9 @@ await registerRoutes(app);
 const people = {};
 for (const [who, name] of [['ada', 'Ada'], ['bob', 'Bob'], ['carol', 'Carol'], ['dana', 'Dana']]) {
   const u = await auth.register(`${who}@example.com`, 'password123', name);
+  // Invites by email count once the address is confirmed (email-confirmation.test.mjs).
+  await db().setEmailPending(u.id, null);
+  delete u.emailPending;
   people[who] = { user: u, headers: { cookie: `aldine_session=${await auth.createSession(u.id)}` } };
 }
 const { token } = await auth.createAccessToken(people.ada.user.id, 'agent', null, null);

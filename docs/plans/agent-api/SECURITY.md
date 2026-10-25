@@ -139,8 +139,12 @@ Aldine is its own authorization server; every endpoint is anonymous-reachable.
   400, never a `redirectTo`.
 - **Code guessing / token-endpoint brute force.** Codes are 32 random bytes,
   kept 10 minutes, keyed by digest, single use, and bound to client_id,
-  redirect_uri, PKCE challenge (S256 only, verifier 43–128 chars), resource
-  and user; one wrong binding burns the code. `oauthTokenLimiter` (30 burst,
+  redirect_uri, PKCE challenge (S256 only, verifier 43–128 chars) and user;
+  one wrong binding burns the code. The `resource` parameter is checked at
+  the exchange only when the client sends it, and must then name this
+  server's `/mcp` (the same check as at `/oauth/authorize`); without it the
+  code's own resource applies (RFC 8707), which can only be that endpoint
+  too. `oauthTokenLimiter` (30 burst,
   1/s per IP) covers `/oauth/token` and `/oauth/revoke`; `oauthClientLimiter`
   covers `/api/oauth/*`. Unknown and used codes share one error string;
   `/oauth/revoke` always answers 200; token responses are `no-store`.

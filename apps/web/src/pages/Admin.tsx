@@ -124,7 +124,7 @@ export default function Admin() {
                   {(users || []).map((u) => (
                     <tr key={u.id} data-testid="admin-user-row">
                       <td>{u.name}{u.admin && <span className="admin__badge" title="On the admin list">admin</span>}</td>
-                      <td>{u.email || <span className="admin__muted">no email</span>}</td>
+                      <td>{u.email || <span className="admin__muted">no email</span>}{u.emailPending && <span className="admin__muted" data-testid="admin-email-pending" title="Invites by email and the admin list ignore this address until it is confirmed"> not confirmed</span>}</td>
                       <td>{u.provider || 'password'}</td>
                       <td title={u.createdAt}>{new Date(u.createdAt).toLocaleDateString()}</td>
                       <td title={u.lastSeenAt}>{ago(u.lastSeenAt, now)}</td>

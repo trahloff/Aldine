@@ -57,7 +57,10 @@ eq(compileKey({ user: null, tokenScope: null, ip: '203.0.113.7' }), 'mcp:ip:203.
 await auth.register('ada@example.com', 'password123', 'Ada');
 const app = Fastify();
 await registerRoutes(app);
-const login = (remoteAddress) => app.inject({ method: 'POST', url: '/api/auth/login', remoteAddress, payload: { email: 'ada@example.com', password: 'wrong-password' } });
+// A new email per try: these count address buckets, and five failures on one
+// account would bring in the per-account backoff (signin-backoff.test.mjs).
+let tries = 0;
+const login = (remoteAddress) => app.inject({ method: 'POST', url: '/api/auth/login', remoteAddress, payload: { email: `try${++tries}@example.com`, password: 'wrong-password' } });
 const codes = [];
 for (let i = 1; i <= 6; i++) codes.push((await login(`2001:db8:aa:cc::${i.toString(16)}`)).statusCode);
 eq(codes, [401, 401, 401, 429, 429, 429], 'new addresses in one /64 share the bucket');

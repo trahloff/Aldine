@@ -24,6 +24,7 @@
 // the token (and its scope), the usage tally; then it typesets again.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 const BASE = (process.env.ALDINE_URL || 'http://localhost:8191').replace(/\/$/, '');
 const WAIT_MS = Number(process.env.LIFECYCLE_WAIT_MS || 180_000);
@@ -85,6 +86,28 @@ async function expect200(method, path, opts, what) {
 function sessionFrom(r) {
   const c = r.setCookie.map((s) => s.split(';')[0]).find((s) => s.startsWith('aldine_session='));
   return c ? { cookie: c } : null;
+}
+
+/**
+ * A release that confirms sign-up addresses keeps an invitee out until it
+ * follows its link. The drill's stack mails nothing, so the link is taken
+ * from the app's log the way an operator relays it: `docker logs` of
+ * LIFECYCLE_APP_CONTAINER (drill.sh sets it).
+ */
+async function confirmAddress(account, session) {
+  const container = process.env.LIFECYCLE_APP_CONTAINER;
+  check(container, `${account.email} has to confirm its address: set LIFECYCLE_APP_CONTAINER to the app container so its log can be read`);
+  const pattern = new RegExp(`email confirmation for ${account.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: \\S*[?&]confirm_email=([A-Za-z0-9_-]+)`, 'g');
+  let token = null;
+  for (let i = 0; i < 10 && !token; i++) {
+    const r = spawnSync('docker', ['logs', container], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const found = [...`${r.stdout || ''}\n${r.stderr || ''}`.matchAll(pattern)];
+    token = found.length ? found[found.length - 1][1] : null;
+    if (!token) await sleep(1000);
+  }
+  check(token, `no confirmation link for ${account.email} in the log of ${container}`);
+  const r = await call('POST', '/api/auth/confirm-email', { as: session, body: { token } });
+  check(r.status === 200 && r.body?.user && !r.body.user.emailPending, `confirming ${account.email} returned ${r.status}`, r.body);
 }
 
 async function waitForInstance() {
@@ -235,6 +258,7 @@ async function seed() {
     a.id = r.body.user.id;
     sessions[role] = sessionFrom(r);
     check(sessions[role], `registering ${a.email} set no session cookie`);
+    if (r.body.user.emailPending) await confirmAddress(a, sessions[role]);
   }
   ok(`accounts ${accounts.owner.email} and ${accounts.collaborator.email}`);
   const owner = sessions.owner;

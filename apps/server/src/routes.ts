@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -34,7 +34,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, clientKey } from './ratelimit.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
@@ -239,11 +239,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // ---------- auth (env-gated) ----------
   // mcpEnabled/publicUrl let the Agent access card say whether the connector
   // URL it shows is served at all, and whether claude.ai could reach it.
+  // sendsEmail: confirmation and reset links go out by mail; without it they
+  // are in the server log for the operator to pass on.
   app.get('/api/auth/me', async (req) => {
     const user = reqUser(req);
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
-      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null,
+      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(),
     };
   });
 
@@ -259,6 +261,43 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** 403 when password sign-in is disabled (SSO-only mode). */
   const passwordDisabled = (reply: any) => reply.code(403).send({ error: 'Password sign-in is disabled — use single sign-on.' });
 
+  // Links are built from the CONFIGURED public URL only, never from the
+  // request's Host, which an attacker controls (see reset-request).
+  const sendsEmail = () => email.emailConfigured() && !!config.publicUrl;
+  /** Last confirmation link logged per address; read by the test hook only. */
+  const loggedConfirmations = new Map<string, string>();
+  /** Mail the confirmation link, or log it for the operator. True when mailed. */
+  const deliverConfirmation = (to: string, token: string, signUp: boolean): boolean => {
+    const link = `${config.publicUrl || config.basePath}/?confirm_email=${encodeURIComponent(token)}`;
+    if (sendsEmail()) {
+      // Nothing but the address comes from the request: the address is
+      // unconfirmed, so a name would put the signer's own text and links in
+      // a mail this instance sends to anyone.
+      const intro = signUp
+        ? `Welcome to Aldine — write LaTeX together, fast, versioned, and yours. Someone, probably you, just created an account at ${config.publicUrl} with this address.`
+        : `Here is a new link to confirm the address of your Aldine account at ${config.publicUrl}.`;
+      const why = 'Confirm the address to see the projects people share with you by email. If you are not signed in, Aldine asks you to sign in first.';
+      email.sendMail({
+        to,
+        subject: 'Confirm your email address for Aldine',
+        text: `Hi there,\n\n${intro}\n\n${why}\n\nConfirm your email address (the link expires in ${auth.CONFIRM_TTL_DAYS} days):\n${link}\n\nIf you did not create this account, ignore this email: the address stays unconfirmed.`,
+        html: `<p>Hi there,</p><p>${intro}</p><p>${why}</p><p><a href="${link}">Confirm your email address</a> (the link expires in ${auth.CONFIRM_TTL_DAYS} days).</p><p>If you did not create this account, ignore this email: the address stays unconfirmed.</p>`,
+      }).catch((err) => console.error('[aldine] confirmation email failed:', err?.message || err));
+      return true;
+    }
+    const where = config.publicUrl ? '' : ", after this instance's address";
+    console.log(`[aldine] email confirmation for ${to}: ${link} (relay it to them${where}; expires in ${auth.CONFIRM_TTL_DAYS} days. Set ALDINE_PUBLIC_URL + an email transport to mail links instead)`);
+    if (process.env.ALDINE_TEST_HOOKS === '1') loggedConfirmations.set(to, link);
+    return false;
+  };
+  /** The per-account backoff key: this browser's device entry for the typed
+   *  email when it has one, else the email itself (hashed, account or not). */
+  const accountKey = (typed: string) => `a:${auth.secretDigest(typed.trim().toLowerCase())}`;
+  const tooManyForAccount = (reply: any, ms: number) => {
+    const s = Math.max(1, Math.ceil(ms / 1000));
+    return reply.code(429).header('retry-after', String(s)).send({ error: `Too many failed sign-ins to this account. Try again in ${s} ${s === 1 ? 'second' : 'seconds'}.` });
+  };
+
   app.post<{ Body: { email: string; password: string; name?: string } }>('/api/auth/register', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
@@ -266,23 +305,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const bad = badCredentials(req.body);
     if (bad) return reply.code(400).send({ error: bad });
     try {
-      const user = await auth.register(req.body.email, req.body.password, req.body.name);
+      const { user, confirmToken } = await auth.signUp(req.body.email, req.body.password, req.body.name);
       reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
-      // Fire-and-forget a simple welcome email (no verification step). Never let
-      // a mail failure affect the signup response. Nothing but the address
-      // comes from the request: the address is unconfirmed, so the name would
-      // put the signer's own text and links in a mail this instance sends to
-      // anyone.
-      const base = process.env.ALDINE_PUBLIC_URL?.replace(/\/$/, '');
-      if (email.emailConfigured() && base && user.email) {
-        const greeting = 'Hi there,';
-        email.sendMail({
-          to: user.email,
-          subject: 'Welcome to Aldine',
-          text: `${greeting}\n\nWelcome to Aldine — write LaTeX together, fast, versioned, and yours.\n\nOpen your workspace: ${base}\n\nStart a blank paper or a template, import a project from GitHub or an Overleaf ZIP, then hit ⌘S to typeset. Invite others and you'll see their cursors live.\n\nHappy writing.`,
-          html: `<p>${greeting}</p><p>Welcome to <strong>Aldine</strong> — write LaTeX together, fast, versioned, and yours.</p><p><a href="${base}">Open your workspace</a></p><p>Start a blank paper or a template, import a project from GitHub or an Overleaf ZIP, then hit ⌘S to typeset. Invite others and you'll see their cursors live.</p><p>Happy writing.</p>`,
-        }).catch((err) => console.error('[aldine] welcome email failed:', err?.message || err));
-      }
+      // In the background: a mail failure never fails the sign-up.
+      if (user.email) deliverConfirmation(user.email, confirmToken, true);
       return { user };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
@@ -292,9 +318,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     if (!(await loginLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
     if (badCredentials(req.body)) return reply.code(400).send({ error: 'Email and password are required' });
+    const account = accountKey(req.body.email);
+    const device = await auth.trustedDevice(req.headers.cookie, req.body.email);
+    const key = device ? `d:${device}` : account;
+    const wait = await signInBackoff.attempt(key);
+    if (wait > 0) return tooManyForAccount(reply, wait);
     try {
       const user = await auth.login(req.body.email, req.body.password);
-      reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+      await signInBackoff.clear(key);
+      if (key !== account) await signInBackoff.clear(account);
+      const trust = await auth.deviceCookie(req.headers.cookie, user.id);
+      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), ...(trust ? [trust] : [])]);
       return { user };
     } catch (err: any) { return reply.code(401).send({ error: err.message }); }
   });
@@ -315,7 +349,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!(await loginLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
     try {
       const revokedTokens = await auth.changePassword(user.id, req.body?.currentPassword || '', req.body?.newPassword || '');
-      reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+      const trust = await auth.deviceCookie(req.headers.cookie, user.id);
+      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), ...(trust ? [trust] : [])]);
       return { ok: true, revokedTokens };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
@@ -351,6 +386,43 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // never reveal whether the email exists
     return process.env.ALDINE_RESET_ECHO === '1' && r ? { ok: true, token: r.token } : { ok: true };
   });
+
+  // Confirming takes the session of the account the link was sent for: a
+  // person who follows the link for an account someone else created with
+  // their address confirms nothing (they reset the password instead, which
+  // proves the address and ends the other sessions).
+  app.post<{ Body: { token?: string } }>('/api/auth/confirm-email', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
+    const user = reqUser(req);
+    if (!user) return reply.code(401).send({ error: 'Sign in to confirm your email address' });
+    try {
+      return { user: await auth.confirmEmail(user.id, typeof req.body?.token === 'string' ? req.body.token : '') };
+    } catch (err: any) { return reply.code(400).send({ error: err.message }); }
+  });
+
+  app.post('/api/auth/confirm-email/resend', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
+    const user = reqUser(req);
+    if (!user) return reply.code(401).send({ error: 'Sign in required' });
+    if (!user.emailPending) return { ok: true, confirmed: true };
+    if (!(await confirmResendLimiter.take(clientKey(req, user.id)))) {
+      return reply.code(429).send({ error: 'You asked for several links already. Use the newest one, or ask again in 10 minutes.' });
+    }
+    // Without email the operator may be relaying an older link right now, so
+    // asking again must not cancel it.
+    const r = await auth.reissueConfirmation(user.id, !sendsEmail());
+    if (!r?.user.email) return { ok: true, confirmed: true };
+    return { ok: true, sent: deliverConfirmation(r.user.email, r.token, false) };
+  });
+
+  // Test hook (never in production): the link the server would have the
+  // operator relay, so the e2e suite can follow it.
+  if (process.env.ALDINE_TEST_HOOKS === '1') {
+    app.get<{ Querystring: { email?: string } }>('/api/test/confirmation-link', async (req, reply) => {
+      const link = loggedConfirmations.get(String(req.query.email || '').trim().toLowerCase());
+      return link ? { link } : reply.code(404).send({ error: 'No confirmation link was logged for that address' });
+    });
+  }
 
   app.post<{ Body: { token: string; newPassword: string } }>('/api/auth/reset', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
@@ -902,7 +974,12 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
     const { remote } = await trashProject(meta);
-    if (req.query.permanent === '1') await store.deleteProject(req.params.id);
+    if (req.query.permanent === '1') {
+      // Opening the editor starts a typeset; one still writing .aldine-out
+      // makes the removal fail. The trash above already refuses new ones.
+      await typesetsSettled(req.params.id);
+      await store.deleteProject(req.params.id);
+    }
     return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
@@ -2087,6 +2164,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   // Create a new remote branch from the current content and switch to it.
   projectRoute('post', 'create-branch', async (req, reply) => {
+    // Repoints the link's remoteBranch like switch-branch, so the same rule.
+    if (!(await requireOwner(req, reply, 'start a branch on the git host'))) return;
     const l = await linkedRemote(req, reply); if (!l) return;
     const name = String(req.body?.name || '').trim();
     // Use the same BRANCH_RE gitops enforces on push/pull, so a name the UI

@@ -99,6 +99,18 @@ export function ensureSigningSecret(): void {
   loadSecret();
 }
 
+const subkeys = new Map<string, Buffer>();
+/** A key for another use of the same secret, derived with HKDF under its own
+ *  label: nothing signed with it verifies as an output link, or the reverse. */
+export function subkey(label: string): Buffer {
+  let k = subkeys.get(label);
+  if (!k) {
+    k = Buffer.from(crypto.hkdfSync('sha256', loadSecret(), Buffer.alloc(0), `aldine:${label}`, 32));
+    subkeys.set(label, k);
+  }
+  return k;
+}
+
 /** JSON-encoded tuple, not a joined string: a `|` inside a path could
  *  otherwise make two different (project, branch, path) triples sign alike. */
 function message(projectId: string, branch: string, rel: string, exp: number): string {

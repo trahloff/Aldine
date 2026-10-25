@@ -46,7 +46,7 @@ releases, not a build of `main`.
 | Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`) and each project's last edit and typesets (`activity.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
 | The same, with `DATABASE_URL` set | the Postgres database | tables Aldine creates |
 | Collaboration state | `META_DIR/yjs/`, one `.ybin` file per document | Yjs binary update |
-| Signing secret for PDF links | `META_DIR/output-signing-secret`, unless `ALDINE_SIGNING_SECRET` is set | text |
+| Signing secret for PDF links and sign-in device cookies | `META_DIR/output-signing-secret`, unless `ALDINE_SIGNING_SECRET` is set | text |
 | Caches | `CACHE_DIR`: template-repository checkouts, downloaded venue kits | disposable |
 
 The project repositories are plain git: you can clone, read and back them up
@@ -69,6 +69,9 @@ two paths stay as they are within 1.x.
   from before July 2026, and a project's `github` link, which becomes
   `remote` on its next write. Metadata from the old location
   (`DATA_DIR/meta`) is moved to `META_DIR` at start.
+  An account without `emailPending` (the `email_pending` column in Postgres)
+  counts as having a confirmed address, so accounts written before 1.0 need
+  no step.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.

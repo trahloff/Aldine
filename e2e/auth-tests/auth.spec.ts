@@ -3,6 +3,19 @@ import { test, expect } from '../fixtures';
 /** Unique email per run so re-runs don't collide with the persisted user store. */
 const uniq = () => `u${Date.now()}${Math.floor(Math.random() * 1000)}@test.com`;
 
+/** The confirmation link the server logged for `email` (ALDINE_TEST_HOOKS). */
+async function confirmationLink(request: import('@playwright/test').APIRequestContext, email: string): Promise<string> {
+  const r = await request.get(`/api/test/confirmation-link?email=${encodeURIComponent(email)}`);
+  expect(r.ok(), 'the server logged a confirmation link').toBeTruthy();
+  return (await r.json()).link;
+}
+/** Confirm the address of the account `request` is signed in to, as following the link would. */
+async function confirmEmail(request: import('@playwright/test').APIRequestContext, email: string) {
+  const token = new URL(await confirmationLink(request, email), 'http://x').searchParams.get('confirm_email');
+  const r = await request.post('/api/auth/confirm-email', { data: { token } });
+  expect(r.ok(), `confirming ${email}`).toBeTruthy();
+}
+
 async function register(page: import('@playwright/test').Page, email: string, password = 'password123', name = 'Tester') {
   await page.goto('/');
   await expect(page.getByTestId('auth-email')).toBeVisible();
@@ -103,6 +116,10 @@ test.describe('auth', () => {
     const shared = await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [bEmail] } });
     expect(shared.ok()).toBeTruthy();
 
+    // …which applies once Bob has confirmed the address
+    expect((await bob.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await confirmEmail(bob.request, bEmail);
+
     // Bob can now open it and it shows in his list
     const allowed = await bob.request.get(`/api/projects/${proj.id}`);
     expect(allowed.ok()).toBeTruthy();
@@ -157,6 +174,7 @@ test.describe('auth', () => {
 
     const dana = await browser.newContext();
     await dana.request.post('/api/auth/register', { data: { email: dEmail, password: 'password123' } });
+    await confirmEmail(dana.request, dEmail);
     const danaList = await (await dana.request.get('/api/projects')).json();
     expect(danaList.some((p: { id: string }) => p.id === proj.id)).toBeTruthy();
 
@@ -323,6 +341,159 @@ test.describe('abuse controls', () => {
   });
 });
 
+test.describe('email confirmation', () => {
+  test('an invite by email applies once the invitee confirms the address', async ({ page, browser }) => {
+    const alice = await browser.newContext();
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const proj = await (await alice.request.post('/api/projects', { data: { name: 'Shared Before Signup' } })).json();
+    const bEmail = uniq();
+    expect((await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [bEmail] } })).ok()).toBeTruthy();
+
+    // whoever signs up with the address first sees nothing yet
+    await register(page, bEmail, 'password123', 'Bob');
+    const banner = page.getByTestId('email-confirm-banner');
+    await expect(banner).toContainText('Confirm your email address to see projects shared with you.');
+    await expect(banner).toContainText('ask its administrator'); // the e2e server mails nothing
+    await expect(page.getByTestId('projects-empty')).toBeVisible();
+    expect((await page.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    // without email, asking again keeps the link the operator may have sent
+    const first = await confirmationLink(page.request, bEmail);
+    await page.getByTestId('email-confirm-resend').click();
+    await expect(page.locator('.toast').filter({ hasText: 'a link they already sent still works' })).toBeVisible();
+    const second = await confirmationLink(page.request, bEmail);
+    expect(second).not.toBe(first);
+    await page.goto(first.replace(/confirm_email=[^&]+/, 'confirm_email=not-a-link'));
+    await expect(page.getByTestId('email-confirm-notice')).toContainText('expired, was replaced by a newer one');
+    await expect(page).not.toHaveURL(/confirm_email/);
+    await page.getByTestId('email-confirm-notice-close').click();
+    await expect(banner).toBeVisible();
+
+    await page.goto(first);
+    await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+    await expect(page).not.toHaveURL(/confirm_email/);
+    await expect(page.getByTestId('project-grid')).toContainText('Shared Before Signup');
+    await expect(banner).toHaveCount(0);
+    expect((await page.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
+    await alice.close();
+  });
+
+  test('a link opened while signed out asks to sign in, then confirms', async ({ browser }) => {
+    const email = uniq();
+    const signup = await browser.newContext();
+    expect((await signup.request.post('/api/auth/register', { data: { email, password: 'password123' } })).ok()).toBeTruthy();
+    const link = await confirmationLink(signup.request, email);
+    await signup.close();
+
+    const other = await browser.newContext();
+    const page = await other.newPage();
+    await page.goto(link);
+    await expect(page.getByTestId('auth-info')).toHaveText('Sign in to confirm your email address.');
+    await page.getByTestId('auth-email').fill(email);
+    await page.getByTestId('auth-password').fill('password123');
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+    await expect(page.getByTestId('email-confirm-banner')).toHaveCount(0);
+    const me = await (await page.request.get('/api/auth/me')).json();
+    expect(me.user.emailPending).toBeUndefined();
+    await other.close();
+  });
+
+  test('a confirmed account that opens the link for another account is told how to use it', async ({ page, browser }) => {
+    const pendingEmail = uniq();
+    const signup = await browser.newContext();
+    expect((await signup.request.post('/api/auth/register', { data: { email: pendingEmail, password: 'password123' } })).ok()).toBeTruthy();
+    const link = await confirmationLink(signup.request, pendingEmail);
+
+    const confirmedEmail = uniq();
+    await register(page, confirmedEmail, 'password123', 'Bea');
+    await page.goto(await confirmationLink(page.request, confirmedEmail));
+    await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+
+    await page.goto(link);
+    const notice = page.getByTestId('email-confirm-notice');
+    await expect(notice).toContainText(`(${confirmedEmail}) is already confirmed`);
+    await expect(notice).toContainText('If the link is for another account, sign out, open the link again and sign in to that account.');
+
+    // the link was not spent: the account it was for still confirms with it
+    const confirm = await signup.newPage();
+    await confirm.goto(link);
+    await expect(confirm.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+    await signup.close();
+  });
+});
+
+test.describe('per-account sign-in limit', () => {
+  test('after five failures from anywhere the form waits, but the owner\'s browser goes in', async ({ browser }) => {
+    const email = uniq();
+    const owner = await browser.newContext();
+    expect((await owner.request.post('/api/auth/register', { data: { email, password: 'password123', name: 'Owner' } })).ok()).toBeTruthy();
+    expect((await owner.cookies()).some((c) => c.name === 'aldine_device')).toBe(false);
+    // a sign-up proves nothing about the browser; a correct sign-in does
+    await owner.request.post('/api/auth/logout');
+    expect((await owner.request.post('/api/auth/login', { headers: { 'x-forwarded-for': '198.51.99.1' }, data: { email, password: 'password123' } })).ok()).toBeTruthy();
+    await owner.request.post('/api/auth/logout');
+
+    // five wrong passwords, each from its own address (TRUST_PROXY=1)
+    const attacker = await browser.newContext();
+    for (let i = 1; i <= 5; i++) {
+      const r = await attacker.request.post('/api/auth/login', { headers: { 'x-forwarded-for': `198.51.100.${i}` }, data: { email, password: 'guess' } });
+      expect(r.status()).toBe(401);
+    }
+    // The wait runs from the start of the previous try, so on a slow machine
+    // the password check alone can outlast the first (1 s) wait; the doubled
+    // ones cannot.
+    const throttledTry = async (prefix: string, address: string) => {
+      for (let i = 6; i <= 9; i++) {
+        const r = await attacker.request.post('/api/auth/login', { headers: { 'x-forwarded-for': `${prefix}.${i}` }, data: { email: address, password: 'guess' } });
+        if (r.status() !== 401) return r;
+      }
+      throw new Error(`no try at ${address} was throttled`);
+    };
+    const throttled = await throttledTry('198.51.100', email);
+    expect(throttled.status()).toBe(429);
+    expect(Number(throttled.headers()['retry-after'])).toBeGreaterThan(0);
+
+    // an email nobody registered answers the same way
+    const ghost = uniq();
+    for (let i = 1; i <= 5; i++) await attacker.request.post('/api/auth/login', { headers: { 'x-forwarded-for': `198.51.101.${i}` }, data: { email: ghost, password: 'guess' } });
+    const ghostThrottled = await throttledTry('198.51.101', ghost);
+    expect(ghostThrottled.status()).toBe(429);
+    expect((await ghostThrottled.json()).error).toMatch(/^Too many failed sign-ins to this account\. Try again in \d+ seconds?\.$/);
+
+    // a new browser: the form says so and waits out Retry-After
+    const fresh = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '198.51.100.10' } });
+    const freshPage = await fresh.newPage();
+    await freshPage.goto('/');
+    await freshPage.getByTestId('auth-email').fill(email);
+    await freshPage.getByTestId('auth-password').fill('guess');
+    // A try after the wait ran out goes ahead (and doubles the next wait), so
+    // the form may need a second one before it is throttled.
+    const error = freshPage.getByTestId('auth-error');
+    for (let i = 0; i < 4; i++) {
+      await freshPage.getByTestId('auth-submit').click();
+      await expect(error).toBeVisible();
+      if ((await error.textContent())?.startsWith('Too many failed')) break;
+    }
+    await expect(error).toContainText('Too many failed sign-ins to this account. Try again in');
+    await expect(freshPage.getByTestId('auth-submit')).toBeDisabled();
+    await expect(freshPage.getByTestId('auth-submit')).toHaveText(/Try again in \d+ s/);
+    await expect(freshPage.getByTestId('auth-submit')).toBeEnabled({ timeout: 10_000 });
+
+    // the browser that signed in before goes straight in with the right password
+    const ownerPage = await owner.newPage();
+    await ownerPage.goto('/');
+    await ownerPage.getByTestId('auth-email').fill(email);
+    await ownerPage.getByTestId('auth-password').fill('password123');
+    await ownerPage.getByTestId('auth-submit').click();
+    await expect(ownerPage.getByTestId('new-project')).toBeVisible();
+
+    await owner.close();
+    await attacker.close();
+    await fresh.close();
+  });
+});
+
 test.describe('auth depth', () => {
   test('logout revokes the session server-side (stale cookie is invalid)', async ({ browser }) => {
     const ctx = await browser.newContext();
@@ -399,9 +570,12 @@ test.describe('auth depth', () => {
   test('change password from account settings revokes other sessions and agent access', async ({ page, browser, request }) => {
     const email = uniq();
     await register(page, email);
-    // a second session for the same account (should be revoked by the change)
+    // a second session for the same account (should be revoked by the change);
+    // its own client address keeps it off the per-address sign-in limit the
+    // rest of the suite shares (TRUST_PROXY=1)
+    const own = { 'x-forwarded-for': '203.0.113.21' };
     const other = await browser.newContext();
-    await other.request.post('/api/auth/login', { data: { email, password: 'password123' } });
+    await other.request.post('/api/auth/login', { headers: own, data: { email, password: 'password123' } });
     // and an agent token (should be revoked too)
     const { token } = await (await page.request.post('/api/tokens', { data: { name: 'Script' } })).json();
     const bearer = { authorization: `Bearer ${token}` };
@@ -419,7 +593,7 @@ test.describe('auth depth', () => {
     await expect.poll(async () => (await (await other.request.get('/api/auth/me')).json()).user).toBeNull();
     expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(401);
     // and the new password works
-    expect((await request.post('/api/auth/login', { data: { email, password: 'changed-pw-99' } })).ok()).toBeTruthy();
+    expect((await request.post('/api/auth/login', { headers: own, data: { email, password: 'changed-pw-99' } })).ok()).toBeTruthy();
     await other.close();
   });
 });

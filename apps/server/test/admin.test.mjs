@@ -35,10 +35,13 @@ const app = Fastify({ logger: false });
 await registerRoutes(app);
 await app.ready();
 
-const cookieOf = (res) => String(res.headers['set-cookie']).split(';')[0];
+const cookieOf = (res) => [].concat(res.headers['set-cookie']).map((c) => c.split(';')[0]).find((c) => c.startsWith('aldine_session='));
+/** A sign-up whose address is confirmed: the allow-list ignores it until then
+ *  (email-confirmation.test.mjs). */
 async function signUp(email, name) {
   const res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { email, password: 'password123', name } });
   eq(res.statusCode, 200, `register ${email}`);
+  await db().setEmailPending(res.json().user.id, null);
   return { cookie: cookieOf(res), id: res.json().user.id };
 }
 const get = (url, cookie) => app.inject({ method: 'GET', url, headers: cookie ? { cookie } : {} });

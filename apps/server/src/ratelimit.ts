@@ -66,6 +66,64 @@ export class RateLimiter {
   }
 }
 
+// Atomic check+count. KEYS[1]=state, ARGV=free, capMs, now(ms), ttlMs.
+// Returns 0 (go ahead, counted) or the milliseconds still to wait.
+const BACKOFF_LUA = `
+local d = redis.call('HMGET', KEYS[1], 'f', 'l')
+local f = tonumber(d[1]) or 0; local l = tonumber(d[2]) or 0
+local free = tonumber(ARGV[1]); local cap = tonumber(ARGV[2]); local now = tonumber(ARGV[3])
+if f >= free then
+  local wait = math.min(cap, 1000 * 2 ^ (f - free))
+  if now < l + wait then return math.ceil(l + wait - now) end
+end
+redis.call('HMSET', KEYS[1], 'f', f + 1, 'l', now)
+redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[4]))
+return 0`;
+const DEL_LUA = `return redis.call('DEL', KEYS[1])`;
+
+/**
+ * Exponential backoff on consecutive failures per key: `free` attempts go
+ * ahead at once, then each further one must wait 1, 2, 4 … seconds after the
+ * previous one, at most `capSeconds`. An attempt that goes ahead counts as a
+ * failure until clear(), so parallel requests cannot share one free try.
+ * State is forgotten `ttlMs` after the last counted attempt. Shared through
+ * Redis like RateLimiter, with the same per-node fallback.
+ */
+export class BackoffLimiter {
+  private state = new Map<string, { f: number; l: number }>();
+  constructor(private name: string, private free: number, private capSeconds: number, private ttlMs = 3_600_000) {
+    setInterval(() => this.sweep(), 300_000).unref?.();
+  }
+
+  /** 0 when the attempt may go ahead (and is counted), else the milliseconds to wait. */
+  async attempt(key: string, now = Date.now()): Promise<number> {
+    if (redis) {
+      try {
+        return Number(await redis.eval(BACKOFF_LUA, 1, `rl:${this.name}:${key}`, this.free, this.capSeconds * 1000, now, this.ttlMs));
+      } catch { /* redis hiccup → this node's state */ }
+    }
+    let s = this.state.get(key);
+    if (!s || now - s.l > this.ttlMs) s = { f: 0, l: 0 };
+    if (s.f >= this.free) {
+      const wait = Math.min(this.capSeconds * 1000, 1000 * 2 ** (s.f - this.free));
+      if (now < s.l + wait) return Math.ceil(s.l + wait - now);
+    }
+    this.state.set(key, { f: s.f + 1, l: now });
+    return 0;
+  }
+
+  async clear(key: string): Promise<void> {
+    this.state.delete(key);
+    if (redis) {
+      try { await redis.eval(DEL_LUA, 1, `rl:${this.name}:${key}`); } catch { /* expires on its own */ }
+    }
+  }
+
+  private sweep(now = Date.now()): void {
+    for (const [k, s] of this.state) if (now - s.l > this.ttlMs) this.state.delete(k);
+  }
+}
+
 /**
  * At most `max` concurrent operations per key. Deliberately per-node: it protects
  * a single node's compiler from overload; the shared cost ceiling is the metered
@@ -91,6 +149,14 @@ const n = (v: string | undefined, d: number) => (v && !Number.isNaN(Number(v)) ?
 
 /** login: 10 attempts, refill 1 / 30s → slows brute force without annoying real users. */
 export const loginLimiter = new RateLimiter('login', n(process.env.RL_LOGIN_BURST, 10), 1 / 30);
+/** Password sign-in per account, across every address: 5 free failures,
+ *  then 1, 2, 4 … s between tries, at most 60 s. Keyed by the typed email
+ *  whether or not an account has it, so the answer never says which. A
+ *  browser that signed in to the account before is counted on its own key
+ *  instead (auth.ts, device cookie). */
+export const signInBackoff = new BackoffLimiter('signin', 5, 60);
+/** Confirmation links on request: 3 per account, then 1 / 10 min. */
+export const confirmResendLimiter = new RateLimiter('confirm-resend', 3, 1 / 600);
 /** register: 5 accounts per client, refill 1 / 5min — bounds account-store spam. */
 export const registerLimiter = new RateLimiter('register', n(process.env.RL_REGISTER_BURST, 5), 1 / 300);
 /** AI fix: 20 burst, refill 1 / 12s (≈5/min sustained) — bounds LLM spend per client. */

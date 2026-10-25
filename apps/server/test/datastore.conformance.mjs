@@ -60,6 +60,33 @@ async function runSuite(store, label) {
   const listed = (await store.listUsers()).filter((u) => u.id === user.id);
   eq(listed, [touched], `${label}: listUsers includes lastSeenAt`);
 
+  // ---- emailPending: a password sign-up's unconfirmed address ----
+  check(touched.emailPending === undefined, `${label}: a user without the marker reads back without it (confirmed)`);
+  const pending = { hash: 'a'.repeat(64), expiresAt: '2026-11-01T00:00:00.000Z' };
+  const signup = { id: `u6-${t}`, email: `p-${t}@example.com`, name: 'Pat', salt: 's', hash: 'h', createdAt: new Date().toISOString(), emailPending: pending };
+  await store.createUser(signup);
+  eq(await store.getUser(signup.id), signup, `${label}: emailPending roundtrips through createUser/getUser`);
+  eq((await store.findUserByEmail(signup.email)).emailPending, pending, `${label}: findUserByEmail carries emailPending`);
+  eq((await store.listUsers()).find((u) => u.id === signup.id).emailPending, pending, `${label}: listUsers carries emailPending`);
+  const next = { hash: 'b'.repeat(64), expiresAt: '2026-11-08T00:00:00.000Z' };
+  await store.updateUser({ ...signup, hash: 'h2' });
+  await store.setEmailPending(signup.id, next);
+  const replaced = await store.getUser(signup.id);
+  eq(replaced.emailPending, next, `${label}: setEmailPending replaces the link`);
+  eq(replaced.hash, 'h2', `${label}: setEmailPending leaves the rest of the row alone`);
+  await store.setEmailPending(signup.id, null);
+  check((await store.getUser(signup.id)).emailPending === undefined, `${label}: setEmailPending(null) clears the marker`);
+  await store.updateUser({ ...signup, emailPending: pending });
+  eq((await store.getUser(signup.id)).emailPending, pending, `${label}: updateUser writes the marker`);
+  const { emailPending: _drop, ...confirmed } = signup;
+  await store.updateUser(confirmed);
+  check((await store.getUser(signup.id)).emailPending === undefined, `${label}: updateUser without it clears the marker`);
+  const withEarlier = { hash: 'c'.repeat(64), expiresAt: '2026-11-03T00:00:00.000Z', earlier: [pending, next] };
+  await store.setEmailPending(signup.id, withEarlier);
+  eq((await store.getUser(signup.id)).emailPending, withEarlier, `${label}: setEmailPending keeps the earlier links`);
+  await store.setEmailPending(`missing-${t}`, pending); // no throw, no row
+  check((await store.getUser(`missing-${t}`)) === null, `${label}: setEmailPending of a missing user creates nothing`);
+
   // ---- accounts keyed by provider subject, with no email (ORCID) ----
   const orcidUser = { id: `u3-${t}`, email: null, name: 'Josiah', salt: 's', hash: '', createdAt: new Date().toISOString(), provider: 'orcid', subject: `orcid:${t}` };
   await store.createUser(orcidUser);

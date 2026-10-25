@@ -346,6 +346,31 @@ test.describe('GitLab sync', () => {
     expect(mine[0]).toMatchObject({ source_branch: 'feature-x', target_branch: 'main' });
   });
 
+  test('a collaborator who is not the owner cannot start a branch on the host', async ({ page }) => {
+    // This suite runs without accounts, where everyone owns everything; the
+    // browser is told it is a signed-in collaborator instead.
+    await page.route('**/api/auth/me', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), authEnabled: true, user: { id: 'member', email: 'member@test.com', name: 'Member' } } });
+    });
+    await page.route(`**/api/projects/${projectId}`, async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), isOwner: false, isMember: true } });
+    });
+    await page.goto(`/p/${projectId}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await page.getByTestId('branch-menu').click();
+    await expect(page.getByTestId('branch-list')).toBeVisible();
+    await expect(page.getByTestId('gitlab-pull-btn')).toBeEnabled(); // members still sync
+    await expect(page.getByTestId('new-branch')).toBeDisabled();
+    await expect(page.getByTestId('new-branch-blocked')).toHaveText('Only the project owner can start a branch on GitLab, because it becomes the branch this project tracks for everyone.');
+    await expect(page.getByTestId('new-branch-name')).toHaveCount(0);
+    // The editor keeps polling the project; an answer still in flight when
+    // the test ends must not reach the next one.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
   test('publish dialog offers both hosts and publishes to GitLab', async ({ page, request }) => {
     // a re-run (or retry) must not hit "has already been taken" on the mock
     await request.delete(`${MOCK}/projects/${encodeURIComponent('e2e-user/my-new-paper')}`, { headers: AUTH });

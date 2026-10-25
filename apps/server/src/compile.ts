@@ -213,6 +213,22 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
   return result;
 }
 
+/**
+ * Resolves once no typeset of the project is queued or running on this node.
+ * The compiler writes into the project directory until it answers, so removing
+ * that directory under a running typeset fails (ENOTEMPTY) or leaves files
+ * behind. Callers must already refuse new typesets for the project (trash
+ * does), or this can wait as long as people keep typesetting.
+ */
+export async function typesetsSettled(projectId: string): Promise<void> {
+  const prefix = `${projectId}::`;
+  for (;;) {
+    const tails = [...compileChain].filter(([k]) => k.startsWith(prefix)).map(([, t]) => t);
+    if (!tails.length) return;
+    await Promise.all(tails);
+  }
+}
+
 export interface CompileStatus {
   /** A typeset for this branch is in flight on this node. */
   running: boolean;

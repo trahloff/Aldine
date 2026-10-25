@@ -49,6 +49,8 @@ export interface AdminUserRow {
   provider?: string;
   createdAt: string;
   lastSeenAt?: string;
+  /** A password sign-up that has not confirmed its address yet. */
+  emailPending: boolean;
   admin: boolean;
   projects: number;
   compileSecondsThisMonth: number;
@@ -89,6 +91,7 @@ export async function adminUsers(now = Date.now()): Promise<AdminUserRow[]> {
     provider: u.provider,
     createdAt: u.createdAt,
     lastSeenAt: u.lastSeenAt,
+    emailPending: !!u.emailPending,
     admin: isAdmin(auth.pub(u)),
     projects: owned.get(u.id) || 0,
     compileSecondsThisMonth: Math.round((await usageFor(u.id, new Date(now))).seconds),
