@@ -10,6 +10,12 @@
  *   `v` may be cached for a year; no `v`, or another one, must revalidate.
  *   If-None-Match answers 304. An unknown id is 404.
  *
+ * Venue tiles:
+ * - An installed class's image is served under venues/ while its key is the
+ *   seed the catalog row makes; a fetched kit's under kits/ while its key is
+ *   its registry entry, so a new kit URL is not served the old image.
+ * - A venue that is both installed and a kit shows the installed image.
+ *
  * Repository templates:
  * - The first sync typesets each template once, with the fixed preview date;
  *   a sync that does not move HEAD typesets nothing new.
@@ -59,7 +65,12 @@ const writeTemplate = (name, tex) => {
 writeTemplate('paper', '\\documentclass{article}\\title{ {{PROJECT_NAME}} }\\begin{document}Hi\\end{document}\n');
 writeTemplate('notex', null);
 fs.writeFileSync(path.join(tplDir, 'notex', 'README.md'), 'no document here\n');
-fs.writeFileSync(process.env.VENUES_FILE, JSON.stringify({ venues: [] }));
+const kitEntry = (id, url) => ({
+  id, name: id === 'llncs' ? 'LNCS kit' : 'Test kit', category: 'Conferences', description: 'A kit.', homepage: 'https://example.org/',
+  kit: { url, host: new URL(url).host, take: ['k.sty'] }, documentClass: 'article', preamble: ['\\usepackage{k}'],
+});
+const writeVenues = (url) => fs.writeFileSync(process.env.VENUES_FILE, JSON.stringify({ venues: [kitEntry('testkit', url), kitEntry('llncs', 'http://127.0.0.1:9/llncs.zip')] }));
+writeVenues('http://127.0.0.1:9/k.zip');
 
 // ---- a template repository ----
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
@@ -100,7 +111,7 @@ const compiler = http.createServer((req, res) => {
       if (!stub.up) { res.statusCode = 503; return res.end('{}'); }
       return res.end(JSON.stringify({ ok: true, thumbnails: 'pdftoppm' }));
     }
-    if (req.url === '/catalog') return res.end(JSON.stringify({ ok: true, classes: [] }));
+    if (req.url === '/catalog') return res.end(JSON.stringify({ ok: true, classes: [{ id: 'llncs', cls: 'llncs', kind: 'class' }] }));
     if (req.url !== '/compile') { res.statusCode = 404; return res.end('{}'); }
     const { projectDir, rootFile } = JSON.parse(body);
     const dir = path.join(process.env.DATA_DIR, projectDir);
@@ -184,6 +195,35 @@ try {
   previews.loadShippedPreviews();
   eq((await row('paper')).preview, undefined, 'an edited shipped template shows no image until it is rendered again');
   eq((await preview('id=paper')).statusCode, 404, 'and the old image is not served');
+
+  // ---- venues ----
+  const { venueClasses } = await import('../src/catalog.ts');
+  const { venueKit } = await import('../src/venuekits.ts');
+  const llncs = previews.installedVersion((await venueClasses()).find((c) => c.id === 'llncs'));
+  check(llncs, 'the installed class has a version');
+  const venueBytes = Buffer.concat([TINY_JPEG, Buffer.from('venue')]);
+  const kitBytes = Buffer.concat([TINY_JPEG, Buffer.from('kit')]);
+  const shippedDir = process.env.TEMPLATE_PREVIEWS_DIR;
+  previews.storePreview(path.join(shippedDir, 'venues'), 'llncs', venueBytes, { key: llncs.key, w: 21, h: 29, v: thumbVersion(venueBytes) });
+  previews.storePreview(path.join(shippedDir, 'kits'), 'llncs', kitBytes, { key: previews.kitVersionKey(venueKit('llncs')), w: 21, h: 29, v: thumbVersion(kitBytes) });
+  previews.storePreview(path.join(shippedDir, 'kits'), 'testkit', kitBytes, { key: previews.kitVersionKey(venueKit('testkit')), w: 22, h: 30, v: thumbVersion(kitBytes) });
+  previews.loadShippedPreviews();
+  const vRow = await row('venue:llncs');
+  eq(vRow.source.kind, 'venue', 'llncs is listed as the installed class');
+  eq(vRow.preview?.v, thumbVersion(venueBytes), 'and shows the installed image, not the kit one');
+  const vHit = await preview(`id=${encodeURIComponent('venue:llncs')}&v=${vRow.preview.v}`);
+  eq(vHit.statusCode, 200, 'the route serves an installed class');
+  eq(thumbVersion(vHit.rawPayload), thumbVersion(venueBytes), 'its bytes');
+  const kRow = await row('venue:testkit');
+  eq(JSON.stringify(kRow.preview), JSON.stringify({ w: 22, h: 30, v: thumbVersion(kitBytes) }), 'a fetched kit shows its image');
+  eq((await preview(`id=${encodeURIComponent('venue:testkit')}`)).statusCode, 200, 'and the route serves it');
+  eq(compiles.length, 0, 'the server never typesets a venue for its preview');
+  writeVenues('http://127.0.0.1:9/k2.zip');
+  const later = Date.now() + 1000;
+  fs.utimesSync(process.env.VENUES_FILE, later / 1000, later / 1000);
+  eq((await row('venue:testkit')).preview, undefined, 'a kit with a new URL shows no image until it is rendered again');
+  eq((await preview(`id=${encodeURIComponent('venue:testkit')}`)).statusCode, 404, 'and the old image is not served');
+  eq((await preview(`id=${encodeURIComponent('venue:../x')}`)).statusCode, 404, 'a path is not a venue id');
 
   // ---- repository: first sync in this process ----
   await sync();

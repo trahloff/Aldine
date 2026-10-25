@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- The New project chooser shows page 1 of the journal and conference
+  templates too, not only of the four general ones. Venues are typeset in CI
+  with the full TeX Live image; one that does not typeset keeps its title-page
+  placeholder.
+
 ### Changed
 - A new logo: "aldine." set in Geist SemiBold, and an app icon with a
   lowercase a and a blue full stop.

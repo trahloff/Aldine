@@ -14,7 +14,7 @@ import type { TemplateCategory, TemplateInfo } from './templates.js';
 
 export const VENUE_PREFIX = 'venue:';
 
-interface CatalogClass {
+export interface CatalogClass {
   id: string;
   cls: string;
   kind: 'class' | 'style';
@@ -227,6 +227,11 @@ function fetchClasses(): Promise<CatalogClass[]> {
   })();
 }
 
+/** The catalog as last fetched, without asking the compiler: empty before the first answer. */
+export function cachedVenueClasses(): CatalogClass[] {
+  return lastGoodClasses();
+}
+
 /** Fills the cache at boot so the first listing does not pay for the fetch. */
 export function warmVenueCache(): void {
   void venueClasses().catch(() => undefined);
@@ -386,9 +391,17 @@ export async function venueTemplateFiles(id: string): Promise<Record<string, Buf
   // last-good on a slow or failing compiler): a tile the user can see must not
   // 400 because the catalog fetch happened to fail between listing and create.
   const cls = (await venueClasses(CATALOG_WAIT_MS)).find((c) => c.id === key);
-  if (!meta || !cls) throw new Error(`unknown template: ${id}`);
-  const sample = cls.sample?.content;
-  const main = sample && sampleIsSelfContained(sample) ? sample : skeleton(cls, meta);
+  const files = cls && meta ? installedVenueFiles(cls) : null;
+  if (!files) throw new Error(`unknown template: ${id}`);
+  return files;
+}
+
+/** What a project from catalog row `c` is seeded with, or null for a class the gallery does not list. */
+export function installedVenueFiles(c: CatalogClass): Record<string, Buffer> | null {
+  const meta = own(INSTALLED_VENUES, c.id);
+  if (!meta) return null;
+  const sample = c.sample?.content;
+  const main = sample && sampleIsSelfContained(sample) ? sample : skeleton(c, meta);
   return {
     'main.tex': Buffer.from(main, 'utf8'),
     'references.bib': Buffer.from(REFERENCES_BIB, 'utf8'),

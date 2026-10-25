@@ -1,0 +1,165 @@
+{
+  "venue": {
+    "aaai": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "aastex": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "achemso": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "acl": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "acmart": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "agujournal": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "aiaa": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "amsart": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "apa7": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "ascelike": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "asmeconf": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "copernicus": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "cvpr": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "elsarticle": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "iclr": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "ieeeconf": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "ieeetran": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "jfm": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "jmlr": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "llncs": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "mdpi": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "mnras": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "neurips": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "revtex": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "siamart": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "spie": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "svjour3": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "usenix": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    }
+  },
+  "kit": {
+    "aaai": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "acl": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "aistats": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "cellpress": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "coling": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "copernicus": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "cvpr": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "ecai": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "eccv": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "elife": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "frontiers": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "iccv": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "iclr": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "icml": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "ijcai": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "iop": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "mdpi": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "neurips": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "optica": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "siamart": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "springernature": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "tandf": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "usenix": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "usenix-security": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    },
+    "wiley": {
+      "reason": "not rendered yet: the Template previews workflow renders it"
+    }
+  }
+}
