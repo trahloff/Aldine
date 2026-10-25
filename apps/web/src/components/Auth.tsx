@@ -83,13 +83,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { refresh(); }, []);
 
   // The server confirms only for the account the link was sent for, so this
-  // waits until someone is signed in.
+  // waits until someone is signed in. A confirmed account cannot tell whether
+  // the link was its own (the link's digest is gone once confirmed), so the
+  // notice covers a link meant for another account too; that link still
+  // works there, since nothing was spent.
   useEffect(() => {
     if (!confirmToken || !user) return;
     const token = confirmToken;
     setConfirmToken(null);
     stripConfirmParam();
-    if (!user.emailPending) { setEmailNotice({ tone: 'ok', text: 'Your email address is already confirmed.' }); return; }
+    if (!user.emailPending) {
+      setEmailNotice({ tone: 'ok', text: `The address of the account you are signed in to${user.email ? ` (${user.email})` : ''} is already confirmed. If the link is for another account, sign out, open the link again and sign in to that account.` });
+      return;
+    }
     api.confirmEmail(token).then(
       (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: 'Your email address is confirmed. Projects shared with it are in your list now.' }); },
       (err: any) => setEmailNotice({ tone: 'error', text: err.message }),

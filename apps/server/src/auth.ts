@@ -83,6 +83,8 @@ function cleanName(name: unknown): string {
 }
 
 /** A fresh one-time confirmation link: the secret for the link, the digest for the store. */
+/** Older links kept working on an instance that sends no email. */
+const EARLIER_LINKS = 5;
 function newConfirmation(now = Date.now()): { token: string; pending: EmailPending } {
   const token = crypto.randomBytes(24).toString('base64url');
   return { token, pending: { hash: tokenDigest(token), expiresAt: new Date(now + CONFIRM_TTL_DAYS * 864e5).toISOString() } };
@@ -125,12 +127,19 @@ async function createAccount(email: string | null, password: string, name?: stri
   return { user, confirmToken: confirm?.token ?? null };
 }
 
-/** A new link for an address still pending; the previous link stops
- *  working. Null when the account has nothing to confirm. */
-export async function reissueConfirmation(userId: string): Promise<{ token: string; user: PublicUser } | null> {
+/** A new link for an address still pending. The previous link stops working
+ *  unless `keepEarlier`, which keeps every unexpired one (up to
+ *  EARLIER_LINKS). Null when the account has nothing to confirm. */
+export async function reissueConfirmation(userId: string, keepEarlier = false): Promise<{ token: string; user: PublicUser } | null> {
   const user = await db().getUser(userId);
   if (!user?.emailPending || !user.email) return null;
   const c = newConfirmation();
+  if (keepEarlier) {
+    const now = Date.now();
+    const { earlier = [], ...current } = user.emailPending;
+    const live = [{ hash: current.hash, expiresAt: current.expiresAt }, ...earlier].filter((l) => Date.parse(l.expiresAt) > now);
+    if (live.length) c.pending.earlier = live.slice(0, EARLIER_LINKS);
+  }
   await db().setEmailPending(user.id, c.pending);
   return { token: c.token, user: pub(user) };
 }
@@ -142,9 +151,12 @@ export async function confirmEmail(userId: string, token: string): Promise<Publi
   if (!user) throw new Error('User not found');
   const p = user.emailPending;
   if (!p) return pub(user);
-  const a = Buffer.from(p.hash, 'hex');
   const b = Buffer.from(tokenDigest(token), 'hex');
-  if (!token || a.length !== b.length || !crypto.timingSafeEqual(a, b) || !(Date.parse(p.expiresAt) > Date.now())) {
+  const matches = (l: { hash: string; expiresAt: string }) => {
+    const a = Buffer.from(l.hash, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b) && Date.parse(l.expiresAt) > Date.now();
+  };
+  if (!token || ![p, ...(p.earlier || [])].some(matches)) {
     throw new Error('This confirmation link has expired, was replaced by a newer one, or belongs to another account.');
   }
   await db().setEmailPending(user.id, null);
@@ -422,48 +434,55 @@ export function clearCookie(): string {
 
 // ---------- device cookie (per-account sign-in backoff) ----------
 // OWASP's device-cookie pattern: a browser that signed in to an account
-// before proves it with an entry signed for that account's email, and its
-// failed tries count on the entry's own key instead of the account's. Someone
-// who knows only the address can then slow down every other browser, but
-// never the ones its owner uses.
+// before proves it with an entry signed for that account's id and current
+// password salt, and its failed tries count on the entry's own key instead of
+// the account's. Someone who knows only the address can then slow down every
+// other browser, but never the ones its owner uses. A password change or reset
+// replaces the salt, so every entry issued before it stops counting.
 export const DEVICE_COOKIE = 'aldine_device';
 const DEVICE_DAYS = 365;
 /** Accounts one browser stays trusted for; the oldest entry drops out. */
 const DEVICE_ENTRIES = 5;
 const NONCE_RE = /^[A-Za-z0-9_-]{16}$/;
+const ENTRY_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
-function deviceSig(email: string, nonce: string): Buffer {
-  return crypto.createHmac('sha256', subkey('device-cookie')).update(JSON.stringify([email, nonce])).digest();
+function deviceSig(user: User, nonce: string): Buffer {
+  return crypto.createHmac('sha256', subkey('device-cookie')).update(JSON.stringify([user.id, user.salt, nonce])).digest();
 }
 function deviceEntries(cookieHeader: string | undefined): string[] {
   const raw = parseCookies(cookieHeader)[DEVICE_COOKIE];
   return raw ? raw.split('~').slice(0, DEVICE_ENTRIES) : [];
 }
-/** The entry's nonce when it is a valid entry for `email`. */
-function entryFor(entry: string, email: string): string | null {
+/** The entry's nonce when it is a valid entry for `user`. */
+function entryFor(entry: string, user: User): string | null {
   const [nonce, sig, extra] = entry.split('.');
   if (extra !== undefined || !nonce || !sig || !NONCE_RE.test(nonce)) return null;
   let got: Buffer;
   try { got = Buffer.from(sig, 'base64url'); } catch { return null; }
-  const want = deviceSig(email, nonce);
+  const want = deviceSig(user, nonce);
   return got.length === want.length && crypto.timingSafeEqual(got, want) ? nonce : null;
 }
-/** The nonce of this browser's entry for `email` (as typed), or null. */
-export function trustedDevice(cookieHeader: string | undefined, email: string): string | null {
-  const e = email.trim().toLowerCase();
-  for (const entry of deviceEntries(cookieHeader)) {
-    const nonce = entryFor(entry, e);
+/** The nonce of this browser's entry for the account that has `email` (as
+ *  typed), or null, also when no password account has it. */
+export async function trustedDevice(cookieHeader: string | undefined, email: string): Promise<string | null> {
+  const entries = deviceEntries(cookieHeader);
+  if (!entries.length) return null;
+  const user = await db().findUserByEmail(email.trim().toLowerCase());
+  if (!user || user.provider || !user.hash) return null;
+  for (const entry of entries) {
+    const nonce = entryFor(entry, user);
     if (nonce) return nonce;
   }
   return null;
 }
-/** Set-Cookie after a correct sign-in: a fresh entry for `email` first, the
- *  browser's entries for its other accounts after it. */
-export function deviceCookie(cookieHeader: string | undefined, email: string): string {
-  const e = email.trim().toLowerCase();
+/** Set-Cookie after a correct sign-in: a fresh entry for the account first,
+ *  the browser's entries for its other accounts after it. */
+export async function deviceCookie(cookieHeader: string | undefined, userId: string): Promise<string | null> {
+  const user = await db().getUser(userId);
+  if (!user) return null;
   const nonce = crypto.randomBytes(12).toString('base64url');
-  const others = deviceEntries(cookieHeader).filter((entry) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(entry) && !entryFor(entry, e));
-  const value = [`${nonce}.${deviceSig(e, nonce).toString('base64url')}`, ...others].slice(0, DEVICE_ENTRIES).join('~');
+  const others = deviceEntries(cookieHeader).filter((entry) => ENTRY_RE.test(entry) && !entryFor(entry, user));
+  const value = [`${nonce}.${deviceSig(user, nonce).toString('base64url')}`, ...others].slice(0, DEVICE_ENTRIES).join('~');
   return `${DEVICE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${DEVICE_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
 }
 

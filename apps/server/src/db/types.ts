@@ -32,8 +32,11 @@ export interface User {
 }
 
 /** The one-time confirmation link of a pending address: `hash` is the
- *  SHA-256 digest of the link's secret, which is never stored. */
-export interface EmailPending { hash: string; expiresAt: string }
+ *  SHA-256 digest of the link's secret, which is never stored. `earlier`
+ *  holds links that still work after a new one was issued: only on an
+ *  instance that sends no email, where the operator may already have passed
+ *  an older link on. */
+export interface EmailPending { hash: string; expiresAt: string; earlier?: Array<{ hash: string; expiresAt: string }> }
 
 /** `author` is the display name shown with the text; `authorId` is the
  *  account that wrote it (absent without accounts and on older rows). Names

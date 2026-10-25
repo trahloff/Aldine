@@ -81,6 +81,9 @@ async function runSuite(store, label) {
   const { emailPending: _drop, ...confirmed } = signup;
   await store.updateUser(confirmed);
   check((await store.getUser(signup.id)).emailPending === undefined, `${label}: updateUser without it clears the marker`);
+  const withEarlier = { hash: 'c'.repeat(64), expiresAt: '2026-11-03T00:00:00.000Z', earlier: [pending, next] };
+  await store.setEmailPending(signup.id, withEarlier);
+  eq((await store.getUser(signup.id)).emailPending, withEarlier, `${label}: setEmailPending keeps the earlier links`);
   await store.setEmailPending(`missing-${t}`, pending); // no throw, no row
   check((await store.getUser(`missing-${t}`)) === null, `${label}: setEmailPending of a missing user creates nothing`);
 

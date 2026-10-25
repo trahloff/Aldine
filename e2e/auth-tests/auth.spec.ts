@@ -357,19 +357,19 @@ test.describe('email confirmation', () => {
     await expect(page.getByTestId('projects-empty')).toBeVisible();
     expect((await page.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
 
-    // a new link replaces the first one
+    // without email, asking again keeps the link the operator may have sent
     const first = await confirmationLink(page.request, bEmail);
     await page.getByTestId('email-confirm-resend').click();
-    await expect(page.locator('.toast').filter({ hasText: 'A new confirmation link is in the server log' })).toBeVisible();
+    await expect(page.locator('.toast').filter({ hasText: 'a link they already sent still works' })).toBeVisible();
     const second = await confirmationLink(page.request, bEmail);
     expect(second).not.toBe(first);
-    await page.goto(first);
+    await page.goto(first.replace(/confirm_email=[^&]+/, 'confirm_email=not-a-link'));
     await expect(page.getByTestId('email-confirm-notice')).toContainText('expired, was replaced by a newer one');
     await expect(page).not.toHaveURL(/confirm_email/);
     await page.getByTestId('email-confirm-notice-close').click();
     await expect(banner).toBeVisible();
 
-    await page.goto(second);
+    await page.goto(first);
     await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
     await expect(page).not.toHaveURL(/confirm_email/);
     await expect(page.getByTestId('project-grid')).toContainText('Shared Before Signup');
@@ -398,6 +398,29 @@ test.describe('email confirmation', () => {
     expect(me.user.emailPending).toBeUndefined();
     await other.close();
   });
+
+  test('a confirmed account that opens the link for another account is told how to use it', async ({ page, browser }) => {
+    const pendingEmail = uniq();
+    const signup = await browser.newContext();
+    expect((await signup.request.post('/api/auth/register', { data: { email: pendingEmail, password: 'password123' } })).ok()).toBeTruthy();
+    const link = await confirmationLink(signup.request, pendingEmail);
+
+    const confirmedEmail = uniq();
+    await register(page, confirmedEmail, 'password123', 'Bea');
+    await page.goto(await confirmationLink(page.request, confirmedEmail));
+    await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+
+    await page.goto(link);
+    const notice = page.getByTestId('email-confirm-notice');
+    await expect(notice).toContainText(`(${confirmedEmail}) is already confirmed`);
+    await expect(notice).toContainText('If the link is for another account, sign out, open the link again and sign in to that account.');
+
+    // the link was not spent: the account it was for still confirms with it
+    const confirm = await signup.newPage();
+    await confirm.goto(link);
+    await expect(confirm.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
+    await signup.close();
+  });
 });
 
 test.describe('per-account sign-in limit', () => {
@@ -405,6 +428,10 @@ test.describe('per-account sign-in limit', () => {
     const email = uniq();
     const owner = await browser.newContext();
     expect((await owner.request.post('/api/auth/register', { data: { email, password: 'password123', name: 'Owner' } })).ok()).toBeTruthy();
+    expect((await owner.cookies()).some((c) => c.name === 'aldine_device')).toBe(false);
+    // a sign-up proves nothing about the browser; a correct sign-in does
+    await owner.request.post('/api/auth/logout');
+    expect((await owner.request.post('/api/auth/login', { headers: { 'x-forwarded-for': '198.51.99.1' }, data: { email, password: 'password123' } })).ok()).toBeTruthy();
     await owner.request.post('/api/auth/logout');
 
     // five wrong passwords, each from its own address (TRUST_PROXY=1)
@@ -453,7 +480,7 @@ test.describe('per-account sign-in limit', () => {
     await expect(freshPage.getByTestId('auth-submit')).toHaveText(/Try again in \d+ s/);
     await expect(freshPage.getByTestId('auth-submit')).toBeEnabled({ timeout: 10_000 });
 
-    // the browser that signed up goes straight in with the right password
+    // the browser that signed in before goes straight in with the right password
     const ownerPage = await owner.newPage();
     await ownerPage.goto('/');
     await ownerPage.getByTestId('auth-email').fill(email);
@@ -543,9 +570,12 @@ test.describe('auth depth', () => {
   test('change password from account settings revokes other sessions and agent access', async ({ page, browser, request }) => {
     const email = uniq();
     await register(page, email);
-    // a second session for the same account (should be revoked by the change)
+    // a second session for the same account (should be revoked by the change);
+    // its own client address keeps it off the per-address sign-in limit the
+    // rest of the suite shares (TRUST_PROXY=1)
+    const own = { 'x-forwarded-for': '203.0.113.21' };
     const other = await browser.newContext();
-    await other.request.post('/api/auth/login', { data: { email, password: 'password123' } });
+    await other.request.post('/api/auth/login', { headers: own, data: { email, password: 'password123' } });
     // and an agent token (should be revoked too)
     const { token } = await (await page.request.post('/api/tokens', { data: { name: 'Script' } })).json();
     const bearer = { authorization: `Bearer ${token}` };
@@ -563,7 +593,7 @@ test.describe('auth depth', () => {
     await expect.poll(async () => (await (await other.request.get('/api/auth/me')).json()).user).toBeNull();
     expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(401);
     // and the new password works
-    expect((await request.post('/api/auth/login', { data: { email, password: 'changed-pw-99' } })).ok()).toBeTruthy();
+    expect((await request.post('/api/auth/login', { headers: own, data: { email, password: 'changed-pw-99' } })).ok()).toBeTruthy();
     await other.close();
   });
 });

@@ -27,7 +27,7 @@ export default function EmailConfirmBanner() {
       const r = await api.resendConfirmation();
       if (r.confirmed) { toast('Your email address is already confirmed', 'ok'); await refresh(); }
       else if (r.sent) toast(`A new confirmation link is on its way to ${user.email}`, 'ok');
-      else toast('A new confirmation link is in the server log. Ask the administrator to send it to you.', 'ok');
+      else toast('A new confirmation link is in the server log. Ask the administrator to send it to you; a link they already sent still works.', 'ok');
     } catch (err: any) {
       toast(err.message, 'error');
     }

@@ -2,8 +2,9 @@
  * A password sign-up proves its address before the address grants anything:
  * invites by email and ALDINE_ADMIN_EMAILS skip the account until it follows
  * the one-time link mailed at sign-up (or logged, without a transport), and
- * apply from then on. Confirming takes the session of that account; a resend
- * replaces the link; a link expires; a completed password reset proves the
+ * apply from then on. Confirming takes the session of that account; a mailed
+ * resend replaces the link, a logged one keeps the earlier links working; a
+ * link expires; a completed password reset proves the
  * address too, except under ALDINE_RESET_ECHO=1. Accounts without the marker
  * (every account from before it, every single sign-on account) count as
  * confirmed.
@@ -159,16 +160,18 @@ const log = console.log;
 console.log = (...a) => { logged.push(a.join(' ')); };
 const henry = await call('POST', '/api/auth/register', null, { email: 'henry@example.com', password: 'password123' });
 const henryResend = await call('POST', '/api/auth/confirm-email/resend', sessionOf(henry));
+await call('POST', '/api/auth/confirm-email/resend', sessionOf(henry));
 const henryMe = (await call('GET', '/api/auth/me', sessionOf(henry))).json();
 console.log = log;
 eq(henry.statusCode, 200, 'sign-up works without a transport');
 const lines = logged.filter((l) => l.includes('email confirmation for henry@example.com'));
-eq(lines.length, 2, 'the sign-up and the resend each log a link');
-const m = /https:\/\/aldine\.test\/\?confirm_email=([A-Za-z0-9_-]+)/.exec(lines[1]);
-check(m, 'the logged line holds the full link');
+eq(lines.length, 3, 'the sign-up and each resend log a link');
+const links = lines.map((l) => /https:\/\/aldine\.test\/\?confirm_email=([A-Za-z0-9_-]+)/.exec(l));
+check(links.every(Boolean), 'the logged line holds the full link');
 eq(henryResend.json(), { ok: true, sent: false }, 'the resend says the link was not mailed');
 eq(henryMe.sendsEmail, false, '/api/auth/me says links are not mailed');
-eq((await call('POST', '/api/auth/confirm-email', sessionOf(henry), { token: m[1] })).statusCode, 200, 'the logged link confirms');
+eq((await db().getUser(henry.json().user.id)).emailPending.earlier.length, 2, 'without email a resend keeps the earlier links');
+eq((await call('POST', '/api/auth/confirm-email', sessionOf(henry), { token: links[0][1] })).statusCode, 200, 'the link logged at sign-up still confirms after a resend');
 
 await app.close();
 smtp.close();

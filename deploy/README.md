@@ -285,7 +285,9 @@ new password account starts with its address **not confirmed**:
   transport. Without a transport, or without `ALDINE_PUBLIC_URL`, the server
   logs the link (`[aldine] email confirmation for <address>: <link>`) for you
   to pass on, the way it logs password-reset links. The banner on the project
-  list offers a new link; asking again replaces the previous one.
+  list offers a new link. A mailed new link replaces the previous one; a
+  logged one does not, so a link you already passed on keeps working until
+  it expires.
 - Until the address is confirmed, the account signs in and works on its own
   projects, but projects shared with that address do not appear, and
   `ALDINE_ADMIN_EMAILS` does not count it. Once it is confirmed, the shares
@@ -308,8 +310,10 @@ carries a signed cookie (`aldine_device`, one year) that keeps it out of the
 per-account wait, so someone who only knows the address cannot lock its owner
 out; it still counts against the per-address limit. Both counters live in
 Redis when `REDIS_URL` is set, so they hold across app nodes. The cookie is
-signed with `ALDINE_SIGNING_SECRET`; rotating it makes every browser sign in
-once more before it is exempt again.
+signed with `ALDINE_SIGNING_SECRET` and bound to the account's current
+password: rotating the secret, or changing or resetting the password, makes
+every browser sign in once more before it is exempt again (the browser that
+changes the password keeps its exemption).
 
 ## Scaling notes
 

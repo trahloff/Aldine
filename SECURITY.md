@@ -41,7 +41,9 @@ you in the fix's release notes unless you prefer otherwise.
   backoff, per account across all addresses (unknown addresses alike). A
   browser that signed in to the account before carries a signed device
   cookie that exempts it from the per-account wait, so knowing an address is
-  not enough to lock its owner out.
+  not enough to lock its owner out. The cookie is bound to the account's
+  current password, so a password change or reset ends every exemption
+  issued before it, and signing up issues none.
 - Single sign-on never signs into an existing account that merely shares an
   email address: not a password account, not another provider's, not another
   OIDC identity. With OpenID Connect the address is used only when the IdP

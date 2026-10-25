@@ -306,7 +306,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (bad) return reply.code(400).send({ error: bad });
     try {
       const { user, confirmToken } = await auth.signUp(req.body.email, req.body.password, req.body.name);
-      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), auth.deviceCookie(req.headers.cookie, req.body.email)]);
+      reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
       // In the background: a mail failure never fails the sign-up.
       if (user.email) deliverConfirmation(user.email, confirmToken, true);
       return { user };
@@ -319,7 +319,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!(await loginLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
     if (badCredentials(req.body)) return reply.code(400).send({ error: 'Email and password are required' });
     const account = accountKey(req.body.email);
-    const device = auth.trustedDevice(req.headers.cookie, req.body.email);
+    const device = await auth.trustedDevice(req.headers.cookie, req.body.email);
     const key = device ? `d:${device}` : account;
     const wait = await signInBackoff.attempt(key);
     if (wait > 0) return tooManyForAccount(reply, wait);
@@ -327,7 +327,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const user = await auth.login(req.body.email, req.body.password);
       await signInBackoff.clear(key);
       if (key !== account) await signInBackoff.clear(account);
-      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), auth.deviceCookie(req.headers.cookie, req.body.email)]);
+      const trust = await auth.deviceCookie(req.headers.cookie, user.id);
+      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), ...(trust ? [trust] : [])]);
       return { user };
     } catch (err: any) { return reply.code(401).send({ error: err.message }); }
   });
@@ -348,7 +349,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!(await loginLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
     try {
       const revokedTokens = await auth.changePassword(user.id, req.body?.currentPassword || '', req.body?.newPassword || '');
-      reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+      const trust = await auth.deviceCookie(req.headers.cookie, user.id);
+      reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), ...(trust ? [trust] : [])]);
       return { ok: true, revokedTokens };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
@@ -406,7 +408,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!(await confirmResendLimiter.take(clientKey(req, user.id)))) {
       return reply.code(429).send({ error: 'You asked for several links already. Use the newest one, or ask again in 10 minutes.' });
     }
-    const r = await auth.reissueConfirmation(user.id);
+    // Without email the operator may be relaying an older link right now, so
+    // asking again must not cancel it.
+    const r = await auth.reissueConfirmation(user.id, !sendsEmail());
     if (!r?.user.email) return { ok: true, confirmed: true };
     return { ok: true, sent: deliverConfirmation(r.user.email, r.token, false) };
   });
