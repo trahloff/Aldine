@@ -7,6 +7,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-10-25
+
+Aldine 1.0. Apart from a new logo and previews of the journal and conference
+templates, it works the same as 0.18.0; what is new is a promise about
+upgrades. Any 1.x release starts on data written by an earlier 1.x, or by
+0.14 or later, with no manual step, on the JSON store and on Postgres.
+Stable settings, MCP tools and the plugin API keep their names and shapes
+until 2.0, and anything deprecated keeps working for at least one more minor
+release, with a warning. [docs/STABILITY.md](docs/STABILITY.md) lists what
+is covered and what is not (the web interface's layout and wording, for
+one).
+
+None of this is on trust. Before `latest` moves, every release is started on
+volumes filled by the previous release and by 0.14.4, with both datastores.
+The projects, comments, shares and tokens have to be there afterwards and
+the projects have to typeset. It also has to restore from a backup.
+
+Coming from 0.14 or earlier? Read the 0.15.0 notes first: they fix security
+problems.
+
 ### Added
 - The New project chooser shows page 1 of the journal and conference
   templates too, not only of the four general ones. Venues are typeset in CI
