@@ -247,6 +247,7 @@ test.describe('OAuth Connect flow', () => {
 
     // the Agent access card lists the connector token with the "via Connect" badge; revoking there kills the refresh token too
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-settings')).toBeVisible();
     await expect(page.getByTestId('agent-token-via-connect')).toBeVisible();

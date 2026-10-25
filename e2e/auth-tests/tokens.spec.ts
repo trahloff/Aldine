@@ -12,7 +12,7 @@ async function register(page: import('@playwright/test').Page, email: string, pa
   await page.getByTestId('auth-email').fill(email);
   await page.getByTestId('auth-password').fill(password);
   await page.getByTestId('auth-submit').click();
-  await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('account-menu')).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe('agent access tokens', () => {
@@ -24,6 +24,7 @@ test.describe('agent access tokens', () => {
     await page.request.put(`/api/projects/${inScope.id}/file`, { data: { branch: 'main', path: 'agent.tex', content: 'AGENT-READ-ME\n' } });
 
     // mint a scoped token through the settings card
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-settings')).toBeVisible();
     await page.getByTestId('agent-token-create').click();
@@ -94,6 +95,7 @@ test.describe('agent access card at 1280×800', () => {
     await register(page, uniq());
     // a project makes the form grow by a checklist that loads after it opened
     await page.request.post('/api/projects', { data: { name: 'Scroll target' } });
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-settings')).toBeVisible();
     // opened without scrolling: the whole form, Create button included, is above the footer
@@ -133,6 +135,7 @@ test.describe('agent access card on a phone', () => {
 
   test('tap targets are at least 32px and the connector URL wraps instead of hiding its path', async ({ page, baseURL }) => {
     await register(page, uniq());
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-settings')).toBeVisible();
     for (const id of ['agent-token-create', 'agent-claude-code-copy']) {

@@ -40,7 +40,6 @@ const BIB = '@book{knuth1984texbook,\n  author = {Knuth, Donald E.},\n  title = 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, colorScheme: 'dark' });
 await ctx.addInitScript(() => {
-  localStorage.setItem('aldine.onboarded', '1');
   localStorage.setItem('aldine.theme', 'dark');
   localStorage.setItem('aldine.editorMode', 'visual');
 });

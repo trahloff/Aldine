@@ -82,7 +82,11 @@ export function menuKey(e: KeyLike, s: MenuKeyState): MenuKeyAction | null {
 
 export type MenuAnchor =
   | { type: 'point'; x: number; y: number }
-  | { type: 'rect'; rect: { top: number; right: number; bottom: number; left: number }; placement: 'bottom-start' | 'bottom-end' | 'right-start' };
+  | {
+    type: 'rect'; rect: { top: number; right: number; bottom: number; left: number }; placement: 'bottom-start' | 'bottom-end' | 'right-start';
+    /** right-start: the parent menu's box. A submenu hangs from its edge, not the row's, so it never covers the rows. */
+    outer?: { left: number; right: number };
+  };
 
 export interface MenuPlacement { left: number; top: number; maxHeight: number; origin: string }
 
@@ -111,9 +115,10 @@ export function placeMenu(anchor: MenuAnchor, w: number, h: number, vw: number, 
     if (top + ht > vh - margin && anchor.y - ht >= margin) { top = anchor.y - ht; oy = 'bottom'; }
   } else if (anchor.placement === 'right-start') {
     const r = anchor.rect;
-    left = r.right - 2;
+    const o = anchor.outer ?? { left: r.left - PAD, right: r.right + PAD };
+    left = o.right - PAD;
     top = r.top - PAD;
-    if (left + w > vw - margin) { left = r.left - w + 2; ox = 'right'; }
+    if (left + w > vw - margin) { left = o.left - w + PAD; ox = 'right'; }
   } else {
     const r = anchor.rect;
     top = r.bottom + GAP;

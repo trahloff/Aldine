@@ -137,7 +137,7 @@ try {
   eq(stored.lastEdit.byId, people.ada.user.id, 'the stored last edit names Ada');
 
   // ---- who may use the new routes ----
-  for (const [method, url, payload] of [['POST', `/api/projects/${p1.id}/opened`, { branch: 'main' }], ['DELETE', `/api/projects/${p1.id}/listing`], ['POST', `/api/projects/${p1.id}/copy`, {}]]) {
+  for (const [method, url, payload] of [['POST', `/api/projects/${p1.id}/opened`, { branch: 'main' }], ['DELETE', `/api/projects/${p1.id}/listing`], ['PUT', `/api/projects/${p1.id}/listing`, { opened: null }], ['POST', `/api/projects/${p1.id}/copy`, {}]]) {
     eq((await send(method, url, null, payload)).statusCode, 401, `${method} ${url.split('/').pop()}: signed out is 401`);
     eq((await send(method, url, 'bob', payload)).statusCode, 403, `${method} ${url.split('/').pop()}: a stranger to a private project is 403`);
     eq((await send(method, url, bearer, payload)).statusCode, 403, `${method} ${url.split('/').pop()}: an access token is 403 (the list is the person's)`);
@@ -163,6 +163,13 @@ try {
   check(!(await row('carol', p2.id)), 'it is gone from her list');
   check((await db().getProjectOpen(people.carol.user.id, p2.id)) === null, 'and her row with it');
   eq((await send('GET', `/api/projects/${p2.id}`, 'carol')).statusCode, 200, 'the link still opens it');
+  // Undo hands back the open it had; a time to come is not believed.
+  eq((await send('PUT', `/api/projects/${p2.id}/listing`, 'carol', { opened: { at: c2.opened.at, branch: 'main' } })).statusCode, 200, 'Carol undoes the removal');
+  eq((await row('carol', p2.id))?.opened, c2.opened, 'it is back with the open it had, not a new one');
+  await send('DELETE', `/api/projects/${p2.id}/listing`, 'carol');
+  await send('PUT', `/api/projects/${p2.id}/listing`, 'carol', { opened: { at: '2999-01-01T00:00:00.000Z', branch: 'nope' } });
+  eq((await row('carol', p2.id))?.opened ?? null, null, 'an open in the future or on a missing branch is not recorded');
+  await send('DELETE', `/api/projects/${p2.id}/listing`, 'carol');
   await send('POST', `/api/projects/${p2.id}/opened`, 'carol', { branch: 'main' });
   eq((await row('carol', p2.id))?.access, 'link', 'opening it again lists it again');
 
@@ -180,6 +187,9 @@ try {
   check(!(await row('dana', p2.id)), 'it is off her list');
   eq((await send('GET', `/api/projects/${p2.id}`, 'dana')).statusCode, 200, 'she keeps access');
   eq(await db().getProjectOpen(people.dana.user.id, p2.id), { userId: people.dana.user.id, projectId: p2.id, at: danaOpen.at, branch: 'main', hidden: true }, 'her row keeps the open and says hidden');
+  eq((await send('PUT', `/api/projects/${p2.id}/listing`, 'dana', { opened: { at: new Date().toISOString(), branch: 'main' } })).statusCode, 200, 'Dana undoes it');
+  eq((await row('dana', p2.id))?.opened, danaOpen, 'back on her list with her own open, whatever the client says');
+  await send('DELETE', `/api/projects/${p2.id}/listing`, 'dana');
   await send('POST', `/api/projects/${p2.id}/opened`, 'dana', { branch: 'main' });
   d2 = await row('dana', p2.id);
   eq(d2.access, 'member', 'opening it again brings it back');
@@ -252,6 +262,13 @@ try {
   for (let i = 0; i < 6; i++) codes.push((await send('POST', `/api/projects/${p2.id}/copy`, 'carol', {})).statusCode);
   eq(codes.slice(0, 4), [200, 200, 200, 200], 'Carol copies until her burst is spent');
   eq(codes.slice(4), [429, 429], 'then the copy route refuses');
+
+  // ---- undoing a removal shares the budget of an open ----
+  codes = [];
+  for (let i = 0; i < 70; i++) codes.push((await send('PUT', `/api/projects/${p2.id}/listing`, 'dana', { opened: null })).statusCode);
+  eq(codes[0], 200, 'Dana puts it back on her list');
+  check(codes.includes(429), `then the listing route refuses (${[...new Set(codes)].join(', ')})`);
+  check(codes.every((c) => c === 200 || c === 429), 'with nothing but 200 and 429');
 
   // ---- trash: purgeAt ----
   eq((await send('DELETE', `/api/projects/${p1.id}`, 'ada')).statusCode, 200, 'P1 goes to the trash');

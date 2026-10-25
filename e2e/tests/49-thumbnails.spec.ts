@@ -44,8 +44,8 @@ test.describe('page-1 thumbnails', () => {
       const first = (await rowThumb(request, id))!;
       expect(first.branch).toBe('main');
       expect(first.v).toMatch(/^[0-9a-f]{16}$/);
-      expect(first.w).toBeGreaterThanOrEqual(340);
-      expect(first.w).toBeLessThanOrEqual(380);
+      expect(first.w).toBeGreaterThanOrEqual(490);
+      expect(first.w).toBeLessThanOrEqual(530);
       expect(first.h).toBeGreaterThan(first.w);
 
       const res = await request.get(`/api/projects/${id}/thumbnail?branch=main&v=${first.v}`);

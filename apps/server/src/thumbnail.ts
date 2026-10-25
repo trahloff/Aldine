@@ -13,7 +13,7 @@ import { branchDir, type ProjectMeta } from './store.js';
 /** A list row's `thumb`: `branch` is the branch whose typeset the image shows. */
 export interface Thumb { branch: string; w: number; h: number; v: string }
 
-/** Far above any image the compiler writes at its 360px width. */
+/** Far above any image the compiler writes at its 512px width. */
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SIDE = 4096;
 const V_RE = /^[0-9a-f]{16}$/;

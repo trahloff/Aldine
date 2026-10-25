@@ -27,8 +27,11 @@ async function signIn(page: import('@playwright/test').Page, email: string, name
 test.describe('server admin', () => {
   test('a regular account gets no link, no page, and 403 from the API', async ({ page }) => {
     await signIn(page, uniq('plain'), 'Plain');
+    await expect(page.getByTestId('account-menu')).toBeVisible();
+    await page.getByTestId('account-menu').click();
     await expect(page.getByTestId('user-name')).toBeVisible();
     await expect(page.getByTestId('admin-link')).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     const denied = await page.request.get('/api/admin/stats');
     expect(denied.status()).toBe(403);
@@ -47,6 +50,7 @@ test.describe('server admin', () => {
     await other.close();
 
     await signIn(page, ADMIN_EMAIL, 'Admin');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('admin-link').click();
     await expect(page.getByTestId('admin-page')).toBeVisible();
 

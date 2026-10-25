@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import { startFrom, projectAction, trashAction } from './helpers';
 import { request as pwRequest, type APIRequestContext, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -235,7 +236,7 @@ test.describe('GitLab auto-provisioning', () => {
     await page.goto('/');
     const card = page.getByTestId(`project-card-${teamPaperId}`);
     await expect(card).toBeVisible();
-    await card.locator('.project-card__del').click();
+    await projectAction(page, teamPaperId, 'menu-trash');
     await expect(card).not.toBeVisible();
     // delayed deletion on the mock: marked, then purged by path — both by the server
     expect(await mock<string[]>('/__deleted')).toContain(teamPaperRepo);
@@ -245,9 +246,9 @@ test.describe('GitLab auto-provisioning', () => {
     expect(trash.map((t) => t.id)).toContain(teamPaperId);
 
     await page.getByTestId('open-trash').click();
-    await page.getByTestId(`restore-${teamPaperId}`).click();
+    await trashAction(page, teamPaperId, `restore-${teamPaperId}`);
     await expect(page.locator('.toast').filter({ hasText: 'Restored Team Paper' })).toBeVisible();
-    await page.keyboard.press('Escape');
+    await page.getByTestId('filter-all').click();
     await expect(card).toBeVisible();
     const restored = await summary(request, teamPaperId);
     // the purge freed the slug; a refused purge would have given the re-creation a suffix
@@ -258,7 +259,7 @@ test.describe('GitLab auto-provisioning', () => {
     await expect.poll(() => bareMainTex(teamPaperRepo), { timeout: 10_000 }).toContain('\\documentclass');
 
     // imported from GitLab: Aldine did not create it, so deleting the project never deletes the repository
-    await page.getByTestId('new-from-gitlab').click();
+    await startFrom(page, 'new-from-gitlab');
     await expect(page.getByTestId('gitlab-import')).toBeVisible();
     await connectWithToken(page);
     await expect(page.getByTestId('gitlab-repos')).toBeVisible();

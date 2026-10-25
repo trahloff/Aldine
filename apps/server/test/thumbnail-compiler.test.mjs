@@ -181,7 +181,7 @@ try {
   const render = calls[1].args;
   check(render.includes('-sDEVICE=jpeg'), 'the render writes a JPEG');
   const dpi = Number(render.find((a) => a.startsWith('-r')).slice(2));
-  check(Math.abs((595.276 * dpi) / 72 - 360) < 1, `the resolution makes the page 360px wide (dpi ${dpi})`);
+  check(Math.abs((595.276 * dpi) / 72 - 512) < 1, `the resolution makes the page 512px wide (dpi ${dpi})`);
   eq(fs.realpathSync(calls[1].cwd), out, 'gs runs in the output directory');
   check(render.includes('./main.pdf') && render.includes('-sOutputFile=./.main.thumb.tmp.jpg'), 'gs gets relative, dot-prefixed names');
   eq(leftovers(out), [], 'no temporary file is left');
@@ -299,11 +299,11 @@ try {
     const realOut = path.join(realDir, '.aldine-out');
     fs.mkdirSync(realOut, { recursive: true });
     const shapes = {
-      a4: [minimalPdf({ pages: 2 }), 360, 509],
-      letter: [minimalPdf({ w: 612, h: 792 }), 360, 466],
-      slides: [minimalPdf({ w: 362.83, h: 272.13 }), 360, 270],
-      rotated: [minimalPdf({ w: 612, h: 792, rotate: 90 }), 360, 278],
-      strip: [minimalPdf({ w: 100, h: 1000 }), 108, 1080],
+      a4: [minimalPdf({ pages: 2 }), 512, 724],
+      letter: [minimalPdf({ w: 612, h: 792 }), 512, 663],
+      slides: [minimalPdf({ w: 362.83, h: 272.13 }), 512, 384],
+      rotated: [minimalPdf({ w: 612, h: 792, rotate: 90 }), 512, 396],
+      strip: [minimalPdf({ w: 100, h: 1000 }), 154, 1536],
     };
     for (const [name, [bytes]] of Object.entries(shapes)) {
       fs.writeFileSync(path.join(realOut, `${name}.pdf`), bytes);

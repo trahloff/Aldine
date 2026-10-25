@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, moreAction } from './helpers';
 
 /**
  * The connector setup outside Account settings. This server runs with auth
@@ -52,7 +52,7 @@ test.describe('Connect Claude', () => {
       await expect(page.getByTestId('connect-claude')).toHaveCount(0);
 
       await page.goto('/');
-      await page.getByTestId('open-connect-claude').click();
+      await moreAction(page, 'open-connect-claude');
       await expect(page.getByTestId('claude-connect')).toBeVisible();
       // no accounts on this server, so nothing to manage
       await expect(page.getByTestId('connect-manage')).toHaveCount(0);

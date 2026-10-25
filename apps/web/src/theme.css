@@ -15,7 +15,8 @@
   --bg-toolbar: #f6f6f8;
 
   --text: #1d1d1f;
-  --text-2: #6e6e73;
+  /* secondary (meta, section headings) sits a step above tertiary: 6.3:1 on #f5f5f7 */
+  --text-2: #5c5c61;
   /* tertiary carries real text (palette group labels, hints, badges) and sits
      on --bg-app as well as on panels: 4.9:1 on #f5f5f7 */
   --text-3: #6b6b70;
@@ -56,7 +57,8 @@
   --paper: #faf8f2;
   --paper-ink: #1b1b1d;
   --paper-line: rgba(27, 27, 29, 0.16);
-  --shadow-paper: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 16px rgba(0, 0, 0, 0.06);
+  /* cream on #f5f5f7 is nearly the page's own colour: the edge and the shadow carry the sheet */
+  --shadow-paper: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 20px rgba(0, 0, 0, 0.07);
 
   /* The spacing scale. */
   --space-1: 4px;
@@ -98,6 +100,11 @@
      document, not another panel: translucent, blurred behind. */
   --material-pop: rgba(255, 255, 255, 0.82);
   --material-blur: blur(24px) saturate(180%);
+  /* Menus open over pages and paper: nearly opaque, so no light content reads through them. */
+  --material-menu: rgba(255, 255, 255, 0.96);
+  --material-menu-blur: blur(30px) saturate(180%);
+  /* the phone's bar carries a centred title over the shelf */
+  --material-bar-compact: rgba(255, 255, 255, 0.92);
   --scrim: rgba(0, 0, 0, 0.28);
 
   /* --ease moves state that is already on screen (hover, toggles); --ease-out
@@ -120,7 +127,7 @@
   --bg-toolbar: #202023;
 
   --text: #f5f5f7;
-  --text-2: #98989d;
+  --text-2: #a1a1a6;
   --text-3: #8b8b95;
 
   --hairline: rgba(255, 255, 255, 0.10);
@@ -157,6 +164,8 @@
   --shadow-paper: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.4);
 
   --material-pop: rgba(44, 44, 48, 0.82);
+  --material-menu: rgba(44, 44, 48, 0.96);
+  --material-bar-compact: rgba(28, 28, 30, 0.92);
   /* the panes are dark already, so the scrim has to go further to push them back */
   --scrim: rgba(0, 0, 0, 0.5);
 }
@@ -207,16 +216,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
   *, *::before, *::after { transition-duration: 0.01ms !important; }
 }
 
+/* A half-pixel ring is lost on a 1x screen. */
+@media (max-resolution: 1dppx) {
+  :root:not([data-theme="dark"]) { --shadow-paper: 0 0 0 1px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 20px rgba(0, 0, 0, 0.07); }
+}
+
 @media (prefers-reduced-transparency: reduce) {
-  :root, :root[data-theme="dark"] { --material-blur: none; }
-  :root { --material-pop: #ffffff; }
-  :root[data-theme="dark"] { --material-pop: #2c2c30; }
+  :root, :root[data-theme="dark"] { --material-blur: none; --material-menu-blur: none; }
+  :root { --material-pop: #ffffff; --material-menu: #ffffff; --material-bar-compact: #ffffff; }
+  :root[data-theme="dark"] { --material-pop: #2c2c30; --material-menu: #2c2c30; --material-bar-compact: #1c1c1e; }
 }
 
 @media (prefers-contrast: more) {
-  :root, :root[data-theme="dark"] { --material-blur: none; }
-  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; --paper: #ffffff; }
-  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; --paper: #ffffff; }
+  :root, :root[data-theme="dark"] { --material-blur: none; --material-menu-blur: none; }
+  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; --material-menu: #ffffff; --material-bar-compact: #ffffff; --paper: #ffffff; }
+  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; --material-menu: #2c2c30; --material-bar-compact: #1c1c1e; --paper: #ffffff; }
 }
 
 /* Theme switch: one short cross-fade of the whole page instead of a jump in

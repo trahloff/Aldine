@@ -9,6 +9,9 @@ interface Props {
   /** Panel width in px (padding included) — overrides the 440px default. */
   width?: number;
   testId?: string;
+  /** Where focus goes on open: the first control, or the panel itself (a sheet opened by touch, where a ring on its
+   *  first row would read as a selection). */
+  initialFocus?: 'first' | 'panel';
 }
 
 /**
@@ -20,7 +23,7 @@ interface Props {
  *  so a confirmation opened from inside a dialog does not close both. */
 const openStack: symbol[] = [];
 
-export default function Modal({ onClose, children, label, wide, width, testId }: Props) {
+export default function Modal({ onClose, children, label, wide, width, testId, initialFocus = 'first' }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const leave = useExitGhost();
   const self = useRef(Symbol('modal'));
@@ -43,7 +46,7 @@ export default function Modal({ onClose, children, label, wide, width, testId }:
     const focusables = () => Array.from(
       panel?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [],
     );
-    (focusables()[0] ?? panel)?.focus({ preventScroll: true });
+    ((initialFocus === 'first' ? focusables()[0] : null) ?? panel)?.focus({ preventScroll: true });
 
     const onKey = (e: KeyboardEvent) => {
       if (openStack[openStack.length - 1] !== id) return;

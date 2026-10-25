@@ -1031,6 +1031,33 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return { ok: true };
   });
 
+  // Undo of "Remove from my list": puts the row back as it was, without
+  // counting as an open, so what changed since the last open stays unread.
+  // A link visitor's row was deleted, so the client hands back its open;
+  // it can only name a time already past and a branch that exists.
+  app.put<{ Params: { id: string }; Body: { opened?: { at?: unknown; branch?: unknown } | null } }>('/api/projects/:id/listing', async (req, reply) => {
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
+    const user = reqUser(req);
+    if (isOwner(meta, user)) return { ok: true };
+    // Each call may look up a branch in git and writes the datastore: the same budget as an open.
+    if (!(await visitLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+    const userId = listUserId(user);
+    const prev = await store.getProjectOpen(userId, meta.id);
+    let at = prev?.at ?? null;
+    let branch = prev?.branch ?? null;
+    const given = req.body?.opened;
+    if (!prev && given) {
+      const t = typeof given.at === 'string' ? Date.parse(given.at) : NaN;
+      if (!Number.isNaN(t) && t <= Date.now()) at = new Date(t).toISOString();
+      const b = typeof given.branch === 'string' ? given.branch : '';
+      if (b && BRANCH_RE.test(b) && !b.includes('..') && (await gitops.branchHead(meta.id, b))) branch = b;
+      else if (at) branch = 'main';
+    }
+    await store.setProjectOpen({ userId, projectId: meta.id, at, branch, hidden: false });
+    return { ok: true };
+  });
+
   // Duplicate: anyone who may download the source may copy it, and owns the
   // copy. The source's main working tree, no history (store.copyProject).
   app.post<{ Params: { id: string }; Body: { name?: unknown } }>('/api/projects/:id/copy', async (req, reply) => {

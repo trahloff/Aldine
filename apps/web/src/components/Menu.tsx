@@ -5,6 +5,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { IconCheck, IconChevronRight } from './Icons';
+import ActionSheet from './ActionSheet';
 import { useExitGhost } from '../exitGhost';
 import { menuKey, placeMenu, typeahead, type MenuAnchor, type MenuPlacement } from '../util/menuModel';
 
@@ -40,6 +41,8 @@ export type MenuEntry =
   | MenuSubmenu
   | { kind: 'separator'; id?: string }
   | { kind: 'label'; id?: string; label: string }
+  /** Who or what the menu is about, above its items (an account's name and email). */
+  | { kind: 'header'; id?: string; title: string; detail?: string | null; testId?: string }
   /** A line of advice that does nothing when chosen ("Drop .zip files anywhere on this page"). */
   | { kind: 'hint'; id?: string; label: string; testId?: string };
 
@@ -54,7 +57,11 @@ const SUBMENU_OPEN_MS = 120;
 const SUBMENU_CLOSE_MS = 250;
 const TYPEAHEAD_MS = 500;
 
-const takesFocus = (e: MenuEntry) => e.kind !== 'separator' && e.kind !== 'label';
+/** A phone: a menu opened by touch comes up as a sheet from the bottom edge (ActionSheet). */
+const PHONE = '(max-width: 640px)';
+export const sheetFits = () => typeof window !== 'undefined' && !!window.matchMedia?.(PHONE).matches;
+
+const takesFocus = (e: MenuEntry) => e.kind !== 'separator' && e.kind !== 'label' && e.kind !== 'header';
 const labelOf = (e: MenuEntry) => ('label' in e ? e.label : '');
 
 interface Tree {
@@ -131,7 +138,15 @@ export function Menu({ items, anchor, label, labelledBy, id, testId, initialFocu
       if (inside(e.target) || (trigger && e.target instanceof Node && trigger.contains(e.target))) return;
       tree.closeAll('outside');
     };
-    const onScroll = (e: Event) => { if (!inside(e.target)) tree.closeAll('outside'); };
+    // A scroll the page makes on its own (scroll anchoring after content
+    // above changes height) leaves the trigger where it was: the menu stays.
+    const from = (trigger ?? returnFocus)?.getBoundingClientRect();
+    const onScroll = (e: Event) => {
+      if (inside(e.target)) return;
+      const now = (trigger ?? returnFocus)?.isConnected ? (trigger ?? returnFocus)!.getBoundingClientRect() : null;
+      if (from && now && Math.abs(now.top - from.top) < 1 && Math.abs(now.left - from.left) < 1) return;
+      tree.closeAll('outside');
+    };
     // An on-screen keyboard that comes or goes changes only the height; the
     // menu's anchor moves only when the width does.
     let width = window.innerWidth;
@@ -147,7 +162,7 @@ export function Menu({ items, anchor, label, labelledBy, id, testId, initialFocu
       window.removeEventListener('resize', onResize);
       window.removeEventListener('blur', onBlur);
     };
-  }, [tree, trigger]);
+  }, [tree, trigger, returnFocus]);
 
   return (
     <MenuLevel
@@ -191,7 +206,7 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
   const leave = useExitGhost();
   const rows = useRef<(HTMLElement | null)[]>([]);
   const [place, setPlace] = useState<MenuPlacement | null>(null);
-  const [sub, setSub] = useState<{ index: number; rect: DOMRect; focus: 'first' | 'none'; nonce: number } | null>(null);
+  const [sub, setSub] = useState<{ index: number; rect: DOMRect; outer: { left: number; right: number }; focus: 'first' | 'none'; nonce: number } | null>(null);
   const openTimer = useRef<{ index: number; id: number } | null>(null);
   const closeTimer = useRef<number | null>(null);
   const typed = useRef({ text: '', timer: 0 });
@@ -210,8 +225,8 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
     const el = ref.current;
     if (!el) return;
     tree.elements.add(el);
-    const r = el.getBoundingClientRect();
-    setPlace(placeMenu(anchor, r.width, r.height, document.documentElement.clientWidth || window.innerWidth, window.innerHeight));
+    // Layout size: the entrance animation scales the box while it is measured.
+    setPlace(placeMenu(anchor, el.offsetWidth, el.offsetHeight, document.documentElement.clientWidth || window.innerWidth, window.innerHeight));
     return () => { tree.elements.delete(el); };
     // Placed once, when it opens: a menu does not follow its anchor around.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,7 +244,9 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
     const row = rows.current[index];
     if (!row) return;
     cancelTimers();
-    setSub((s) => ({ index, rect: row.getBoundingClientRect(), focus, nonce: (s?.nonce ?? 0) + 1 }));
+    const box = ref.current;
+    const outer = box && place ? { left: place.left, right: place.left + box.offsetWidth } : (() => { const r = row.getBoundingClientRect(); return { left: r.left - 5, right: r.right + 5 }; })();
+    setSub((s) => ({ index, rect: row.getBoundingClientRect(), outer, focus, nonce: (s?.nonce ?? 0) + 1 }));
   };
   const closeSub = () => {
     const at = sub?.index;
@@ -241,7 +258,7 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
   const activate = (index: number, fromKeyboard: boolean) => {
     const e = items[index];
     if (e.kind === 'submenu') { if (!e.disabled) openSub(index, fromKeyboard ? 'first' : 'none'); return; }
-    if (e.kind === 'separator' || e.kind === 'label' || e.kind === 'hint' || e.disabled) return;
+    if (e.kind === 'separator' || e.kind === 'label' || e.kind === 'header' || e.kind === 'hint' || e.disabled) return;
     tree.select(e);
   };
 
@@ -310,6 +327,14 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
   const body = items.map((e, i) => {
     if (e.kind === 'separator') return <div key={e.id ?? `sep-${i}`} role="separator" className="menu__sep" />;
     if (e.kind === 'label') return <div key={e.id ?? `label-${i}`} role="presentation" className="menu__label">{e.label}</div>;
+    if (e.kind === 'header') {
+      return (
+        <div key={e.id ?? `header-${i}`} role="presentation" className="menu__header" data-testid={e.testId}>
+          <span className="menu__header-title">{e.title}</span>
+          {e.detail && <span className="menu__header-detail">{e.detail}</span>}
+        </div>
+      );
+    }
     const common = {
       id: rowId(i),
       ref: (el: HTMLElement | null) => { rows.current[i] = el; },
@@ -403,7 +428,7 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
           tree={tree}
           depth={depth + 1}
           items={subEntry.items}
-          anchor={{ type: 'rect', rect: sub.rect, placement: 'right-start' }}
+          anchor={{ type: 'rect', rect: sub.rect, outer: sub.outer, placement: 'right-start' }}
           initialFocus={sub.focus}
           focusNonce={sub.nonce}
           label={subEntry.label}
@@ -426,7 +451,7 @@ type Placement = 'bottom-start' | 'bottom-end';
  * it with nothing highlighted; the arrow keys then start at either end.
  */
 export function MenuButton({
-  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName,
+  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex, sheetTitle,
 }: {
   items: MenuEntry[] | (() => MenuEntry[]);
   /** The menu's name for assistive tech when the button's own text does not name it. */
@@ -440,14 +465,20 @@ export function MenuButton({
   ariaLabel?: string;
   disabled?: boolean;
   menuClassName?: string;
+  /** -1 keeps the button off the Tab order where a roving item already reaches its menu. */
+  tabIndex?: number;
+  /** Given, a tap on a phone opens the menu as a sheet with this title. */
+  sheetTitle?: string;
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   const btnId = useId();
   const menuId = useId();
-  const [open, setOpen] = useState<{ items: MenuEntry[]; rect: DOMRect; focus: 'first' | 'last' | 'menu'; keyboard: boolean } | null>(null);
+  const lastPointer = useRef('');
+  const [open, setOpen] = useState<{ items: MenuEntry[]; rect: DOMRect; focus: 'first' | 'last' | 'menu'; keyboard: boolean; sheet: boolean } | null>(null);
   const show = (focus: 'first' | 'last' | 'menu', keyboard: boolean) => {
     if (!btn.current) return;
-    setOpen({ items: typeof items === 'function' ? items() : items, rect: btn.current.getBoundingClientRect(), focus, keyboard });
+    const sheet = !keyboard && sheetTitle !== undefined && lastPointer.current === 'touch' && sheetFits();
+    setOpen({ items: typeof items === 'function' ? items() : items, rect: btn.current.getBoundingClientRect(), focus, keyboard, sheet });
   };
   return (
     <>
@@ -462,8 +493,10 @@ export function MenuButton({
         aria-label={ariaLabel}
         title={title}
         disabled={disabled}
+        tabIndex={tabIndex}
         data-testid={testId}
         // A click from Enter or Space has no pointer position (detail 0).
+        onPointerDown={(e) => { lastPointer.current = e.pointerType; }}
         onClick={(e) => (open ? setOpen(null) : show(e.detail === 0 ? 'first' : 'menu', e.detail === 0))}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -473,7 +506,8 @@ export function MenuButton({
       >
         {children}
       </button>
-      {open && (
+      {open?.sheet && <ActionSheet label={label} title={sheetTitle} items={open.items} testId={menuTestId} onClose={() => setOpen(null)} />}
+      {open && !open.sheet && (
         <Menu
           items={open.items}
           anchor={{ type: 'rect', rect: open.rect, placement }}
@@ -496,9 +530,9 @@ export function MenuButton({
 /** How long after a long press is released its click may still arrive. */
 const RELEASE_CLICK_MS = 350;
 
-/** Swallows the click that ends a long press, which would otherwise activate what was pressed. */
-function swallowClickOnRelease(): void {
-  const stop = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
+/** Swallows the click that ends a long press on `pressed`, which would otherwise activate it. A click elsewhere (the menu that opened) goes through. */
+function swallowClickOnRelease(pressed: Element): void {
+  const stop = (e: Event) => { if (e.target instanceof Node && pressed.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } };
   const release = () => {
     window.removeEventListener('pointerup', release, true);
     window.removeEventListener('pointercancel', release, true);
@@ -520,14 +554,15 @@ function besideElement(el: HTMLElement): MenuAnchor {
  * `bind(() => items)` onto the element and render `element`.
  */
 export function useContextMenu({ label, testId, className }: { label: string; testId?: string; className?: string }) {
-  const [state, setState] = useState<{ items: MenuEntry[]; anchor: MenuAnchor; trigger: HTMLElement; keyboard: boolean } | null>(null);
+  const [state, setState] = useState<{ items: MenuEntry[]; anchor: MenuAnchor; trigger: HTMLElement; keyboard: boolean; sheet?: string | null } | null>(null);
   const press = useRef<{ timer: number; x: number; y: number; fired: boolean } | null>(null);
 
   const endPress = () => {
     if (press.current) clearTimeout(press.current.timer);
   };
 
-  const bind = useCallback((getItems: () => MenuEntry[]) => ({
+  /** `sheetTitle`: a long press on a phone opens the menu as a sheet with this title. */
+  const bind = useCallback((getItems: () => MenuEntry[], sheetTitle?: string) => ({
     'data-context-menu': '',
     onContextMenu(e: ReactMouseEvent<HTMLElement>) {
       e.preventDefault();
@@ -537,8 +572,8 @@ export function useContextMenu({ label, testId, className }: { label: string; te
         // A touch browser's own long press (Android): the same as ours.
         endPress();
         p.fired = true;
-        swallowClickOnRelease();
-        setState({ items: getItems(), anchor: besideElement(e.currentTarget), trigger: e.currentTarget, keyboard: false });
+        swallowClickOnRelease(e.currentTarget);
+        setState({ items: getItems(), anchor: besideElement(e.currentTarget), trigger: e.currentTarget, keyboard: false, sheet: sheetTitle !== undefined && sheetFits() ? sheetTitle : null });
         return;
       }
       setState({ items: getItems(), anchor: { type: 'point', x: e.clientX, y: e.clientY }, trigger: e.currentTarget, keyboard: false });
@@ -558,8 +593,8 @@ export function useContextMenu({ label, testId, className }: { label: string; te
       const p = { x, y, fired: false, timer: 0 };
       p.timer = window.setTimeout(() => {
         p.fired = true;
-        swallowClickOnRelease();
-        setState({ items: getItems(), anchor: besideElement(el), trigger: el, keyboard: false });
+        swallowClickOnRelease(el);
+        setState({ items: getItems(), anchor: besideElement(el), trigger: el, keyboard: false, sheet: sheetTitle !== undefined && sheetFits() ? sheetTitle : null });
       }, LONG_PRESS_MS);
       press.current = p;
     },
@@ -581,7 +616,9 @@ export function useContextMenu({ label, testId, className }: { label: string; te
 
   useEffect(() => () => endPress(), []);
 
-  const element = state ? (
+  const element = state?.sheet != null ? (
+    <ActionSheet label={label} title={state.sheet} items={state.items} testId={testId} onClose={() => setState(null)} />
+  ) : state ? (
     <Menu
       items={state.items}
       anchor={state.anchor}
