@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
 
 /**
  * OAuth-minted (family set) and revoked before `cutoff` (ms epoch). An
@@ -20,6 +20,7 @@ function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
  * deployments keep working:
  *   <metaRoot>/users.json  sessions.json  resets.json  usage.json
  *   <metaRoot>/oauth_clients.json  refresh_tokens.json  visits.json
+ *   <metaRoot>/opens.json  activity.json
  *   <metaRoot>/meta/<id>.json          (project metadata)
  *   <metaRoot>/comments/<id>.json      (review comments)
  * Writes are atomic (temp + rename). Node's synchronous fs calls don't
@@ -35,6 +36,8 @@ export class JsonStore implements DataStore {
   private oauthClientsPath: string;
   private refreshPath: string;
   private visitsPath: string;
+  private opensPath: string;
+  private activityPath: string;
   private metaDir: string;
   private commentsDir: string;
   private flat: Set<string>;
@@ -49,9 +52,11 @@ export class JsonStore implements DataStore {
     this.oauthClientsPath = path.join(metaRoot, 'oauth_clients.json');
     this.refreshPath = path.join(metaRoot, 'refresh_tokens.json');
     this.visitsPath = path.join(metaRoot, 'visits.json');
+    this.opensPath = path.join(metaRoot, 'opens.json');
+    this.activityPath = path.join(metaRoot, 'activity.json');
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
-    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath]);
+    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath]);
   }
 
   async init(): Promise<void> {
@@ -287,6 +292,94 @@ export class JsonStore implements DataStore {
       for (const k of Object.keys(rows)) if (k.startsWith(prefix)) { delete rows[k]; changed = true; }
     }
     if (changed) this.write(this.visitsPath, m);
+  }
+
+  // ---- project list: opens ----
+  // Keyed `{ [userId]: { [projectId]: row } }`.
+  private opens() { return this.read<Record<string, Record<string, { at: string | null; branch: string | null; hidden: boolean }>>>(this.opensPath, {}); }
+  private openRow(userId: string, projectId: string, r: { at: string | null; branch: string | null; hidden: boolean }): ProjectOpen {
+    return { userId, projectId, at: r.at ?? null, branch: r.branch ?? null, hidden: !!r.hidden };
+  }
+  async listProjectOpens(userId: string): Promise<ProjectOpen[]> {
+    return Object.entries(this.opens()[userId] ?? {}).map(([projectId, r]) => this.openRow(userId, projectId, r));
+  }
+  async getProjectOpen(userId: string, projectId: string): Promise<ProjectOpen | null> {
+    if (!PROJECT_ID_RE.test(projectId)) return null;
+    const r = this.opens()[userId]?.[projectId];
+    return r ? this.openRow(userId, projectId, r) : null;
+  }
+  async setProjectOpen(o: ProjectOpen): Promise<void> {
+    if (!PROJECT_ID_RE.test(o.projectId)) throw new Error('bad project id');
+    const m = this.opens();
+    (m[o.userId] ||= {})[o.projectId] = { at: o.at, branch: o.branch, hidden: o.hidden };
+    this.write(this.opensPath, m);
+  }
+  async deleteProjectOpen(userId: string, projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.opens();
+    if (!m[userId]?.[projectId]) return;
+    delete m[userId][projectId];
+    this.write(this.opensPath, m);
+  }
+  async resetProjectOpenBranch(projectId: string, branch: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.opens();
+    let changed = false;
+    for (const rows of Object.values(m)) {
+      const r = rows[projectId];
+      if (r && r.branch === branch) { r.branch = 'main'; changed = true; }
+    }
+    if (changed) this.write(this.opensPath, m);
+  }
+  async deleteProjectOpens(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.opens();
+    let changed = false;
+    for (const rows of Object.values(m)) if (rows[projectId]) { delete rows[projectId]; changed = true; }
+    if (changed) this.write(this.opensPath, m);
+  }
+
+  // ---- project list: activity ----
+  // Keyed `{ [projectId]: { lastEdit, compile: { [branch]: mark } } }`.
+  private activity() { return this.read<Record<string, { lastEdit: LastEdit | null; compile: Record<string, CompileMark> }>>(this.activityPath, {}); }
+  async listProjectActivity(): Promise<ProjectActivity[]> {
+    return Object.entries(this.activity()).map(([projectId, r]) => this.clone({ projectId, lastEdit: r.lastEdit ?? null, compile: r.compile ?? {} }));
+  }
+  async setLastEdit(projectId: string, lastEdit: LastEdit): Promise<void> {
+    return this.setLastEdits([{ projectId, lastEdit }]);
+  }
+  // One rewrite of activity.json for the whole batch: the file holds every
+  // project, so a write per project would be quadratic in the project count.
+  async setLastEdits(entries: Array<{ projectId: string; lastEdit: LastEdit }>): Promise<void> {
+    for (const { projectId } of entries) if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.activity();
+    let changed = false;
+    for (const { projectId, lastEdit } of entries) {
+      const row = (m[projectId] ||= { lastEdit: null, compile: {} });
+      if (row.lastEdit && row.lastEdit.at >= lastEdit.at) continue;
+      row.lastEdit = this.clone(lastEdit);
+      changed = true;
+    }
+    if (changed) this.write(this.activityPath, m);
+  }
+  async setCompileMark(projectId: string, branch: string, mark: CompileMark | null): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.activity();
+    if (!mark) {
+      if (!m[projectId]?.compile?.[branch]) return;
+      delete m[projectId].compile[branch];
+    } else {
+      const row = (m[projectId] ||= { lastEdit: null, compile: {} });
+      (row.compile ||= {})[branch] = this.clone(mark);
+    }
+    this.write(this.activityPath, m);
+  }
+  async deleteProjectActivity(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.activity();
+    if (!m[projectId]) return;
+    delete m[projectId];
+    this.write(this.activityPath, m);
   }
 
   // ---- connections ----

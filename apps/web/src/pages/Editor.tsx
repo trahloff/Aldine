@@ -227,6 +227,9 @@ export default function Editor() {
     }
   }, [id]);
 
+  // The project list's "opened" and, for a share-link visitor, its listing.
+  useEffect(() => { api.markOpened(id, branch).catch(() => { /* the list is a convenience */ }); }, [id, branch]);
+
   // Whole-document word count (the include graph from the root file). The
   // status bar swaps the active file's server count for the live editor count,
   // so the total stays current while typing without refetching.

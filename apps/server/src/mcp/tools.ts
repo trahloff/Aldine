@@ -22,6 +22,7 @@ import { bibIndex, labelIndex, wordCount } from '../indexes.js';
 import { adoptRootIfUnset } from '../root.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from '../templates.js';
 import { trashProject, restorableUntil, TRASH_DAYS } from '../trash.js';
+import { noteEdit, AGENT_EDITOR } from '../activity.js';
 import {
   McpDenied, projectNotFound, resolveProject, assertWritableProject, compileKey, assertFileTarget, isDirectoryPath, visiblePath, diskSpelling, type McpIdentity,
 } from './guards.js';
@@ -1021,7 +1022,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         return toolError(err);
       }
       if (!added) return fail(`No reference found for "${query}" — pass a DOI (10.…), arXiv id or OpenAlex id; an id in the right shape that is still not found is not registered upstream, so check it with the user rather than retrying`);
-      if (!added.duplicate) signalAgentWrite(meta.id, branch);
+      if (!added.duplicate) { signalAgentWrite(meta.id, branch); noteEdit(meta.id, branch, AGENT_EDITOR); }
       const loaded = bibLoadedBySource(meta.id, branch, meta.rootFile, added.bibFile);
       return ok({
         ...added,
@@ -1103,6 +1104,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       }
       // The mark trash_project keys on: only what the agent made is within its reach.
       const meta = await store.createProject(name, seed, identity.user?.id, { createdVia: 'agent' });
+      noteEdit(meta.id, 'main', AGENT_EDITOR);
       // A venue kit that could not be downloaded still creates the project
       // from a skeleton; the model should say so rather than the call failing.
       return ok({

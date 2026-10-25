@@ -412,7 +412,8 @@ compose files hand a variable to a container only when they name it:
 | `SENTRY_RELEASE` | Build an error belongs to. Defaults to `ALDINE_VERSION`, then the package version |
 | `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
-| `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST` | Rate-limit tuning (sane defaults) |
+| `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
+| `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
 | `ALDINE_SEARCH_MS` | Time a project search or replace may scan before it is stopped and refused (default 2000 ms). Each scan runs in a worker thread of its own; one per person and four per server at a time |
 | `ALDINE_COMPILE_PER_MIN` | Typesets per minute per client (default: no limit). Meant for a public demo under launch traffic |

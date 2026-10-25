@@ -11,6 +11,7 @@ import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
+import { noteEdit, AGENT_EDITOR, editorOf } from './activity.js';
 
 /**
  * Document naming: `${projectId}/${branch}/${filePath}`
@@ -120,10 +121,12 @@ export async function commitAgentWrite(projectId: string, branch: string, files:
   try {
     const res = await commitAgentWriteHeld(projectId, branch, files, message);
     if (!res.committed) return { hash: null, unchanged: true };
+    noteEdit(projectId, branch, AGENT_EDITOR);
     notifyCommitted(projectId, branch);
     return { hash: res.hash ?? null, unchanged: false };
   } catch (err) {
     console.warn(`[collab] commit of ${files.map((f) => f.path).join(', ')} failed, left for the autosave: ${(err as Error).message}`);
+    noteEdit(projectId, branch, AGENT_EDITOR);
     scheduleCommit(projectId, branch, message, AGENT_COMMIT_AUTHOR, files.map((f) => f.path));
     return { hash: null, unchanged: false };
   }
@@ -330,8 +333,9 @@ const authHook = AUTH_ENABLED ? {
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
     if (!canAccess(meta, user)) throw new Error('Access denied');
     // Becomes connection.context: the only per-socket identity we keep, so
-    // onlineUserIds can count people rather than sockets.
-    return { userId: user.id };
+    // onlineUserIds can count people rather than sockets, and the project
+    // list can name who typed last.
+    return { userId: user.id, userName: user.name || user.email || null };
   },
 } : {};
 
@@ -446,6 +450,17 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   },
   async onStoreDocument({ documentName, document }) {
     writeDocToDisk(documentName, document);
+  },
+  // Who sent the last update, the one thing about an edit git cannot tell
+  // (autosave commits are anonymous). Only updates a client sent: a change
+  // the server made itself (a REST or tool write, a git rewrite, the agent)
+  // is recorded by whatever made it, and one relayed from a peer node by
+  // that node.
+  async onChange({ documentName, context, transactionOrigin }: { documentName: string; context?: { userId?: string; userName?: string | null }; transactionOrigin?: unknown }) {
+    if (!transactionOrigin || typeof transactionOrigin !== 'object') return;
+    const parsed = parseDocName(documentName);
+    if (!parsed || isSignalDoc(parsed.filePath)) return;
+    noteEdit(parsed.projectId, parsed.branch, context?.userId ? editorOf({ id: context.userId, name: context.userName }) : null);
   },
   // Reclaim the change-tracking entry when Hocuspocus unloads an idle doc, so
   // the map is bounded by live docs and a reopened doc never trusts a stale hash.

@@ -386,6 +386,19 @@ async function verify() {
     const r = await typeset(id, b, owner);
     ok(`typeset ${b}: ${r.bytes}-byte PDF in ${r.durationMs} ms`);
   }
+
+  // The project list on this data: why each person sees the project, a last
+  // edit (recorded, or read from the history in the background after an
+  // upgrade) and the typeset of main just made.
+  let row;
+  for (const end = Date.now() + 60_000; ; await sleep(500)) {
+    row = (await expect200('GET', '/api/projects', { as: owner }, "owner's project list")).find((x) => x.id === id);
+    if (row?.lastEdit || Date.now() > end) break;
+  }
+  check(row?.access === 'owner' && listed.access === 'member', 'the list rows do not say why each person sees the project', { owner: row?.access, collaborator: listed.access });
+  check(row.lastEdit && !Number.isNaN(Date.parse(row.lastEdit.at)), 'the project has no last edit on the list', row);
+  check(row.compile?.branch === 'main' && ['ok', 'error'].includes(row.compile.status), 'the list does not show the typeset of main', row.compile);
+  ok(`project list row: last edit ${row.lastEdit.at} on ${row.lastEdit.branch}, typeset ${row.compile.status}`);
   console.log(`${tag} all checks passed on data seeded at ${s.seededAt}`);
 }
 

@@ -72,7 +72,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
             </label>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
               <input type="radio" name="share-mode" checked={mode === 'link'} onChange={() => setMode('link')} data-testid="share-link" />
-              <span><strong>Anyone signed in with the link</strong> can edit — it won’t appear in their project list</span>
+              <span><strong>Anyone signed in with the link</strong> can edit — once they open it, it stays in their project list until they remove it</span>
             </label>
             {mode === 'link' && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>

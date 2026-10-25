@@ -1,5 +1,5 @@
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
 
 /**
  * Postgres DataStore — the horizontally-scalable backend. Multiple app nodes
@@ -111,6 +111,16 @@ export class PgStore implements DataStore {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subject text;
       CREATE UNIQUE INDEX IF NOT EXISTS users_subject_idx ON users(subject);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at text;
+      -- The project list: each person's opens, each project's last edit and typesets.
+      CREATE TABLE IF NOT EXISTS project_opens (
+        user_id text NOT NULL, project_id text NOT NULL, opened_at text, branch text,
+        hidden boolean NOT NULL DEFAULT false,
+        PRIMARY KEY (user_id, project_id)
+      );
+      CREATE INDEX IF NOT EXISTS project_opens_project_idx ON project_opens(project_id);
+      CREATE TABLE IF NOT EXISTS project_activity (
+        project_id text PRIMARY KEY, last_edit jsonb, compile jsonb NOT NULL DEFAULT '{}'::jsonb
+      );
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
@@ -377,6 +387,79 @@ export class PgStore implements DataStore {
   async deleteProjectVisits(projectId: string): Promise<void> {
     if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
     await this.pool.query(`DELETE FROM project_visits WHERE project_id=$1`, [projectId]);
+  }
+
+  // ---- project list: opens ----
+  // Same id discipline as project meta: a read treats a malformed id as
+  // absent, a write or delete refuses it.
+  private rowToOpen(r: any): ProjectOpen {
+    return { userId: r.user_id, projectId: r.project_id, at: r.opened_at ?? null, branch: r.branch ?? null, hidden: !!r.hidden };
+  }
+  async listProjectOpens(userId: string): Promise<ProjectOpen[]> {
+    const { rows } = await this.pool.query(`SELECT * FROM project_opens WHERE user_id=$1`, [userId]);
+    return rows.map((r) => this.rowToOpen(r));
+  }
+  async getProjectOpen(userId: string, projectId: string): Promise<ProjectOpen | null> {
+    if (!PROJECT_ID_RE.test(projectId)) return null;
+    const { rows } = await this.pool.query(`SELECT * FROM project_opens WHERE user_id=$1 AND project_id=$2`, [userId, projectId]);
+    return rows[0] ? this.rowToOpen(rows[0]) : null;
+  }
+  async setProjectOpen(o: ProjectOpen): Promise<void> {
+    if (!PROJECT_ID_RE.test(o.projectId)) throw new Error('bad project id');
+    await this.pool.query(
+      `INSERT INTO project_opens(user_id,project_id,opened_at,branch,hidden) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(user_id,project_id) DO UPDATE SET opened_at=EXCLUDED.opened_at, branch=EXCLUDED.branch, hidden=EXCLUDED.hidden`,
+      [o.userId, o.projectId, o.at, o.branch, o.hidden],
+    );
+  }
+  async deleteProjectOpen(userId: string, projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`DELETE FROM project_opens WHERE user_id=$1 AND project_id=$2`, [userId, projectId]);
+  }
+  async resetProjectOpenBranch(projectId: string, branch: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`UPDATE project_opens SET branch='main' WHERE project_id=$1 AND branch=$2`, [projectId, branch]);
+  }
+  async deleteProjectOpens(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`DELETE FROM project_opens WHERE project_id=$1`, [projectId]);
+  }
+
+  // ---- project list: activity ----
+  async listProjectActivity(): Promise<ProjectActivity[]> {
+    const { rows } = await this.pool.query(`SELECT project_id, last_edit, compile FROM project_activity`);
+    return rows.map((r) => ({ projectId: r.project_id, lastEdit: (r.last_edit as LastEdit | null) ?? null, compile: (r.compile as Record<string, CompileMark>) ?? {} }));
+  }
+  async setLastEdit(projectId: string, lastEdit: LastEdit): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(
+      `INSERT INTO project_activity(project_id,last_edit) VALUES($1,$2::jsonb)
+       ON CONFLICT(project_id) DO UPDATE SET last_edit=EXCLUDED.last_edit
+       WHERE project_activity.last_edit IS NULL OR project_activity.last_edit->>'at' < EXCLUDED.last_edit->>'at'`,
+      [projectId, jsonb(lastEdit)],
+    );
+  }
+  async setLastEdits(entries: Array<{ projectId: string; lastEdit: LastEdit }>): Promise<void> {
+    for (const { projectId } of entries) if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    for (const { projectId, lastEdit } of entries) await this.setLastEdit(projectId, lastEdit);
+  }
+  async setCompileMark(projectId: string, branch: string, mark: CompileMark | null): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    if (!mark) {
+      await this.pool.query(`UPDATE project_activity SET compile = compile - $2::text WHERE project_id=$1`, [projectId, branch]);
+      return;
+    }
+    // One key merged in place: two branches typesetting at once must not
+    // overwrite each other's mark.
+    await this.pool.query(
+      `INSERT INTO project_activity(project_id,compile) VALUES($1, jsonb_build_object($2::text, $3::jsonb))
+       ON CONFLICT(project_id) DO UPDATE SET compile = project_activity.compile || EXCLUDED.compile`,
+      [projectId, branch, jsonb(mark)],
+    );
+  }
+  async deleteProjectActivity(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`DELETE FROM project_activity WHERE project_id=$1`, [projectId]);
   }
 
   // ---- connections ----

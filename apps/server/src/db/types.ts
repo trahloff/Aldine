@@ -174,6 +174,37 @@ export interface ProjectVisit {
 }
 
 /**
+ * One person's own relation to a project on their project list: when they
+ * last opened it and on which branch (both null when they never did), and
+ * whether they took it off their list. A link visitor's project is listed
+ * because this row exists; an invited member's is listed unless `hidden`.
+ */
+export interface ProjectOpen {
+  userId: string;
+  projectId: string;
+  at: string | null;
+  branch: string | null;
+  hidden: boolean;
+}
+
+/** The last change to a project's files, on any branch. `byId` is the
+ *  account; agent writes carry the agent's name with a null id; both are null
+ *  when nobody is known (read from git history, or a write without accounts). */
+export interface LastEdit { at: string; byId: string | null; byName: string | null; branch: string }
+
+/** The last finished typeset of one branch. `errors` counts error rows only. */
+export interface CompileMark { status: 'ok' | 'error'; errors: number; at: string }
+
+/** What the project list shows about a project's work, kept apart from its
+ *  metadata so a settings write holding an older copy of the metadata can
+ *  never take it back. `compile` is keyed by branch. */
+export interface ProjectActivity {
+  projectId: string;
+  lastEdit: LastEdit | null;
+  compile: Record<string, CompileMark>;
+}
+
+/**
  * Every method is async so a network-backed implementation (Postgres) is a
  * drop-in for the file-backed one. Implementations must be safe for concurrent
  * callers (the JSON backend writes atomically; Postgres is transactional).
@@ -259,6 +290,28 @@ export interface DataStore {
   setProjectVisit(v: ProjectVisit): Promise<void>;
   /** Purge a project's marks; called when the project itself is deleted. */
   deleteProjectVisits(projectId: string): Promise<void>;
+
+  // project list: each person's opens and removals
+  listProjectOpens(userId: string): Promise<ProjectOpen[]>;
+  getProjectOpen(userId: string, projectId: string): Promise<ProjectOpen | null>;
+  setProjectOpen(o: ProjectOpen): Promise<void>;
+  deleteProjectOpen(userId: string, projectId: string): Promise<void>;
+  /** Point every open of `branch` at main; called when the branch is deleted. */
+  resetProjectOpenBranch(projectId: string, branch: string): Promise<void>;
+  /** Purge a project's opens; called when the project itself is deleted. */
+  deleteProjectOpens(projectId: string): Promise<void>;
+
+  // project list: last edit and last typeset per branch
+  listProjectActivity(): Promise<ProjectActivity[]>;
+  /** Keeps whichever of the stored and the given edit is newer (by `at`), so
+   *  a late write of an older value (a history backfill) never wins. */
+  setLastEdit(projectId: string, lastEdit: LastEdit): Promise<void>;
+  /** setLastEdit for many projects at once (the history backfill), same rule per row. */
+  setLastEdits(entries: Array<{ projectId: string; lastEdit: LastEdit }>): Promise<void>;
+  /** Record a branch's last typeset; null forgets it (the branch was deleted). */
+  setCompileMark(projectId: string, branch: string, mark: CompileMark | null): Promise<void>;
+  /** Purge; called when the project itself is deleted. */
+  deleteProjectActivity(projectId: string): Promise<void>;
 
   // compile-time usage metering: seconds consumed per (user, month YYYY-MM)
   getUsageSeconds(userId: string, month: string): Promise<number>;

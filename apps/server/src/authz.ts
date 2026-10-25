@@ -3,11 +3,9 @@ import { ProjectMeta } from './store.js';
 
 /**
  * Is this user a member of the project — its owner or someone the owner
- * invited by email or ORCID iD? Membership is the basis for both listing and for anything
+ * invited by email or ORCID iD? Membership is the basis for listing and for anything
  * that reaches the owner's linked accounts (Zotero, GitHub remote): a link
  * grants entry to the document, it does not make the visitor part of the team.
- * Also the listing predicate — a link-shared project opens by URL but must not
- * surface on every signed-in user's home screen.
  */
 export function isMember(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (!AUTH_ENABLED) return true;
@@ -18,7 +16,8 @@ export function isMember(meta: ProjectMeta, user: PublicUser | null): boolean {
   return !!meta.share?.collaborators?.some((c) => (email && c.toLowerCase() === email) || (user.orcid && c === user.orcid));
 }
 
-/** Should this project appear in the user's project list? Members only. */
+/** Members-only listing: what the Agent API's list_projects offers. A
+ *  link-shared project must not surface for every signed-in user. */
 export const isListed = isMember;
 
 /**
@@ -29,6 +28,21 @@ export const isListed = isMember;
 export function canAccess(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (isMember(meta, user)) return true;
   return !!user && meta.share?.mode === 'link';
+}
+
+export type ListAccess = 'owner' | 'member' | 'link';
+
+/**
+ * Why the project is on this user's project list, or null when it is not.
+ * `open` is the user's own row (ProjectOpen): a link visitor's project is
+ * listed once they opened it, for as long as the link still lets them in, and
+ * a member's unless they removed it. The owner's always is.
+ */
+export function listingAccess(meta: ProjectMeta, user: PublicUser | null, open: { hidden: boolean } | null): ListAccess | null {
+  if (isOwner(meta, user)) return 'owner';
+  if (open?.hidden) return null;
+  if (isMember(meta, user)) return 'member';
+  return open && canAccess(meta, user) ? 'link' : null;
 }
 
 /** Only the owner may change sharing / delete. Ownerless legacy projects

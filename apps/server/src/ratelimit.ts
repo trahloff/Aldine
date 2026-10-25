@@ -130,6 +130,8 @@ export const oauthClientLimiter = new RateLimiter('oauth-client', n(process.env.
 export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_BURST, 60), 2);
 /** Replace (one or all): 30 burst, 1/2s — every replace is a commit. */
 export const replaceLimiter = new RateLimiter('replace', n(process.env.RL_REPLACE_BURST, 30), 0.5);
+/** Duplicate: 10 burst, 1/30s — each copy writes the whole project to disk. */
+export const copyLimiter = new RateLimiter('copy', n(process.env.RL_COPY_BURST, 10), 1 / 30);
 /** Every search and replace scans in a worker of its own: one in flight per
  *  client, and at most four per process (key 'all'), so slow scans cannot
  *  take every core. */
