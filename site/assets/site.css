@@ -89,18 +89,12 @@ header {
     height: 52px;
 }
 .brand {
-    font-family: var(--sans);
-    font-weight: 700;
-    font-size: 1.0625rem;
-    letter-spacing: -0.02em;
+    display: inline-flex;
     color: var(--text);
 }
-.brand:hover {
-    text-decoration: none;
-}
-.brand em {
-    font-style: normal;
-    color: var(--accent);
+.brand-mark {
+    display: block;
+    fill: currentColor;
 }
 nav {
     display: flex;

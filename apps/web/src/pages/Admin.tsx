@@ -81,7 +81,7 @@ export default function Admin() {
       <div className="home__inner">
         <header className="home__bar">
           <div>
-            <Link className="home__brand" to="/" aria-label="Aldine, back to projects"><Wordmark /></Link>
+            <Link className="home__brand" to="/" aria-label="Aldine, back to projects"><Wordmark height={18} /></Link>
             <h1 className="home__tag admin__title">Server admin</h1>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

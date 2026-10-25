@@ -155,7 +155,7 @@ export default function HomeToolbar({ compact, scrolled, titleInBar, start, acco
   return (
     <header className={`home-bar${scrolled ? ' is-scrolled' : ''}${compact ? ' home-bar--compact' : ''}`} aria-label="Projects toolbar" data-testid="home-bar">
       <div className="home-bar__inner">
-        <Link to="/" className="home-bar__brand"><Wordmark height={compact ? 19 : 20} /></Link>
+        <Link to="/" className="home-bar__brand"><Wordmark height={compact ? 17 : 18} /></Link>
         {compact && <span className={`home-bar__title${titleInBar ? ' is-shown' : ''}`} aria-hidden="true">Projects</span>}
         {!compact && search}
         <span className="home-bar__spacer" />

@@ -70,7 +70,7 @@ export default function OAuthConsent() {
     return (
       <main className="login">
         <div className="login__card consent" data-testid="oauth-error">
-          <h1 className="home__brand"><Wordmark height={24} /></h1>
+          <h1 className="home__brand"><Wordmark height={21} /></h1>
           <p className="home__tag" style={{ margin: '8px 0 14px' }}>This connection request can’t continue.</p>
           <p className="consent__error" title={client.detail}>{client.message}</p>
           <p className="consent__hint">Nothing was granted. Go back to the app that sent you here and start the connection again.</p>
@@ -153,7 +153,7 @@ function ConsentStep({ client, params, onSessionEnded }: { client: OAuthClientIn
   return (
     <main className="login">
       <div className="login__card consent" data-testid="oauth-consent">
-        <h1 className="home__brand"><Wordmark height={24} /></h1>
+        <h1 className="home__brand"><Wordmark height={21} /></h1>
         <p className="home__tag" style={{ margin: '8px 0 18px' }}>Connect an app to your projects.</p>
 
         <h2 className="consent__title">
