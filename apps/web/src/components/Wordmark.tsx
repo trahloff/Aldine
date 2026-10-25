@@ -1,6 +1,6 @@
 import { SVGProps } from 'react';
 
-/** Height to width of the drawing below. */
+/** Width to height of the drawing below. */
 const RATIO = 3128 / 760;
 
 /**

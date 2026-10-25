@@ -108,6 +108,15 @@ test.describe('menu', () => {
     await page.getByTestId('theme-toggle').click();
     const menu = page.getByRole('menu', { name: 'Appearance' });
     await expect(menu).toBeFocused();
+    // Space with no row focused is swallowed: it must not scroll the page behind
+    await page.evaluate(() => {
+      window.addEventListener('keydown', (e) => {
+        if (e.key === ' ') setTimeout(() => { (window as unknown as { spacePrevented: boolean }).spacePrevented = e.defaultPrevented; });
+      }, { capture: true, once: true });
+    });
+    await page.keyboard.press(' ');
+    await expect.poll(() => page.evaluate(() => (window as unknown as { spacePrevented?: boolean }).spacePrevented)).toBe(true);
+    await expect(menu).toBeVisible();
     await page.keyboard.press('ArrowDown');
     await expect(menu.getByRole('menuitemradio', { name: 'Match system' })).toBeFocused();
     await page.mouse.click(5, 400);
@@ -169,9 +178,19 @@ test.describe('command palette', () => {
       expect(active).toBeTruthy();
       await expect(page.locator(`[id="${active}"]`)).toHaveAttribute('aria-selected', 'true');
 
+      // a long project list leaves room for the commands below it
+      await expect(page.getByTestId('palette-item-new-project')).toBeVisible();
+      expect(await listbox.getByRole('group', { name: 'Projects' }).getByRole('option').count()).toBeLessThanOrEqual(8);
+      await expect(input).toHaveAttribute('aria-expanded', 'true');
+
       await page.keyboard.type('op');
       await expect(page.getByTestId(`palette-item-open-${a}`)).toBeVisible();
       await expect(page.getByTestId(`palette-item-open-${b}`)).toHaveCount(0);
+
+      await page.keyboard.type('zzqx');
+      await expect(input).toHaveAttribute('aria-expanded', 'false');
+      await page.keyboard.press('ControlOrMeta+a');
+      await page.keyboard.press('Backspace');
 
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('command-palette')).toHaveCount(0);
@@ -251,5 +270,29 @@ test.describe('dialogs and notifications', () => {
         await expect(page.getByTestId('file-menu-rename')).toHaveCSS('min-height', '44px');
       } finally { await cleanup(request, id); }
     });
+  });
+});
+
+test.describe('app shell', () => {
+  test('the project list loads without the editor, and a failed download offers Reload', async ({ page, request }) => {
+    const id = await createProject(request, 'Shell Paper');
+    try {
+      const blocked = /\/assets\/Editor-[^/]*\.js$/;
+      await page.route(blocked, (route) => route.abort());
+      await page.goto('/');
+      await expect(page.getByTestId('new-project')).toBeVisible();
+      await expect(page).toHaveTitle('Projects – Aldine');
+
+      await page.goto(`/p/${id}`);
+      const error = page.getByTestId('app-error');
+      await expect(error).toBeVisible();
+      await expect(error).toHaveAttribute('role', 'alert');
+      await page.unroute(blocked);
+      await page.getByTestId('app-error-reload').click();
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await expect(page).toHaveTitle('Shell Paper – Aldine');
+      await expect(page.getByRole('main', { name: 'Editor' })).toBeVisible();
+      await expect(page.getByRole('banner', { name: 'Project toolbar' })).toBeVisible();
+    } finally { await cleanup(request, id); }
   });
 });

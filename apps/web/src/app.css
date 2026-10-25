@@ -545,7 +545,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 
 /* the word count follows the typeset status, a dot between when both show */
 .pdf-status:not(:empty) + .pdf-words::before { content: '·'; color: var(--text-3); }
-.user-chip__name { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--text-2); font: inherit; font-size: var(--text-m); font-weight: 600; }
+.user-chip__name { background: transparent; border: 0; padding: 2px 6px; margin: -2px -6px; border-radius: var(--radius-s); cursor: pointer; color: var(--text-2); font: inherit; font-size: var(--text-m); font-weight: 600; }
 @media (hover: hover) and (pointer: fine) { .user-chip__name:hover { color: var(--accent); text-decoration: underline; } }
 .login__oauth { width: 100%; justify-content: center; gap: 8px; height: 34px; margin-bottom: 10px; }
 .login__or { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--text-xs); margin: 6px 0 12px; }

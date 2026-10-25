@@ -64,4 +64,19 @@ describe('palette sections', () => {
     const s = rankCommands(many, '', [], 30);
     expect(s.reduce((n, x) => n + x.items.length, 0)).toBe(30);
   });
+
+  it('keeps every section in view when one section is long', () => {
+    const projects = Array.from({ length: 70 }, (_, i) => cmd('Projects', `Paper ${i}`));
+    const s = rankCommands([...projects, ...commands.filter((c) => c.group !== 'Projects')], '', ['Projects', 'New', 'More']);
+    expect(s.map((x) => x.group)).toEqual(['Projects', 'New', 'More']);
+    expect(s.reduce((n, x) => n + x.items.length, 0)).toBe(60);
+    expect(s[1].items.map((c) => c.title)).toEqual(['New project…', 'Import a ZIP…']);
+  });
+
+  it('shows a few rows of a section before anything is typed, all of them once something is', () => {
+    const projects = Array.from({ length: 70 }, (_, i) => cmd('Projects', `Paper ${i}`));
+    const all = [...projects, ...commands];
+    expect(rankCommands(all, '', ['Projects', 'New', 'More'], 60, 8)[0].items).toHaveLength(8);
+    expect(rankCommands(all, 'paper', ['Projects', 'New', 'More'], 60, 8)[0].items).toHaveLength(60);
+  });
 });

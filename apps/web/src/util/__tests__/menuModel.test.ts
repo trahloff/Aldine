@@ -22,10 +22,11 @@ describe('menu keys', () => {
     expect(menuKey(key('PageDown'), state())).toEqual({ type: 'focus', index: 3 });
   });
 
-  it('activates with Enter and Space, and does nothing with no row focused', () => {
+  it('activates with Enter and Space, and swallows them with no row focused', () => {
     expect(menuKey(key('Enter'), state())).toEqual({ type: 'activate' });
     expect(menuKey(key(' '), state())).toEqual({ type: 'activate' });
-    expect(menuKey(key('Enter'), state({ index: -1 }))).toBeNull();
+    expect(menuKey(key('Enter'), state({ index: -1 }))).toEqual({ type: 'none' });
+    expect(menuKey(key(' '), state({ index: -1 }))).toEqual({ type: 'none' });
   });
 
   it('closes on Escape and on Tab', () => {

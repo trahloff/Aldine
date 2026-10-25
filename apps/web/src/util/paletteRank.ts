@@ -54,8 +54,18 @@ export function matchScore(query: string, title: string, keywords?: string): num
  * Matching commands in sections. A section ranks by its best match; on a tie
  * (always, before anything is typed) `groupOrder` decides, then the order in
  * which sections first appear. Within a section, the better match first.
+ *
+ * At most `limit` rows in all, and every section keeps a few of them, so a
+ * long first section cannot push the others out. Before anything is typed a
+ * section shows at most `idleSectionLimit` rows.
  */
-export function rankCommands<T extends Rankable>(commands: readonly T[], query: string, groupOrder: readonly string[] = [], limit = 60): Section<T>[] {
+export function rankCommands<T extends Rankable>(
+  commands: readonly T[],
+  query: string,
+  groupOrder: readonly string[] = [],
+  limit = 60,
+  idleSectionLimit = Infinity,
+): Section<T>[] {
   const groups = new Map<string, { best: number; first: number; rows: { c: T; score: number; i: number }[] }>();
   commands.forEach((c, i) => {
     const score = matchScore(query, c.title, c.keywords);
@@ -68,13 +78,20 @@ export function rankCommands<T extends Rankable>(commands: readonly T[], query: 
   });
   const rank = (name: string) => { const at = groupOrder.indexOf(name); return at < 0 ? Infinity : at; };
   const ordered = [...groups.entries()].sort(([an, a], [bn, b]) => (a.best - b.best) || (rank(an) - rank(bn)) || (a.first - b.first));
+  const idle = !query.trim();
+  const sections = ordered.map(([group, g]) => ({
+    group,
+    rows: g.rows.sort((a, b) => (a.score - b.score) || (a.i - b.i)).slice(0, idle ? idleSectionLimit : undefined).map((r) => r.c),
+  }));
+  const floor = sections.length ? Math.min(3, Math.floor(limit / sections.length)) : 0;
+  const kept = sections.map((s) => Math.min(s.rows.length, floor));
+  let left = limit - kept.reduce((n, k) => n + k, 0);
   const out: Section<T>[] = [];
-  let left = limit;
-  for (const [group, g] of ordered) {
-    if (left <= 0) break;
-    const items = g.rows.sort((a, b) => (a.score - b.score) || (a.i - b.i)).slice(0, left).map((r) => r.c);
-    left -= items.length;
-    out.push({ group, items });
-  }
+  sections.forEach((s, n) => {
+    const extra = Math.min(s.rows.length - kept[n], left);
+    left -= extra;
+    const items = s.rows.slice(0, kept[n] + extra);
+    if (items.length) out.push({ group: s.group, items });
+  });
   return out;
 }

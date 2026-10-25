@@ -12,7 +12,9 @@ export type MenuKeyAction =
   | { type: 'open-submenu' }
   | { type: 'close-submenu' }
   | { type: 'close'; reason: 'escape' | 'tab' }
-  | { type: 'typeahead'; char: string };
+  | { type: 'typeahead'; char: string }
+  /** Swallowed: Space must not scroll the page behind an open menu. */
+  | { type: 'none' };
 
 export interface MenuKeyState {
   /** Focusable rows in this menu. */
@@ -67,11 +69,11 @@ export function menuKey(e: KeyLike, s: MenuKeyState): MenuKeyAction | null {
     case 'Escape': return s.isSubmenu ? { type: 'close-submenu' } : { type: 'close', reason: 'escape' };
     case 'Tab': return { type: 'close', reason: 'tab' };
     case 'Enter':
-      if (s.index < 0) return null;
+      if (s.index < 0) return { type: 'none' };
       return s.onSubmenuItem ? { type: 'open-submenu' } : { type: 'activate' };
     case ' ':
       if (s.typing) return { type: 'typeahead', char: ' ' };
-      if (s.index < 0) return null;
+      if (s.index < 0) return { type: 'none' };
       return s.onSubmenuItem ? { type: 'open-submenu' } : { type: 'activate' };
   }
   if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) return { type: 'typeahead', char: e.key };

@@ -50,8 +50,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   GitHub…" (or GitLab, Gitea / Forgejo) on Home, in the welcome dialog and in
   the command palette. A project created without a name is called "Untitled
   project".
-- The command palette lists projects before commands, under one heading per
-  group, and typing "op" no longer matches every project. It opens without
+- The command palette lists your newest projects before commands, under
+  one heading per group, and typing searches all of them; "op" no longer
+  matches every project. It opens without
   animation from the keyboard and gives focus back to where it was opened.
 - On a phone, dialogs rise from the bottom edge as a sheet, and the page
   behind them does not scroll.

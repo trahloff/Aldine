@@ -23,6 +23,8 @@ interface Props {
   placeholder?: string;
   /** Section order before anything is typed. Sections not named follow in the order they first appear. */
   groupOrder?: string[];
+  /** Rows a section shows before anything is typed; typing searches all of them. */
+  idleSectionLimit?: number;
 }
 
 /** The palette's visible door: a search field in the toolbar that names its shortcut. */
@@ -53,7 +55,7 @@ export function usePaletteHotkey(toggle: () => void) {
  * field and the highlighted result is its active descendant. Opened from the
  * keyboard it appears without animation; it is opened many times a day.
  */
-export default function CommandPalette({ open, commands, onClose, placeholder = 'Type a command or file…', groupOrder }: Props) {
+export default function CommandPalette({ open, commands, onClose, placeholder = 'Type a command or file…', groupOrder, idleSectionLimit }: Props) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -86,7 +88,7 @@ export default function CommandPalette({ open, commands, onClose, placeholder = 
     };
   }, [open]);
 
-  const sections = useMemo(() => rankCommands(commands, query, groupOrder), [commands, query, groupOrder]);
+  const sections = useMemo(() => rankCommands(commands, query, groupOrder, undefined, idleSectionLimit), [commands, query, groupOrder, idleSectionLimit]);
   const results = useMemo(() => sections.flatMap((s) => s.items), [sections]);
 
   useEffect(() => { if (sel >= results.length) setSel(0); }, [results, sel]);
@@ -124,7 +126,7 @@ export default function CommandPalette({ open, commands, onClose, placeholder = 
           placeholder={placeholder}
           value={query}
           role="combobox"
-          aria-expanded="true"
+          aria-expanded={results.length > 0}
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={results[sel] ? optionId(sel) : undefined}

@@ -418,7 +418,7 @@ export default function Home() {
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
       {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} onManage={authEnabled && user ? () => setShowAccount(true) : undefined} />}
-      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" groupOrder={PALETTE_GROUPS} />
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" groupOrder={PALETTE_GROUPS} idleSectionLimit={8} />
 
       {showTrash && (
         <Modal onClose={() => setShowTrash(false)} label="Trash" testId="trash-modal">
@@ -475,7 +475,7 @@ export default function Home() {
               value={newName}
               data-testid="new-project-name"
               onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) create(); }}
             />
             {remotes.some((r) => r.provisioning) && <NamespacePicker value={namespace} onChange={setNamespace} />}
             {templates === null && <p className="tpl-empty">Loading templates…</p>}
@@ -489,7 +489,7 @@ export default function Home() {
                     value={templateQuery}
                     data-testid="template-search"
                     onChange={(e) => setTemplateQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); create(); } }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); create(); } }}
                   />
                   {/* Escape belongs to the dialog: the modal closes on it before
                       any handler here could clear the query. */}
