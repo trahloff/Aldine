@@ -199,7 +199,6 @@ export function venueKitTemplates(): TemplateInfo[] {
       id: VENUE_PREFIX + e.id,
       name: e.name,
       description: e.description,
-      icon: e.icon || '📄',
       category: e.category,
       documentClass: e.documentClass,
       // There is no licence Aldine can assert for a publisher kit: the terms

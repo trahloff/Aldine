@@ -12,7 +12,7 @@ export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' 
  *  root. Listed first so the grid leads with it and never hidden by an
  *  absent templates dir. */
 export const BLANK_TEMPLATE: TemplateInfo = {
-  id: 'blank', name: 'Blank', description: 'An empty project. Add the first file yourself.', icon: '▢', order: 0, category: 'General',
+  id: 'blank', name: 'Blank', description: 'An empty project. Add the first file yourself.', order: 0, category: 'General',
 };
 
 /** Where the template's files came from: upstream URL and the version they were taken at (`source` in template.json). */
@@ -25,6 +25,7 @@ export interface TemplateInfo {
   id: string;
   name: string;
   description?: string;
+  /** Not drawn: the chooser shows the page-1 preview or a title-page placeholder. Kept so older manifests still parse. */
   icon?: string;
   order?: number;
   category?: TemplateCategory;
@@ -37,6 +38,8 @@ export interface TemplateInfo {
   source?: TemplateSource;
   /** Fetched-kit venues: the publisher the kit is downloaded from at create time. */
   kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+  /** Page 1 of the template typeset once per version (templatepreviews.ts); absent until rendered. */
+  preview?: { w: number; h: number; v: string };
 }
 
 const CATEGORIES: TemplateCategory[] = ['Journals', 'Conferences', 'Theses', 'Slides', 'General'];

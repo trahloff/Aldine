@@ -40,6 +40,7 @@ import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCo
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
+import { readTemplatePreview, withPreviews } from './templatepreviews.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
 
@@ -582,7 +583,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // token to exactly those ids).
     const scope = (req as any)._tokenScope as auth.TokenScope | null;
     if (scope && route?.startsWith('/api/')) {
-      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(route);
+      const neutral = ['/api/health', '/api/auth/me', '/api/templates', '/api/templates/preview', '/api/plugins', '/api/ai/status', '/api/usage', '/api/references/search'].includes(route);
       const allProjects = !scope.projectIds && projectsRoute;
       if (!neutral && !allProjects) {
         return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
@@ -801,7 +802,27 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // instead of waiting on the compiler.
   warmVenueCache();
   startTemplateRepoRefresh();
-  app.get('/api/templates', async () => listAllTemplates());
+  app.get('/api/templates', async () => withPreviews(await listAllTemplates()));
+  /**
+   * Page 1 of a template, as the chooser shows it (templatepreviews.ts). With
+   * accounts on it is for signed-in users, like creating a project from it: a
+   * template repository can be private to the operator's group. A `v` that is
+   * not the current version is answered uncacheable, so a year-long cache
+   * entry always holds the image its `v` names.
+   */
+  app.get<{ Querystring: { id?: string; v?: string } }>('/api/templates/preview', async (req, reply) => {
+    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
+    const img = typeof req.query.id === 'string' ? readTemplatePreview(req.query.id) : null;
+    if (!img) return reply.code(404).send({ error: 'No preview: this template has not been typeset yet' });
+    const etag = `"${img.v}"`;
+    const scope = auth.AUTH_ENABLED ? 'private' : 'public';
+    reply
+      .header('etag', etag)
+      .header('cache-control', req.query.v === img.v ? `${scope}, max-age=31536000, immutable` : `${scope}, no-cache`)
+      .header('x-content-type-options', 'nosniff');
+    if (etagMatches(req.headers['if-none-match'], etag)) return reply.code(304).send();
+    return reply.type('image/jpeg').send(img.bytes);
+  });
   // Template repositories: their sync state, and a forced refresh. With auth
   // on, refreshing is for signed-in users; one sync per repository runs at a
   // time, so a burst of clicks costs one fetch.

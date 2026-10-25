@@ -480,6 +480,7 @@ override file.
 | `TEMPLATE_REPOS` / `TEMPLATE_REPOS_FILE` | Git repositories whose template folders join the gallery under their label: a JSON array of `{ id, label?, url, ref?, path?, tokenEnv?, user? }`, inline or in the file `TEMPLATE_REPOS_FILE` names. Read once at boot; a bad entry is logged and skipped. Checkouts live in `CACHE_DIR/template-repos/<id>`. Field reference in `templates/README.md` |
 | *(per repository)* the variable `tokenEnv` names | Read token for a private template repository, e.g. `TEMPLATE_REPO_LAB_TOKEN`. Any name; injected per git operation, never written to the checkout's `.git/config` |
 | `TEMPLATE_REPOS_REFRESH_MS` | How often template repositories are fetched again (default `600000` = 10 min; values below `60000` are raised to it). "Refresh templates" in the new-project dialog fetches on demand |
+| `ALDINE_TEMPLATE_PREVIEWS` | App server. Each shipped template is typeset once per version after boot, and each repository template after every sync, so the New project chooser shows its page 1 (the image is kept in `CACHE_DIR/template-previews`). `0` turns that off and the chooser shows title-page placeholders. On by default |
 | `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |
 
 ### Tests and internals

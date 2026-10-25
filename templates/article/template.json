@@ -2,7 +2,6 @@
   "id": "article",
   "name": "Article",
   "description": "A clean article with biblatex — the right default for most papers.",
-  "icon": "📄",
   "order": 1,
   "category": "General",
   "license": "MIT",

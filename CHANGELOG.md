@@ -50,6 +50,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ## [0.17.0] — 2026-10-25
 
 ### Added
+- New project opens a template chooser: a large sheet (a bottom sheet on a
+  phone) with categories down the side, a search, page 1 of each template and
+  the project name in the footer, filled in and selected so Enter creates the
+  project. Arrow keys move through the templates and the categories, typing
+  on a template searches, and Escape closes. The server typesets each shipped
+  template once per version, and each template from a template repository
+  after every sync, and serves page 1 with a long cache. Venues whose kit is
+  downloaded at create time show a title page with their name instead. The
+  gallery no longer uses emoji icons; the `icon` field of `template.json` is
+  ignored. `ALDINE_TEMPLATE_PREVIEWS=0` turns the typesetting off.
 - The project list puts the most recently edited project first and says when
   each one was last edited and by whom (the agent's name for edits made
   through the Agent API), which branch you last had open, and whether that
