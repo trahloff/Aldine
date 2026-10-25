@@ -1,3 +1,4 @@
+import { safeStorage } from './safeStorage';
 /**
  * Where the review mark lives without accounts: there is no user to key a
  * server row on, so it is per browser. With accounts the server owns it
@@ -8,19 +9,15 @@ export interface SeenMark { head: string; at: string; promptedHead: string | nul
 const key = (projectId: string, branch: string) => `aldine.agentSeen.${projectId}.${branch}`;
 
 export function readSeen(projectId: string, branch: string): SeenMark | null {
-  try {
-    const raw = localStorage.getItem(key(projectId, branch));
-    if (!raw) return null;
-    const v = JSON.parse(raw) as Partial<SeenMark>;
-    // A hand-edited or half-written value must not break the editor.
-    if (!v || typeof v.head !== 'string') return null;
-    return { head: v.head, at: typeof v.at === 'string' ? v.at : new Date(0).toISOString(), promptedHead: typeof v.promptedHead === 'string' ? v.promptedHead : null };
-  } catch { return null; }
+  const v = safeStorage.getJSON<Partial<SeenMark> | null>(key(projectId, branch), null);
+  // A hand-edited or half-written value must not break the editor.
+  if (!v || typeof v !== 'object' || typeof v.head !== 'string') return null;
+  return { head: v.head, at: typeof v.at === 'string' ? v.at : new Date(0).toISOString(), promptedHead: typeof v.promptedHead === 'string' ? v.promptedHead : null };
 }
 
 function write(projectId: string, branch: string, v: SeenMark): void {
-  // Safari private mode throws on every write.
-  try { localStorage.setItem(key(projectId, branch), JSON.stringify(v)); } catch { /* the prompt returns next time */ }
+  // A write that fails only means the prompt returns next time.
+  safeStorage.setJSON(key(projectId, branch), v);
 }
 
 /** A prompt was raised for `head`; a second sighting of the same head counts

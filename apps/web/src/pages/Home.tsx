@@ -7,8 +7,11 @@ import { useAuth } from '../components/Auth';
 import Modal from '../components/Modal';
 import ShareModal from '../components/ShareModal';
 import { IconDoc, IconLink, IconX } from '../components/Icons';
+import Wordmark from '../components/Wordmark';
+import { AppearanceMenuButton, appearanceCommands } from '../components/Appearance';
 import AccountSettings from '../components/AccountSettings';
-import { getTheme, toggleTheme } from '../theme';
+import { useAppearance } from '../theme';
+import { useDocumentTitle } from '../util/documentTitle';
 import RemoteImport from '../components/RemoteImport';
 import { isRemoteProviderId, RemoteProviderId } from '../remotes';
 import Onboarding from '../components/Onboarding';
@@ -20,6 +23,7 @@ import { friendlyDate } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
 import { pickTemplate, templateToPost } from '../util/templates';
 import { importSummary } from '../util/engines';
+import { safeSession, safeStorage } from '../util/safeStorage';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */
@@ -28,6 +32,9 @@ const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 
 /** Gallery order; a category with no template in it is not drawn. */
 const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
+
+/** The palette's sections before anything is typed: projects first. */
+const PALETTE_GROUPS = ['Projects', 'New', 'Appearance', 'More'];
 
 function matchesQuery(t: TemplateInfo, q: string): boolean {
   const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host, t.source?.label].join(' ').toLowerCase();
@@ -89,7 +96,7 @@ export default function Home() {
   const [loadFailed, setLoadFailed] = useState(false);
   const zipInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
-  const [themeChoice, setThemeChoice] = useState(getTheme());
+  const appearance = useAppearance();
   const [newName, setNewName] = useState('');
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [repoStates, setRepoStates] = useState<TemplateRepoState[]>([]);
@@ -106,8 +113,8 @@ export default function Home() {
   const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('aldine.onboarded') !== '1');
-  const dismissOnboarding = () => { localStorage.setItem('aldine.onboarded', '1'); setShowOnboarding(false); };
+  const [showOnboarding, setShowOnboarding] = useState(() => safeStorage.get('aldine.onboarded') !== '1');
+  const dismissOnboarding = () => { safeStorage.set('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
   const toast = useToast();
   const dialogs = useDialogs();
@@ -115,6 +122,7 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
+  useDocumentTitle('Projects');
 
   const load = () => {
     api.listTrash().then(setTrash).catch(() => setTrash([]));
@@ -127,8 +135,8 @@ export default function Home() {
   // /oauth/authorize: the provider callback lands here, so resume the consent.
   useEffect(() => {
     if (!authEnabled || !user) return;
-    let resume: string | null = null;
-    try { resume = sessionStorage.getItem(OAUTH_RESUME_KEY); sessionStorage.removeItem(OAUTH_RESUME_KEY); } catch { /* private mode */ }
+    const resume = safeSession.get(OAUTH_RESUME_KEY);
+    safeSession.remove(OAUTH_RESUME_KEY);
     if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
   }, []);
   useEffect(() => { api.remotes().then(setRemotes).catch(() => setRemotes([])); }, []);
@@ -195,7 +203,7 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const create = async () => {
     if (submitting) return;
-    const name = newName.trim() || 'Untitled Project';
+    const name = newName.trim() || 'Untitled project';
     setSubmitting(true);
     try {
       const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate), namespace);
@@ -243,7 +251,7 @@ export default function Home() {
     // notification carries the way back.
     try {
       await api.deleteProject(p.id);
-      toast(`Moved ${p.name} to the trash`, 'ok', { label: 'Undo', testId: 'undo-trash', onClick: () => restore(p.id, p.name) });
+      toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', onClick: () => restore(p.id, p.name) });
       load();
     } catch (err: any) {
       toast(`Could not delete ${p.name}: ${err.message}`, 'error');
@@ -272,17 +280,17 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
 
   const paletteCommands: Command[] = useMemo(() => [
-    { id: 'new-project', group: 'Action', title: 'New project…', run: () => setCreating(true) },
-    { id: 'import-zip', group: 'Action', title: 'Import a ZIP…', run: () => zipInput.current?.click() },
-    ...remotes.map((r) => ({ id: `new-from-${r.id}`, group: 'Action', title: `New project from ${r.label}…`, run: () => setImportFrom(r.id) })),
-    { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => setThemeChoice(toggleTheme()) },
-    ...(authEnabled && user ? [{ id: 'account', group: 'View', title: 'Account settings', run: () => setShowAccount(true) }] : []),
-    ...(admin && authEnabled ? [{ id: 'admin', group: 'View', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
-    ...(trash.length ? [{ id: 'trash', group: 'View', title: `Trash (${trash.length})`, run: () => setShowTrash(true) }] : []),
-    { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
-    { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
-    ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Open', title: p.name, run: () => navigate(`/p/${p.id}`) })),
-  ], [remotes, authEnabled, user, admin, trash.length, projects, navigate]);
+    ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Projects', title: p.name, run: () => navigate(`/p/${p.id}`) })),
+    { id: 'new-project', group: 'New', title: 'New project…', run: () => setCreating(true) },
+    { id: 'import-zip', group: 'New', title: 'Import a ZIP…', keywords: 'overleaf upload', run: () => zipInput.current?.click() },
+    ...remotes.map((r) => ({ id: `new-from-${r.id}`, group: 'New', title: `Clone from ${r.label}…`, keywords: 'import git repository', run: () => setImportFrom(r.id) })),
+    ...appearanceCommands(appearance),
+    ...(authEnabled && user ? [{ id: 'account', group: 'More', title: 'Account settings…', run: () => setShowAccount(true) }] : []),
+    ...(admin && authEnabled ? [{ id: 'admin', group: 'More', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
+    ...(trash.length ? [{ id: 'trash', group: 'More', title: `Trash (${trash.length})`, run: () => setShowTrash(true) }] : []),
+    { id: 'about', group: 'More', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
+    { id: 'connect-claude', group: 'More', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
+  ], [remotes, authEnabled, user, admin, trash.length, projects, navigate, appearance]);
 
   return (
     <div
@@ -297,22 +305,11 @@ export default function Home() {
       }}
     >
       <div className="home__inner">
-        <div className="home__bar">
-          <div>
-            <h1 className="home__brand">aldine<em>.</em></h1>
-            <p className="home__tag">Write LaTeX together. Fast, versioned, yours.</p>
-          </div>
+        <header className="home__bar">
+          <div className="home__brand"><Wordmark /></div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <PaletteTrigger label="Search projects and commands" onOpen={() => setPaletteOpen(true)} />
-            <button
-              className="btn"
-              data-testid="theme-toggle"
-              title="Switch light/dark theme"
-              aria-label="Switch light/dark theme"
-              onClick={() => setThemeChoice(toggleTheme())}
-            >
-              {themeChoice === 'dark' ? '☀︎' : '☾'}
-            </button>
+            <AppearanceMenuButton />
             {admin && authEnabled && (
               <Link className="btn" to="/admin" data-testid="admin-link" title="Server-wide accounts and usage">Server admin</Link>
             )}
@@ -322,24 +319,27 @@ export default function Home() {
                 <button className="btn btn--small" data-testid="logout" onClick={async () => { await api.logout(); setUser(null); }}>Sign out</button>
               </span>
             )}
-            <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import ZIP</button>
+            <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import a ZIP…</button>
             <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
               onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
             {remotes.map((r) => (
               <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)} data-testid={`new-from-${r.id}`}>
-                From {r.label}
+                Clone from {r.label}…
               </button>
             ))}
             <button className="btn btn--primary" onClick={() => setCreating(true)} data-testid="new-project">
-              New project
+              New project…
             </button>
           </div>
-        </div>
+        </header>
+
+        <main>
+        <h1 className="visually-hidden">Projects</h1>
 
         {projects === null ? (
-          <div className="empty"><div className="spinner" style={{ margin: '0 auto' }} /></div>
+          <div className="empty" role="status"><div className="spinner" style={{ margin: '0 auto' }} /><span className="visually-hidden">Loading projects…</span></div>
         ) : loadFailed ? (
-          <div className="empty">
+          <div className="empty" role="alert">
             <p style={{ margin: '0 0 16px' }}>Couldn’t reach the server to load your projects.</p>
             <button className="btn btn--primary" onClick={load}>Try again</button>
           </div>
@@ -347,11 +347,11 @@ export default function Home() {
           <div className="empty" data-testid="projects-empty">
             <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn--primary" onClick={() => setCreating(true)}>New project</button>
+              <button className="btn btn--primary" onClick={() => setCreating(true)}>New project…</button>
               {remotes.map((r) => (
-                <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)}>Import from {r.label}</button>
+                <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)}>Clone from {r.label}…</button>
               ))}
-              <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP</button>
+              <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP…</button>
             </div>
           </div>
         ) : (
@@ -382,11 +382,11 @@ export default function Home() {
                   )}
                   {p.zotero && <span title="Zotero linked" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><IconLink /> Zotero</span>}
                   {authEnabled && p.isOwner && (
-                    <button className="project-card__del" title={p.share?.mode === 'link' ? 'Shared by link — anyone signed in with the link can edit' : 'Share project'} style={{ marginLeft: 'auto' }} data-testid={`share-${p.id}`}
+                    <button className="project-card__act" title={p.share?.mode === 'link' ? 'Shared by link — anyone signed in with the link can edit' : 'Share project'} aria-label={`Share ${p.name}`} style={{ marginLeft: 'auto' }} data-testid={`share-${p.id}`}
                       onClick={(e) => { e.stopPropagation(); setSharing(p); }}><IconLink /></button>
                   )}
                   {canManage && (
-                    <button className="project-card__del" title="Delete project" aria-label={`Delete ${p.name}`} style={authEnabled && p.isOwner ? undefined : { marginLeft: 'auto' }} onClick={(e) => remove(e, p)}><IconX /></button>
+                    <button className="project-card__act project-card__del" title="Move to trash" aria-label={`Move ${p.name} to the trash`} style={authEnabled && p.isOwner ? undefined : { marginLeft: 'auto' }} onClick={(e) => remove(e, p)}><IconX /></button>
                   )}
                 </span>
               </div>
@@ -403,20 +403,22 @@ export default function Home() {
           </p>
         )}
 
+        </main>
+
         {/* AGPL section 13: a network instance must offer its users the source. */}
-        <p className="home__legal">
+        <footer className="home__legal">
           <button className="btn btn--ghost btn--small" onClick={() => setConnectOpen(true)} data-testid="open-connect-claude">
             Connect Claude
           </button>
           <button className="btn btn--ghost btn--small" onClick={() => setAboutOpen(true)} data-testid="open-about">
             About &amp; source
           </button>
-        </p>
+        </footer>
       </div>
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
       {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} onManage={authEnabled && user ? () => setShowAccount(true) : undefined} />}
-      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" />
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" groupOrder={PALETTE_GROUPS} />
 
       {showTrash && (
         <Modal onClose={() => setShowTrash(false)} label="Trash" testId="trash-modal">
@@ -464,10 +466,12 @@ export default function Home() {
           <div>
             <h2>New project</h2>
             <p className="modal__sub">Name it, pick a starting point, start writing.</p>
+            <label className="field__label" htmlFor="new-project-name">Project name</label>
             <input
               autoFocus
+              id="new-project-name"
               className="input"
-              placeholder="Project name"
+              placeholder="Untitled project"
               value={newName}
               data-testid="new-project-name"
               onChange={(e) => setNewName(e.target.value)}
@@ -485,6 +489,7 @@ export default function Home() {
                     value={templateQuery}
                     data-testid="template-search"
                     onChange={(e) => setTemplateQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); create(); } }}
                   />
                   {/* Escape belongs to the dialog: the modal closes on it before
                       any handler here could clear the query. */}
@@ -532,6 +537,7 @@ export default function Home() {
                             <button
                               key={t.id}
                               className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
+                              aria-pressed={effectiveTemplate === t.id}
                               data-testid={`template-${t.id}`}
                               onClick={() => setTemplate(t.id)}
                               title={t.description}
@@ -559,14 +565,16 @@ export default function Home() {
                   ));
                   })()}
                 </div>
-                <p className="tpl-choice" data-testid="template-choice">
+              </>
+            )}
+            <div className="modal__row">
+              {templates !== null && templates.length > 0 && (
+                <p className="tpl-choice" data-testid="template-choice" aria-live="polite">
                   Starting from {chosen ? chosen.name : 'the built-in article'}
                   {chosen?.license ? ` (${chosen.license})` : ''}
                   {chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
                 </p>
-              </>
-            )}
-            <div className="modal__row">
+              )}
               <button className="btn" onClick={closeCreate}>Cancel</button>
               <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
             </div>

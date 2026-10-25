@@ -71,9 +71,9 @@ export default function RemoteImport({ provider, onClose, onImported }: {
   const shown = [...local, ...(found || []).filter((r) => !local.some((l) => l.fullName === r.fullName))];
 
   return (
-    <Modal onClose={onClose} label={`Import from ${d.label}`} wide testId={`${provider}-import`}>
+    <Modal onClose={onClose} label={`Clone from ${d.label}`} wide testId={`${provider}-import`}>
       <div>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>{d.icon} Import from {d.label}</h2>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>{d.icon} Clone from {d.label}</h2>
 
         {!status && <p className="modal__sub">Checking connection…</p>}
 
@@ -81,7 +81,7 @@ export default function RemoteImport({ provider, onClose, onImported }: {
           <div style={{ marginTop: 10 }}>
             {reconnect
               ? <p className="modal__sub" style={{ marginBottom: 14, color: 'var(--error)' }} data-testid={`${provider}-reconnect`}>{reconnect}</p>
-              : <p className="modal__sub" style={{ marginBottom: 14 }}>Connect your {d.label} account to browse and import repositories.</p>}
+              : <p className="modal__sub" style={{ marginBottom: 14 }}>Connect your {d.label} account to browse and clone repositories.</p>}
             <RemoteConnectForm provider={provider} status={status} onConnected={async () => { setReconnect(''); await loadStatus(); }} />
           </div>
         )}

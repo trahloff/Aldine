@@ -23,6 +23,7 @@ import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
 import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
+import { safeStorage } from '../util/safeStorage';
 
 export type EditorMode = 'source' | 'visual';
 
@@ -427,7 +428,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, provider.awareness),
           // after yCollab on purpose — see agentHighlight's ordering contract
-          ...(localStorage.getItem('aldine.experimental.agentPresence') === '1'
+          ...(safeStorage.get('aldine.experimental.agentPresence') === '1'
             ? [agentHighlight(ytext, awareness)]
             : []),
         ],

@@ -2,13 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <!-- Instances hold private documents; the public face for search engines is aldine.dev. -->
     <meta name="robots" content="noindex" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#1c1c1e" />
     <title>Aldine</title>
-    <!-- Apply the theme before first paint (dark is the default; a stored choice wins). -->
-    <script>document.documentElement.dataset.theme = localStorage.getItem('aldine.theme') === 'light' ? 'light' : 'dark';</script>
+    <!-- Apply the appearance before first paint. Dark is the default; a stored
+         choice wins, and "system" asks the operating system. Mirrors theme.ts. -->
+    <script data-prepaint>
+      (function () {
+        var a = null;
+        try { a = window.localStorage.getItem('aldine.theme'); } catch (e) {}
+        var t = 'dark';
+        if (a === 'light') t = 'light';
+        else if (a === 'system') {
+          try { t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) {}
+        }
+        document.documentElement.dataset.theme = t;
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', t === 'light' ? '#f5f5f7' : '#1c1c1e');
+      })();
+    </script>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231c1c1e'/><path d='M27 78 50 22 73 78' fill='none' stroke='%23f5f5f7' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><path d='M36 57H64' stroke='%235b8cff' stroke-width='6'/><circle cx='36' cy='57' r='7' fill='%235b8cff' stroke='%231c1c1e' stroke-width='3'/><circle cx='64' cy='57' r='7' fill='%235b8cff' stroke='%231c1c1e' stroke-width='3'/></svg>" />
   </head>
   <body>

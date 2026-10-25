@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
-import { getTheme, setTheme, Theme } from '../theme';
+import { Appearance, APPEARANCES, setAppearance, useAppearance } from '../theme';
 import { chordConflict, chordFromEvent, chordProblem, isDefaultChord, setChord, ShortcutId, SHORTCUTS, useShortcutLabel } from '../util/shortcuts';
 
 interface Props {
@@ -98,7 +98,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  */
 export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, focus }: Props) {
   const [name, setName] = useState(project.name);
-  const [theme, setThemeChoice] = useState<Theme>(getTheme());
+  const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
   const shortcutsRef = useRef<HTMLElement>(null);
   useEffect(() => { if (focus === 'shortcuts') shortcutsRef.current?.scrollIntoView({ block: 'nearest' }); }, [focus]);
@@ -217,16 +217,15 @@ export default function ProjectSettings({ project, files, autoTypeset, importNot
               data-testid="settings-auto-typeset"
             />
           </Row>
-          <Row label="Theme" htmlFor="settings-theme">
+          <Row label="Appearance" htmlFor="settings-theme">
             <select
               id="settings-theme"
               className="input"
-              value={theme}
-              onChange={(e) => { const t = e.target.value as Theme; setTheme(t); setThemeChoice(t); }}
+              value={appearance}
+              onChange={(e) => setAppearance(e.target.value as Appearance)}
               data-testid="settings-theme"
             >
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
+              {APPEARANCES.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
             </select>
           </Row>
         </section>

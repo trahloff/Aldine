@@ -117,6 +117,83 @@ export const IconX = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const IconCheck = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={12} height={12} strokeWidth={1.75}>
+    <path d="M3 8.5 6.5 12 13 4.5" />
+  </svg>
+);
+
+export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M8 3v10M3 8h10" />
+  </svg>
+);
+
+/** "More actions": three dots, filled so they read at 14px. */
+export const IconEllipsis = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} fill="currentColor" strokeWidth={0}>
+    <circle cx="3.25" cy="8" r="1.3" />
+    <circle cx="8" cy="8" r="1.3" />
+    <circle cx="12.75" cy="8" r="1.3" />
+  </svg>
+);
+
+export const IconPeople = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="6" cy="5.25" r="2.25" />
+    <path d="M1.75 13.5c0-2.35 1.9-4 4.25-4s4.25 1.65 4.25 4" />
+    <path d="M10.5 3.25a2 2 0 0 1 0 4" />
+    <path d="M12 9.75c1.35.45 2.25 1.75 2.25 3.5" />
+  </svg>
+);
+
+export const IconTrash = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.5 4h11" />
+    <path d="M6 4V2.75h4V4" />
+    <path d="M3.75 4l.7 8.6a1.25 1.25 0 0 0 1.25 1.15h4.6a1.25 1.25 0 0 0 1.25-1.15L12.25 4" />
+    <path d="M6.75 6.75v4.25M9.25 6.75v4.25" />
+  </svg>
+);
+
+/** A git branch: a line that forks off and keeps going. */
+export const IconBranch = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="4.5" cy="3.5" r="1.5" />
+    <circle cx="4.5" cy="12.5" r="1.5" />
+    <circle cx="11.5" cy="4.5" r="1.5" />
+    <path d="M4.5 5v6" />
+    <path d="M11.5 6c0 2.4-1.6 3.5-3.75 3.5H6.5c-1.1 0-2 .7-2 1.5" />
+  </svg>
+);
+
+export const IconChevronDown = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={10} height={10} strokeWidth={1.75}>
+    <path d="M3.5 6 8 10.5 12.5 6" />
+  </svg>
+);
+
+export const IconSun = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="8" cy="8" r="2.75" />
+    <path d="M8 1.25v1.5M8 13.25v1.5M1.25 8h1.5M13.25 8h1.5M3.23 3.23l1.06 1.06M11.71 11.71l1.06 1.06M3.23 12.77l1.06-1.06M11.71 4.29l1.06-1.06" />
+  </svg>
+);
+
+export const IconMoon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M13.25 9.6A5.5 5.5 0 1 1 6.4 2.75a4.5 4.5 0 0 0 6.85 6.85Z" />
+  </svg>
+);
+
+/** A display: the appearance that follows the operating system. */
+export const IconMonitor = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5" />
+    <path d="M5.5 13.75h5M8 11v2.75" />
+  </svg>
+);
+
 /** Icon for a file path. */
 export function fileIcon(path: string, isRoot: boolean) {
   if (isRoot) return <IconStar style={{ color: 'var(--warn)' }} />;

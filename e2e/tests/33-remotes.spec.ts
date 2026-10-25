@@ -50,7 +50,7 @@ test.describe('remote providers on Home', () => {
     await page.goto('/');
     await expect(page.getByTestId('new-from-github')).toBeVisible();
     await expect(page.getByTestId('new-from-gitlab')).toBeVisible();
-    await expect(page.getByTestId('new-from-gitea')).toHaveText('From Gitea / Forgejo');
+    await expect(page.getByTestId('new-from-gitea')).toHaveText('Clone from Gitea / Forgejo…');
   });
 
   test('first-run onboarding offers all three git hosts', async ({ browser }) => {
@@ -61,7 +61,7 @@ test.describe('remote providers on Home', () => {
       await expect(p.getByTestId('onboarding')).toBeVisible({ timeout: 10_000 });
       await expect(p.getByTestId('onboard-github')).toBeVisible();
       await expect(p.getByTestId('onboard-gitlab')).toBeVisible();
-      await expect(p.getByTestId('onboard-gitea')).toContainText('Import from Gitea / Forgejo');
+      await expect(p.getByTestId('onboard-gitea')).toContainText('Clone from Gitea / Forgejo…');
     } finally { await ctx.close(); }
   });
 

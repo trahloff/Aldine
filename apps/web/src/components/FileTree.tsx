@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
 import { fileIcon, IconChevronRight } from './Icons';
 import { useDialogs } from './Dialogs';
-import { useExitGhost } from '../exitGhost';
+import { useContextMenu, type MenuEntry } from './Menu';
 
 interface Props {
   files: TreeEntry[];
@@ -68,7 +68,6 @@ export function stemEnd(path: string): number {
 
 export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
   const dialogs = useDialogs();
-  const leave = useExitGhost();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   // A project with no files of the user's own (the .gitignore every project
@@ -79,28 +78,24 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     setAdding(true);
   };
   useEffect(() => { if (newFileRequest) { startAdding(); onNewFileHandled?.(); } }, [newFileRequest]);
-  const [menu, setMenu] = useState<{ path: string; x: number; y: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  // The menu opens at the pointer; near the right or bottom edge it would
-  // hang off the window, so it is pulled back in before the first paint.
-  useLayoutEffect(() => {
-    const el = menuRef.current;
-    if (!el || !menu) return;
-    const r = el.getBoundingClientRect();
-    const x = Math.max(8, Math.min(menu.x, window.innerWidth - r.width - 8));
-    const y = Math.max(8, Math.min(menu.y, window.innerHeight - r.height - 8));
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-    el.querySelector<HTMLElement>('.menu__item')?.focus({ preventScroll: true });
-  }, [menu]);
-  useEffect(() => {
-    if (!menu) return;
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
-    const away = (e: PointerEvent) => { if (!menuRef.current?.contains(e.target as Element)) setMenu(null); };
-    window.addEventListener('keydown', key);
-    window.addEventListener('pointerdown', away);
-    return () => { window.removeEventListener('keydown', key); window.removeEventListener('pointerdown', away); };
-  }, [menu]);
+  const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
+  const fileActions = (path: string): MenuEntry[] => [
+    { id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' },
+    {
+      id: 'rename', label: 'Rename…', testId: 'file-menu-rename',
+      onSelect: async () => {
+        const to = (await dialogs.prompt({ title: `Rename ${path}`, value: path, confirmLabel: 'Rename', selectTo: stemEnd(path) }))?.trim();
+        if (to && to !== path) onRename(path, to);
+      },
+    },
+    { kind: 'separator' },
+    {
+      id: 'delete', label: 'Delete…', danger: true, testId: 'file-menu-delete',
+      onSelect: async () => {
+        if (await dialogs.confirm({ title: `Delete ${path}?`, confirmLabel: 'Delete file', danger: true })) onDelete(path);
+      },
+    },
+  ];
   const [dragOver, setDragOver] = useState(false);
   const [sourceOnly, setSourceOnly] = useState(true);
   // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
@@ -182,7 +177,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         style={{ paddingLeft: pad }}
         data-testid={`file-${node.path}`}
         onClick={() => !node.binary && onOpen(node.path)}
-        onContextMenu={(e) => { e.preventDefault(); setMenu({ path: node.path, x: e.clientX, y: e.clientY }); }}
+        {...fileMenu.bind(() => fileActions(node.path))}
         title={node.path}
       >
         <span className="tree__chevron" />
@@ -197,7 +192,6 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     <div
       className={`panel-list filetree ${dragOver ? 'filetree--drag' : ''}`}
       data-testid="file-tree"
-      onClick={() => setMenu(null)}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={async (e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) await uploadFiles(e.dataTransfer.files); }}
@@ -221,23 +215,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       )}
       <p className="filetree__hint">Drop files here to upload</p>
 
-      {menu && (
-        <div ref={(el) => { menuRef.current = el; leave(el); }} className="menu" role="menu" style={{ left: menu.x, top: menu.y, position: 'fixed' }} onClick={(e) => e.stopPropagation()} data-testid="file-menu">
-          <button className="menu__item" onClick={() => { onSetRoot(menu.path); setMenu(null); }}>Set as main document</button>
-          <button className="menu__item" data-testid="file-menu-rename" onClick={async () => {
-            const from = menu.path;
-            setMenu(null);
-            const to = (await dialogs.prompt({ title: `Rename ${from}`, value: from, confirmLabel: 'Rename', selectTo: stemEnd(from) }))?.trim();
-            if (to && to !== from) onRename(from, to);
-          }}>Rename…</button>
-          <div className="menu__sep" />
-          <button className="menu__item" data-testid="file-menu-delete" onClick={async () => {
-            const path = menu.path;
-            setMenu(null);
-            if (await dialogs.confirm({ title: `Delete ${path}?`, confirmLabel: 'Delete file', danger: true })) onDelete(path);
-          }}>Delete</button>
-        </div>
-      )}
+      {fileMenu.element}
     </div>
   );
 }

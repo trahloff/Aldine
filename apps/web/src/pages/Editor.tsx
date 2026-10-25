@@ -35,13 +35,16 @@ import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
-import { toggleTheme } from '../theme';
+import { useAppearance } from '../theme';
+import { appearanceCommands } from '../components/Appearance';
+import { useDocumentTitle } from '../util/documentTitle';
 import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { shortcut } from '../platform';
 import { usePopover } from '../util/usePopover';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
+import { safeStorage } from '../util/safeStorage';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
@@ -76,6 +79,8 @@ export default function Editor() {
   const dialogs = useDialogs();
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
+  useDocumentTitle(project?.name);
+  const appearance = useAppearance();
   const [files, setFiles] = useState<TreeEntry[]>([]);
   // The on-open typeset waits for the first file listing: before it, every
   // project looks empty and a blank one must not compile at all.
@@ -99,28 +104,28 @@ export default function Editor() {
   }, []);
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
-  const [auto, setAuto] = useState(() => localStorage.getItem('aldine.autoTypeset') !== '0');
+  const [auto, setAuto] = useState(() => safeStorage.get('aldine.autoTypeset') !== '0');
   // Auto-typeset runs one engine pass while you type; Typeset and Mod-s run the full cycle.
-  const [draftTypeset, setDraftTypeset] = useState(() => localStorage.getItem('aldine.draftTypeset') !== '0');
+  const [draftTypeset, setDraftTypeset] = useState(() => safeStorage.get('aldine.draftTypeset') !== '0');
   const draftRef = useRef(draftTypeset);
   draftRef.current = draftTypeset;
   const [stats, setStats] = useState<{ words: number; selWords: number | null }>({ words: 0, selWords: null });
   const [zoom, setZoomState] = useState(() => {
-    const z = Number(localStorage.getItem('aldine.pdfZoom'));
+    const z = Number(safeStorage.get('aldine.pdfZoom'));
     return z >= 0.5 && z <= 3 ? z : 1;
   });
   const setZoom = useCallback((v: number | ((z: number) => number)) => {
     setZoomState((prev) => {
       const next = typeof v === 'function' ? v(prev) : v;
-      localStorage.setItem('aldine.pdfZoom', String(next));
+      safeStorage.set('aldine.pdfZoom', String(next));
       return next;
     });
   }, []);
   const [showLog, setShowLog] = useState(false);
   // Warnings alone fold to the panel's header line; errors always open it.
-  const [problemsOpen, setProblemsOpen] = useState(() => localStorage.getItem('aldine.problemsOpen') === '1');
+  const [problemsOpen, setProblemsOpen] = useState(() => safeStorage.get('aldine.problemsOpen') === '1');
   const toggleProblems = useCallback(() => setProblemsOpen((o) => {
-    localStorage.setItem('aldine.problemsOpen', o ? '0' : '1');
+    safeStorage.set('aldine.problemsOpen', o ? '0' : '1');
     return !o;
   }), []);
   const [ignored, setIgnoredState] = useState<string[]>(() => loadIgnored(id));
@@ -154,21 +159,21 @@ export default function Editor() {
   // it so the flagged line is on screen, and the toolbar button restores it.
   // Wider screens collapse it to a rail by choice, remembered per browser.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
-    try { return !window.matchMedia('(max-width: 640px)').matches && localStorage.getItem(SIDEBAR_HIDDEN) === '1'; } catch { return false; }
+    try { return !window.matchMedia('(max-width: 640px)').matches && safeStorage.get(SIDEBAR_HIDDEN) === '1'; } catch { return false; }
   });
   const setSidebar = useCallback((hidden: boolean) => {
     setSidebarHidden(hidden);
-    try { if (!window.matchMedia('(max-width: 640px)').matches) localStorage.setItem(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* storage off: this visit only */ }
+    try { if (!window.matchMedia('(max-width: 640px)').matches) safeStorage.set(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* no matchMedia: this visit only */ }
   }, []);
-  const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('aldine.spellcheck') === '1');
+  const [spellcheck, setSpellcheck] = useState(() => safeStorage.get('aldine.spellcheck') === '1');
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
-  const agentPresenceEnabled = localStorage.getItem('aldine.experimental.agentPresence') === '1';
+  const agentPresenceEnabled = safeStorage.get('aldine.experimental.agentPresence') === '1';
   const [mode, setMode] = useState<EditorMode>(() => {
-    try { return localStorage.getItem(EDITOR_MODE) === 'visual' ? 'visual' : 'source'; } catch { return 'source'; }
+    return safeStorage.get(EDITOR_MODE) === 'visual' ? 'visual' : 'source';
   });
   const switchMode = (m: EditorMode) => {
     setMode(m);
-    try { localStorage.setItem(EDITOR_MODE, m); } catch { /* storage off: this visit only */ }
+    safeStorage.set(EDITOR_MODE, m);
     // after the palette that ran it has closed, or off the button that was clicked
     requestAnimationFrame(() => codeRef.current?.focus());
   };
@@ -314,8 +319,8 @@ export default function Editor() {
       // this server until it's published to a git host. Only the owner can
       // publish, so only the owner is nudged.
       const owner = !authEnabled || !!p.isOwner;
-      if (owner && !p.remote && !localStorage.getItem(`aldine.remoteNudged.${id}`)) {
-        localStorage.setItem(`aldine.remoteNudged.${id}`, '1');
+      if (owner && !p.remote && !safeStorage.get(`aldine.remoteNudged.${id}`)) {
+        safeStorage.set(`aldine.remoteNudged.${id}`, '1');
         toast('This project lives only on this server — publish it to a git host to keep a synced copy.');
       }
     })();
@@ -580,7 +585,7 @@ export default function Editor() {
   const toggleAuto = () => {
     const next = !auto;
     setAuto(next);
-    localStorage.setItem('aldine.autoTypeset', next ? '1' : '0');
+    safeStorage.set('aldine.autoTypeset', next ? '1' : '0');
   };
 
   const switchBranch = (name: string) => {
@@ -972,27 +977,27 @@ export default function Editor() {
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
-      { id: 'typeset', group: 'Action', title: 'Typeset document', hint: keys.typeset, run: doCompile },
-      { id: 'auto', group: 'Action', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
+      { id: 'typeset', group: 'Actions', title: 'Typeset document', hint: keys.typeset, run: doCompile },
+      { id: 'auto', group: 'Actions', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       {
-        id: 'draft-typeset', group: 'Action',
+        id: 'draft-typeset', group: 'Actions',
         title: draftTypeset ? 'Auto-typeset: run the full cycle every time (slower)' : 'Auto-typeset: quick draft while typing',
-        run: () => setDraftTypeset((d) => { localStorage.setItem('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
+        run: () => setDraftTypeset((d) => { safeStorage.set('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
       },
-      { id: 'jump-pdf', group: 'Action', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
-      { id: 'comment', group: 'Action', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
-      { id: 'search', group: 'Action', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
-      { id: 'replace', group: 'Action', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
-      ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Action', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
-      { id: 'stop-on-error', group: 'Action', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
-      { id: 'manual-commits', group: 'Action', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
-      { id: 'spell', group: 'Action', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { localStorage.setItem('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
-      { id: 'theme', group: 'View', title: 'Toggle light/dark theme', run: () => { toggleTheme(); } },
+      { id: 'jump-pdf', group: 'Actions', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
+      { id: 'comment', group: 'Actions', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
+      { id: 'search', group: 'Actions', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
+      { id: 'replace', group: 'Actions', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
+      ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Actions', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
+      { id: 'stop-on-error', group: 'Actions', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
+      { id: 'manual-commits', group: 'Actions', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
+      { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { safeStorage.set('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
+      ...appearanceCommands(appearance),
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
       { id: 'sidebar', group: 'View', title: sidebarHidden ? 'Show the sidebar' : 'Hide the sidebar', run: () => setSidebar(!sidebarHidden) },
-      { id: 'download-zip', group: 'File', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
-      { id: 'share', group: 'File', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
+      { id: 'download-zip', group: 'Project', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
+      { id: 'share', group: 'Project', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
       ...(visualFile
@@ -1000,7 +1005,7 @@ export default function Editor() {
         : []),
       ...(paneMode === 'visual'
         ? [{
-          id: 'edit-at-cursor', group: 'Action', title: 'Edit the formula or table at the cursor', hint: shortcut('Enter'),
+          id: 'edit-at-cursor', group: 'Actions', title: 'Edit the formula or table at the cursor', hint: shortcut('Enter'),
           run: () => {
             const opened = codeRef.current?.editAtCursor();
             if (opened === 'source') toast('This formula opens as source: the formula editor would rewrite its \\label, alignment, comments or line breaks');
@@ -1010,8 +1015,8 @@ export default function Editor() {
         }]
         : []),
       ...(agentPresenceEnabled
-        ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '0'); location.reload(); } }]
-        : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { localStorage.setItem('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
+        ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
+        : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); setSidebar(false); } },
       { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
     ];
@@ -1032,7 +1037,7 @@ export default function Editor() {
     }
     if (activeFile) {
       cmds.push({
-        id: 'rename-file', group: 'File', title: `Rename ${activeFile}…`, run: async () => {
+        id: 'rename-file', group: 'Project', title: `Rename ${activeFile}…`, run: async () => {
           const to = (await dialogs.prompt({ title: `Rename ${activeFile}`, value: activeFile, confirmLabel: 'Rename', selectTo: stemEnd(activeFile) }))?.trim();
           if (to && to !== activeFile) {
             try {
@@ -1048,7 +1053,7 @@ export default function Editor() {
         },
       });
       cmds.push({
-        id: 'delete-file', group: 'File', title: `Delete ${activeFile}…`, run: async () => {
+        id: 'delete-file', group: 'Project', title: `Delete ${activeFile}…`, run: async () => {
           if (await dialogs.confirm({ title: `Delete ${activeFile}?`, confirmLabel: 'Delete file', danger: true })) {
             await api.deleteFile(id, branch, activeFile);
             await loadFiles();
@@ -1065,10 +1070,10 @@ export default function Editor() {
       cmds.push({ id: `snippet-${s.id}`, group: 'Insert', title: s.title, run: () => insertAtCursor(s.text) });
     }
     for (const f of files.filter((f) => f.type === 'file' && !f.binary)) {
-      cmds.push({ id: `open-${f.path}`, group: 'Open', title: f.path, run: () => setActiveFile(f.path) });
+      cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode]);
+  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1098,7 +1103,7 @@ export default function Editor() {
   return (
     <div className="editor-shell" data-testid="editor-shell">
       <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} />
-      <header className="toolbar">
+      <header className="toolbar" aria-label="Project toolbar">
         <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
@@ -1177,7 +1182,7 @@ export default function Editor() {
             <button className="btn btn--ghost sidebar-rail__btn" onClick={() => setSidebar(false)} title="Show the sidebar" aria-label="Show the sidebar" data-testid="sidebar-expand"><IconSidebar /></button>
           </div>
         )}
-        <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} data-testid="sidebar">
+        <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} aria-label="Sidebar" data-testid="sidebar">
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" aria-selected={tab === 'files'} data-testid="tab-files">Files</button>
             <button
@@ -1314,7 +1319,7 @@ export default function Editor() {
           </div>
         </aside>
 
-        <main className="pane pane--editor" style={{ flex: 1 }}>
+        <main className="pane pane--editor" aria-label="Editor" style={{ flex: 1 }}>
           {activeFile ? (
             <>
               <div className="pane__header">
@@ -1467,7 +1472,7 @@ export default function Editor() {
         />
 
         {/* data-pdf: the run on screen, for tests that follow it across typesets */}
-        <section className="pane pane--preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined}>
+        <section className="pane pane--preview" aria-label="PDF preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined}>
           <div className="pane__header">
             <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (

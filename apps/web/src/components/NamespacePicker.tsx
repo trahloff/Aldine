@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, GitlabNamespace } from '../api';
 import { useToast } from './Toast';
+import { safeStorage } from '../util/safeStorage';
 
 const NAMESPACE_KEY = 'aldine.gitlab.namespace';
 
@@ -8,11 +9,11 @@ const NAMESPACE_KEY = 'aldine.gitlab.namespace';
  *  Undefined until the picker has been shown once, so an instance without
  *  provisioning never sends a namespace. */
 export function rememberedNamespace(): string | undefined {
-  try { return localStorage.getItem(NAMESPACE_KEY) || undefined; } catch { return undefined; }
+  return safeStorage.get(NAMESPACE_KEY) || undefined;
 }
 
 function remember(ns: string) {
-  try { localStorage.setItem(NAMESPACE_KEY, ns); } catch { /* private mode */ }
+  safeStorage.set(NAMESPACE_KEY, ns);
 }
 
 /** Which GitLab group a new project is provisioned into. Mounted only when

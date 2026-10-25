@@ -16,8 +16,9 @@
 
   --text: #1d1d1f;
   --text-2: #6e6e73;
-  /* tertiary carries real text (palette group labels, hints, badges) — must clear 4.5:1 */
-  --text-3: #76767b;
+  /* tertiary carries real text (palette group labels, hints, badges) and sits
+     on --bg-app as well as on panels: 4.9:1 on #f5f5f7 */
+  --text-3: #6b6b70;
 
   --hairline: rgba(0, 0, 0, 0.10);
   --hairline-strong: rgba(0, 0, 0, 0.16);
@@ -49,6 +50,28 @@
      ≥ 5:1 on every light surface and carries the white glyph at 5.6:1 */
   --agent: #6d4fd8;
   --bg-panel-raised: #ffffff;
+
+  /* Paper: the typeset page as a surface (aldine.dev's paper), the same in
+     both themes. Ink and rules drawn on it use the paper's own colours. */
+  --paper: #faf8f2;
+  --paper-ink: #1b1b1d;
+  --paper-line: rgba(27, 27, 29, 0.16);
+  --shadow-paper: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 16px rgba(0, 0, 0, 0.06);
+
+  /* The spacing scale. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* A toolbar control's height; a finger needs 44px (below). */
+  --control-h: 32px;
+
+  /* The surface behind a focus ring's gap (app.css, filled buttons). */
+  --focus-gap: var(--bg-app);
 
   --radius-xs: 4px;
   --radius-s: 6px;
@@ -131,6 +154,7 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-card-hover: 0 4px 14px rgba(0, 0, 0, 0.5);
   --shadow-pop: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 34px rgba(0, 0, 0, 0.6);
+  --shadow-paper: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.4);
 
   --material-pop: rgba(44, 44, 48, 0.82);
   /* the panes are dark already, so the scrim has to go further to push them back */
@@ -141,7 +165,12 @@
 
 html, body, #root { height: 100%; margin: 0; }
 
-html { -webkit-tap-highlight-color: transparent; }
+html {
+  -webkit-tap-highlight-color: transparent;
+  /* iOS enlarges text on rotation to landscape unless told not to */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 
 body {
   font-family: var(--font-ui);
@@ -167,6 +196,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* iOS zooms the page when a focused field's text is under 16px. */
 @media (pointer: coarse) {
+  :root { --control-h: 44px; }
   input, select, textarea { font-size: 16px; }
 }
 
@@ -185,8 +215,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 @media (prefers-contrast: more) {
   :root, :root[data-theme="dark"] { --material-blur: none; }
-  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; }
-  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; }
+  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; --paper: #ffffff; }
+  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; --paper: #ffffff; }
 }
 
 /* Theme switch: one short cross-fade of the whole page instead of a jump in

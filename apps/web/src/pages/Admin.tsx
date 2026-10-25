@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, AdminStats, AdminUserRow } from '../api';
 import { useAuth } from '../components/Auth';
+import Wordmark from '../components/Wordmark';
+import { useDocumentTitle } from '../util/documentTitle';
 
 /**
  * Instance administration: who is on this server and how busy it is.
@@ -42,6 +44,7 @@ export default function Admin() {
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  useDocumentTitle('Server admin');
 
   const load = async () => {
     try {
@@ -76,16 +79,16 @@ export default function Admin() {
   return (
     <div className="home admin" data-testid="admin-page">
       <div className="home__inner">
-        <div className="home__bar">
+        <header className="home__bar">
           <div>
-            <h1 className="home__brand">aldine<em>.</em></h1>
-            <p className="home__tag">Server admin</p>
+            <Link className="home__brand" to="/" aria-label="Aldine, back to projects"><Wordmark /></Link>
+            <h1 className="home__tag admin__title">Server admin</h1>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="btn" onClick={load} data-testid="admin-refresh">Refresh</button>
             <Link className="btn" to="/">Back to projects</Link>
           </div>
-        </div>
+        </header>
 
         {error && <p className="admin__error" data-testid="admin-error">{error}</p>}
 
