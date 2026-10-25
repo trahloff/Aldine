@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-25
+
 ### Added
 - New project opens a template chooser: a large sheet (a bottom sheet on a
   phone) with categories down the side, a search, page 1 of each template and
