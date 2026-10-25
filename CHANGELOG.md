@@ -100,6 +100,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the one the project tracks for everyone. Collaborators see why the action
   is unavailable.
 
+### Fixed
+- Deleting a project forever while it was still typesetting (right after
+  opening it, for example) could fail with a server error and leave the
+  project half removed in the trash. The delete now waits for the typeset.
+
 ## [0.16.0] — 2026-10-25
 
 ### Added

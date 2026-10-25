@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -974,7 +974,12 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
     const { remote } = await trashProject(meta);
-    if (req.query.permanent === '1') await store.deleteProject(req.params.id);
+    if (req.query.permanent === '1') {
+      // Opening the editor starts a typeset; one still writing .aldine-out
+      // makes the removal fail. The trash above already refuses new ones.
+      await typesetsSettled(req.params.id);
+      await store.deleteProject(req.params.id);
+    }
     return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
