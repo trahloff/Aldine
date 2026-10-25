@@ -38,6 +38,7 @@ test.describe('OIDC sign-in', () => {
     await signIn(page, p);
     await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
 
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     const settings = page.getByTestId('account-settings');
     await expect(settings.getByTestId('account-email')).toHaveText(p.claims.email as string);
@@ -58,6 +59,7 @@ test.describe('OIDC sign-in', () => {
     await expect(page.getByTestId('editor-shell')).toBeVisible();
 
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
     await signIn(page, p);
@@ -76,12 +78,14 @@ test.describe('OIDC sign-in', () => {
     await expect(page.getByTestId('projects-empty')).toBeVisible({ timeout: 15_000 });
     const mine = (await (await page.request.get('/api/projects')).json()) as { name: string }[];
     expect(mine.map((p) => p.name)).not.toContain(secret);
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-email')).toHaveText('No email address on this account');
     await page.keyboard.press('Escape');
 
     // The same address, verified this time, still never enters a password account.
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
     await signIn(page, await persona({ email: address }));

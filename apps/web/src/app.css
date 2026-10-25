@@ -157,6 +157,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .menu__hint { margin-left: auto; color: var(--text-2); font-size: var(--text-xs); }
 .menu__sep { height: 1px; margin: 5px 8px; background: var(--hairline); }
 .menu__label { padding: 6px 9px 2px; font-size: var(--text-xs); font-weight: 600; color: var(--text-3); }
+.menu__header { display: flex; flex-direction: column; gap: 1px; padding: 6px 9px 7px; min-width: 0; }
+.menu__header-title { font-size: var(--text-m); font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu__header-detail { font-size: var(--text-s); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Menus from components/Menu.tsx: drawn over everything, placed by script,
    and the focused row is the highlighted one, whatever moved the focus. */
@@ -407,19 +410,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .login__error { color: var(--error); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info { color: var(--ok-text); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info--warn { color: var(--warn-text); }
-/* first-run onboarding */
-.onboard { width: 100%; text-align: center; }
-.onboard__brand { justify-content: center; margin-bottom: 8px; }
-.onboard__tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
-.onboard__tile { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; padding: 12px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--bg-inset); cursor: pointer; transition: border-color 150ms var(--ease), transform 120ms var(--ease-out); }
-@media (hover: hover) and (pointer: fine) { .onboard__tile:hover { border-color: var(--accent); } }
-.onboard__tile:active { transform: scale(0.98); transition-duration: 0ms; }
-.onboard__tile-title { font-weight: 600; font-size: var(--text-m); }
-.onboard__tile-sub { font-size: var(--text-s); color: var(--text-2); line-height: 1.35; }
-.onboard__points { list-style: none; padding: 0; margin: 0 0 18px; text-align: left; display: flex; flex-direction: column; gap: 7px; }
-.onboard__points li { font-size: var(--text-s); color: var(--text-2); line-height: 1.45; padding-left: 18px; position: relative; }
-.onboard__points li::before { content: '›'; position: absolute; left: 4px; color: var(--accent); font-weight: 700; }
-@media (max-width: 560px) { .onboard__tiles { grid-template-columns: 1fr; } }
 
 /* comment composer */
 .composer__quote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg-inset); border-radius: 0 var(--radius-s) var(--radius-s) 0; color: var(--text-2); font-size: var(--text-s); max-height: 84px; overflow-y: auto; white-space: pre-wrap; }
@@ -545,22 +535,17 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 
 /* the word count follows the typeset status, a dot between when both show */
 .pdf-status:not(:empty) + .pdf-words::before { content: '·'; color: var(--text-3); }
-.user-chip__name { background: transparent; border: 0; padding: 2px 6px; margin: -2px -6px; border-radius: var(--radius-s); cursor: pointer; color: var(--text-2); font: inherit; font-size: var(--text-m); font-weight: 600; }
-@media (hover: hover) and (pointer: fine) { .user-chip__name:hover { color: var(--accent); text-decoration: underline; } }
 .login__oauth { width: 100%; justify-content: center; gap: 8px; height: 34px; margin-bottom: 10px; }
 .login__or { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--text-xs); margin: 6px 0 12px; }
 .login__or::before, .login__or::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
 
-/* user chip on home */
-.user-chip { display: inline-flex; align-items: center; gap: 8px; }
 
-/* ---------- home ---------- */
+/* ---------- admin (the old project-list frame) ---------- */
 
 .home {
   min-height: 100%;
   padding: 48px 24px 80px;
 }
-.home--drag { outline: 2px dashed var(--accent); outline-offset: -12px; background: var(--accent-soft); }
 .home__inner { max-width: 980px; margin: 0 auto; }
 /* holds the Wordmark; as a heading it takes the drawing's own height */
 .home__brand { display: flex; align-items: center; margin: 0; color: var(--text); line-height: 0; }
@@ -572,56 +557,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .email-banner--ok { background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
 .email-banner--error { background: color-mix(in srgb, var(--error) 8%, var(--bg-panel)); }
 .home__section { margin: 26px 0 10px; font-size: var(--text-m); font-weight: 600; color: var(--text-2); }
-
-.projects {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 14px;
-}
-.project-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px;
-  min-height: 118px;
-  background: var(--bg-panel);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-  text-align: left;
-  transition: box-shadow 180ms var(--ease), transform 180ms var(--ease-out), border-color 180ms var(--ease);
-}
-/* The lift is a pointer affordance. On touch a :hover sticks to the last
-   tapped card, so it only exists where there is a real hover. */
-@media (hover: hover) and (pointer: fine) {
-  .project-card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
-  :root[data-theme="dark"] .project-card:hover { border-color: var(--hairline-strong); background: var(--bg-panel-raised); }
-}
-.project-card:active { transform: scale(0.985); box-shadow: var(--shadow-card); transition-duration: 0ms; }
-/* pressing the delete button inside the card is not pressing the card */
-.project-card:has(.project-card__act:active) { transform: none; }
-.project-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.project-card__icon { color: var(--text-2); display: flex; }
-.project-card__name { font-weight: 600; font-size: var(--text-l); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-card__meta { color: var(--text-2); font-size: var(--text-s); margin-top: auto; display: flex; gap: 10px; align-items: center; }
-.project-card__meta > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.project-card__act { opacity: 0; margin-left: auto; border: 0; background: none; color: var(--text-3); cursor: pointer; border-radius: var(--radius-xs); padding: 2px 5px; }
-/* hover alone hides the only way to delete from keyboards and touch screens */
-.project-card:focus-within .project-card__act, .project-card__act:focus-visible { opacity: 1; }
-@media (hover: hover) and (pointer: fine) { .project-card:hover .project-card__act { opacity: 1; } }
-@media (hover: none), (pointer: coarse) { .project-card__act { opacity: 1; } }
-@media (hover: hover) and (pointer: fine) { .project-card__act:hover { color: var(--text); background: var(--bg-hover); } }
-/* only the action that removes the project turns red */
-@media (hover: hover) and (pointer: fine) { .project-card__del:hover { color: var(--error); background: var(--error-soft); } }
-
-.empty {
-  border: 1px dashed var(--hairline-strong);
-  border-radius: var(--radius-l);
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--text-2);
-}
 
 /* ---------- editor shell ---------- */
 
@@ -955,7 +890,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* log viewer */
 .modal--wide { width: 760px; }
 
-.home__legal { text-align: center; margin-top: 26px; color: var(--text-3); }
 .logview {
   font-family: var(--font-mono);
   font-size: var(--text-s);
@@ -1409,9 +1343,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .notfound h1 { font-size: var(--text-2xl); font-weight: 600; }
 .notfound p { color: var(--text-2); }
 
-/* --- a11y & responsive polish (QA deferred batch) --- */
-/* Import-ZIP label acts as a button; expose it to AT */
-.home__bar label.btn, .empty label.btn { position: relative; }
 
 
 /* sidebar tabs wrap (the base rule): a single row with a hidden scrollbar

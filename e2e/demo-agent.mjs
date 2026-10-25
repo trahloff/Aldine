@@ -97,7 +97,6 @@ const ctx = await browser.newContext({
   recordVideo: { dir: RAW, size: { width: 1440, height: 900 } },
 });
 await ctx.addInitScript((pid) => {
-  window.localStorage.setItem('aldine.onboarded', '1');
   window.localStorage.setItem('aldine.theme', 'light');
   window.localStorage.setItem('aldine.experimental.agentPresence', '1');
   window.localStorage.setItem(`aldine.remoteNudged.${pid}`, '1');

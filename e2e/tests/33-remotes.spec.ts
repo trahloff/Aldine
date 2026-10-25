@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import { startFrom } from './helpers';
 import type { Page } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -48,21 +49,10 @@ async function openFile(page: Page, name: string) {
 test.describe('remote providers on Home', () => {
   test('Home offers all three git hosts', async ({ page }) => {
     await page.goto('/');
+    await page.getByTestId('new-menu').click();
     await expect(page.getByTestId('new-from-github')).toBeVisible();
     await expect(page.getByTestId('new-from-gitlab')).toBeVisible();
-    await expect(page.getByTestId('new-from-gitea')).toHaveText('Clone from Gitea / Forgejo…');
-  });
-
-  test('first-run onboarding offers all three git hosts', async ({ browser }) => {
-    const ctx = await browser.newContext(); // raw context → no pre-dismiss, fresh localStorage
-    const p = await ctx.newPage();
-    try {
-      await p.goto('/');
-      await expect(p.getByTestId('onboarding')).toBeVisible({ timeout: 10_000 });
-      await expect(p.getByTestId('onboard-github')).toBeVisible();
-      await expect(p.getByTestId('onboard-gitlab')).toBeVisible();
-      await expect(p.getByTestId('onboard-gitea')).toContainText('Clone from Gitea / Forgejo…');
-    } finally { await ctx.close(); }
+    await expect(page.getByTestId('new-from-gitea')).toContainText('Clone from Gitea / Forgejo…');
   });
 
   test('/api/remotes lists all three providers with their labels', async ({ request }) => {
@@ -77,7 +67,7 @@ test.describe('remote providers on Home', () => {
 
   test('the Gitea / Forgejo connect dialog always asks for the instance URL', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('new-from-gitea').click();
+    await startFrom(page, 'new-from-gitea');
     await expect(page.getByTestId('gitea-import')).toBeVisible();
     const disconnect = page.getByTestId('gitea-disconnect');
     const tokenInput = page.getByTestId('gitea-token');
@@ -103,7 +93,7 @@ test.describe('Gitea / Forgejo sync', () => {
 
   test('PAT connect with the instance URL, then import', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('new-from-gitea').click();
+    await startFrom(page, 'new-from-gitea');
     await expect(page.getByTestId('gitea-import')).toBeVisible();
     const disconnect = page.getByTestId('gitea-disconnect');
     const tokenInput = page.getByTestId('gitea-token');
@@ -237,7 +227,7 @@ test.describe('GitLab sync', () => {
 
   test('PAT connect and import of a nested-group project', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('new-from-gitlab').click();
+    await startFrom(page, 'new-from-gitlab');
     await expect(page.getByTestId('gitlab-import')).toBeVisible();
     await connectWithToken(page);
 
@@ -415,7 +405,7 @@ test.describe('GitLab sync', () => {
 
   test('a malformed self-hosted URL is refused with a toast', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('new-from-gitlab').click();
+    await startFrom(page, 'new-from-gitlab');
     await expect(page.getByTestId('gitlab-import')).toBeVisible();
 
     const disconnect = page.getByTestId('gitlab-disconnect');

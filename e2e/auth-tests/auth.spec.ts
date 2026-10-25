@@ -48,7 +48,8 @@ test.describe('auth', () => {
 
     // back home, sign out
     await page.goto('/');
-    await expect(page.getByTestId('user-name')).toBeVisible();
+    await expect(page.getByTestId('account-menu')).toBeVisible();
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
 
@@ -63,6 +64,7 @@ test.describe('auth', () => {
     const email = uniq();
     await register(page, email);
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page).toHaveTitle('Sign in – Aldine');
     await expect(page.getByRole('main')).toBeVisible();
@@ -90,6 +92,7 @@ test.describe('auth', () => {
     const email = uniq();
     await register(page, email);
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await page.getByTestId('auth-email').fill(email);
     await page.getByTestId('auth-password').fill('wrongpassword');
@@ -536,6 +539,7 @@ test.describe('auth depth', () => {
     const bearer = { authorization: `Bearer ${token}` };
     expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(200);
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     // forgot flow (self-host echo returns the token → reset mode)
     await page.getByTestId('auth-forgot').click();
@@ -552,7 +556,7 @@ test.describe('auth depth', () => {
     await page.getByTestId('auth-email').fill(email);
     await page.getByTestId('auth-password').fill('brandnewpass1');
     await page.getByTestId('auth-submit').click();
-    await expect(page.locator('.home__brand')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('account-menu')).toBeVisible({ timeout: 15_000 });
   });
 
   test('SSO endpoints 404 for unconfigured providers, and only configured ones show a button', async ({ page, request }) => {
@@ -582,6 +586,7 @@ test.describe('auth depth', () => {
     expect((await request.get('/api/projects', { headers: bearer })).status()).toBe(200);
 
     // open account settings and change the password
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     await expect(page.getByTestId('account-settings')).toBeVisible();
     await page.getByTestId('current-password').fill('password123');
@@ -646,6 +651,7 @@ test.describe('cookies', () => {
     await expect(page.locator('body')).not.toContainText('Internal server error');
 
     // signed out with only the malformed cookies left: the login screen, not a 500
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
     const again = await page.goto('/');
@@ -708,26 +714,65 @@ test.describe('ownerless legacy projects', () => {
     await bob.close();
   });
 
-  test('claim via the home-screen button unlocks owner controls', async ({ browser }) => {
+  test('claim from the project menu unlocks owner controls', async ({ browser }) => {
     const seeder = await browser.newContext();
     await seeder.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
     const id = await seedOwnerless(seeder.request, 'Claim Me');
     await seeder.close();
 
     const ctx = await browser.newContext();
-    await ctx.addInitScript(() => localStorage.setItem('aldine.onboarded', '1'));
     const page = await ctx.newPage();
     await register(page, uniq());
     const card = page.getByTestId(`project-card-${id}`);
     await expect(card).toBeVisible();
+    await expect(page.getByTestId(`unclaimed-${id}`)).toHaveText('Unclaimed');
+    await page.getByTestId(`project-menu-${id}`).click();
     await expect(page.getByTestId(`claim-${id}`)).toBeVisible();
     await expect(page.getByTestId(`share-${id}`)).toHaveCount(0); // no owner controls pre-claim
     await page.getByTestId(`claim-${id}`).click();
     await expect(page.getByTestId('dialog-message')).toContainText('You become its owner');
     await page.getByTestId('dialog-confirm').click();
+    await expect(page.getByTestId(`unclaimed-${id}`)).toHaveCount(0);
+    await page.getByTestId(`project-menu-${id}`).click();
     await expect(page.getByTestId(`share-${id}`)).toBeVisible(); // owner controls appear
     await expect(page.getByTestId(`claim-${id}`)).toHaveCount(0);
     await ctx.close();
+  });
+
+  test('a project opened through a share link is listed under Shared with me until removed', async ({ browser }) => {
+    const owner = await browser.newContext();
+    const ownerPage = await owner.newPage();
+    await register(ownerPage, uniq(), 'password123', 'Grace Owner');
+    const { id } = await (await ownerPage.request.post('/api/projects', { data: { name: 'Link Shared Paper' } })).json();
+    expect((await ownerPage.request.post(`/api/projects/${id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+    await ownerPage.goto('/');
+    await expect(ownerPage.getByTestId(`shared-link-${id}`)).toHaveText('Link');
+
+    const visitor = await browser.newContext();
+    const page = await visitor.newPage();
+    await register(page, uniq(), 'password123', 'Ada Visitor');
+    await expect(page.getByTestId(`project-card-${id}`)).toHaveCount(0);
+    await page.goto(`/p/${id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    await page.goto('/?show=shared');
+    await expect(page.getByTestId('filter-shared')).toHaveAttribute('aria-current', 'page');
+    const card = page.getByTestId(`project-card-${id}`);
+    await expect(card).toBeVisible();
+    await expect(page.getByTestId(`owner-${id}`)).toContainText('Grace Owner');
+    // a recipient's menu: no rename, share or trash, but a way off the list
+    await page.getByTestId(`project-menu-${id}`).click();
+    await expect(page.getByTestId('menu-trash')).toHaveCount(0);
+    await expect(page.getByTestId('menu-rename')).toHaveCount(0);
+    await page.getByTestId('menu-remove').click();
+    await expect(card).toHaveCount(0);
+    await expect(page.locator('.toast', { hasText: 'Removed Link Shared Paper from your list' })).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId('shared-empty')).toBeVisible();
+    const mine = (await (await page.request.get('/api/projects')).json()) as { id: string }[];
+    expect(mine.some((p) => p.id === id)).toBe(false);
+
+    await owner.close();
+    await visitor.close();
   });
 });
 
@@ -750,6 +795,7 @@ test.describe('ORCID sign-in', () => {
     await signInWithOrcid(page, 'private');
     await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
 
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('user-name').click();
     const settings = page.getByTestId('account-settings');
     await expect(settings.getByTestId('account-orcid')).toHaveText(ORCID_PRIVATE);
@@ -764,6 +810,7 @@ test.describe('ORCID sign-in', () => {
     await expect(page.getByTestId('editor-shell')).toBeVisible();
 
     await page.goto('/');
+    await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
     await signInWithOrcid(page, 'private');

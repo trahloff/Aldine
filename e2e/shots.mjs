@@ -16,7 +16,6 @@ const shoot = async (ctx, name, fn) => {
 for (const scheme of ['light', 'dark']) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: scheme });
   await ctx.addInitScript((t) => {
-    window.localStorage.setItem('aldine.onboarded', '1');
     window.localStorage.setItem('aldine.theme', t);
   }, scheme);
 

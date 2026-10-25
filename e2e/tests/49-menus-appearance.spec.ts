@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createPaperProject, createProject, openProject, cleanup } from './helpers';
+import { createPaperProject, createProject, openProject, cleanup, projectAction } from './helpers';
 
 /**
  * The shared pieces the project list and the editor stand on: the menu
@@ -17,9 +17,11 @@ test.describe('appearance', () => {
     // nothing stored: dark, whatever the system says
     expect(await themeOf(page)).toBe('dark');
 
-    const toggle = page.getByTestId('theme-toggle');
+    // no accounts here: Appearance lives in the "…" menu
+    const toggle = page.getByTestId('home-more');
     await expect(toggle).toHaveAttribute('aria-haspopup', 'menu');
     await toggle.click();
+    await page.getByTestId('appearance').click();
     const menu = page.getByTestId('appearance-menu');
     await expect(menu).toBeVisible();
     await expect(menu.getByRole('menuitemradio', { name: 'Dark' })).toHaveAttribute('aria-checked', 'true');
@@ -40,7 +42,8 @@ test.describe('appearance', () => {
     expect(await themeOf(page)).toBe('light');
 
     // an explicit choice stops following the system
-    await page.getByTestId('theme-toggle').click();
+    await page.getByTestId('home-more').click();
+    await page.getByTestId('appearance').click();
     await page.getByTestId('appearance-dark').click();
     await expect.poll(() => themeOf(page)).toBe('dark');
     await page.emulateMedia({ colorScheme: 'light' });
@@ -67,29 +70,36 @@ test.describe('appearance', () => {
 });
 
 test.describe('menu', () => {
-  test('keyboard: arrows, Home and End, typeahead, Escape back to the button', async ({ page }) => {
+  test('keyboard: arrows, Home and End, typeahead, a submenu, Escape back to the button', async ({ page }) => {
     await page.goto('/');
-    const toggle = page.getByTestId('theme-toggle');
+    const toggle = page.getByTestId('home-more');
     await toggle.focus();
     await page.keyboard.press('Enter');
-    const menu = page.getByRole('menu', { name: 'Appearance' });
+    const menu = page.getByRole('menu', { name: 'More' });
     await expect(menu).toBeVisible();
-    const item = (name: string) => menu.getByRole('menuitemradio', { name });
-    await expect(item('Match system')).toBeFocused();
+    const item = (name: string) => menu.getByRole('menuitem', { name });
+    await expect(item('Appearance')).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(item('Light')).toBeFocused();
+    await expect(item('Connect Claude…')).toBeFocused();
     await page.keyboard.press('End');
-    await expect(item('Dark')).toBeFocused();
+    await expect(item('About & source')).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(item('Match system')).toBeFocused();
+    await expect(item('Appearance')).toBeFocused();
     await page.keyboard.press('ArrowUp');
-    await expect(item('Dark')).toBeFocused();
+    await expect(item('About & source')).toBeFocused();
     await page.keyboard.press('Home');
-    await expect(item('Match system')).toBeFocused();
-    await page.keyboard.press('l');
-    await expect(item('Light')).toBeFocused();
+    await expect(item('Appearance')).toBeFocused();
+    await page.keyboard.press('c');
+    await expect(item('Connect Claude…')).toBeFocused();
     // opened from the keyboard: no entrance animation
     expect(await menu.evaluate((el) => el.getAnimations().length)).toBe(0);
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight');
+    const sub = page.getByRole('menu', { name: 'Appearance' });
+    await expect(sub.getByRole('menuitemradio', { name: 'Match system' })).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(sub).toHaveCount(0);
+    await expect(item('Appearance')).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
     await expect(toggle).toBeFocused();
@@ -97,7 +107,7 @@ test.describe('menu', () => {
 
     // ArrowUp on the button opens on the last item; Tab closes and moves on
     await page.keyboard.press('ArrowUp');
-    await expect(item('Dark')).toBeFocused();
+    await expect(item('About & source')).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(menu).toHaveCount(0);
     await expect(toggle).not.toBeFocused();
@@ -105,8 +115,8 @@ test.describe('menu', () => {
 
   test('a pointer opens it with nothing chosen yet, and a press outside closes it', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('theme-toggle').click();
-    const menu = page.getByRole('menu', { name: 'Appearance' });
+    await page.getByTestId('home-more').click();
+    const menu = page.getByRole('menu', { name: 'More' });
     await expect(menu).toBeFocused();
     // Space with no row focused is swallowed: it must not scroll the page behind
     await page.evaluate(() => {
@@ -118,7 +128,7 @@ test.describe('menu', () => {
     await expect.poll(() => page.evaluate(() => (window as unknown as { spacePrevented?: boolean }).spacePrevented)).toBe(true);
     await expect(menu).toBeVisible();
     await page.keyboard.press('ArrowDown');
-    await expect(menu.getByRole('menuitemradio', { name: 'Match system' })).toBeFocused();
+    await expect(menu.getByRole('menuitem', { name: 'Appearance' })).toBeFocused();
     await page.mouse.click(5, 400);
     await expect(menu).toHaveCount(0);
   });
@@ -211,7 +221,7 @@ test.describe('dialogs and notifications', () => {
     const id = await createProject(request, 'Neutral Trash');
     try {
       await page.goto('/');
-      await page.getByTestId(`project-card-${id}`).locator('.project-card__del').click();
+      await projectAction(page, id, 'menu-trash');
       const region = page.getByRole('region', { name: 'Notifications' });
       const toast = region.locator('.toast', { hasText: 'Moved Neutral Trash to the trash' });
       await expect(toast).toBeVisible();
@@ -237,8 +247,9 @@ test.describe('dialogs and notifications', () => {
 
     test('a dialog is a sheet from the bottom edge, and the page behind it does not scroll', async ({ page }) => {
       await page.goto('/');
-      await page.getByTestId('new-project').click();
-      const sheet = page.locator('.modal');
+      await page.getByTestId('home-add').click();
+      await page.getByTestId('home-add-sheet').getByTestId('new-project').click();
+      const sheet = page.getByRole('dialog', { name: 'New project' });
       await expect(sheet).toBeVisible();
       await expect.poll(async () => {
         const b = (await sheet.boundingBox())!;

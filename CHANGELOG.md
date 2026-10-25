@@ -7,6 +7,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- The project list is a new Home: a shelf of first pages, each with when it
+  was last edited and by whom, a dot when someone else changed it since you
+  opened it, its branch, its sharing and its typeset errors. Projects open on
+  the branch you last had open.
+- One bar holds search (it narrows the list as you type), New project with
+  the imports under its arrow, and your account menu with Appearance, Connect
+  Claude and Sign out; Appearance moves there from the toolbar. Sort by last
+  edited, last opened, name or date created; Shared with me and Trash have
+  their own address, and the trash says when each project goes for good.
+- Each project has a menu (the "…" button, right-click, long press,
+  Shift+F10) with Rename, Duplicate, Share, downloads and Move to Trash, and
+  the list answers the arrow keys, Delete, Cmd/Ctrl+Z to undo and "n" for a
+  new project. Several ZIPs import at once, with progress and Cancel.
+- The welcome dialog is gone: an empty list offers templates and imports
+  instead. On a phone Home has a compact bar, two columns, and project menus
+  open as a sheet from the bottom.
+- Page-1 thumbnails are rendered at twice the width, so they stay sharp on
+  large and high-density screens.
+
 ## [0.17.0] — 2026-10-25
 
 ### Added

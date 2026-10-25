@@ -26,6 +26,13 @@ export function useToast() {
   return useContext(ToastCtx);
 }
 
+const DismissCtx = createContext<(key: string) => void>(() => {});
+
+/** Takes down the toast whose action carries `key`: its Undo was done another way (a shortcut). */
+export function useToastDismiss() {
+  return useContext(DismissCtx);
+}
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -56,8 +63,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((t) => [...(action?.key ? t.filter((x) => x.action?.key !== action.key) : t), { id, text, kind, action, ms }]);
     if (ms) arm(id, ms);
   }, [arm]);
+  const shown = useRef(toasts);
+  shown.current = toasts;
+  const dismissKey = useCallback((key: string) => {
+    shown.current.filter((x) => x.action?.key === key && !x.leaving).forEach((x) => dismiss(x.id));
+  }, [dismiss]);
   return (
     <ToastCtx.Provider value={push}>
+     <DismissCtx.Provider value={dismissKey}>
       {children}
       {/* A named landmark: a screen reader can jump straight to the notifications and their Undo. */}
       <section className="toasts" role="region" aria-label="Notifications" aria-live="polite" data-testid="toasts">
@@ -102,6 +115,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           </div>
         ))}
       </section>
+     </DismissCtx.Provider>
     </ToastCtx.Provider>
   );
 }

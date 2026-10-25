@@ -1,143 +1,183 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { api, ApiError, ProjectSummary, RemoteInfo, TemplateCategory, TemplateInfo, TemplateRepoState } from '../api';
-import { useToast } from '../components/Toast';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { api, ApiError, ProjectSummary, RemoteInfo, RemoteProviderId, TemplateInfo, TrashedProject } from '../api';
+import { withBase } from '../basePath';
+import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import EmailConfirmBanner from '../components/EmailConfirmBanner';
 import Modal from '../components/Modal';
 import ShareModal from '../components/ShareModal';
-import { IconDoc, IconLink, IconX } from '../components/Icons';
-import Wordmark from '../components/Wordmark';
-import { AppearanceMenuButton, appearanceCommands } from '../components/Appearance';
+import { appearanceCommands } from '../components/Appearance';
 import AccountSettings from '../components/AccountSettings';
+import { MenuButton, useContextMenu, type MenuEntry } from '../components/Menu';
+import { IconChevronDown } from '../components/Icons';
+import HomeToolbar, { HomeSearch, startItems, type AccountActions, type StartActions } from '../components/home/HomeToolbar';
+import { BlankSheet, ImportSheet, ProjectSheet, SkeletonSheet, TemplateSheet, TrashSheet } from '../components/home/ProjectSheet';
+import NewProjectDialog from '../components/NewProjectDialog';
 import { useAppearance } from '../theme';
 import { useDocumentTitle } from '../util/documentTitle';
 import RemoteImport from '../components/RemoteImport';
-import { isRemoteProviderId, RemoteProviderId } from '../remotes';
-import Onboarding from '../components/Onboarding';
-import NamespacePicker, { rememberedNamespace } from '../components/NamespacePicker';
+import { isRemoteProviderId } from '../remotes';
+import { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
-import CommandPalette, { Command, PaletteTrigger, usePaletteHotkey } from '../components/CommandPalette';
+import CommandPalette, { Command, usePaletteHotkey } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
-import { friendlyDate } from '../util/dates';
+import { useMinuteTick } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
-import { pickTemplate, templateToPost } from '../util/templates';
 import { importSummary } from '../util/engines';
 import { safeSession, safeStorage } from '../util/safeStorage';
+import { gridMove, isGridKey } from '../util/rovingGrid';
+import { useMediaQuery, prefersReducedMotion } from '../util/useMediaQuery';
+import { useFlip } from '../util/useFlip';
+import { isMac } from '../platform';
+import {
+  isSharedWithMe, matchSentence, matchesQuery, parseShow, parseSort, pdfOutputPath, projectHref, sectionsOf, SORT_KEY, SORTS,
+  sortProjects, type ShelfSection, type Show, type SortKey,
+} from '../util/homeList';
+
+declare const __ALDINE_VERSION__: string;
+
+/** AGPL section 13: the source of the version running here (About.tsx says the same). */
+const SOURCE_URL = 'https://github.com/trahloff/Aldine';
 
 /** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
  *  enforces it; this pre-flight only spares the upload. */
 const IMPORT_MAX_ZIP_MB = 60;
 const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 
-/** Gallery order; a category with no template in it is not drawn. */
-const TEMPLATE_CATEGORIES: TemplateCategory[] = ['General', 'Journals', 'Conferences', 'Theses', 'Slides'];
-
 /** The palette's sections before anything is typed: projects first. */
 const PALETTE_GROUPS = ['Projects', 'New', 'Appearance', 'More'];
 
-function matchesQuery(t: TemplateInfo, q: string): boolean {
-  const hay = [t.name, t.description, t.category, t.documentClass, t.id, t.kit?.host, t.source?.label].join(' ').toLowerCase();
-  return q.split(/\s+/).every((word) => hay.includes(word));
-}
+/** Matches the toast that carries Undo (Toast.tsx). */
+const UNDO_MS = 8000;
+/** Matches .sheet.is-leaving in app.css. */
+const EXIT_MS = 150;
+/** A list that answers quicker than this never shows its skeleton. */
+const SKELETON_DELAY_MS = 300;
+/** With this few projects a blank "New project" page ends the shelf. */
+const BLANK_SHEET_MAX = 3;
 
-/** Template ids from a repository are `repo:<repoId>/<folder>`. */
-function repoIdOf(t: TemplateInfo): string {
-  return t.id.slice('repo:'.length).split('/')[0];
-}
+const PHONE = '(max-width: 640px)';
 
-interface GalleryGroup {
+/** The starting points the empty list offers, in this order, when the server has them. */
+const STARTERS: { match: (t: TemplateInfo) => boolean; name: string; title: string; detail: string; slide?: boolean }[] = [
+  { match: (t) => t.id === 'article', name: 'Article', title: 'Title of Your Article', detail: 'One column, biblatex' },
+  { match: (t) => t.id === 'report', name: 'Thesis', title: 'Title of Your Thesis', detail: 'Chapters in their own files' },
+  { match: (t) => t.id === 'beamer', name: 'Presentation', title: 'Title of Your Talk', detail: 'Beamer, 16:9', slide: true },
+  { match: (t) => /(^|[:/])neurips/i.test(t.id), name: 'NeurIPS', title: 'Paper Title', detail: 'Official kit, fetched on create' },
+];
+
+interface ImportJob {
   key: string;
-  testid: string;
-  heading: string;
-  /** Set on a repository whose last refresh failed while its previous checkout is still listed. */
-  stale?: { repoId: string; text: string };
-  items: TemplateInfo[];
+  name: string;
+  state: 'uploading' | 'importing' | 'failed';
+  progress: number | null;
+  error?: string;
+  ctrl: AbortController;
 }
 
-/** Built-in categories in TEMPLATE_CATEGORIES order, with one group per
- *  repository (in config order) between 'General' and the venue categories.
- *  Repository templates are never placed in a category group. */
-function galleryGroups(shown: TemplateInfo[], repos: TemplateRepoState[]): GalleryGroup[] {
-  const byRepo = new Map<string, TemplateInfo[]>();
-  for (const t of shown) {
-    if (t.source?.kind !== 'repo') continue;
-    const id = repoIdOf(t);
-    byRepo.set(id, [...(byRepo.get(id) ?? []), t]);
-  }
-  const repoOrder = [...repos.map((r) => r.id), ...byRepo.keys()].filter((id, i, all) => all.indexOf(id) === i);
-  const repoGroups: GalleryGroup[] = [];
-  for (const repoId of repoOrder) {
-    const items = byRepo.get(repoId);
-    if (!items?.length) continue;
-    const state = repos.find((r) => r.id === repoId);
-    const stale = state && !state.ok && state.available
-      ? { repoId, text: state.syncedAt ? `last updated ${friendlyDate(state.syncedAt)}, refresh failed` : 'refresh failed' }
-      : undefined;
-    repoGroups.push({
-      key: `repo:${repoId}`,
-      testid: `template-category-repo-${repoId}`,
-      heading: state?.label ?? items[0].source?.label ?? repoId,
-      stale,
-      items,
-    });
-  }
-  const out: GalleryGroup[] = [];
-  for (const cat of TEMPLATE_CATEGORIES) {
-    const items = shown.filter((t) => t.source?.kind !== 'repo' && (t.category || 'General') === cat);
-    if (items.length) out.push({ key: cat, testid: `template-category-${cat}`, heading: cat, items });
-    if (cat === 'General') out.push(...repoGroups);
-  }
-  return out;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+/** A dialog or menu is open: page shortcuts stand aside. */
+const overlayOpen = () => !!document.querySelector('.modal-backdrop:not(.is-leaving), .menu--floating:not(.is-leaving)');
+
+function download(href: string, filename?: string) {
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename ?? '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function failureReason(err: unknown): string {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'You are offline.';
+  if (err instanceof ApiError && err.status === 0) return 'The server didn’t answer.';
+  if (err instanceof ApiError) return `The server answered: ${err.message}.`;
+  return 'The server didn’t answer.';
 }
 
 export default function Home() {
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const zipInput = useRef<HTMLInputElement>(null);
-  const [creating, setCreating] = useState(false);
-  const appearance = useAppearance();
-  const [newName, setNewName] = useState('');
-  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
-  const [repoStates, setRepoStates] = useState<TemplateRepoState[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [template, setTemplate] = useState('article');
-  const [templateQuery, setTemplateQuery] = useState('');
-  // Undefined until the namespace picker loads, i.e. while the server has no
-  // GitLab provisioning: nothing is sent and no GitLab toast is shown.
-  const [namespace, setNamespace] = useState<string | undefined>(undefined);
-  const [sharing, setSharing] = useState<ProjectSummary | null>(null);
-  const [showAccount, setShowAccount] = useState(false);
-  const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
-  const [importFrom, setImportFrom] = useState<RemoteProviderId | null>(null);
-  const [trash, setTrash] = useState<{ id: string; name: string; deletedAt: string }[]>([]);
-  const [showTrash, setShowTrash] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(() => safeStorage.get('aldine.onboarded') !== '1');
-  const dismissOnboarding = () => { safeStorage.set('aldine.onboarded', '1'); setShowOnboarding(false); };
   const navigate = useNavigate();
   const toast = useToast();
+  const dismissToast = useToastDismiss();
   const dialogs = useDialogs();
+  const appearance = useAppearance();
   const { authEnabled, user, admin, setUser } = useAuth();
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [connectOpen, setConnectOpen] = useState(false);
-  usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
+  const myId = user?.id ?? null;
+  const compact = useMediaQuery(PHONE);
+  const now = useMinuteTick();
+  const [params] = useSearchParams();
+  const show: Show = parseShow(params.get('show'), authEnabled);
   useDocumentTitle('Projects');
 
-  const load = () => {
-    api.listTrash().then(setTrash).catch(() => setTrash([]));
+  const cacheKey = `aldine.home.list:${myId ?? 'local'}`;
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(() => safeSession.getJSON<ProjectSummary[] | null>(cacheKey, null, (v): v is ProjectSummary[] => Array.isArray(v)));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [trash, setTrash] = useState<TrashedProject[] | null>(null);
+  const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
+  const [logins, setLogins] = useState<Partial<Record<RemoteProviderId, string>>>({});
+  const [sort, setSortState] = useState<SortKey>(() => parseSort(safeStorage.get(SORT_KEY)));
+  const [query, setQuery] = useState('');
+  const [skeleton, setSkeleton] = useState(false);
+  const [starters, setStarters] = useState<TemplateInfo[] | null>(null);
+  const [imports, setImports] = useState<ImportJob[]>([]);
+  const [leaving, setLeaving] = useState<Set<string>>(() => new Set());
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [scrolled, setScrolled] = useState(false);
+  const [titleUnder, setTitleUnder] = useState(false);
+  const [drag, setDrag] = useState<number | null>(null);
+
+  const [creating, setCreating] = useState<{ template?: string } | null>(null);
+  const [sharing, setSharing] = useState<ProjectSummary | null>(null);
+  const [showAccount, setShowAccount] = useState(false);
+  const [importFrom, setImportFrom] = useState<RemoteProviderId | null>(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [addSheet, setAddSheet] = useState(false);
+  usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
+
+  const zipInput = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const shelfRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<string | null | 'title'>(null);
+  const undo = useRef<{ key: string; until: number; run(): void } | null>(null);
+  const flip = useFlip(shelfRef);
+  const dragDepth = useRef(0);
+
+  const setSort = (s: SortKey) => { setSortState(s); safeStorage.set(SORT_KEY, s); };
+
+  const loadTrash = useCallback(() => api.listTrash().then(setTrash).catch(() => setTrash((t) => t ?? [])), []);
+  const load = useCallback(() => {
+    loadTrash();
     return api.listProjects()
-      .then((p) => { setProjects(p); setLoadFailed(false); })
-      .catch(() => { setLoadFailed(true); setProjects((cur) => cur ?? []); });
-  };
-  useEffect(() => { load(); }, []);
+      .then((p) => { setProjects(p); setLoadError(null); safeSession.setJSON(cacheKey, p); })
+      .catch((err) => { setLoadError(failureReason(err)); });
+  }, [cacheKey, loadTrash]);
+  useEffect(() => { load(); }, [load]);
   // Confirming the address brings in the projects shared with it.
   const wasPending = useRef(!!user?.emailPending);
   useEffect(() => {
     if (wasPending.current && !user?.emailPending) load();
     wasPending.current = !!user?.emailPending;
   }, [user?.emailPending]);
+  // Back online: the list that failed to load tries again by itself.
+  useEffect(() => {
+    if (!loadError) return;
+    const retry = () => { load(); };
+    window.addEventListener('online', retry);
+    return () => window.removeEventListener('online', retry);
+  }, [loadError, load]);
+  useEffect(() => {
+    if (projects !== null) { setSkeleton(false); return; }
+    const t = setTimeout(() => setSkeleton(true), SKELETON_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [projects]);
+
   // Signed in through an SSO provider while an app was waiting on
   // /oauth/authorize: the provider callback lands here, so resume the consent.
   useEffect(() => {
@@ -146,7 +186,15 @@ export default function Home() {
     safeSession.remove(OAUTH_RESUME_KEY);
     if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
   }, []);
-  useEffect(() => { api.remotes().then(setRemotes).catch(() => setRemotes([])); }, []);
+  useEffect(() => {
+    api.remotes().then((list) => {
+      setRemotes(list);
+      // Which account each host is connected as, for the Clone items.
+      for (const r of list) {
+        api.remoteStatus(r.id).then((s) => { if (s.connected && s.login) setLogins((cur) => ({ ...cur, [r.id]: s.login })); }).catch(() => {});
+      }
+    }).catch(() => setRemotes([]));
+  }, []);
   // returning from a host's OAuth connect → reopen the import flow (now
   // connected). `?github=connected` is the pre-GitLab callback and stays.
   useEffect(() => {
@@ -157,295 +205,635 @@ export default function Home() {
       window.history.replaceState({}, '', location.pathname);
     }
   }, []);
-  const loadTemplates = () => {
-    // The repo list is informational: a server without the route (or without
-    // repos) still gets its gallery.
-    api.templateRepos().then((r) => setRepoStates(r.repos)).catch(() => setRepoStates([]));
-    return api.templates().then((list) => {
-      setTemplates(list);
-      setTemplate((cur) => pickTemplate(list, cur));
-    }).catch(() => setTemplates((cur) => cur ?? []));
-  };
-  // Repositories sync in the background after boot, so a dialog opened later
-  // must see what has arrived since the page loaded.
-  useEffect(() => { if (creating || templates === null) loadTemplates(); }, [creating]);
+  const empty = projects !== null && projects.length === 0 && show === 'all';
+  useEffect(() => {
+    if (!empty || starters) return;
+    api.templates().then(setStarters).catch(() => setStarters([]));
+  }, [empty, starters]);
 
-  const refreshTemplates = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
+  // The toolbar takes its material once anything has scrolled under it.
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([e]) => setScrolled(!e.isIntersecting));
+    io.observe(el);
+    // The large title has gone under the bar: the phone's bar shows it instead.
+    const t = titleRef.current;
+    const titleIo = t ? new IntersectionObserver(([e]) => setTitleUnder(!e.isIntersecting && e.boundingClientRect.top < 60), { rootMargin: '-44px 0px 0px 0px' }) : null;
+    if (t) titleIo!.observe(t);
+    return () => { io.disconnect(); titleIo?.disconnect(); };
+  }, []);
+
+  // ---------- what is shown ----------
+  const sharedCount = useMemo(() => (projects ?? []).filter(isSharedWithMe).length, [projects]);
+  const visible = useMemo(() => {
+    const base = (projects ?? []).filter((p) => (show === 'shared' ? isSharedWithMe(p) : true));
+    const q = query.trim();
+    return sortProjects(q ? base.filter((p) => matchesQuery(p, q)) : base, sort);
+  }, [projects, show, query, sort]);
+  const trashVisible = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase();
+    return [...(trash ?? [])]
+      .filter((t) => !q || t.name.toLocaleLowerCase().includes(q))
+      .sort((a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime());
+  }, [trash, query]);
+  const sections: ShelfSection[] = useMemo(() => (query.trim()
+    ? [{ key: 'all', label: null, items: visible }]
+    : sectionsOf(visible, sort, now)), [visible, sort, now, query]);
+  const blankSheet = show === 'all' && !query.trim() && projects !== null && projects.length > 0 && projects.length <= BLANK_SHEET_MAX;
+
+  /** The roving items in reading order. */
+  const keys: string[] = useMemo(() => {
+    if (show === 'trash') return trashVisible.map((t) => t.id);
+    return [...visible.map((p) => p.id), ...(blankSheet ? ['new'] : [])];
+  }, [show, trashVisible, visible, blankSheet]);
+  const tabKey = activeKey && keys.includes(activeKey) ? activeKey : keys[0] ?? null;
+  const tabIndexOf = (key: string) => (key === tabKey ? 0 : -1);
+
+  /** The focusable part of a roving item: a project's link, or the blank "New project" page. */
+  const linkFor = (key: string) => (key === 'new'
+    ? shelfRef.current?.querySelector<HTMLElement>('[data-testid="new-project-sheet"]')
+    : shelfRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(key)}"] .sheet__link`)) ?? null;
+
+  // Focus that has to wait for the list to re-render (after a trash, a duplicate).
+  useEffect(() => {
+    const want = pendingFocus.current;
+    if (want === null) return;
+    pendingFocus.current = null;
+    if (want === 'title') { titleRef.current?.focus(); return; }
+    const el = linkFor(want);
+    if (el) { setActiveKey(want); el.focus(); } else titleRef.current?.focus();
+  });
+
+  // ---------- actions ----------
+  const byId = (id: string) => projects?.find((p) => p.id === id) ?? null;
+
+  /** Where focus goes when the item `id` leaves the list: the next, else the previous, else the title. */
+  const focusAfter = (id: string): string | 'title' => {
+    const i = keys.indexOf(id);
+    return keys[i + 1] ?? keys[i - 1] ?? 'title';
+  };
+
+  /** Fades the item out, then takes it off the list while its neighbours close the gap. */
+  const exit = async (id: string, work: Promise<unknown>, hadFocus: boolean): Promise<boolean> => {
+    const next = focusAfter(id);
+    // From its menu, focus is on the item's "…" button, which leaves with it.
+    hadFocus ||= !!(document.activeElement instanceof Element && document.activeElement.closest(`[data-id="${CSS.escape(id)}"]`));
+    setLeaving((s) => new Set(s).add(id));
     try {
-      const { repos } = await api.refreshTemplateRepos();
-      setRepoStates(repos);
-      const list = await api.templates();
-      setTemplates(list);
-      setTemplate((cur) => pickTemplate(list, cur));
-      const failed = repos.filter((r) => !r.ok);
-      if (failed.length) {
-        toast(`Could not refresh ${failed.map((r) => r.label).join(', ')}: ${failed[0].error ?? 'unknown error'}`, 'error');
-      }
-    } catch (err: any) {
-      toast(`Could not refresh templates: ${err.message}`, 'error');
-    } finally {
-      setRefreshing(false);
+      await Promise.all([work, wait(prefersReducedMotion() ? 0 : EXIT_MS)]);
+    } catch (err) {
+      setLeaving((s) => { const n = new Set(s); n.delete(id); return n; });
+      throw err;
     }
+    flip();
+    if (hadFocus) pendingFocus.current = next;
+    setProjects((cur) => cur?.filter((p) => p.id !== id) ?? cur);
+    setTrash((cur) => (show === 'trash' ? cur?.filter((t) => t.id !== id) ?? cur : cur));
+    setLeaving((s) => { const n = new Set(s); n.delete(id); return n; });
+    return true;
   };
 
-  // A search that hides the chosen tile would leave Create acting on something
-  // the user cannot see, so the first result of a narrowing search becomes the
-  // choice. With no search, or when the choice is still on screen, it stands.
-  const shownTemplates = (() => {
-    const q = templateQuery.trim().toLowerCase();
-    if (!templates) return [] as TemplateInfo[];
-    return q ? templates.filter((t) => matchesQuery(t, q)) : templates;
-  })();
-  const effectiveTemplate = shownTemplates.some((t) => t.id === template)
-    ? template
-    : shownTemplates[0]?.id ?? template;
-  const chosen = templates?.find((t) => t.id === effectiveTemplate) ?? null;
-  const closeCreate = () => { setCreating(false); setTemplateQuery(''); };
+  /** Puts a project back where the sort says, growing in. */
+  const reinsert = (p: ProjectSummary) => {
+    flip([p.id]);
+    setProjects((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
+  };
 
-  // One request per click: a venue kit takes seconds to download, and a
-  // double-click or a held Enter used to make two identical projects and
-  // land in the second.
-  const [submitting, setSubmitting] = useState(false);
-  const create = async () => {
-    if (submitting) return;
-    const name = newName.trim() || 'Untitled project';
-    setSubmitting(true);
+  const armUndo = (key: string, run: () => void) => {
+    undo.current = { key, until: Date.now() + UNDO_MS, run };
+  };
+
+  const restoreFromTrash = async (id: string, name: string, original?: ProjectSummary) => {
+    undo.current = null;
     try {
-      const p = await api.createProject(name, undefined, templateToPost(templates ?? [], effectiveTemplate), namespace);
-      if (p.venueKit && !p.venueKit.ok) {
-        toast(`Could not download the ${p.venueKit.name} kit from ${p.venueKit.host}. The project was created from a skeleton; README-venue.md says where to get the kit.`, 'error');
-      }
-      // Provisioning never blocks the project: a failure is a warning and the
-      // editor offers a retry.
-      if (p.remoteError) toast(p.remoteError, 'error');
-      else if (p.remote && namespace) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
-      navigate(`/p/${p.id}`);
-    } catch (err: any) {
-      toast(`Could not create project: ${err.message}`, 'error');
-      setSubmitting(false);
-    }
+      await api.restoreProject(id);
+      toast(`Restored ${name}`, 'ok');
+      // A reload here would re-sort under an open menu and close it; the row is known.
+      if (original) { reinsert(original); loadTrash(); } else load();
+      if (show === 'trash') { flip(); setTrash((cur) => cur?.filter((t) => t.id !== id) ?? cur); }
+    } catch (err: any) { toast(err.message, 'error'); }
   };
 
-  const importZip = async (file: File) => {
-    if (!/\.zip$/i.test(file.name)) { toast('Please drop a .zip file', 'error'); return; }
-    const sizeMb = Number((file.size / (1024 * 1024)).toFixed(1));
-    if (file.size > IMPORT_MAX_ZIP_BYTES) { toast(`ZIP is ${sizeMb} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
-    toast('Importing…');
+  const moveToTrash = async (p: ProjectSummary, hadFocus = false) => {
+    // No question first: the trash keeps the project, and the notification
+    // carries the way back.
     try {
-      // One-click import: the group is the last one picked in the new-project
-      // dialog (none until the picker has been shown once).
-      const p = await api.importZip(file.name.replace(/\.zip$/i, ''), file, rememberedNamespace());
-      toast(importSummary(p), 'ok');
-      if (p.remoteError) toast(p.remoteError, 'error');
-      else if (p.remote) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
-      navigate(`/p/${p.id}`, { state: { import: p.import } });
+      await exit(p.id, api.deleteProject(p.id), hadFocus);
     } catch (err: any) {
-      // A 413 without the route's own text comes from a proxy or body limit
-      // below what the app allows — the size is the only number worth stating.
-      if (err instanceof ApiError && err.status === 413 && !/limit is/.test(err.message)) {
-        toast(`ZIP too large for this server: ${sizeMb} MB was refused before it reached the app, which allows ${IMPORT_MAX_ZIP_MB} MB`, 'error');
-        return;
-      }
-      toast(`Import failed: ${err.message}`, 'error');
+      toast(`Could not move ${p.name} to the trash: ${err.message}`, 'error');
+      return;
     }
+    const key = `undo-trash-${p.id}`;
+    const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, p); };
+    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onClick: () => { undo.current = null; restoreFromTrash(p.id, p.name, p); } });
+    armUndo(key, run);
+    loadTrash();
   };
 
-  const remove = async (e: React.MouseEvent, p: ProjectSummary) => {
-    e.stopPropagation();
-    // No question first: the trash keeps the project for 30 days, and the
-    // notification carries the way back.
+  const removeFromList = async (p: ProjectSummary, hadFocus = false) => {
     try {
-      await api.deleteProject(p.id);
-      toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', onClick: () => restore(p.id, p.name) });
-      load();
+      await exit(p.id, api.removeFromList(p.id), hadFocus);
     } catch (err: any) {
-      toast(`Could not delete ${p.name}: ${err.message}`, 'error');
+      toast(`Could not remove ${p.name} from your list: ${err.message}`, 'error');
+      return;
     }
+    const key = `undo-remove-${p.id}`;
+    const back = async () => {
+      undo.current = null;
+      try { await api.markOpened(p.id, p.opened?.branch ?? 'main'); reinsert(p); } catch (err: any) { toast(err.message, 'error'); }
+    };
+    toast(`Removed ${p.name} from your list`, 'info', { label: 'Undo', testId: 'undo-remove', key, onClick: back });
+    armUndo(key, () => { dismissToast(key); back(); });
   };
 
-  const claim = async (e: React.MouseEvent, p: ProjectSummary) => {
-    e.stopPropagation();
+  const purge = async (t: TrashedProject, hadFocus = false) => {
+    if (!(await dialogs.confirm({ title: `Delete “${t.name}” forever?`, body: 'This cannot be undone.', confirmLabel: 'Delete forever', danger: true }))) return;
+    try {
+      await exit(t.id, api.deleteProject(t.id, true), hadFocus);
+      toast(`Deleted ${t.name} forever`, 'ok');
+    } catch (err: any) { toast(err.message, 'error'); }
+  };
+
+  const emptyTrash = async () => {
+    const list = trash ?? [];
+    if (!list.length) return;
+    const n = list.length;
+    if (!(await dialogs.confirm({
+      title: `Delete ${n === 1 ? `“${list[0].name}”` : `all ${n} projects in the trash`} forever?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Empty trash',
+      danger: true,
+    }))) return;
+    let failed = 0;
+    for (const t of list) {
+      try { await api.deleteProject(t.id, true); } catch { failed += 1; }
+    }
+    flip();
+    await loadTrash();
+    toast(failed ? `Emptied the trash · ${failed} could not be deleted` : 'Emptied the trash', failed ? 'error' : 'ok');
+  };
+
+  const claim = async (p: ProjectSummary) => {
     if (!(await dialogs.confirm({ title: `Claim “${p.name}”?`, body: 'You become its owner and other users lose access.', confirmLabel: 'Claim project' }))) return;
     try { await api.claimProject(p.id); toast(`You now own ${p.name}`, 'ok'); }
     catch (err: any) { toast(err.message, 'error'); } // e.g. someone claimed it first
     load(); // winner sees owner controls; a loser sees the project disappear
   };
 
-  const restore = async (id: string, name: string) => {
-    try { await api.restoreProject(id); toast(`Restored ${name}`, 'ok'); load(); }
-    catch (err: any) { toast(err.message, 'error'); }
+  const rename = async (p: ProjectSummary) => {
+    const name = await dialogs.prompt({ title: 'Rename project', value: p.name, confirmLabel: 'Rename' });
+    if (name === null || !name.trim() || name.trim() === p.name) return;
+    try {
+      const updated = await api.patchProject(p.id, { name: name.trim() });
+      setProjects((cur) => cur?.map((x) => (x.id === p.id ? { ...x, name: updated.name } : x)) ?? cur);
+    } catch (err: any) { toast(`Could not rename ${p.name}: ${err.message}`, 'error'); }
   };
 
-  const purge = async (id: string, name: string) => {
-    if (!(await dialogs.confirm({ title: `Delete “${name}” forever?`, body: 'This cannot be undone.', confirmLabel: 'Delete forever', danger: true }))) return;
-    try { await api.deleteProject(id, true); toast(`Deleted ${name} forever`, 'ok'); load(); }
-    catch (err: any) { toast(err.message, 'error'); }
+  const duplicate = async (p: ProjectSummary) => {
+    try {
+      const c = await api.copyProject(p.id);
+      if (c.remoteError) toast(c.remoteError, 'error');
+      flip([c.id]);
+      pendingFocus.current = c.id;
+      setProjects((cur) => (cur ? [c, ...cur] : [c]));
+      toast(`Duplicated ${p.name} as “${c.name}”`, 'ok');
+    } catch (err: any) { toast(`Could not duplicate ${p.name}: ${err.message}`, 'error'); }
   };
 
-  const [dragOver, setDragOver] = useState(false);
+  const downloadPdf = (p: ProjectSummary) => {
+    const branch = p.thumb?.branch ?? p.compile?.branch ?? 'main';
+    download(api.pdfUrl(p.id, branch, pdfOutputPath(p.rootFile)), `${p.name.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
+  };
+
+  const canManage = (p: ProjectSummary) => !authEnabled || !!p.isOwner;
+  const trashKeys = isMac ? '⌘⌫' : 'Del';
+
+  const projectMenu = (p: ProjectSummary): MenuEntry[] => {
+    const href = projectHref(p);
+    const open: MenuEntry[] = [
+      { id: 'open', label: 'Open', shortcut: '↩', onSelect: () => navigate(href), testId: 'menu-open' },
+      { id: 'open-tab', label: 'Open in new tab', shortcut: isMac ? '⌘↩' : 'Ctrl+↩', onSelect: () => window.open(withBase(href), '_blank', 'noopener'), testId: 'menu-open-tab' },
+    ];
+    const downloads: MenuEntry[] = [
+      { id: 'pdf', label: 'Download PDF', disabled: !p.thumb, onSelect: () => downloadPdf(p), testId: 'menu-download-pdf' },
+      { id: 'zip', label: 'Download source (.zip)', onSelect: () => download(api.archiveUrl(p.id, p.opened?.branch ?? 'main')), testId: 'menu-download-zip' },
+    ];
+    const claimItem: MenuEntry[] = authEnabled && !p.ownerId
+      ? [{ kind: 'separator' }, { id: 'claim', label: 'Claim project…', onSelect: () => claim(p), testId: `claim-${p.id}` }]
+      : [];
+    if (!canManage(p)) {
+      return [
+        ...open,
+        ...downloads,
+        ...claimItem,
+        ...(p.ownerId ? [{ kind: 'separator' } as MenuEntry, { id: 'remove', label: 'Remove from my list', onSelect: () => removeFromList(p), testId: 'menu-remove' } as MenuEntry] : []),
+      ];
+    }
+    return [
+      ...open,
+      { kind: 'separator' },
+      { id: 'rename', label: 'Rename…', onSelect: () => rename(p), testId: 'menu-rename' },
+      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicate(p), testId: 'menu-duplicate' },
+      ...(authEnabled ? [{ id: 'share', label: 'Share…', onSelect: () => setSharing(p), testId: `share-${p.id}` } as MenuEntry] : []),
+      { kind: 'separator' },
+      ...downloads,
+      ...claimItem,
+      { kind: 'separator' },
+      { id: 'trash', label: 'Move to Trash', shortcut: trashKeys, danger: true, onSelect: () => moveToTrash(p), testId: 'menu-trash' },
+    ];
+  };
+
+  const trashMenu = (t: TrashedProject): MenuEntry[] => [
+    { id: 'restore', label: 'Restore', onSelect: () => restoreFromTrash(t.id, t.name), testId: `restore-${t.id}` },
+    { kind: 'separator' },
+    { id: 'purge', label: 'Delete forever…', danger: true, onSelect: () => purge(t), testId: `purge-${t.id}` },
+  ];
+
+  const ctx = useContextMenu({ label: 'Project actions', testId: 'project-menu' });
+
+  // ---------- importing ----------
+  const importFiles = async (files: File[]) => {
+    const zips = files.filter((f) => /\.zip$/i.test(f.name));
+    if (!zips.length) { toast(files.length > 1 ? 'Those are not .zip files' : 'Please drop a .zip file', 'error'); return; }
+    const single = zips.length === 1 && files.length === 1;
+    const jobs: (ImportJob & { file: File })[] = zips.map((file, i) => ({
+      key: `import-${Date.now()}-${i}`, name: file.name.replace(/\.zip$/i, ''), file, state: 'uploading', progress: 0, ctrl: new AbortController(),
+    }));
+    const tooBig = jobs.filter((j) => j.file.size > IMPORT_MAX_ZIP_BYTES);
+    for (const j of tooBig) {
+      j.state = 'failed';
+      j.error = `the ZIP is ${(j.file.size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`;
+    }
+    if (single && tooBig.length) { toast(`ZIP is ${(zips[0].size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
+    setImports((cur) => [...jobs.map(({ file: _f, ...j }) => j), ...cur]);
+    const patch = (key: string, p: Partial<ImportJob>) => setImports((cur) => cur.map((j) => (j.key === key ? { ...j, ...p } : j)));
+    const drop = (key: string) => setImports((cur) => cur.filter((j) => j.key !== key));
+    let ok = 0;
+    let failed = tooBig.length;
+    for (const j of jobs) {
+      if (j.state === 'failed' || j.ctrl.signal.aborted) continue;
+      try {
+        // One-click import: the group is the last one picked in the new-project
+        // dialog (none until the picker has been shown once).
+        const p = await api.importZipWithProgress(j.name, j.file, {
+          namespace: rememberedNamespace(),
+          signal: j.ctrl.signal,
+          onProgress: (fr) => patch(j.key, fr !== null && fr >= 1 ? { state: 'importing', progress: 1 } : { progress: fr }),
+        });
+        ok += 1;
+        if (p.remoteError) toast(p.remoteError, 'error');
+        else if (p.remote) toast(`Also created on GitLab in ${p.remote.owner}`, 'ok');
+        if (single) {
+          toast(importSummary(p), 'ok');
+          drop(j.key);
+          navigate(`/p/${p.id}`, { state: { import: p.import } });
+          return;
+        }
+        flip([p.id]);
+        drop(j.key);
+        setProjects((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
+      } catch (err: any) {
+        if (err?.name === 'AbortError') { drop(j.key); continue; }
+        failed += 1;
+        // A 413 without the route's own text comes from a proxy or body limit
+        // below what the app allows — the size is the only number worth stating.
+        const mb = (j.file.size / (1024 * 1024)).toFixed(1);
+        const msg = err instanceof ApiError && err.status === 413 && !/limit is/.test(err.message)
+          ? `${mb} MB was refused before it reached the app, which allows ${IMPORT_MAX_ZIP_MB} MB`
+          : err.message;
+        if (single) { drop(j.key); toast(`Import failed: ${msg}`, 'error'); return; }
+        patch(j.key, { state: 'failed', error: msg });
+      }
+    }
+    if (!single && (ok || failed)) {
+      const head = `Imported ${ok} ${ok === 1 ? 'project' : 'projects'}`;
+      toast(failed ? `${head} · ${failed} failed` : head, failed ? 'error' : 'ok');
+    }
+    if (ok) load();
+  };
+
+  // ---------- keyboard ----------
+  const focusKey = (key: string) => {
+    const el = linkFor(key);
+    if (el) { setActiveKey(key); el.focus(); el.scrollIntoView({ block: 'nearest' }); }
+  };
+
+  const onItemKeyDown = (key: string) => (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (isGridKey(e.key) && !e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      const links = [...(shelfRef.current?.querySelectorAll<HTMLElement>('.sheet__link') ?? [])].filter((l) => l.closest('.sheet:not(.sheet--import)'));
+      const boxes = links.map((l) => { const r = (l.closest('.sheet') as HTMLElement).getBoundingClientRect(); return { top: r.top, left: r.left, width: r.width }; });
+      const from = links.indexOf(e.currentTarget);
+      const to = gridMove(boxes, from, e.key);
+      e.preventDefault();
+      if (to >= 0 && to !== from) focusKey(keys[to]);
+      return;
+    }
+    const del = e.key === 'Delete' || (e.key === 'Backspace' && (e.metaKey || e.ctrlKey));
+    if (!del) return;
+    e.preventDefault();
+    if (show === 'trash') {
+      const t = trash?.find((x) => x.id === key);
+      if (t) purge(t, true);
+      return;
+    }
+    const p = byId(key);
+    if (p && canManage(p)) moveToTrash(p, true);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z') {
+        const u = undo.current;
+        if (!u || Date.now() > u.until || isTyping(e.target) || overlayOpen()) return;
+        e.preventDefault();
+        undo.current = null;
+        u.run();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || overlayOpen()) return;
+      if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
+      else if (e.key === 'n' && !e.shiftKey) { e.preventDefault(); setCreating({}); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // ---------- drop to import ----------
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+  const dropHandlers = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setDrag(e.dataTransfer.items?.length || 1);
+    },
+    onDragOver: (e: React.DragEvent) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (!dragDepth.current) setDrag(null);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDrag(null);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length) importFiles(files);
+    },
+  };
+
+  // ---------- chrome ----------
+  const start: StartActions = {
+    remotes,
+    logins,
+    onNew: () => setCreating({}),
+    onImportZip: () => zipInput.current?.click(),
+    onClone: (id) => setImportFrom(id),
+  };
+  const account: AccountActions = {
+    accounts: authEnabled,
+    user,
+    admin: admin && authEnabled,
+    onAccount: () => setShowAccount(true),
+    onConnect: () => setConnectOpen(true),
+    onAbout: () => setAboutOpen(true),
+    onAdmin: () => navigate('/admin'),
+    onSignOut: async () => { await api.logout(); safeSession.remove(cacheKey); setUser(null); },
+  };
 
   const paletteCommands: Command[] = useMemo(() => [
-    ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Projects', title: p.name, run: () => navigate(`/p/${p.id}`) })),
-    { id: 'new-project', group: 'New', title: 'New project…', run: () => setCreating(true) },
+    ...(projects || []).map((p) => ({ id: `open-${p.id}`, group: 'Projects', title: p.name, run: () => navigate(projectHref(p)) })),
+    { id: 'new-project', group: 'New', title: 'New project…', run: () => setCreating({}) },
     { id: 'import-zip', group: 'New', title: 'Import a ZIP…', keywords: 'overleaf upload', run: () => zipInput.current?.click() },
     ...remotes.map((r) => ({ id: `new-from-${r.id}`, group: 'New', title: `Clone from ${r.label}…`, keywords: 'import git repository', run: () => setImportFrom(r.id) })),
     ...appearanceCommands(appearance),
+    ...(authEnabled ? [{ id: 'shared', group: 'More', title: 'Show projects shared with me', run: () => navigate('/?show=shared') }] : []),
+    { id: 'trash', group: 'More', title: trash?.length ? `Show the trash (${trash.length})` : 'Show the trash', run: () => navigate('/?show=trash') },
     ...(authEnabled && user ? [{ id: 'account', group: 'More', title: 'Account settings…', run: () => setShowAccount(true) }] : []),
     ...(admin && authEnabled ? [{ id: 'admin', group: 'More', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
-    ...(trash.length ? [{ id: 'trash', group: 'More', title: `Trash (${trash.length})`, run: () => setShowTrash(true) }] : []),
     { id: 'about', group: 'More', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
     { id: 'connect-claude', group: 'More', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
-  ], [remotes, authEnabled, user, admin, trash.length, projects, navigate, appearance]);
+  ], [remotes, authEnabled, user, admin, trash, projects, navigate, appearance]);
+
+  const search = (
+    <HomeSearch
+      ref={searchRef}
+      value={query}
+      onChange={setQuery}
+      onOpenPalette={() => setPaletteOpen(true)}
+      onExit={() => { if (tabKey) focusKey(tabKey); }}
+    />
+  );
+
+  const filters: { show: Show; label: string; count?: number; testId: string; to: string }[] = [
+    { show: 'all', label: 'All', testId: 'filter-all', to: '/' },
+    ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: sharedCount || undefined, testId: 'filter-shared', to: '/?show=shared' }] : []),
+    { show: 'trash', label: 'Trash', count: trash?.length || undefined, testId: 'open-trash', to: '/?show=trash' },
+  ];
+  const sortLabel = SORTS.find((s) => s.id === sort)!.label;
+  const searching = !!query.trim();
+  const listed = show === 'trash' ? trashVisible.length : visible.length;
+
+  // ---------- the shelf ----------
+  const renderShelf = () => {
+    if (projects === null) {
+      if (loadError) return null;
+      return (
+        <div role="status" aria-live="polite" data-testid="projects-loading">
+          <span className="visually-hidden">Loading projects…</span>
+          {skeleton && <ul role="list" className="shelf__grid">{Array.from({ length: 6 }, (_, i) => <SkeletonSheet key={i} />)}</ul>}
+        </div>
+      );
+    }
+    if (show === 'trash') {
+      if (trash === null) return null;
+      if (!trashVisible.length) {
+        return searching ? <NoMatches query={query} onClear={() => setQuery('')} /> : (
+          <div className="shelf-empty" data-testid="trash-empty">
+            <h2 className="shelf-empty__title">The trash is empty</h2>
+            <p className="shelf-empty__text">Projects you move to the trash stay here for a while, then are deleted for good.</p>
+          </div>
+        );
+      }
+      return (
+        <section aria-labelledby="sec-trash" className="shelf__section">
+          <h2 id="sec-trash" className="visually-hidden">Trash</h2>
+          <ul role="list" className="shelf__grid" data-testid="trash-grid">
+            {trashVisible.map((t) => (
+              <TrashSheet
+                key={t.id}
+                t={t}
+                now={now}
+                tabIndex={tabIndexOf(t.id)}
+                menu={() => trashMenu(t)}
+                contextMenu={ctx.bind(() => trashMenu(t))}
+                onKeyDown={onItemKeyDown(t.id)}
+                onFocus={() => setActiveKey(t.id)}
+              />
+            ))}
+          </ul>
+        </section>
+      );
+    }
+    if (empty && !imports.length) return null;
+    if (!visible.length && !imports.length) {
+      if (searching) return <NoMatches query={query} onClear={() => setQuery('')} />;
+      return (
+        <div className="shelf-empty" data-testid="shared-empty">
+          <h2 className="shelf-empty__title">Nothing shared with you yet</h2>
+          <p className="shelf-empty__text">Projects others invite you to, and projects you open through a share link, appear here.</p>
+        </div>
+      );
+    }
+    return sections.map((s, si) => (
+      <section key={s.key} aria-labelledby={`sec-${s.key}`} className="shelf__section">
+        <h2 id={`sec-${s.key}`} className={s.label ? 'shelf__heading' : 'visually-hidden'}>{s.label ?? (show === 'shared' ? 'Shared with me' : 'All projects')}</h2>
+        <ul role="list" className="shelf__grid" data-testid={si === 0 ? 'project-grid' : undefined}>
+          {si === 0 && imports.map((j) => (
+            <ImportSheet key={j.key} testId={j.key} name={j.name} state={j.state} progress={j.progress} error={j.error}
+              onCancel={() => { j.ctrl.abort(); setImports((cur) => cur.filter((x) => x.key !== j.key)); }} />
+          ))}
+          {s.items.map((p) => (
+              <ProjectSheet
+                key={p.id}
+                leaving={leaving.has(p.id)}
+                p={p}
+                accounts={authEnabled}
+                myId={myId}
+                now={now}
+                tabIndex={tabIndexOf(p.id)}
+                menu={() => projectMenu(p)}
+                contextMenu={ctx.bind(() => projectMenu(p))}
+                onKeyDown={onItemKeyDown(p.id)}
+                onFocus={() => setActiveKey(p.id)}
+              />
+          ))}
+          {si === sections.length - 1 && blankSheet && (
+            <BlankSheet
+              testId="new-project-sheet"
+              title="New project"
+              detail="From a template, a ZIP or a repository"
+              tabIndex={tabIndexOf('new')}
+              onActivate={() => setCreating({})}
+              onKeyDown={onItemKeyDown('new')}
+              onFocus={() => setActiveKey('new')}
+            />
+          )}
+        </ul>
+      </section>
+    ));
+  };
+
+  const starterSheets = (() => {
+    const list = starters ?? [];
+    const picked = STARTERS.map((s) => ({ s, t: list.find(s.match) })).filter((x) => x.t);
+    return picked as { s: (typeof STARTERS)[number]; t: TemplateInfo }[];
+  })();
 
   return (
-    <div
-      className={`home ${dragOver ? 'home--drag' : ''}`}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
-      onDrop={async (e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const f = e.dataTransfer.files[0];
-        if (f) await importZip(f);
-      }}
-    >
-      <div className="home__inner">
-        <header className="home__bar">
-          <div className="home__brand"><Wordmark /></div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <PaletteTrigger label="Search projects and commands" onOpen={() => setPaletteOpen(true)} />
-            <AppearanceMenuButton />
-            {admin && authEnabled && (
-              <Link className="btn" to="/admin" data-testid="admin-link" title="Server-wide accounts and usage">Server admin</Link>
-            )}
-            {authEnabled && user && (
-              <span className="user-chip">
-                <button className="user-chip__name" data-testid="user-name" onClick={() => setShowAccount(true)} title="Account settings">{user.name}</button>
-                <button className="btn btn--small" data-testid="logout" onClick={async () => { await api.logout(); setUser(null); }}>Sign out</button>
-              </span>
-            )}
-            <button className="btn" data-testid="import-zip" onClick={() => zipInput.current?.click()}>Import a ZIP…</button>
-            <input ref={zipInput} type="file" accept=".zip" hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
-              onChange={async (e) => { if (e.target.files?.[0]) await importZip(e.target.files[0]); e.target.value = ''; }} />
-            {remotes.map((r) => (
-              <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)} data-testid={`new-from-${r.id}`}>
-                Clone from {r.label}…
-              </button>
-            ))}
-            <button className="btn btn--primary" onClick={() => setCreating(true)} data-testid="new-project">
-              New project…
-            </button>
-          </div>
-        </header>
+    <div className="shelf-page" {...dropHandlers}>
+      <a className="skip-link" href="#projects">Skip to projects</a>
+      <div ref={sentinel} className="shelf-page__sentinel" aria-hidden="true" />
+      <HomeToolbar compact={compact} scrolled={scrolled} titleInBar={titleUnder} start={start} account={account} onOpenAddSheet={() => setAddSheet(true)} search={search} />
+      <input ref={zipInput} type="file" accept=".zip,application/zip" multiple hidden data-testid="import-input" aria-hidden="true" tabIndex={-1}
+        onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length) importFiles(files); }} />
 
-        <main>
-        <h1 className="visually-hidden">Projects</h1>
-
+      <main className="shelf-page__main" id="projects" tabIndex={-1}>
+        <div className="shelf-page__title-row">
+          <h1 className="shelf-page__title" ref={titleRef} tabIndex={-1}>Projects</h1>
+          {projects !== null && projects.length > BLANK_SHEET_MAX && show !== 'trash' && (
+            <MenuButton
+              items={() => SORTS.map((s) => ({ id: s.id, label: s.label, checked: sort === s.id, onSelect: () => setSort(s.id), testId: `sort-${s.id}` }))}
+              label="Sort by"
+              className="home-sort"
+              testId="sort-menu"
+              menuTestId="sort-menu-list"
+              placement="bottom-end"
+              title="Sort by"
+            >
+              <span className="visually-hidden">Sort by </span>{sortLabel}<IconChevronDown width={11} height={11} />
+            </MenuButton>
+          )}
+          {show === 'trash' && !!trash?.length && (
+            <button type="button" className="home-sort" onClick={emptyTrash} data-testid="empty-trash">Empty trash…</button>
+          )}
+        </div>
         {authEnabled && <EmailConfirmBanner />}
+        {compact && search}
+        {projects !== null && (
+          <nav className="seg home-filter" aria-label="Show">
+            {filters.map((f) => (
+              <Link key={f.show} to={f.to} className={`seg__btn${show === f.show ? ' seg__btn--active' : ''}`} aria-current={show === f.show ? 'page' : undefined} data-testid={f.testId}>
+                {f.label}{f.count ? <span className="home-filter__count">{f.count}</span> : null}
+              </Link>
+            ))}
+          </nav>
+        )}
+        <p className="visually-hidden" aria-live="polite" data-testid="search-status">{searching && projects !== null ? matchSentence(listed, query) : ''}</p>
 
-        {projects === null ? (
-          <div className="empty" role="status"><div className="spinner" style={{ margin: '0 auto' }} /><span className="visually-hidden">Loading projects…</span></div>
-        ) : loadFailed ? (
-          <div className="empty" role="alert">
-            <p style={{ margin: '0 0 16px' }}>Couldn’t reach the server to load your projects.</p>
-            <button className="btn btn--primary" onClick={load}>Try again</button>
+        {loadError && (
+          <div className={`home-error${projects ? ' home-error--inline' : ''}`} role="alert" data-testid="projects-error">
+            <p className="home-error__text"><strong>{projects ? 'Couldn’t refresh your projects.' : 'Couldn’t load your projects.'}</strong> {loadError}</p>
+            <button type="button" className="btn" onClick={() => load()} data-testid="projects-retry">Try again</button>
           </div>
-        ) : projects.length === 0 ? (
-          <div className="empty" data-testid="projects-empty">
-            <p style={{ margin: '0 0 16px' }}>No projects yet — start a paper however you like.</p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn--primary" onClick={() => setCreating(true)}>New project…</button>
-              {remotes.map((r) => (
-                <button key={r.id} className="btn" onClick={() => setImportFrom(r.id)}>Clone from {r.label}…</button>
+        )}
+
+        {empty && !imports.length && (
+          <div className="shelf-start" data-testid="projects-empty">
+            <h2 className="shelf-start__title">Start your first project</h2>
+            <p className="shelf-start__text">Pick a starting point. You can change everything later.</p>
+            <ul role="list" className="shelf__grid">
+              <BlankSheet testId="start-blank" title="Blank project" detail="An empty main.tex" onActivate={() => setCreating({ template: starters?.some((t) => t.id === 'blank') ? 'blank' : undefined })} />
+              {starterSheets.map(({ s, t }) => (
+                <TemplateSheet key={t.id} testId={`start-${t.id.replace(/[^a-z0-9-]/gi, '-')}`} title={s.title} name={s.name} detail={s.detail} slide={s.slide} onActivate={() => setCreating({ template: t.id })} />
               ))}
-              <button className="btn" onClick={() => zipInput.current?.click()}>Import a ZIP…</button>
-            </div>
-          </div>
-        ) : (
-          <div className="projects" data-testid="project-grid">
-            {projects.map((p) => {
-              // Deleting is owner-only server-side; without auth everyone owns
-              // everything. Don't offer what the server will refuse.
-              const canManage = !authEnabled || !!p.isOwner;
-              return (
-              <div
-                key={p.id}
-                role="button"
-                tabIndex={0}
-                className="project-card"
-                data-testid={`project-card-${p.id}`}
-                onClick={() => navigate(`/p/${p.id}`)}
-                onKeyDown={(e) => e.key === 'Enter' && navigate(`/p/${p.id}`)}
-              >
-                <span className="project-card__icon"><IconDoc width={20} height={20} /></span>
-                <span className="project-card__name">{p.name}</span>
-                <span className="project-card__meta">
-                  <span>{friendlyDate(p.createdAt)}</span>
-                  {authEnabled && p.ownerId && !p.isOwner && <span title={`Shared by ${p.ownerName || 'someone'}`}>· shared</span>}
-                  {authEnabled && !p.ownerId && (
-                    <button className="btn btn--small" style={{ marginLeft: 'auto' }} data-testid={`claim-${p.id}`}
-                      title="This project predates accounts on this server and has no owner yet"
-                      onClick={(e) => claim(e, p)}>Claim</button>
-                  )}
-                  {p.zotero && <span title="Zotero linked" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><IconLink /> Zotero</span>}
-                  {authEnabled && p.isOwner && (
-                    <button className="project-card__act" title={p.share?.mode === 'link' ? 'Shared by link — anyone signed in with the link can edit' : 'Share project'} aria-label={`Share ${p.name}`} style={{ marginLeft: 'auto' }} data-testid={`share-${p.id}`}
-                      onClick={(e) => { e.stopPropagation(); setSharing(p); }}><IconLink /></button>
-                  )}
-                  {canManage && (
-                    <button className="project-card__act project-card__del" title="Move to trash" aria-label={`Move ${p.name} to the trash`} style={authEnabled && p.isOwner ? undefined : { marginLeft: 'auto' }} onClick={(e) => remove(e, p)}><IconX /></button>
-                  )}
-                </span>
-              </div>
-              );
-            })}
+              <TemplateSheet testId="start-more" title={(() => { const n = (starters?.length ?? 0) - starterSheets.length - 1; return n > 0 ? `${n} more templates` : 'More templates'; })()} name="More templates…" detail="Journals, conferences, theses" onActivate={() => setCreating({})} />
+            </ul>
+            <p className="shelf-start__import">
+              Or bring one over: <button type="button" className="link-button" onClick={() => zipInput.current?.click()} data-testid="empty-import-zip">Import a ZIP from Overleaf</button>
+              {remotes.map((r, i) => (
+                <span key={r.id}>{' · '}<button type="button" className="link-button" onClick={() => setImportFrom(r.id)} data-testid={`empty-clone-${r.id}`}>{i === 0 ? `Clone from ${r.label}` : r.label}</button></span>
+              ))}
+            </p>
+            <p className="shelf-start__hint">You can also drop .zip files anywhere on this page.</p>
           </div>
         )}
 
-        {trash.length > 0 && (
-          <p style={{ textAlign: 'center', marginTop: 26 }}>
-            <button className="btn btn--ghost btn--small" onClick={() => setShowTrash(true)} data-testid="open-trash">
-              Trash ({trash.length})
-            </button>
-          </p>
-        )}
+        <div ref={shelfRef} className="shelf" key={show}>
+          {renderShelf()}
+        </div>
+      </main>
 
-        </main>
+      {/* AGPL section 13: a network instance must offer its users the source. */}
+      <footer className="shelf-page__colophon" data-testid="colophon">
+        Aldine {__ALDINE_VERSION__} · AGPL-3.0 · <a href={SOURCE_URL} target="_blank" rel="noreferrer" data-testid="colophon-source">Source code</a>
+      </footer>
 
-        {/* AGPL section 13: a network instance must offer its users the source. */}
-        <footer className="home__legal">
-          <button className="btn btn--ghost btn--small" onClick={() => setConnectOpen(true)} data-testid="open-connect-claude">
-            Connect Claude
-          </button>
-          <button className="btn btn--ghost btn--small" onClick={() => setAboutOpen(true)} data-testid="open-about">
-            About &amp; source
-          </button>
-        </footer>
-      </div>
+      {drag !== null && (
+        <div className="home-drop" aria-hidden="true" data-testid="drop-overlay">
+          <span className="home-drop__label">{drag > 1 ? `Drop to import ${drag} projects` : 'Drop to import as a new project'}</span>
+        </div>
+      )}
 
+      {ctx.element}
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
       {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} onManage={authEnabled && user ? () => setShowAccount(true) : undefined} />}
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" groupOrder={PALETTE_GROUPS} idleSectionLimit={8} />
 
-      {showTrash && (
-        <Modal onClose={() => setShowTrash(false)} label="Trash" testId="trash-modal">
-          <div>
-            <h2 style={{ marginBottom: 2 }}>Trash</h2>
-            <p className="modal__sub">Deleted projects are kept for 30 days, then removed permanently.</p>
-            {trash.length === 0 && <p style={{ color: 'var(--text-2)' }}>The trash is empty.</p>}
-            {trash.map((t) => (
-              <div key={t.id} className="settings__row" style={{ alignItems: 'center', gap: 10 }} data-testid={`trash-${t.id}`}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-                <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                  <span style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)' }}>{friendlyDate(t.deletedAt)}</span>
-                  <button className="btn btn--small" onClick={() => restore(t.id, t.name)} data-testid={`restore-${t.id}`}>Restore</button>
-                  <button className="btn btn--ghost btn--small" onClick={() => purge(t.id, t.name)} data-testid={`purge-${t.id}`}>Delete forever</button>
-                </span>
-              </div>
-            ))}
-            <div className="modal__row" style={{ marginTop: 14 }}><button className="btn" onClick={() => setShowTrash(false)}>Close</button></div>
+      {addSheet && (
+        <Modal onClose={() => setAddSheet(false)} label="Start a project" testId="home-add-sheet">
+          <div className="action-sheet">
+            <button type="button" className="action-sheet__item action-sheet__item--primary" data-testid="new-project" onClick={() => { setAddSheet(false); setCreating({}); }}>New project…</button>
+            {startItems(start).map((m) => (m.kind === undefined || m.kind === 'item') ? (
+              <button key={m.id} type="button" className="action-sheet__item" data-testid={m.testId} onClick={() => { setAddSheet(false); m.onSelect(); }}>
+                {m.icon && <span className="action-sheet__icon" aria-hidden="true">{m.icon}</span>}{m.label}
+                {m.shortcut && <span className="action-sheet__detail">{m.shortcut}</span>}
+              </button>
+            ) : null)}
+            <button type="button" className="action-sheet__item action-sheet__cancel" onClick={() => setAddSheet(false)}>Cancel</button>
           </div>
         </Modal>
       )}
@@ -460,136 +848,21 @@ export default function Home() {
           }}
         />
       )}
-      {showAccount && user && (
-        <AccountSettings user={user} onClose={() => setShowAccount(false)} />
-      )}
+      {showAccount && user && <AccountSettings user={user} onClose={() => setShowAccount(false)} />}
       {importFrom && (
         <RemoteImport key={importFrom} provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
-      {showOnboarding && (
-        <Onboarding onNew={() => setCreating(true)} onRemote={setImportFrom} remotes={remotes.map((r) => r.id)} onImportZip={importZip} onClose={dismissOnboarding} />
-      )}
+      {creating && <NewProjectDialog remotes={remotes} initialTemplate={creating.template} onClose={() => setCreating(null)} />}
+    </div>
+  );
+}
 
-      {creating && (
-        <Modal onClose={closeCreate} label="New project">
-          <div>
-            <h2>New project</h2>
-            <p className="modal__sub">Name it, pick a starting point, start writing.</p>
-            <label className="field__label" htmlFor="new-project-name">Project name</label>
-            <input
-              autoFocus
-              id="new-project-name"
-              className="input"
-              placeholder="Untitled project"
-              value={newName}
-              data-testid="new-project-name"
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) create(); }}
-            />
-            {remotes.some((r) => r.provisioning) && <NamespacePicker value={namespace} onChange={setNamespace} />}
-            {templates === null && <p className="tpl-empty">Loading templates…</p>}
-            {templates !== null && templates.length > 0 && (
-              <>
-                <div className="tpl-search">
-                  <input
-                    className="input"
-                    placeholder="Search templates, for example IEEE or NeurIPS"
-                    aria-label="Search templates"
-                    value={templateQuery}
-                    data-testid="template-search"
-                    onChange={(e) => setTemplateQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); create(); } }}
-                  />
-                  {/* Escape belongs to the dialog: the modal closes on it before
-                      any handler here could clear the query. */}
-                  {templateQuery && (
-                    <button
-                      className="tpl-search__clear"
-                      aria-label="Clear the template search"
-                      data-testid="template-search-clear"
-                      onClick={() => setTemplateQuery('')}
-                    >
-                      <IconX />
-                    </button>
-                  )}
-                </div>
-                {repoStates.length > 0 && (
-                  <div className="tpl-toolbar">
-                    <button
-                      className="btn btn--small"
-                      onClick={refreshTemplates}
-                      disabled={refreshing}
-                      data-testid="template-refresh"
-                    >
-                      {refreshing ? 'Refreshing…' : 'Refresh templates'}
-                    </button>
-                  </div>
-                )}
-                <div className="tpl-gallery" data-testid="template-grid">
-                  {(() => {
-                    const shown = shownTemplates;
-                    if (!shown.length) {
-                      return <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>;
-                    }
-                    return galleryGroups(shown, repoStates).map((g) => (
-                      <div key={g.key} className="tpl-group" data-testid={g.testid}>
-                        <div className="tpl-group__label">
-                          {g.heading}
-                          {g.stale && (
-                            <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>
-                              {g.stale.text}
-                            </span>
-                          )}
-                        </div>
-                        <div className="tpl-grid">
-                          {g.items.map((t) => (
-                            <button
-                              key={t.id}
-                              className={`tpl ${effectiveTemplate === t.id ? 'tpl--active' : ''}`}
-                              aria-pressed={effectiveTemplate === t.id}
-                              data-testid={`template-${t.id}`}
-                              onClick={() => setTemplate(t.id)}
-                              title={t.description}
-                            >
-                              <span className="tpl__icon">{t.icon || '📄'}</span>
-                              <span className="tpl__name">{t.name}</span>
-                              <span className="tpl__desc">{t.description}</span>
-                              {/* The kit is downloaded when the project is created, not now:
-                                  say so before the user picks the tile. */}
-                              {t.kit && (
-                                <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
-                                  Downloads the official kit from {t.kit.host}
-                                </span>
-                              )}
-                              {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
-                              {t.source?.kind === 'repo' && (
-                                <span className="tpl__source" data-testid={`template-source-${t.id}`}>
-                                  {t.source.label ?? repoIdOf(t)}
-                                </span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                  ));
-                  })()}
-                </div>
-              </>
-            )}
-            <div className="modal__row">
-              {templates !== null && templates.length > 0 && (
-                <p className="tpl-choice" data-testid="template-choice" aria-live="polite">
-                  Starting from {chosen ? chosen.name : 'the built-in article'}
-                  {chosen?.license ? ` (${chosen.license})` : ''}
-                  {chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
-                </p>
-              )}
-              <button className="btn" onClick={closeCreate}>Cancel</button>
-              <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
-            </div>
-          </div>
-        </Modal>
-      )}
+function NoMatches({ query, onClear }: { query: string; onClear(): void }) {
+  return (
+    <div className="shelf-empty" data-testid="search-empty">
+      <h2 className="shelf-empty__title">No projects match “{query.trim()}”</h2>
+      <p className="shelf-empty__text">Check the spelling, or search for part of a name.</p>
+      <button type="button" className="btn" onClick={onClear} data-testid="search-clear">Clear search</button>
     </div>
   );
 }

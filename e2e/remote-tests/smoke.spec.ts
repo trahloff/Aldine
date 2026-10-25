@@ -96,7 +96,8 @@ test.describe(`deployed instance${BASE ? ` under ${BASE}` : ''}`, () => {
     expect(new URL(page.url()).pathname).toMatch(new RegExp(`^${BASE}/?$`));
 
     if (authed) {
-      await expect(page.getByTestId('user-name')).toBeVisible();
+      await expect(page.getByTestId('account-menu')).toBeVisible();
+      await page.getByTestId('account-menu').click();
       await page.getByTestId('logout').click();
       await expect(page.getByTestId('auth-email')).toBeVisible();
       await page.getByTestId('auth-email').fill(EMAIL);

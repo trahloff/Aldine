@@ -351,6 +351,33 @@ export const api = {
     form.append('zip', zip, zip.name);
     return req<ImportedProject>('/api/projects/import', { method: 'POST', body: form });
   },
+  /** importZip with upload progress (0..1, or null while the size is unknown)
+   *  and a way to stop it: aborting rejects with an AbortError. */
+  importZipWithProgress: (name: string, zip: File, opts: { namespace?: string; signal?: AbortSignal; onProgress?(fraction: number | null): void } = {}) =>
+    new Promise<ImportedProject>((resolve, reject) => {
+      const form = new FormData();
+      form.append('name', name);
+      if (opts.namespace) form.append('namespace', opts.namespace);
+      form.append('zip', zip, zip.name);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', withBase('/api/projects/import'));
+      xhr.responseType = 'text';
+      xhr.upload.onprogress = (e) => opts.onProgress?.(e.lengthComputable ? e.loaded / e.total : null);
+      xhr.onload = () => {
+        let body: any = null;
+        try { body = JSON.parse(xhr.responseText); } catch { /* not JSON: a proxy's page */ }
+        if (xhr.status >= 200 && xhr.status < 300 && body) resolve(body as ImportedProject);
+        else reject(new ApiError(body?.error || `HTTP ${xhr.status}`, xhr.status));
+      };
+      xhr.onerror = () => reject(new ApiError('The server could not be reached', 0));
+      xhr.onabort = () => reject(new DOMException('Import cancelled', 'AbortError'));
+      if (opts.signal?.aborted) { reject(new DOMException('Import cancelled', 'AbortError')); return; }
+      opts.signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+      xhr.send(form);
+    }),
+  /** Direct link to the last PDF typeset on `branch`. */
+  pdfUrl: (id: string, branch: string, outputPath: string) =>
+    withBase(`/api/projects/${id}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(outputPath)}`),
   compilerInfo: () => req<CompilerInfo>('/api/compiler'),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
   patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>>) =>

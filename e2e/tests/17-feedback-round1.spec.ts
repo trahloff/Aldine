@@ -398,7 +398,7 @@ test.describe('ZIP import root detection and path safety', () => {
       const list = await (await request.get('/api/projects')).json();
       expect(list.some((p: { name: string }) => p.name === name)).toBe(false);
       await page.reload();
-      await expect(page.getByTestId('theme-toggle')).toBeVisible();
+      await expect(page.getByTestId('new-project')).toBeVisible();
       await expect(page.getByText(name)).toHaveCount(0);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

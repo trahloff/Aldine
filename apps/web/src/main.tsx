@@ -11,6 +11,7 @@ import { startThemeSync } from './theme';
 import { useDocumentTitle } from './util/documentTitle';
 import './theme.css';
 import './app.css';
+import './home.css';
 
 // The editor brings CodeMirror, pdf.js, KaTeX and Yjs, most of the app's
 // code: the project list must not wait for it.

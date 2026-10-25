@@ -84,3 +84,27 @@ export async function cleanup(request: APIRequestContext, id: string): Promise<v
 /** ZIP fixtures built in-test (raw names, foreign methods, encryption flag,
  *  ZIP64): the server unit tests own the builder. */
 export { buildZip, unicodePathExtra } from '../../apps/server/test/zip.mjs';
+
+/** Home: an item of the New project split button's menu ("import-zip", "new-from-gitlab", …). */
+export async function startFrom(page: Page, item: string): Promise<void> {
+  await page.getByTestId('new-menu').click();
+  await page.getByTestId(item).click();
+}
+
+/** Home: an item of a project's "…" menu ("menu-trash", `share-${id}`, …). */
+export async function projectAction(page: Page, id: string, item: string): Promise<void> {
+  await page.getByTestId(`project-menu-${id}`).click();
+  await page.getByTestId(item).click();
+}
+
+/** Home: an item of a project's menu in the trash (`restore-${id}`, `purge-${id}`). */
+export async function trashAction(page: Page, id: string, item: string): Promise<void> {
+  await page.getByTestId(`trash-menu-${id}`).click();
+  await page.getByTestId(item).click();
+}
+
+/** Home without accounts: an item of the "…" menu ("open-about", "open-connect-claude"). */
+export async function moreAction(page: Page, item: string): Promise<void> {
+  await page.getByTestId('home-more').click();
+  await page.getByTestId(item).click();
+}

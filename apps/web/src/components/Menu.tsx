@@ -40,6 +40,8 @@ export type MenuEntry =
   | MenuSubmenu
   | { kind: 'separator'; id?: string }
   | { kind: 'label'; id?: string; label: string }
+  /** Who or what the menu is about, above its items (an account's name and email). */
+  | { kind: 'header'; id?: string; title: string; detail?: string | null; testId?: string }
   /** A line of advice that does nothing when chosen ("Drop .zip files anywhere on this page"). */
   | { kind: 'hint'; id?: string; label: string; testId?: string };
 
@@ -54,7 +56,7 @@ const SUBMENU_OPEN_MS = 120;
 const SUBMENU_CLOSE_MS = 250;
 const TYPEAHEAD_MS = 500;
 
-const takesFocus = (e: MenuEntry) => e.kind !== 'separator' && e.kind !== 'label';
+const takesFocus = (e: MenuEntry) => e.kind !== 'separator' && e.kind !== 'label' && e.kind !== 'header';
 const labelOf = (e: MenuEntry) => ('label' in e ? e.label : '');
 
 interface Tree {
@@ -131,7 +133,15 @@ export function Menu({ items, anchor, label, labelledBy, id, testId, initialFocu
       if (inside(e.target) || (trigger && e.target instanceof Node && trigger.contains(e.target))) return;
       tree.closeAll('outside');
     };
-    const onScroll = (e: Event) => { if (!inside(e.target)) tree.closeAll('outside'); };
+    // A scroll the page makes on its own (scroll anchoring after content
+    // above changes height) leaves the trigger where it was: the menu stays.
+    const from = (trigger ?? returnFocus)?.getBoundingClientRect();
+    const onScroll = (e: Event) => {
+      if (inside(e.target)) return;
+      const now = (trigger ?? returnFocus)?.isConnected ? (trigger ?? returnFocus)!.getBoundingClientRect() : null;
+      if (from && now && Math.abs(now.top - from.top) < 1 && Math.abs(now.left - from.left) < 1) return;
+      tree.closeAll('outside');
+    };
     // An on-screen keyboard that comes or goes changes only the height; the
     // menu's anchor moves only when the width does.
     let width = window.innerWidth;
@@ -147,7 +157,7 @@ export function Menu({ items, anchor, label, labelledBy, id, testId, initialFocu
       window.removeEventListener('resize', onResize);
       window.removeEventListener('blur', onBlur);
     };
-  }, [tree, trigger]);
+  }, [tree, trigger, returnFocus]);
 
   return (
     <MenuLevel
@@ -241,7 +251,7 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
   const activate = (index: number, fromKeyboard: boolean) => {
     const e = items[index];
     if (e.kind === 'submenu') { if (!e.disabled) openSub(index, fromKeyboard ? 'first' : 'none'); return; }
-    if (e.kind === 'separator' || e.kind === 'label' || e.kind === 'hint' || e.disabled) return;
+    if (e.kind === 'separator' || e.kind === 'label' || e.kind === 'header' || e.kind === 'hint' || e.disabled) return;
     tree.select(e);
   };
 
@@ -310,6 +320,14 @@ function MenuLevel({ tree, depth, items, anchor, initialFocus, focusNonce, label
   const body = items.map((e, i) => {
     if (e.kind === 'separator') return <div key={e.id ?? `sep-${i}`} role="separator" className="menu__sep" />;
     if (e.kind === 'label') return <div key={e.id ?? `label-${i}`} role="presentation" className="menu__label">{e.label}</div>;
+    if (e.kind === 'header') {
+      return (
+        <div key={e.id ?? `header-${i}`} role="presentation" className="menu__header" data-testid={e.testId}>
+          <span className="menu__header-title">{e.title}</span>
+          {e.detail && <span className="menu__header-detail">{e.detail}</span>}
+        </div>
+      );
+    }
     const common = {
       id: rowId(i),
       ref: (el: HTMLElement | null) => { rows.current[i] = el; },
@@ -426,7 +444,7 @@ type Placement = 'bottom-start' | 'bottom-end';
  * it with nothing highlighted; the arrow keys then start at either end.
  */
 export function MenuButton({
-  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName,
+  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex,
 }: {
   items: MenuEntry[] | (() => MenuEntry[]);
   /** The menu's name for assistive tech when the button's own text does not name it. */
@@ -440,6 +458,8 @@ export function MenuButton({
   ariaLabel?: string;
   disabled?: boolean;
   menuClassName?: string;
+  /** -1 keeps the button off the Tab order where a roving item already reaches its menu. */
+  tabIndex?: number;
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   const btnId = useId();
@@ -462,6 +482,7 @@ export function MenuButton({
         aria-label={ariaLabel}
         title={title}
         disabled={disabled}
+        tabIndex={tabIndex}
         data-testid={testId}
         // A click from Enter or Space has no pointer position (detail 0).
         onClick={(e) => (open ? setOpen(null) : show(e.detail === 0 ? 'first' : 'menu', e.detail === 0))}
