@@ -17,6 +17,22 @@ export interface NewProjectSheetProps {
 }
 
 const DEFAULT_NAME = 'Untitled project';
+/** A phone layout: the rail is a row, and focusing an input raises the on-screen keyboard over the gallery. */
+const PHONE_QUERY = '(max-width: 640px), (pointer: coarse)';
+const RAIL_ROW_QUERY = '(max-width: 640px)';
+
+function useMedia(query: string): boolean {
+  const get = () => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches;
+  const [match, setMatch] = useState(get);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setMatch(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return match;
+}
 
 /** A printable key with no command modifier: what typeahead sends to the search. */
 const printable = (e: ReactKeyboardEvent) => e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ';
@@ -82,6 +98,12 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
   const [namespace, setNamespace] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Read once at open: the sheet does not move focus again if the window is resized.
+  const [touchFirst] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(PHONE_QUERY).matches);
+  const railRow = useMedia(RAIL_ROW_QUERY);
+  const nameSelected = useRef(!touchFirst);
+  const [announce, setAnnounce] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
@@ -100,6 +122,16 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
     return () => { live = false; };
   }, []);
 
+  // A preselected tile can sit far down the list: bring it on screen once
+  // the list is in, without taking focus from the name field.
+  const scrolledToPreselected = useRef(false);
+  useEffect(() => {
+    if (!preselected || !templates?.length || scrolledToPreselected.current) return;
+    scrolledToPreselected.current = true;
+    const el = gridRef.current?.querySelector<HTMLElement>(`[data-template="${CSS.escape(pickTemplate(templates, preselected))}"]`);
+    el?.scrollIntoView?.({ block: 'nearest' });
+  }, [templates, preselected]);
+
   const all = templates ?? [];
   const rails = useMemo(() => railEntries(galleryGroups(all, repoStates)), [all, repoStates]);
   const railKey = rails.some((r) => r.key === rail) ? rail : ALL;
@@ -112,6 +144,15 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
   // becomes the choice. When the choice is still on screen, it stands.
   const effective = ordered.some((t) => t.id === template) ? template : ordered[0]?.id ?? template;
   const chosen = all.find((t) => t.id === effective) ?? null;
+
+  // The choice line is not live: focus already names a tile the arrows move
+  // to. A search moves the choice without moving focus, so it is announced.
+  useEffect(() => {
+    if (!query || templates === null) { setAnnounce(''); return; }
+    setAnnounce(ordered.length
+      ? `${ordered.length} ${ordered.length === 1 ? 'template matches' : 'templates match'}. Starting from ${chosen?.name ?? 'the built-in article'}.`
+      : 'No template matches.');
+  }, [query, ordered.length, chosen?.name, templates === null]);
 
   const create = async () => {
     if (submitting) return;
@@ -151,7 +192,7 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
     }
   };
 
-  const tiles = () => Array.from(gridRef.current?.querySelectorAll<HTMLButtonElement>('button.tpl') ?? []);
+  const tiles = () => Array.from(gridRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
   const focusTile = (id: string) => {
     const el = tiles().find((b) => b.dataset.template === id);
     el?.focus();
@@ -216,10 +257,10 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
   ) : null;
 
   return (
-    <Modal onClose={onClose} label="New project" className="modal--chooser" testId="new-project-sheet" initialFocus={nameRef}>
+    <Modal onClose={onClose} label="New project" className="modal--chooser" testId="new-project-sheet" initialFocus={touchFirst ? headingRef : nameRef}>
       <div className="chooser">
         <header className="chooser__head">
-          <h2>New project</h2>
+          <h2 ref={headingRef} tabIndex={-1} className="chooser__title">New project</h2>
           <div className="tpl-search">
             <span className="tpl-search__icon" aria-hidden="true"><IconSearch /></span>
             <input
@@ -245,22 +286,24 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
         </header>
 
         <div className="chooser__body">
-          <div className="chooser__rail" ref={railRef} role="tablist" aria-orientation="vertical" aria-label="Template categories" data-testid="template-rail" onKeyDown={onRailKey}>
-            {rails.map((r) => (
-              <button
-                key={r.key}
-                role="tab"
-                aria-selected={railKey === r.key}
-                aria-controls="template-grid"
-                tabIndex={railKey === r.key ? 0 : -1}
-                className="chooser__rail-item"
-                data-testid={`template-rail-${r.key}`}
-                onClick={() => { setRail(r.key); gridRef.current?.scrollTo?.({ top: 0 }); }}
-              >
-                <span className="chooser__rail-label">{r.label}</span>
-                <span className="chooser__rail-count">{r.count}</span>
-              </button>
-            ))}
+          <div className="chooser__side">
+            <div className="chooser__rail" ref={railRef} role="tablist" aria-orientation={railRow ? 'horizontal' : 'vertical'} aria-label="Template categories" data-testid="template-rail" onKeyDown={onRailKey}>
+              {rails.map((r) => (
+                <button
+                  key={r.key}
+                  role="tab"
+                  aria-selected={railKey === r.key}
+                  aria-controls="template-grid"
+                  tabIndex={railKey === r.key ? 0 : -1}
+                  className="chooser__rail-item"
+                  data-testid={`template-rail-${r.key}`}
+                  onClick={() => { setRail(r.key); gridRef.current?.scrollTo?.({ top: 0 }); }}
+                >
+                  <span className="chooser__rail-label">{r.label}</span>
+                  <span className="chooser__rail-count">{r.count}</span>
+                </button>
+              ))}
+            </div>
             {repoStates.length > 0 && (
               <button className="btn btn--ghost btn--small chooser__refresh" onClick={refresh} disabled={refreshing} data-testid="template-refresh">
                 <IconRefresh /> {refreshing ? 'Refreshing…' : 'Refresh templates'}
@@ -268,50 +311,55 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
             )}
           </div>
 
-          <div className="tpl-gallery" id="template-grid" ref={gridRef} role="tabpanel" aria-label="Templates" data-testid="template-grid" onKeyDown={onGridKey}>
+          <div className="tpl-gallery" id="template-grid" ref={gridRef} role="tabpanel" aria-label="Templates" data-testid="template-grid">
             {templates === null && <p className="tpl-empty" role="status">Loading templates…</p>}
             {templates !== null && templates.length > 0 && !ordered.length && (
               <p className="tpl-empty" data-testid="template-empty">No template matches that. Create still starts from {chosen ? chosen.name : 'the built-in article'}.</p>
             )}
-            {groups.map((g) => (
-              <section key={g.key} className="tpl-group" data-testid={g.testid} aria-label={g.heading}>
-                <h3 className="tpl-group__label">
-                  {g.heading}
-                  {g.stale && <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>{g.stale.text}</span>}
-                </h3>
-                <div className="tpl-grid">
-                  {g.items.map((t) => {
-                    const active = effective === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        className={`tpl${active ? ' tpl--active' : ''}`}
-                        aria-pressed={active}
-                        tabIndex={active ? 0 : -1}
-                        data-testid={`template-${t.id}`}
-                        data-template={t.id}
-                        onClick={() => setTemplate(t.id)}
-                        onDoubleClick={() => { setTemplate(t.id); create(); }}
-                        title={t.description}
-                      >
-                        <Preview t={t} />
-                        <span className="tpl__name">{t.name}</span>
-                        {t.description && <span className="tpl__desc">{t.description}</span>}
-                        {/* The kit is downloaded when the project is created, not now:
-                            say so before the user picks the tile. */}
-                        {t.kit && <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>Downloads the official kit from {t.kit.host}</span>}
-                        {(t.license || t.source?.kind === 'repo') && (
-                          <span className="tpl__meta">
-                            {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
-                            {t.source?.kind === 'repo' && <span className="tpl__source" data-testid={`template-source-${t.id}`}>{t.source.label ?? repoIdOf(t)}</span>}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
+            {groups.length > 0 && (
+              <div role="listbox" aria-label="Templates" className="tpl-list" onKeyDown={onGridKey}>
+                {groups.map((g) => (
+                  <div key={g.key} role="group" className="tpl-group" data-testid={g.testid} aria-labelledby={`tpl-group-${g.key}`}>
+                    <h3 className="tpl-group__label" id={`tpl-group-${g.key}`}>
+                      {g.heading}
+                      {g.stale && <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>{g.stale.text}</span>}
+                    </h3>
+                    <div className="tpl-grid">
+                      {g.items.map((t) => {
+                        const active = effective === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            className={`tpl${active ? ' tpl--active' : ''}`}
+                            role="option"
+                            aria-selected={active}
+                            tabIndex={active ? 0 : -1}
+                            data-testid={`template-${t.id}`}
+                            data-template={t.id}
+                            onClick={() => setTemplate(t.id)}
+                            onDoubleClick={() => { setTemplate(t.id); create(); }}
+                            title={t.description}
+                          >
+                            <Preview t={t} />
+                            <span className="tpl__name">{t.name}</span>
+                            {t.description && <span className="tpl__desc">{t.description}</span>}
+                            {/* The kit is downloaded when the project is created, not now:
+                                say so before the user picks the tile. */}
+                            {t.kit && <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>Downloads the official kit from {t.kit.host}</span>}
+                            {(t.license || t.source?.kind === 'repo') && (
+                              <span className="tpl__meta">
+                                {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
+                                {t.source?.kind === 'repo' && <span className="tpl__source" data-testid={`template-source-${t.id}`}>{t.source.label ?? repoIdOf(t)}</span>}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -326,11 +374,18 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
               value={name}
               data-testid="new-project-name"
               autoComplete="off"
+              onFocus={(e) => {
+                // On a phone the name is not selected at open; the first tap selects it.
+                if (nameSelected.current) return;
+                nameSelected.current = true;
+                e.currentTarget.select();
+              }}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); create(); } }}
             />
           </div>
-          {choiceText && <p className="tpl-choice" data-testid="template-choice" aria-live="polite">{choiceText}</p>}
+          {choiceText && <p className="tpl-choice" data-testid="template-choice">{choiceText}</p>}
+          <span className="visually-hidden" role="status" data-testid="template-announce">{announce}</span>
           <div className="chooser__actions">
             <button className="btn" onClick={onClose}>Cancel</button>
             <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>

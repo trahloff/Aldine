@@ -10,8 +10,6 @@ import { cleanup } from './helpers';
  */
 interface Template { id: string; name: string; kit?: { host: string }; preview?: { w: number; h: number; v: string } }
 
-const COMPILER = process.env.COMPILER_URL || 'http://localhost:4020';
-
 async function templates(request: APIRequestContext): Promise<Template[]> {
   const res = await request.get('/api/templates');
   expect(res.ok()).toBeTruthy();
@@ -20,12 +18,20 @@ async function templates(request: APIRequestContext): Promise<Template[]> {
 
 async function openChooser(page: Page) {
   await page.goto('/');
-  await page.getByTestId('new-project').click();
+  // a phone has the compact bar: New project is the first entry of the + sheet
+  const add = page.getByTestId('home-add');
+  await expect(add.or(page.getByTestId('new-project'))).toBeVisible();
+  if (await add.isVisible()) {
+    await add.click();
+    await page.getByTestId('home-add-sheet').getByTestId('new-project').click();
+  } else {
+    await page.getByTestId('new-project').click();
+  }
   await expect(page.getByTestId('new-project-sheet')).toBeVisible();
   await expect(page.getByTestId('template-article')).toBeVisible();
 }
 
-const pressed = (page: Page) => page.locator('[data-testid="template-grid"] button.tpl[aria-pressed="true"]');
+const pressed = (page: Page) => page.locator('[data-testid="template-grid"] [role="option"][aria-selected="true"]');
 
 test.describe('New project chooser', () => {
   test('a sheet with the name prefilled and selected, a rail, and no emoji', async ({ page }) => {
@@ -47,6 +53,29 @@ test.describe('New project chooser', () => {
     expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
+  test('the rail holds only tabs, and the templates are one listbox of options', async ({ page }) => {
+    await openChooser(page);
+    const rail = page.getByTestId('template-rail');
+    await expect(rail).toHaveAttribute('role', 'tablist');
+    await expect(rail).toHaveAttribute('aria-orientation', 'vertical');
+    const roles = await rail.evaluate((el) => Array.from(el.children, (c) => c.getAttribute('role')));
+    expect(roles.length).toBeGreaterThan(1);
+    expect(new Set(roles)).toEqual(new Set(['tab']));
+    // The refresh button sits beside the rail, not inside it.
+    await expect(page.getByTestId('template-refresh')).toBeVisible();
+    await expect(rail.getByTestId('template-refresh')).toHaveCount(0);
+
+    const list = page.getByRole('listbox', { name: 'Templates' });
+    await expect(list).toHaveCount(1);
+    await expect(list.getByRole('option', { name: /^Article/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(list.getByRole('group').first()).toHaveAccessibleName(/.+/);
+    expect(await page.locator('[data-testid="template-grid"] [aria-pressed]').count()).toBe(0);
+    // Arrow moves are announced by focus; the choice line itself is not live.
+    await expect(page.getByTestId('template-choice')).not.toHaveAttribute('aria-live', /.*/);
+    await page.getByTestId('template-search').fill('presen');
+    await expect(page.getByTestId('template-announce')).toContainText('Starting from Presentation');
+  });
+
   test('the rail moves with up and down and shows one group', async ({ page }) => {
     await openChooser(page);
     await page.getByTestId('template-rail-all').focus();
@@ -66,15 +95,15 @@ test.describe('New project chooser', () => {
   test('arrows move the choice through the grid, typing searches, Enter creates', async ({ page, request }) => {
     await openChooser(page);
     const article = page.getByTestId('template-article');
-    await expect(article).toHaveAttribute('aria-pressed', 'true');
+    await expect(article).toHaveAttribute('aria-selected', 'true');
     await article.focus();
     await page.keyboard.press('ArrowRight');
     const next = pressed(page);
     await expect(next).toHaveCount(1);
     await expect(next).toBeFocused();
-    await expect(article).toHaveAttribute('aria-pressed', 'false');
+    await expect(article).toHaveAttribute('aria-selected', 'false');
     await page.keyboard.press('ArrowLeft');
-    await expect(article).toHaveAttribute('aria-pressed', 'true');
+    await expect(article).toHaveAttribute('aria-selected', 'true');
     await expect(article).toBeFocused();
     // Down lands on a tile below, never on the same row
     const top = (await article.boundingBox())!.y;
@@ -141,25 +170,20 @@ test.describe('New project chooser', () => {
     expect(bg).toBe('rgb(250, 248, 242)');
   });
 
-  test('a shipped template shows page 1, served with a long cache', async ({ page, request }) => {
-    test.setTimeout(180_000);
-    const health = await request.get(`${COMPILER}/health`).then((r) => r.json()).catch(() => null);
-    test.skip(!health || health.thumbnails === 'none', 'the compiler cannot render page 1 (no gs or pdftoppm)');
-    // Any shipped template will do: a BasicTeX compiler cannot typeset the
-    // biblatex ones, and their tiles keep the placeholder.
-    const shipped = ['article', 'beamer', 'report', 'iac-paper'];
-    let rendered: Template | undefined;
-    await expect.poll(async () => {
-      rendered = (await templates(request)).find((t) => shipped.includes(t.id) && t.preview);
-      return !!rendered;
-    }, { timeout: 100_000, intervals: [2_000] }).toBe(true);
-    const res = await request.get(`/api/templates/preview?id=${rendered!.id}&v=${rendered!.preview!.v}`);
+  test('every shipped template shows page 1, rendered before release and served with a long cache', async ({ page, request }) => {
+    const list = await templates(request);
+    for (const id of ['article', 'beamer', 'report', 'iac-paper']) {
+      const t = list.find((x) => x.id === id);
+      expect(t?.preview, `${id} has a shipped preview`).toBeTruthy();
+    }
+    const article = list.find((t) => t.id === 'article')!;
+    const res = await request.get(`/api/templates/preview?id=article&v=${article.preview!.v}`);
     expect(res.status()).toBe(200);
     expect(res.headers()['content-type']).toBe('image/jpeg');
     expect(res.headers()['cache-control']).toContain('max-age=31536000, immutable');
 
     await openChooser(page);
-    const img = page.getByTestId(`template-preview-${rendered!.id}`);
+    const img = page.getByTestId('template-preview-article');
     await expect(img).toBeVisible();
     await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBeGreaterThan(0);
   });
@@ -177,7 +201,7 @@ test.describe('New project chooser', () => {
       const all = (await page.getByTestId('template-rail-all').boundingBox())!;
       const general = (await page.getByTestId('template-rail-General').boundingBox())!;
       expect(Math.abs(all.y - general.y)).toBeLessThan(2);
-      const tiles = page.locator('[data-testid="template-category-General"] button.tpl');
+      const tiles = page.locator('[data-testid="template-category-General"] [role="option"]');
       const a = (await tiles.nth(0).boundingBox())!;
       const b = (await tiles.nth(1).boundingBox())!;
       const c = (await tiles.nth(2).boundingBox())!;
@@ -185,6 +209,18 @@ test.describe('New project chooser', () => {
       expect(c.y).toBeGreaterThan(a.y + 10);
       await expect(page.getByTestId('create-project')).toBeInViewport();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+      await expect(page.getByTestId('template-rail')).toHaveAttribute('aria-orientation', 'horizontal');
+    });
+
+    test('opening the sheet does not raise the keyboard; tapping the name selects it', async ({ page }) => {
+      await openChooser(page);
+      const name = page.getByLabel('Project name');
+      await expect(name).toHaveValue('Untitled project');
+      await expect(name).not.toBeFocused();
+      expect(await page.evaluate(() => document.activeElement?.tagName)).not.toMatch(/^(INPUT|TEXTAREA)$/);
+      await name.tap();
+      await expect(name).toBeFocused();
+      expect(await name.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd])).toEqual([0, 'Untitled project'.length]);
     });
   });
 });

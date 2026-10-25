@@ -102,6 +102,27 @@ test.describe('GitLab auto-provisioning', () => {
     } finally { await ctx.dispose(); }
   });
 
+  for (const [width, height] of [[1024, 640], [1280, 600]] as const) {
+    test(`at ${width}x${height} the group picker and its new-group field leave Create and the gallery in view`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto('/');
+      await page.getByTestId('new-project').click();
+      const sheet = page.getByTestId('new-project-sheet');
+      await expect(page.getByTestId('namespace-picker')).toBeVisible();
+      await page.getByTestId('namespace-new').click();
+      await expect(page.getByTestId('namespace-new-name')).toBeVisible();
+      await expect(page.getByTestId('create-project')).toBeInViewport({ ratio: 1 });
+      await expect(page.getByTestId('namespace-new-create')).toBeInViewport({ ratio: 1 });
+      const s = (await sheet.boundingBox())!;
+      const create = (await page.getByTestId('create-project').boundingBox())!;
+      const grid = (await page.getByTestId('template-grid').boundingBox())!;
+      expect(s.y + s.height).toBeLessThanOrEqual(height + 1);
+      expect(create.y + create.height).toBeLessThanOrEqual(s.y + s.height + 1);
+      expect(grid.height, 'the gallery keeps room for a row of pages').toBeGreaterThan(150);
+      expect(await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    });
+  }
+
   test('a new project lands in the root group with autopush on', async ({ page, request }) => {
     await page.goto('/');
     await page.getByTestId('new-project').click();

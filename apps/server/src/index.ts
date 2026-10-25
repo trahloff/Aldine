@@ -33,7 +33,7 @@ initProjectEvents({ onAccessChanged: closeProjectConnections });
 const app = await buildApp();
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
-// After listen: the first typesets wait on the compiler, never on boot.
+// After listen: reading the shipped previews and hashing checkouts never delays it.
 startTemplatePreviews();
 
 // Yjs collaboration over WebSocket at <basePath>/collab

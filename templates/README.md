@@ -35,6 +35,19 @@ Hidden directories (`.git`, `.github`, …) are skipped. `template.json` and
 `template.json` that is not valid JSON is skipped with a warning in the server
 log, and the rest of the folder keeps listing.
 
+## Page-1 previews
+
+The gallery shows page 1 of each template. For the shipped templates it is
+rendered before release into `apps/server/assets/template-previews`: after
+editing anything here, start a compiler and run `npm run templates:previews`
+(instructions at the top of `apps/server/scripts/render-template-previews.ts`),
+then commit the images. The server unit tests fail while a preview is missing
+or older than its template. A template from a repository is typeset by the
+compiler after a sync that changed it. Previews are typeset with the
+template's name as `{{PROJECT_NAME}}`, "Author name" as `{{AUTHOR}}` and
+1 January 2026 as `{{DATE}}`, so a date in a template never makes a new
+version.
+
 ## The manifest, `template.json`
 
 ```json
