@@ -502,18 +502,6 @@
 }
 .chip svg { flex: none; width: 11px; height: 11px; }
 .chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.avatar {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  /* the accent alone is too faint on its own soft fill at this size */
-  color: color-mix(in srgb, var(--accent) 55%, var(--text));
-  font-weight: 700;
-  line-height: 1;
-}
 
 /* "…": on the paper's corner on hover and focus with a pointer; on touch, ink at the end of the name row */
 .sheet__more {

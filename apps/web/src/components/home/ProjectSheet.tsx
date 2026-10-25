@@ -5,7 +5,7 @@ import { Menu, MenuButton, sheetFits, type MenuEntry } from '../Menu';
 import ActionSheet from '../ActionSheet';
 import { IconBranch, IconEllipsis, IconLink, IconPeople, IconPlus } from '../Icons';
 import { REMOTES } from '../../remotes';
-import { errorLabel, firstName, initials, isUnread, metaLine, ownerChipShown, projectHref } from '../../util/homeList';
+import { errorLabel, firstName, isUnread, metaLine, ownerChipShown, projectHref } from '../../util/homeList';
 import { dayAgo, shortDate } from '../../util/dates';
 
 /** Height to width of an A4 page: the tallest stage a section gets. */
@@ -132,10 +132,6 @@ function Thumbnail({ id, thumb, onFail }: { id: string; thumb: ProjectThumb; onF
   );
 }
 
-export function Avatar({ name, size = 16 }: { name: string | null | undefined; size?: number }) {
-  return <span className="avatar" style={{ width: size, height: size, fontSize: Math.max(7, Math.round(size * 0.45)) }} aria-hidden="true">{initials(name)}</span>;
-}
-
 function Chip({ children, title, testId }: { children: ReactNode; title?: string; testId?: string }) {
   return <span className="chip" title={title} data-testid={testId}>{children}</span>;
 }
@@ -157,7 +153,6 @@ function chipsFor(p: ProjectSummary, accounts: boolean, myId: string | null): { 
         sr: t,
         node: (
           <Chip key="owner" title={t} testId={`owner-${p.id}`}>
-            <Avatar name={p.ownerName} size={14} />
             <span className="chip__text">{firstName(p.ownerName) || 'Shared'}</span>
             {p.access === 'link' && <IconLink width={11} height={11} />}
           </Chip>

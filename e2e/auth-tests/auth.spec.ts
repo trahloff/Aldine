@@ -773,6 +773,7 @@ test.describe('ownerless legacy projects', () => {
     // a recipient's sheet names the owner on a chip, with the link it came through
     await expect(page.getByTestId(`owner-${id}`).locator('.chip__text')).toHaveText('Grace');
     await expect(page.getByTestId(`owner-${id}`)).toHaveAttribute('title', 'Opened through a link from Grace Owner');
+    await expect(page.getByTestId(`owner-${id}`)).toHaveText('Grace'); // the first name alone, no initials
     await expect(page.getByTestId(`open-${id}`)).toHaveAccessibleDescription(/Opened through a link from Grace Owner/);
     // a recipient's menu: no rename, share or trash, but a way off the list
     await page.getByTestId(`project-menu-${id}`).click();
