@@ -22,7 +22,11 @@ RUN npm run build -w apps/server
 
 # ---- runtime ----
 FROM node:22-alpine
-RUN apk add --no-cache git
+# Releases build with a registry cache (build-image.yml). PACKAGES_REFRESH is
+# the release version, so this stage reruns on every release and git carries
+# Alpine's current security fixes; the build stages above stay cached.
+ARG PACKAGES_REFRESH=
+RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" && apk add --no-cache git
 WORKDIR /srv
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/

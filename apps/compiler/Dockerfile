@@ -47,8 +47,19 @@ FROM texlive/texlive:latest-full@sha256:4984977ccf5afe883cb382d0163f267de0d029d1
 
 FROM texlive-${TEXLIVE_SCHEME} AS base
 
+# Releases build with a registry cache (build-image.yml) that keeps every layer
+# above this line, so an upgrade downloads TeX Live again only when a base
+# digest or the tlmgr step changes. Everything from here down reruns on each
+# release: build-image.yml passes the release version as PACKAGES_REFRESH, and
+# a new value misses the cache at the RUN that uses it. Without that the apt
+# layer would keep the nodejs of the first cached build and never pick up
+# Debian's security fixes. Large, reproducible TeX Live steps go above this
+# ARG; package installs go below it.
+ARG PACKAGES_REFRESH=
+
 # Node.js for the compile service wrapper
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
 
 # Warm biber's PAR self-extraction cache at build time. Cold extraction takes
 # ~90s, which would blow the compile timeout on a user's very first biblatex
