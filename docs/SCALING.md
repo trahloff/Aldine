@@ -54,8 +54,13 @@ unaffected.
    reachable), OAuth authorization codes (a Connect whose token exchange
    lands on another node than its consent fails), and the per-branch
    `contentVersion` counters behind the Agent API's conflict checks (a
-   write answered by another node can be refused as `version_conflict`). The
-   datastore is multi-node-ready; these caches are not yet.
+   write answered by another node can be refused as `version_conflict`), and
+   the project list's activity overlay (each project's last edit and last
+   typeset per branch, held per node and stored at most once per autosave
+   window: until then another node's list shows an older last edit or
+   typeset, and collab updates relayed from a peer node are not recorded on
+   the node that receives them). The datastore is multi-node-ready; these
+   caches are not yet.
 2. **Single-process Hocuspocus** — each Yjs document's CRDT state lives in one
    process's memory. → **Partially built, not yet a supported topology.** What
    exists: the Redis collab extension (`REDIS_URL`) syncs awareness across

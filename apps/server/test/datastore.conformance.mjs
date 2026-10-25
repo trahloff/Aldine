@@ -318,6 +318,91 @@ async function runSuite(store, label) {
   check((await store.getProjectVisit(other, pv1, 'main')) === null, `${label}: deleteProjectVisits clears every user`);
   check((await store.getProjectVisit(user.id, pv2, 'main')) !== null, `${label}: deleteProjectVisits leaves another project standing`);
 
+  // ---- project list: opens ----
+  const po1 = `o1${t}`;
+  const po2 = `o2${t}`;
+  eq(await store.listProjectOpens(user.id), [], `${label}: no opens → []`);
+  check((await store.getProjectOpen(user.id, po1)) === null, `${label}: unknown open → null`);
+  const opened = { userId: user.id, projectId: po1, at: '2026-10-01T00:00:00.000Z', branch: 'draft', hidden: false };
+  await store.setProjectOpen(opened);
+  eq(await store.getProjectOpen(user.id, po1), opened, `${label}: open roundtrip`);
+  const hiddenOnly = { userId: user.id, projectId: po2, at: null, branch: null, hidden: true };
+  await store.setProjectOpen(hiddenOnly);
+  eq(await store.getProjectOpen(user.id, po2), hiddenOnly, `${label}: a removal without an open keeps at and branch null`);
+  eq((await store.listProjectOpens(user.id)).sort((a, b) => a.projectId.localeCompare(b.projectId)), [opened, hiddenOnly], `${label}: listProjectOpens returns the user's rows`);
+  await store.setProjectOpen({ ...opened, at: '2026-10-02T00:00:00.000Z', branch: 'main' });
+  eq(await store.getProjectOpen(user.id, po1), { ...opened, at: '2026-10-02T00:00:00.000Z', branch: 'main' }, `${label}: setProjectOpen upserts in place`);
+  await store.setProjectOpen(opened);
+
+  await store.setProjectOpen({ ...opened, userId: other });
+  eq(await store.listProjectOpens(other), [{ ...opened, userId: other }], `${label}: opens are per user`);
+  const oAlias = await store.getProjectOpen(user.id, po1);
+  oAlias.branch = 'TAMPERED';
+  eq((await store.getProjectOpen(user.id, po1)).branch, 'draft', `${label}: getProjectOpen result is a copy`);
+
+  await store.resetProjectOpenBranch(po1, 'draft');
+  eq((await store.getProjectOpen(user.id, po1)).branch, 'main', `${label}: resetProjectOpenBranch moves an open of the deleted branch to main`);
+  eq((await store.getProjectOpen(other, po1)).branch, 'main', `${label}: for every user`);
+  eq((await store.getProjectOpen(user.id, po1)).at, opened.at, `${label}: and keeps when it was opened`);
+  await store.setProjectOpen({ ...opened, branch: 'keep' });
+  await store.resetProjectOpenBranch(po1, 'draft');
+  eq((await store.getProjectOpen(user.id, po1)).branch, 'keep', `${label}: resetProjectOpenBranch leaves other branches alone`);
+
+  check((await store.getProjectOpen(user.id, '../evil')) === null, `${label}: getProjectOpen bad id → null`);
+  await throws(() => store.setProjectOpen({ ...opened, projectId: '../evil' }), 'bad project id', `${label}: setProjectOpen bad id throws`);
+  await throws(() => store.deleteProjectOpens('../evil'), 'bad project id', `${label}: deleteProjectOpens bad id throws`);
+
+  await store.deleteProjectOpen(user.id, po2);
+  check((await store.getProjectOpen(user.id, po2)) === null, `${label}: deleteProjectOpen`);
+  await store.deleteProjectOpen(user.id, po2); // no throw on a missing row
+  await store.deleteProjectOpens(po1);
+  check((await store.getProjectOpen(user.id, po1)) === null && (await store.getProjectOpen(other, po1)) === null, `${label}: deleteProjectOpens clears every user's row`);
+  eq(await store.listProjectOpens(user.id), [], `${label}: nothing left for the user`);
+
+  // ---- project list: activity ----
+  const pa = `a1${t}`;
+  const pb = `a2${t}`;
+  const ours = (rows) => rows.filter((r) => r.projectId === pa || r.projectId === pb).sort((a, b) => a.projectId.localeCompare(b.projectId));
+  eq(ours(await store.listProjectActivity()), [], `${label}: no activity yet`);
+  const edit = { at: '2026-10-03T10:00:00.000Z', byId: user.id, byName: 'Ada', branch: 'main' };
+  await store.setLastEdit(pa, edit);
+  eq(ours(await store.listProjectActivity()), [{ projectId: pa, lastEdit: edit, compile: {} }], `${label}: setLastEdit creates the row`);
+  await store.setLastEdit(pa, { ...edit, at: '2026-10-03T09:00:00.000Z', byName: 'Older' });
+  eq(ours(await store.listProjectActivity())[0].lastEdit, edit, `${label}: an older last edit never replaces a newer one`);
+  const newerEdit = { at: '2026-10-03T11:00:00.000Z', byId: null, byName: 'Claude', branch: 'draft' };
+  await store.setLastEdit(pa, newerEdit);
+  eq(ours(await store.listProjectActivity())[0].lastEdit, newerEdit, `${label}: a newer last edit replaces it, null id included`);
+
+  const okMark = { status: 'ok', errors: 0, at: '2026-10-03T12:00:00.000Z' };
+  const errMark = { status: 'error', errors: 3, at: '2026-10-03T12:05:00.000Z' };
+  await store.setCompileMark(pa, 'main', okMark);
+  await store.setCompileMark(pa, 'feature/x', errMark);
+  eq(ours(await store.listProjectActivity())[0], { projectId: pa, lastEdit: newerEdit, compile: { main: okMark, 'feature/x': errMark } }, `${label}: compile marks per branch, beside the last edit`);
+  await store.setCompileMark(pa, 'main', errMark);
+  eq(ours(await store.listProjectActivity())[0].compile.main, errMark, `${label}: setCompileMark replaces the branch's mark`);
+  await store.setCompileMark(pa, 'feature/x', null);
+  eq(ours(await store.listProjectActivity())[0].compile, { main: errMark }, `${label}: null forgets one branch's mark`);
+  await store.setCompileMark(pb, 'main', okMark);
+  eq(ours(await store.listProjectActivity())[1], { projectId: pb, lastEdit: null, compile: { main: okMark } }, `${label}: a mark alone creates the row with no last edit`);
+  await store.setCompileMark(`a3${t}`, 'main', null); // forgetting on a project with no row is a no-op
+  check(!(await store.listProjectActivity()).some((r) => r.projectId === `a3${t}`), `${label}: forgetting creates no row`);
+  const aAlias = ours(await store.listProjectActivity())[0];
+  aAlias.compile.main.errors = 99;
+  eq(ours(await store.listProjectActivity())[0].compile.main.errors, 3, `${label}: listProjectActivity result is a copy`);
+
+  // Many at once, same rule per row: pa keeps its newer edit, pb gains one.
+  const histEdit = { at: '2026-10-01T08:00:00.000Z', byId: null, byName: null, branch: 'main' };
+  await store.setLastEdits([{ projectId: pa, lastEdit: histEdit }, { projectId: pb, lastEdit: histEdit }]);
+  eq(ours(await store.listProjectActivity()).map((r) => r.lastEdit), [newerEdit, histEdit], `${label}: setLastEdits keeps the newer edit of each row`);
+  eq(ours(await store.listProjectActivity())[1].compile, { main: okMark }, `${label}: setLastEdits leaves compile marks alone`);
+  await throws(() => store.setLastEdits([{ projectId: pa, lastEdit: newerEdit }, { projectId: '../evil', lastEdit: edit }]), 'bad project id', `${label}: setLastEdits bad id throws`);
+  await throws(() => store.setLastEdit('../evil', edit), 'bad project id', `${label}: setLastEdit bad id throws`);
+  await throws(() => store.setCompileMark('../evil', 'main', okMark), 'bad project id', `${label}: setCompileMark bad id throws`);
+  await throws(() => store.deleteProjectActivity('../evil'), 'bad project id', `${label}: deleteProjectActivity bad id throws`);
+  await store.deleteProjectActivity(pa);
+  eq(ours(await store.listProjectActivity()).map((r) => r.projectId), [pb], `${label}: deleteProjectActivity removes one project's row`);
+  await store.deleteProjectActivity(pb);
+
   // ---- usage ----
   const month = '2026-08';
   eq(await store.getUsageSeconds(user.id, month), 0, `${label}: usage default 0`);

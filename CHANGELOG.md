@@ -7,6 +7,23 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- The project list puts the most recently edited project first and says when
+  each one was last edited and by whom (the agent's name for edits made
+  through the Agent API), which branch you last had open, and whether that
+  branch's last typeset worked or how many errors it had, also after the
+  server restarts. A project last changed before this release shows the time
+  of its last commit.
+- A project you open through a share link appears in your project list, under
+  Shared with me, until you remove it with "Remove from my list". Invited
+  collaborators can remove a project from their list too; it comes back the
+  next time they open it. The share dialog says so.
+- Duplicate a project: the copy is yours and holds the files of its main
+  branch as they are now, without its history, sharing, remote repository or
+  Zotero link. Projects over 256 MB are not duplicated; download them as a
+  ZIP instead.
+- The trash says when each project in it will be deleted for good.
+
 ## [0.16.0] — 2026-10-25
 
 ### Added

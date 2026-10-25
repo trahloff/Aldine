@@ -19,6 +19,15 @@ export async function listBranches(id: string): Promise<BranchInfo[]> {
   });
 }
 
+/** The most recently committed branch and its commit time; null when the
+ *  repository has no commit. Read-only, no lock. */
+export async function newestBranchTip(id: string): Promise<{ branch: string; at: string } | null> {
+  const raw = await git(repoDir(id)).raw(['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(committerdate:iso-strict)%09%(refname:short)', 'refs/heads']);
+  const [date, branch] = raw.trim().split('\t');
+  const t = Date.parse(date);
+  return branch && !Number.isNaN(t) ? { branch, at: new Date(t).toISOString() } : null;
+}
+
 /** Per-repository write serialisation: every operation that changes an index,
  *  a ref or a worktree of project `id` runs inside this lock, in arrival
  *  order. NOT reentrant — an operation that already holds it calls the `…Held`
@@ -578,11 +587,13 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
 }
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }
+/** `changed`: whether the files of `into` differ from before the merge. */
+export interface BranchMergeResult extends MergeResult { changed?: boolean }
 
 /** Merge `from` into `into`. On conflict: abort and report conflicting files.
  *  `from` must be a local branch; git gets it fully qualified, so it can be
  *  neither an option nor any other revision. */
-export async function merge(id: string, from: string, into: string, author?: string): Promise<MergeResult> {
+export async function merge(id: string, from: string, into: string, author?: string): Promise<BranchMergeResult> {
   if (!BRANCH_RE.test(from) || from.includes('..')) throw new Error('bad branch name');
   const fromRef = `refs/heads/${from}`;
   return withRepoLock(id, async () => {
@@ -593,6 +604,11 @@ export async function merge(id: string, from: string, into: string, author?: str
     await autoCommitHeld(id, into, `aldine: checkpoint before merge`, author).catch(() => {});
     const dir = await ensureWorktree(id, into);
     const g = git(dir);
+    // Trees, not heads: the checkpoint commits move heads without changing
+    // what `into` holds, and edits checkpointed on an already merged `from`
+    // do change it.
+    const tree = () => g.raw(['rev-parse', 'HEAD^{tree}']).then((t) => t.trim(), () => '');
+    const before = await tree();
     let mergeErr: unknown = null;
     try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, fromRef]); } catch (e) { mergeErr = e; }
     const conflicts = (await g.status()).conflicted;
@@ -601,7 +617,7 @@ export async function merge(id: string, from: string, into: string, author?: str
       return { ok: false, conflicts };
     }
     if (mergeErr) return { ok: false, message: String((mergeErr as Error)?.message || mergeErr) };
-    return { ok: true };
+    return { ok: true, changed: (await tree()) !== before };
   });
 }
 
@@ -755,13 +771,19 @@ export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: s
 }
 
 /** Discard all local changes and hard-reset local `main` to the remote branch. */
-export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
+/** Resolves to whether the files of `main` changed: a new head, or tracked
+ *  edits the hard reset threw away (untracked files survive it). */
+export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<boolean> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   forgetRemoteStatus(id);
   return withRepoLock(id, async () => {
     const g = git(repoDir(id));
     await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
+    const head = () => g.raw(['rev-parse', '-q', '--verify', 'HEAD']).then((h) => h.trim(), () => '');
+    const before = await head();
+    const dirty = (await g.raw(['status', '--porcelain', '--untracked-files=no'])).trim() !== '';
     await g.raw(['reset', '--hard', 'FETCH_HEAD']);
+    return dirty || (await head()) !== before;
   });
 }
 

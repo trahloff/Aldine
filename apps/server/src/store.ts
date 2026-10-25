@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
+import type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink } from './db/types.js';
 
-export type { ProjectMeta, ProjectVisit, RemoteLink } from './db/types.js';
+export type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -50,6 +50,27 @@ export function setProjectVisit(v: ProjectVisit): Promise<void> {
   return db().setProjectVisit(v);
 }
 
+/** One person's opens and removals across their project list. */
+export function listProjectOpens(userId: string): Promise<ProjectOpen[]> {
+  return db().listProjectOpens(userId);
+}
+
+export function getProjectOpen(userId: string, id: string): Promise<ProjectOpen | null> {
+  return db().getProjectOpen(userId, id);
+}
+
+export function setProjectOpen(o: ProjectOpen): Promise<void> {
+  return db().setProjectOpen(o);
+}
+
+export function deleteProjectOpen(userId: string, id: string): Promise<void> {
+  return db().deleteProjectOpen(userId, id);
+}
+
+export function resetProjectOpenBranch(id: string, branch: string): Promise<void> {
+  return db().resetProjectOpenBranch(id, branch);
+}
+
 export function listProjects(): Promise<ProjectMeta[]> {
   return db().listMeta();
 }
@@ -82,10 +103,7 @@ export async function createProject(name: string, files?: Record<string, string 
   };
   const written: string[] = [];
   try {
-    const g = git(dir);
-    await g.init(['--initial-branch=main']);
-    await g.addConfig('user.name', 'Aldine');
-    await g.addConfig('user.email', 'aldine@localhost');
+    const g = await initRepo(dir);
     for (const [rel, content] of Object.entries(seed)) {
       const norm = importPath(rel);
       if (norm === null || isHiddenPath(norm)) throw new Error(`file path "${rel}" is not allowed`);
@@ -113,12 +131,79 @@ export async function createProject(name: string, files?: Record<string, string 
   return meta;
 }
 
+async function initRepo(dir: string): Promise<SimpleGit> {
+  const g = git(dir);
+  await g.init(['--initial-branch=main']);
+  await g.addConfig('user.name', 'Aldine');
+  await g.addConfig('user.email', 'aldine@localhost');
+  return g;
+}
+
+/** Largest source, in bytes of copied files, that Duplicate accepts. */
+export const COPY_MAX_BYTES = Number(process.env.COPY_MAX_BYTES) > 0 ? Number(process.env.COPY_MAX_BYTES) : 256 * 1024 * 1024;
+export class CopyTooLargeError extends Error {
+  constructor() { super(`project is larger than ${Math.round(COPY_MAX_BYTES / (1024 * 1024))} MB`); }
+}
+
+/** Bytes of the files `keep` admits under `dir`; stops counting once past `limit`. */
+function copySize(dir: string, keep: (abs: string) => boolean, limit: number): number {
+  let total = 0;
+  const walk = (d: string) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (total > limit) return;
+      const abs = path.join(d, e.name);
+      if (!keep(abs)) continue;
+      if (e.isDirectory()) walk(abs);
+      else if (e.isFile()) total += fs.statSync(abs).size;
+    }
+  };
+  walk(dir);
+  return total;
+}
+
+/**
+ * A new project with the files of `source`'s main working tree, uncommitted
+ * edits included, in one first commit: no history, remote, share settings,
+ * Zotero link or build output. The typesetting settings come along, so the
+ * copy builds the way the original does. The tree is copied before the first
+ * await: callers flush open documents and hold the source's repo lock, and
+ * then the copy is one consistent state of it. Links are not copied.
+ */
+export async function copyProject(source: ProjectMeta, name: string, ownerId?: string): Promise<ProjectMeta> {
+  const from = repoDir(source.id);
+  const copied = (src: string) => {
+    const rel = path.relative(from, src);
+    return !rel || (!isHiddenPath(rel) && !fs.lstatSync(src).isSymbolicLink());
+  };
+  // The copy runs synchronously on the event loop; the cap bounds that stall.
+  if (copySize(from, copied, COPY_MAX_BYTES) > COPY_MAX_BYTES) throw new CopyTooLargeError();
+  const id = newId();
+  const dir = repoDir(id);
+  try {
+    fs.cpSync(from, dir, { recursive: true, filter: copied });
+    const g = await initRepo(dir);
+    await g.add(['-A']);
+    await g.raw(['commit', '--allow-empty', '-m', 'Initial commit']);
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  const meta: ProjectMeta = { id, name, rootFile: source.rootFile, engine: source.engine, createdAt: new Date().toISOString() };
+  if (source.stopOnFirstError !== undefined) meta.stopOnFirstError = source.stopOnFirstError;
+  if (source.manualCommits !== undefined) meta.manualCommits = source.manualCommits;
+  if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+  await writeMeta(meta);
+  return meta;
+}
+
 /** Permanently remove a project — repo, worktrees, and metadata. */
 export async function deleteProject(id: string): Promise<void> {
   fs.rmSync(repoDir(id), { recursive: true, force: true });
   fs.rmSync(path.join(worktreesDir, id), { recursive: true, force: true });
   await db().deleteMeta(id);
   await db().deleteProjectVisits(id);
+  await db().deleteProjectOpens(id);
+  await db().deleteProjectActivity(id);
 }
 
 /** Move a project to trash: data stays on disk, listings hide it, purge collects it later. */

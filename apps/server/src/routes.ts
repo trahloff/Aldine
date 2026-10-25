@@ -13,7 +13,9 @@ import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, w
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
 import { publishProjectEvent } from './events.js';
-import { trashProject } from './trash.js';
+import { trashProject, restorableUntil } from './trash.js';
+import { noteEdit, editorOf, forgetBranch, activitySnapshot, backfillLastEdits } from './activity.js';
+import type { ProjectActivity } from './db/types.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
@@ -30,9 +32,9 @@ import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
-import { canAccess, isAdmin, isListed, isMember, isOwner, ownerName } from './authz.js';
+import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, clientKey } from './ratelimit.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
@@ -154,6 +156,26 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
   };
 }
 
+/** Whose project list a request reads and writes: the account, or with
+ *  accounts off the one implicit user. */
+const listUserId = (user: auth.PublicUser | null) => user?.id ?? 'local';
+
+/** A project list row: the project, plus what the list says about the
+ *  caller's relation to it and its work. The typeset shown is the one of the
+ *  branch the caller last had open. */
+async function projectRow(meta: store.ProjectMeta, user: auth.PublicUser | null, open: store.ProjectOpen | null, activity: ProjectActivity | undefined, access: ListAccess) {
+  const opened = open?.at ? { at: open.at, branch: open.branch || 'main' } : null;
+  const branch = opened?.branch ?? 'main';
+  const mark = activity?.compile[branch];
+  return {
+    ...(await publicMeta(meta, user)),
+    lastEdit: activity?.lastEdit ?? null,
+    opened,
+    compile: mark ? { ...mark, branch } : null,
+    access,
+  };
+}
+
 /**
  * Guards for routes the global preHandler's canAccess is too weak for. Link
  * mode says "anyone signed in with the link can edit" — the document, not the
@@ -205,6 +227,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const route = req.routeOptions.url;
       if (id === undefined || !route?.startsWith('/api/projects/:id') || !protectedProjects.has(id)) return;
       if (route === '/api/projects/:id/compile' || route === '/api/projects/:id/synctex') return; // reading the doc includes building it
+      // The caller's own list and a copy of their own leave the showcase as it is.
+      if (route === '/api/projects/:id/opened' || route === '/api/projects/:id/listing' || route === '/api/projects/:id/copy') return;
       return reply.code(403).send({ error: 'This is a read-only showcase project — create your own to try editing.' });
     });
   }
@@ -549,17 +573,34 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // ---------- projects ----------
+  // Most recently edited first. Three store reads for the whole list and no
+  // git call: a project with no recorded edit is backfilled from its history
+  // in the background and sorts by its creation until then.
   app.get('/api/projects', async (req) => {
     const user = reqUser(req);
-    return Promise.all((await store.listProjects()).filter((m) => !m.deletedAt && isListed(m, user)).map((m) => publicMeta(m, user)));
+    const [metas, opens, activity] = await Promise.all([store.listProjects(), store.listProjectOpens(listUserId(user)), activitySnapshot()]);
+    const openOf = new Map(opens.map((o) => [o.projectId, o]));
+    const rows = await Promise.all(metas.filter((m) => !m.deletedAt).flatMap((m) => {
+      const open = openOf.get(m.id) ?? null;
+      const access = listingAccess(m, user, open);
+      return access ? [projectRow(m, user, open, activity.get(m.id), access)] : [];
+    }));
+    const unknown = rows.filter((r) => !r.lastEdit).map((r) => r.id);
+    if (unknown.length) backfillLastEdits(unknown);
+    const recency = (r: { lastEdit: { at: string } | null; createdAt: string }) => r.lastEdit?.at ?? r.createdAt;
+    return rows.sort((a, b) => recency(b).localeCompare(recency(a)) || b.createdAt.localeCompare(a.createdAt));
   });
 
-  // Trash: soft-deleted projects the user owns, newest first. Restorable until purge (~30 days).
+  // Trash: soft-deleted projects the user owns, newest first. Restorable until
+  // purgeAt; the daily sweep removes them on its first run after it.
   app.get('/api/projects/trash', async (req) => {
     const user = reqUser(req);
     const mine = (await store.listProjects()).filter((m) => !!m.deletedAt && (auth.AUTH_ENABLED ? isOwner(m, user) : true));
     mine.sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
-    return mine.map((m) => ({ id: m.id, name: m.name, deletedAt: m.deletedAt }));
+    return mine.map((m) => {
+      const at = Date.parse(m.deletedAt!);
+      return { id: m.id, name: m.name, deletedAt: m.deletedAt, purgeAt: Number.isNaN(at) ? null : restorableUntil(new Date(at)) };
+    });
   });
 
   // Auto-provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP): a new project is
@@ -609,6 +650,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       req.log.error({ err }, 'createProject failed');
       return reply.code(500).send({ error: 'Could not create the project' });
     }
+    noteEdit(meta.id, 'main', editorOf(reqUser(req)));
     const remoteError = await provisionNew(meta, req, namespace);
     const body = await publicMeta(meta, reqUser(req));
     // A venue kit that could not be downloaded still creates the project (from
@@ -791,6 +833,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (root) meta.rootFile = root;
       meta.engine = detected.engine;
       await store.writeMeta(meta);
+      noteEdit(meta.id, 'main', editorOf(reqUser(req)));
       const remoteError = await provisionNew(meta, req, body.namespace);
       return { ...(await publicMeta(meta, reqUser(req))), import: { engine: detected.engine, engineReason: detected.reason, transcoded }, ...(remoteError ? { remoteError } : {}) };
     } catch (err: any) {
@@ -868,6 +911,72 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       ? await provisionNew(restored, req, restored.remotePending.namespace)
       : undefined;
     return { ok: true, ...(remoteError ? { remoteError } : {}) };
+  });
+
+  // ---------- the caller's project list ----------
+  // Session only (not in TOKEN_PROJECT_WRITES): the list is the person's, an
+  // agent's token neither puts projects on it nor takes them off.
+
+  // The editor reports each open and each branch switch. For someone who is
+  // here through a share link this is what puts the project on their list,
+  // and for anyone it undoes an earlier "Remove from my list".
+  app.post<{ Params: { id: string }; Body: { branch?: unknown } }>('/api/projects/:id/opened', async (req, reply) => {
+    const branch = typeof req.body?.branch === 'string' && req.body.branch ? req.body.branch : 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    const user = reqUser(req);
+    if (!(await visitLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+    // Only a branch that exists: the list opens the project on it.
+    if (!(await gitops.branchHead(req.params.id, branch))) return reply.code(404).send({ error: 'Project or branch not found' });
+    const at = new Date().toISOString();
+    await store.setProjectOpen({ userId: listUserId(user), projectId: req.params.id, at, branch, hidden: false });
+    return { ok: true, opened: { at, branch } };
+  });
+
+  // "Remove from my list". A link visitor's row goes; an invited member keeps
+  // access and the project stays off their list until they open it again.
+  app.delete<{ Params: { id: string } }>('/api/projects/:id/listing', async (req, reply) => {
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
+    const user = reqUser(req);
+    if (isOwner(meta, user)) return reply.code(400).send({ error: 'Your own projects stay on your list. Move this one to the trash to remove it.' });
+    const userId = listUserId(user);
+    if (isMember(meta, user)) {
+      const prev = await store.getProjectOpen(userId, meta.id);
+      await store.setProjectOpen({ userId, projectId: meta.id, at: prev?.at ?? null, branch: prev?.branch ?? null, hidden: true });
+    } else {
+      await store.deleteProjectOpen(userId, meta.id);
+    }
+    return { ok: true };
+  });
+
+  // Duplicate: anyone who may download the source may copy it, and owns the
+  // copy. The source's main working tree, no history (store.copyProject).
+  app.post<{ Params: { id: string }; Body: { name?: unknown } }>('/api/projects/:id/copy', async (req, reply) => {
+    let source: store.ProjectMeta;
+    try { source = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
+    const raw = req.body?.name;
+    if (raw !== undefined && raw !== null && typeof raw !== 'string') return reply.code(400).send({ error: 'Project name must be text' });
+    const name = (typeof raw === 'string' && raw.trim()) || `${source.name.trim().slice(0, 195)} copy`;
+    if (name.length > 200) return reply.code(400).send({ error: 'Project name is too long (max 200 characters)' });
+    const user = reqUser(req);
+    if (!(await copyLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Duplicate rate limit reached — please slow down' });
+    let meta: store.ProjectMeta;
+    try {
+      meta = await gitops.withRepoLock(source.id, () => {
+        flushBranchDocs(source.id, 'main');
+        return store.copyProject(source, name, user?.id);
+      });
+    } catch (err: any) {
+      if (err instanceof store.CopyTooLargeError) {
+        return reply.code(413).send({ error: `This project is larger than ${Math.round(store.COPY_MAX_BYTES / (1024 * 1024))} MB, too large to duplicate. Download it as a ZIP instead.` });
+      }
+      req.log.error({ err }, 'copyProject failed');
+      return reply.code(500).send({ error: 'Could not copy the project' });
+    }
+    noteEdit(meta.id, 'main', editorOf(user));
+    const remoteError = await provisionNew(meta, req);
+    const row = await projectRow(meta, user, null, (await activitySnapshot()).get(meta.id), 'owner');
+    return { ...row, ...(remoteError ? { remoteError } : {}) };
   });
 
   // ---------- files ----------
@@ -972,6 +1081,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
       refreshBranchDocsFromDisk(req.params.id, branch, [rel]);
       scheduleCommit(req.params.id, branch); // non-collab write → still reach git history
+      noteEdit(req.params.id, branch, editorOf(reqUser(req)));
       const newRoot = await adoptRootIfUnset(req.params.id, branch, rel);
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
@@ -1003,6 +1113,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (wasDir) markTreeChanged(req.params.id, branch);
       else markPathsChanged(req.params.id, branch, [from, to]);
       scheduleCommit(req.params.id, branch);
+      noteEdit(req.params.id, branch, editorOf(reqUser(req)));
       // The typeset root keeps its designation through a rename (deletion
       // already re-derives it; a rename must not orphan it). A rename that
       // produces the project's first .tex adopts it, as creation would. The
@@ -1028,12 +1139,14 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!namesEntry(rel)) return reply.code(400).send({ error: NOT_AN_ENTRY });
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
     const wasDir = store.isDirectory(req.params.id, branch, rel);
+    const existed = store.fileExists(req.params.id, branch, rel);
     evictDoc(req.params.id, branch, rel); // prevent resurrection via pending store
     store.deleteFile(req.params.id, branch, rel);
     // a directory delete removes every child, which a single path mark would miss
     if (wasDir) markTreeChanged(req.params.id, branch);
     else markPathsChanged(req.params.id, branch, [rel]);
     scheduleCommit(req.params.id, branch);
+    if (existed) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
     // If the typeset root was deleted, re-point it at the best remaining .tex
     // so the next compile doesn't fail with "root file not found". With no
     // .tex left the root is unset, so the next .tex created becomes it.
@@ -1085,7 +1198,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!(await replaceLimiter.take(key))) return reply.code(429).send({ error: 'Replace rate limit reached — please slow down' });
     const author = commitAuthor(req, typeof body.author === 'string' ? body.author : undefined);
     try {
-      return await replaceInProject(req.params.id, branch, body, author, key);
+      const result = await replaceInProject(req.params.id, branch, body, author, key);
+      if (result.replaced > 0) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
+      return result;
     } catch (err) {
       if (err instanceof SearchError) return reply.code(err.status).send(err.body);
       throw err;
@@ -1260,6 +1375,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
     markTreeChanged(req.params.id, name); // see the create route
     forgetPdfUrls(req.params.id, name);
+    forgetBranch(req.params.id, name);
+    await store.resetProjectOpenBranch(req.params.id, name);
     return { ok: true };
   });
 
@@ -1290,6 +1407,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         const result = await gitops.revertCommits(req.params.id, branch, hashes, message, author);
         if (result.ok) {
           refreshBranchDocsFromDisk(req.params.id, branch);
+          noteEdit(req.params.id, branch, editorOf(reqUser(req)));
           // Success-metric line (docs/plans/agent-api/00-overview.md, "% of
           // agent commits reverted"): only reverts that undo Claude's work.
           const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === gitops.AGENT_COMMIT_AUTHOR).length;
@@ -1393,8 +1511,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
       flushBranchDocs(req.params.id, from);
       flushBranchDocs(req.params.id, into);
-      const result = await gitops.merge(req.params.id, from, into, author);
-      if (result.ok) refreshBranchDocsFromDisk(req.params.id, into);
+      const { changed, ...result } = await gitops.merge(req.params.id, from, into, author);
+      if (result.ok) {
+        refreshBranchDocsFromDisk(req.params.id, into);
+        if (changed) noteEdit(req.params.id, into, editorOf(reqUser(req)));
+      }
       return result;
     });
 
@@ -1439,6 +1560,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         await store.writeMeta(meta);
         // sync into the branch the user linked from (the plugin refreshes that branch), not always main
         const sync = await zotero.syncProject(req.params.id, branch, true);
+        if (sync.synced) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
         return { ok: true, ...sync };
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
@@ -1448,8 +1570,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   app.post<{ Params: { id: string }; Body: { branch?: string; force?: boolean } }>(
     '/api/projects/:id/zotero/sync', async (req, reply) => {
       if (!(await requireMember(req, reply, 'sync this Zotero library'))) return;
+      const branch = req.body?.branch || 'main';
       try {
-        return await zotero.syncProject(req.params.id, req.body?.branch || 'main', !!req.body?.force);
+        const sync = await zotero.syncProject(req.params.id, branch, !!req.body?.force);
+        if (sync.synced) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
+        return sync;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
       }
@@ -1491,6 +1616,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
         const added = await addReference(req.params.id, branch, query, bibFile);
         if (!added) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
+        if (!added.duplicate) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
         return { ok: true, ...added };
       } catch (err: any) {
         return reply.code(502).send({ error: err.message });
@@ -1589,6 +1715,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (outcome === 'stale') return reply.code(409).send({ error: 'The commented text has changed — apply the suggestion manually.' });
       markPathsChanged(req.params.id, branch, [c.file]);
       scheduleCommit(req.params.id, branch);
+      noteEdit(req.params.id, branch, editorOf(reqUser(req)));
       await comments.resolveComment(req.params.id, req.params.cid, true);
       return { ok: true };
     });
@@ -1764,6 +1891,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const ownerId = reqUser(req)?.id;
       if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
       await store.writeMeta(meta);
+      noteEdit(meta.id, 'main', editorOf(reqUser(req)));
       return publicMeta(meta, reqUser(req));
     } catch (err: any) {
       fs.rmSync(store.repoDir(id), { recursive: true, force: true });
@@ -1874,9 +2002,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     flushBranchDocs(req.params.id, 'main');
     await gitops.autoCommit(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
     try {
+      const before = await gitops.branchHead(req.params.id, 'main');
       const result = await gitops.pullFromRemote(req.params.id, l.remoteBranch, l.url);
       if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts });
       refreshBranchDocsFromDisk(req.params.id, 'main'); // push the merged content into open editors
+      if ((await gitops.branchHead(req.params.id, 'main')) !== before) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
     } catch (err: any) { return reply.code(400).send({ error: `Pull failed: ${err.message}` }); }
   });
@@ -1887,8 +2017,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!(await requireOwner(req, reply, 'discard local changes'))) return;
     const l = await linkedRemote(req, reply); if (!l) return;
     try {
-      await gitops.resetToRemote(req.params.id, l.remoteBranch, l.url);
+      const changed = await gitops.resetToRemote(req.params.id, l.remoteBranch, l.url);
       refreshBranchDocsFromDisk(req.params.id, 'main');
+      if (changed) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
     } catch (err: any) { return reply.code(400).send({ error: `Reset failed: ${err.message}` }); }
   });
@@ -1918,9 +2049,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try {
       await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url).catch(() => {}); // best-effort save
-      await gitops.resetToRemote(req.params.id, target, l.url);
+      const changed = await gitops.resetToRemote(req.params.id, target, l.url);
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: target }); await store.writeMeta(l.meta);
       refreshBranchDocsFromDisk(req.params.id, 'main');
+      if (changed) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true, branch: target };
     } catch (err: any) { return reply.code(400).send({ error: `Switch failed: ${err.message}` }); }
   });

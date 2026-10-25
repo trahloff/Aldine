@@ -13,6 +13,7 @@ import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
 import { ensureSigningSecret } from './output-signing.js';
 import { AUTH_ENABLED } from './auth.js';
+import { backfillMissingLastEdits, flushActivity } from './activity.js';
 import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings } from './oidc.js';
 
 // Never let a stray rejection take down the collaboration server.
@@ -68,6 +69,9 @@ const sweepTrash = () => store.purgeExpiredTrash(TRASH_DAYS, async (meta) => { a
   .catch((err) => console.error('[aldine] trash purge failed', err));
 sweepTrash();
 setInterval(sweepTrash, 24 * 60 * 60 * 1000).unref();
+// Projects from before last edits were recorded get one from their history,
+// in the background; the project list asks for any this misses.
+backfillMissingLastEdits().catch((err) => console.error('[aldine] last-edit backfill failed', err));
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
@@ -86,6 +90,7 @@ async function shutdown(signal: string) {
   } catch (err) {
     console.error('[aldine] shutdown flush error', err);
   }
+  await flushActivity().catch((err) => console.error('[aldine] could not record the last edits and typesets', err));
   try { await app.close(); await closeDb(); } catch { /* noop */ }
   process.exit(0);
 }

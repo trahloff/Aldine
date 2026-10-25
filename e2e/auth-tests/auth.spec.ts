@@ -90,7 +90,7 @@ test.describe('auth', () => {
     await bob.close();
   });
 
-  test('link sharing grants access by URL but never lists the project for strangers', async ({ browser }) => {
+  test('link sharing grants access by URL and lists the project only for those who open it, until they remove it', async ({ browser }) => {
     const alice = await browser.newContext();
     await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
     const proj = await (await alice.request.post('/api/projects', { data: { name: 'Linked Paper' } })).json();
@@ -104,12 +104,23 @@ test.describe('auth', () => {
     // direct URL works…
     const opened = await carol.request.get(`/api/projects/${proj.id}`);
     expect(opened.ok()).toBeTruthy();
-    // …but the project must not surface in Carol's list
+    // …but reading it does not put it on Carol's list
     const listRes = await carol.request.get('/api/projects');
     expect(listRes.ok()).toBeTruthy();
     const list = await listRes.json();
     expect(Array.isArray(list)).toBeTruthy();
     expect(list.some((p: { id: string }) => p.id === proj.id)).toBeFalsy();
+    // opening it in the editor does, through the link, until she removes it
+    const carolPage = await carol.newPage();
+    await carolPage.goto(`/p/${proj.id}`);
+    const listedRow = async () => (await (await carol.request.get('/api/projects')).json()).find((p: { id: string }) => p.id === proj.id);
+    await expect.poll(async () => (await listedRow())?.access).toBe('link');
+    await carolPage.close();
+    const listed = await listedRow();
+    expect(listed?.opened?.branch).toBe('main');
+    expect((await carol.request.delete(`/api/projects/${proj.id}/listing`)).ok()).toBeTruthy();
+    expect((await (await carol.request.get('/api/projects')).json()).some((p: { id: string }) => p.id === proj.id)).toBeFalsy();
+    expect((await carol.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
 
     // Positive controls — "not listed" must not be passing because nothing is
     // listed: the owner still sees it, and so does a collaborator invited by

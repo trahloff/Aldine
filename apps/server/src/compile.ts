@@ -5,6 +5,7 @@ import { branchDir, readMeta, writeMeta } from './store.js';
 import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
 import { flushBranchDocs, signalAgentTypeset } from './collab.js';
+import { noteCompile } from './activity.js';
 
 /** `context`: the source line TeX was reading when it failed (the compiler's
  *  parser reconstructs it from the log's "l.<n>" line). `source`: the tool
@@ -243,6 +244,7 @@ async function runCompile(projectId: string, branch: string, agent: boolean, dra
   try {
     const result = await runCompileInner(projectId, branch, agent, draft);
     lastRun.set(key, { result, finishedAt: Date.now(), agent });
+    noteCompile(projectId, branch, result);
     return result;
   } finally {
     const n = (running.get(key) ?? 1) - 1;

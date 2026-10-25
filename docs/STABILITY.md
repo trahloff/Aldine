@@ -43,7 +43,7 @@ releases, not a build of `main`.
 | Projects | `DATA_DIR/projects/<id>`: one git repository per project, with `main` checked out | git |
 | Other branches | `DATA_DIR/worktrees/<id>/<branch>`: a git worktree each | git |
 | Compile output | `.aldine-out/` beside the root file, kept out of git | rebuilt on the next typeset |
-| Accounts, sessions, tokens, project settings, comments, usage (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
+| Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`) and each project's last edit and typesets (`activity.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
 | The same, with `DATABASE_URL` set | the Postgres database | tables Aldine creates |
 | Collaboration state | `META_DIR/yjs/`, one `.ybin` file per document | Yjs binary update |
 | Signing secret for PDF links | `META_DIR/output-signing-secret`, unless `ALDINE_SIGNING_SECRET` is set | text |
@@ -72,6 +72,11 @@ two paths stay as they are within 1.x.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.
+- **Project list state.** `opens.json` and `activity.json` (the
+  `project_opens` and `project_activity` tables) start empty on an upgrade.
+  A project without a recorded last edit gets one from its git history, the
+  newest commit on any branch, without a name; a branch's typeset shows after
+  its next typeset.
 - **Yjs snapshots.** Not versioned: each file is what Yjs 13 writes for a
   document's state. The `.tex` file on disk is the source of truth. A
   snapshot that does not match the file is brought in line with it, and one

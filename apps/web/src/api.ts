@@ -28,7 +28,25 @@ export interface ProjectSummary {
   /** Set when GitLab provisioning was configured but failed at create time:
    *  the project exists locally only until a retry succeeds. */
   remotePending?: { provider: 'gitlab'; namespace: string } | null;
+  /** Project list rows only (GET /api/projects and a copy's answer). The
+   *  list comes sorted by `lastEdit.at`, else `createdAt`, newest first. */
+  lastEdit?: LastEdit | null;
+  /** The caller's own last open of this project, and the branch it was on. Null if never opened. */
+  opened?: { at: string; branch: string } | null;
+  /** Last finished typeset on `branch`, which is `opened?.branch ?? 'main'`. Survives a server restart. */
+  compile?: { status: 'ok' | 'error'; errors: number; at: string; branch: string } | null;
+  /** Why the caller sees it: owner, invited member, or listed because they opened it through a share link. */
+  access?: 'owner' | 'member' | 'link';
 }
+
+/** Last change to a project's files on any branch, by anyone: a collab edit,
+ *  upload, rename, delete, replace, agent write, import or pull. `byId` is the
+ *  account; an agent write has `byName` "Claude" and a null `byId`; both are
+ *  null when nobody is known (from git history, or a write without accounts). */
+export interface LastEdit { at: string; byId: string | null; byName: string | null; branch: string }
+
+/** A project in the trash. `purgeAt` is when it stops being restorable. */
+export interface TrashedProject { id: string; name: string; deletedAt: string; purgeAt: string | null }
 
 export type RemoteProviderId = 'github' | 'gitlab' | 'gitea';
 /** A provider the server offers (honours its REMOTE_PROVIDERS allowlist). */
@@ -328,7 +346,17 @@ export const api = {
   deleteProject: (id: string, permanent = false) => req<{ ok: boolean }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
   claimProject: (id: string) => req<ProjectSummary>(`/api/projects/${id}/claim`, { method: 'POST' }),
-  listTrash: () => req<{ id: string; name: string; deletedAt: string }[]>('/api/projects/trash'),
+  listTrash: () => req<TrashedProject[]>('/api/projects/trash'),
+  /** Tell the server this project is open on `branch` (on open and on each
+   *  branch switch). Lists a link-shared project for the caller and undoes an
+   *  earlier removeFromList. */
+  markOpened: (id: string, branch: string) =>
+    req<{ ok: boolean; opened: { at: string; branch: string } }>(`/api/projects/${id}/opened`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  /** "Remove from my list", for anyone but the owner. A member keeps access. */
+  removeFromList: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/listing`, { method: 'DELETE' }),
+  /** Duplicate: the caller owns the copy of the source's main branch files. Name defaults to "<name> copy". */
+  copyProject: (id: string, name?: string) =>
+    req<CreatedProject>(`/api/projects/${id}/copy`, { method: 'POST', body: JSON.stringify(name === undefined ? {} : { name }) }),
 
   listFiles: (id: string, branch: string) =>
     req<{ files: TreeEntry[]; contentVersion: number }>(`/api/projects/${id}/files?branch=${encodeURIComponent(branch)}`).then((r) => r.files),
