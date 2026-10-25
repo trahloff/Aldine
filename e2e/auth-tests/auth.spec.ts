@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import AxeBuilder from '@axe-core/playwright';
 
 /** Unique email per run so re-runs don't collide with the persisted user store. */
 const uniq = () => `u${Date.now()}${Math.floor(Math.random() * 1000)}@test.com`;
@@ -49,6 +50,9 @@ test.describe('auth', () => {
     // back home, sign out
     await page.goto('/');
     await expect(page.getByTestId('account-menu')).toBeVisible();
+    // the avatar is a circle, not squeezed by the button around it
+    const face = (await page.locator('.home-avatar__face').boundingBox())!;
+    expect(Math.abs(face.width - face.height)).toBeLessThan(0.5);
     await page.getByTestId('account-menu').click();
     await page.getByTestId('logout').click();
     await expect(page.getByTestId('auth-email')).toBeVisible();
@@ -758,14 +762,35 @@ test.describe('ownerless legacy projects', () => {
     await expect(page.getByTestId('filter-shared')).toHaveAttribute('aria-current', 'page');
     const card = page.getByTestId(`project-card-${id}`);
     await expect(card).toBeVisible();
-    await expect(page.getByTestId(`owner-${id}`)).toContainText('Grace Owner');
+    // the owner is named once: on the line under the sheet when they edited it last, else on a chip
+    await expect(card).toContainText('Grace Owner');
     // a recipient's menu: no rename, share or trash, but a way off the list
     await page.getByTestId(`project-menu-${id}`).click();
     await expect(page.getByTestId('menu-trash')).toHaveCount(0);
     await expect(page.getByTestId('menu-rename')).toHaveCount(0);
+    const openedBefore = ((await (await page.request.get('/api/projects')).json()) as { id: string; opened: unknown }[]).find((p) => p.id === id)!.opened;
     await page.getByTestId('menu-remove').click();
     await expect(card).toHaveCount(0);
     await expect(page.locator('.toast', { hasText: 'Removed Link Shared Paper from your list' })).toBeVisible();
+    // Undo puts it back as it was (not as a new open) and focus on it
+    await page.getByTestId('undo-remove').click();
+    await expect(card).toBeVisible();
+    await expect(page.getByTestId(`open-${id}`)).toBeFocused();
+    const back = ((await (await page.request.get('/api/projects')).json()) as { id: string; opened: unknown }[]).find((p) => p.id === id);
+    expect(back?.opened).toEqual(openedBefore);
+
+    // axe with a shared project and the account menu open
+    await page.getByTestId('account-menu').click();
+    await expect(page.getByTestId('account-menu-list')).toBeVisible();
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
+    // An open menu is drawn over the page, outside its landmarks, as a popup belongs to its button.
+    const axe = await new AxeBuilder({ page }).disableRules(['region']).analyze();
+    expect(axe.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
+    await page.keyboard.press('Escape');
+
+    await page.getByTestId(`project-menu-${id}`).click();
+    await page.getByTestId('menu-remove').click();
+    await expect(card).toHaveCount(0);
     await page.reload();
     await expect(page.getByTestId('shared-empty')).toBeVisible();
     const mine = (await (await page.request.get('/api/projects')).json()) as { id: string }[];

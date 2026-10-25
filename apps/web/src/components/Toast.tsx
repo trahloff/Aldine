@@ -13,6 +13,8 @@ export interface ToastAction {
    *  stacking under it — two review prompts for overlapping commit sets would
    *  otherwise sit side by side with nothing to tell them apart. */
   key?: string;
+  /** Runs once the toast is gone, however it went: its action is no longer on offer. */
+  onExpire?: () => void;
 }
 
 interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok'; action?: ToastAction; ms?: number; leaving?: boolean }
@@ -36,9 +38,13 @@ export function useToastDismiss() {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const shown = useRef(toasts);
+  shown.current = toasts;
 
   /** Play the exit, then drop the toast. */
   const dismiss = useCallback((id: number) => {
+    const t = shown.current.find((x) => x.id === id);
+    if (t && !t.leaving) t.action?.onExpire?.();
     clearTimeout(timers.current.get(id));
     timers.current.delete(id);
     setToasts((t) => t.map((x) => (x.id === id ? { ...x, leaving: true } : x)));
@@ -60,11 +66,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     // An error carries a sentence to read and usually something to do about
     // it, so it stays about twice as long as a confirmation.
     const ms = action?.sticky ? undefined : action ? 8000 : kind === 'error' ? 7000 : 3400;
+    if (action?.key) shown.current.filter((x) => x.action?.key === action.key && !x.leaving).forEach((x) => x.action?.onExpire?.());
     setToasts((t) => [...(action?.key ? t.filter((x) => x.action?.key !== action.key) : t), { id, text, kind, action, ms }]);
     if (ms) arm(id, ms);
   }, [arm]);
-  const shown = useRef(toasts);
-  shown.current = toasts;
   const dismissKey = useCallback((key: string) => {
     shown.current.filter((x) => x.action?.key === key && !x.leaving).forEach((x) => dismiss(x.id));
   }, [dismiss]);

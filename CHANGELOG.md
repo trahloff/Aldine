@@ -26,6 +26,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   open as a sheet from the bottom.
 - Page-1 thumbnails are rendered at twice the width, so they stay sharp on
   large and high-density screens.
+- Undo after "Remove from my list" puts the project back as it was: a change
+  you had not opened yet stays marked.
 
 ## [0.17.0] — 2026-10-25
 

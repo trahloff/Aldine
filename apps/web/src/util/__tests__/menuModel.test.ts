@@ -125,8 +125,18 @@ describe('menu placement', () => {
 
   it('opens a submenu beside its item, or on the other side when there is no room', () => {
     const item = { top: 200, bottom: 228, left: 100, right: 320 };
-    expect(placeMenu({ type: 'rect', rect: item, placement: 'right-start' }, 180, 100, VW, VH)).toMatchObject({ left: 318, top: 195, origin: 'top left' });
+    expect(placeMenu({ type: 'rect', rect: item, placement: 'right-start' }, 180, 100, VW, VH)).toMatchObject({ left: 320, top: 195, origin: 'top left' });
     const nearRight = { top: 200, bottom: 228, left: 700, right: 920 };
-    expect(placeMenu({ type: 'rect', rect: nearRight, placement: 'right-start' }, 180, 100, VW, VH)).toMatchObject({ left: 522, origin: 'top right' });
+    expect(placeMenu({ type: 'rect', rect: nearRight, placement: 'right-start' }, 180, 100, VW, VH)).toMatchObject({ left: 520, origin: 'top right' });
+  });
+
+  it('hangs a submenu from the parent menu\'s edge, so a flipped one never covers the row it came from', () => {
+    const row = { top: 200, bottom: 228, left: 705, right: 925 };
+    const outer = { left: 700, right: 930 };
+    const flipped = placeMenu({ type: 'rect', rect: row, outer, placement: 'right-start' }, 180, 100, VW, VH);
+    expect(flipped).toMatchObject({ left: 525, origin: 'top right' });
+    expect(flipped.left + 180).toBeLessThanOrEqual(row.left);
+    const beside = placeMenu({ type: 'rect', rect: { ...row, left: 105, right: 325 }, outer: { left: 100, right: 330 }, placement: 'right-start' }, 180, 100, VW, VH);
+    expect(beside.left).toBeGreaterThanOrEqual(325);
   });
 });

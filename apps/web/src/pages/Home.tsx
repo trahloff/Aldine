@@ -6,14 +6,16 @@ import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import EmailConfirmBanner from '../components/EmailConfirmBanner';
-import Modal from '../components/Modal';
 import ShareModal from '../components/ShareModal';
 import { appearanceCommands } from '../components/Appearance';
 import AccountSettings from '../components/AccountSettings';
 import { MenuButton, useContextMenu, type MenuEntry } from '../components/Menu';
-import { IconChevronDown } from '../components/Icons';
+import ActionSheet from '../components/ActionSheet';
+import { IconChevronDown, IconPlus } from '../components/Icons';
 import HomeToolbar, { HomeSearch, startItems, type AccountActions, type StartActions } from '../components/home/HomeToolbar';
-import { BlankSheet, ImportSheet, ProjectSheet, SkeletonSheet, TemplateSheet, TrashSheet } from '../components/home/ProjectSheet';
+import {
+  BlankSheet, ImportSheet, pageRatio, ProjectSheet, SkeletonSheet, stageRatio, TemplateSheet, TrashSheet, type SheetActions, type TemplateKind,
+} from '../components/home/ProjectSheet';
 import NewProjectDialog from '../components/NewProjectDialog';
 import { useAppearance } from '../theme';
 import { useDocumentTitle } from '../util/documentTitle';
@@ -49,8 +51,6 @@ const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
 /** The palette's sections before anything is typed: projects first. */
 const PALETTE_GROUPS = ['Projects', 'New', 'Appearance', 'More'];
 
-/** Matches the toast that carries Undo (Toast.tsx). */
-const UNDO_MS = 8000;
 /** Matches .sheet.is-leaving in app.css. */
 const EXIT_MS = 150;
 /** A list that answers quicker than this never shows its skeleton. */
@@ -61,12 +61,31 @@ const BLANK_SHEET_MAX = 3;
 const PHONE = '(max-width: 640px)';
 
 /** The starting points the empty list offers, in this order, when the server has them. */
-const STARTERS: { match: (t: TemplateInfo) => boolean; name: string; title: string; detail: string; slide?: boolean }[] = [
-  { match: (t) => t.id === 'article', name: 'Article', title: 'Title of Your Article', detail: 'One column, biblatex' },
-  { match: (t) => t.id === 'report', name: 'Thesis', title: 'Title of Your Thesis', detail: 'Chapters in their own files' },
-  { match: (t) => t.id === 'beamer', name: 'Presentation', title: 'Title of Your Talk', detail: 'Beamer, 16:9', slide: true },
-  { match: (t) => /(^|[:/])neurips/i.test(t.id), name: 'NeurIPS', title: 'Paper Title', detail: 'Official kit, fetched on create' },
+const STARTERS: { match: (t: TemplateInfo) => boolean; name: (t: TemplateInfo) => string; title: string; detail: string; kind: TemplateKind }[] = [
+  { match: (t) => t.id === 'article', name: () => 'Article', title: 'Title of Your Article', detail: 'One column, biblatex', kind: 'article' },
+  { match: (t) => t.id === 'report', name: () => 'Thesis', title: 'Title of Your Thesis', detail: 'Chapters in their own files', kind: 'thesis' },
+  { match: (t) => t.id === 'beamer', name: () => 'Presentation', title: 'Title of Your Talk', detail: 'Beamer, 16:9', kind: 'slides' },
+  { match: (t) => /(^|[:/])neurips/i.test(t.id), name: (t) => withYear('NeurIPS', t), title: 'Paper Title', detail: 'Official kit, fetched on create', kind: 'two-column' },
 ];
+
+/** "NeurIPS 2026": the year of the call the venue kit points at, when its address names one. */
+function withYear(name: string, t: TemplateInfo): string {
+  const year = /\b(20\d\d)\b/.exec(t.kit?.homepage ?? t.kit?.url ?? '')?.[1];
+  return year ? `${name} ${year}` : name;
+}
+
+/** What the tab keeps of the list for an instant return: what the shelf draws, nothing it does not (no invite
+ *  addresses, no Zotero account, no repository names). The fetch that follows replaces it. */
+function forCache(p: ProjectSummary): ProjectSummary {
+  return {
+    ...p,
+    share: p.share ? { mode: p.share.mode, collaborators: p.share.collaborators.map(() => '') } : p.share,
+    zotero: null,
+    remote: p.remote ? ({ provider: p.remote.provider, fullName: '' } as ProjectSummary['remote']) : p.remote,
+  };
+}
+/** A row from that cache, before the fetch answered: its sharing details are not known. */
+const fromCache = (p: ProjectSummary) => !!p.share?.collaborators.some((c) => !c);
 
 interface ImportJob {
   key: string;
@@ -76,6 +95,8 @@ interface ImportJob {
   error?: string;
   ctrl: AbortController;
 }
+
+const ratioOf = (p: ProjectSummary) => pageRatio(p.thumb);
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
@@ -145,20 +166,54 @@ export default function Home() {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null | 'title'>(null);
-  const undo = useRef<{ key: string; until: number; run(): void } | null>(null);
+  const undo = useRef<{ key: string; run(): void } | null>(null);
+  /** Items on their way out: a second Delete on one is not a second request. */
+  const busy = useRef(new Set<string>());
+  /** Bumped by every change made here, so a list fetched before it does not undo it. */
+  const edits = useRef(0);
+  const loads = useRef(0);
   const flip = useFlip(shelfRef);
+  /** Columns of the shelf's grid as laid out: the rows each sheet's stage is sized by. */
+  const [cols, setCols] = useState(1);
+  useEffect(() => {
+    const el = shelfRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const g = el.querySelector('.shelf__grid');
+      if (g) setCols(getComputedStyle(g).gridTemplateColumns.split(' ').filter(Boolean).length || 1);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [show, projects === null]);
   const dragDepth = useRef(0);
 
   const setSort = (s: SortKey) => { setSortState(s); safeStorage.set(SORT_KEY, s); };
 
   const loadTrash = useCallback(() => api.listTrash().then(setTrash).catch(() => setTrash((t) => t ?? [])), []);
-  const load = useCallback(() => {
+  const load = useCallback((): Promise<void> => {
     loadTrash();
+    const seq = ++loads.current;
+    const at = edits.current;
     return api.listProjects()
-      .then((p) => { setProjects(p); setLoadError(null); safeSession.setJSON(cacheKey, p); })
-      .catch((err) => { setLoadError(failureReason(err)); });
+      .then((p) => {
+        if (seq !== loads.current) return;
+        // Changed here while the answer was on its way: it is already out of date.
+        if (at !== edits.current) return load();
+        setProjects(p);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        if (seq !== loads.current) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) safeSession.remove(cacheKey);
+        setLoadError(failureReason(err));
+      });
   }, [cacheKey, loadTrash]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (projects) safeSession.setJSON(cacheKey, projects.map(forCache)); }, [projects, cacheKey]);
+  /** Every local change to the list goes through here. */
+  const change = (fn: (cur: ProjectSummary[] | null) => ProjectSummary[] | null) => { edits.current += 1; setProjects(fn); };
   // Confirming the address brings in the projects shared with it.
   const wasPending = useRef(!!user?.emailPending);
   useEffect(() => {
@@ -288,34 +343,51 @@ export default function Home() {
     }
     flip();
     if (hadFocus) pendingFocus.current = next;
-    setProjects((cur) => cur?.filter((p) => p.id !== id) ?? cur);
+    change((cur) => cur?.filter((p) => p.id !== id) ?? cur);
     setTrash((cur) => (show === 'trash' ? cur?.filter((t) => t.id !== id) ?? cur : cur));
     setLeaving((s) => { const n = new Set(s); n.delete(id); return n; });
     return true;
   };
 
-  /** Puts a project back where the sort says, growing in. */
+  /** Puts a project back where the sort says, growing in. Focus left nowhere (the Undo that was clicked went with its notice) lands on it. */
   const reinsert = (p: ProjectSummary) => {
     flip([p.id]);
-    setProjects((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
+    const a = document.activeElement;
+    if (!a || a === document.body || a.closest('.toasts')) pendingFocus.current = p.id;
+    change((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
   };
 
+  /** Mod+Z does `run` for as long as the notice with `key` is up. */
   const armUndo = (key: string, run: () => void) => {
-    undo.current = { key, until: Date.now() + UNDO_MS, run };
+    undo.current = { key, run };
+  };
+  const expireUndo = (key: string) => () => { if (undo.current?.key === key) undo.current = null; };
+
+  /** Runs `work` for `id` unless it is already under way for it. */
+  const once = async (id: string, work: () => Promise<void>) => {
+    if (busy.current.has(id)) return;
+    busy.current.add(id);
+    try { await work(); } finally { busy.current.delete(id); }
   };
 
   const restoreFromTrash = async (id: string, name: string, original?: ProjectSummary) => {
     undo.current = null;
     try {
+      if (show === 'trash') {
+        // From its own menu in the trash: the item leaves like any other, and focus moves on.
+        await exit(id, api.restoreProject(id), false);
+        toast(`Restored ${name}`, 'ok');
+        load();
+        return;
+      }
       await api.restoreProject(id);
       toast(`Restored ${name}`, 'ok');
       // A reload here would re-sort under an open menu and close it; the row is known.
       if (original) { reinsert(original); loadTrash(); } else load();
-      if (show === 'trash') { flip(); setTrash((cur) => cur?.filter((t) => t.id !== id) ?? cur); }
     } catch (err: any) { toast(err.message, 'error'); }
   };
 
-  const moveToTrash = async (p: ProjectSummary, hadFocus = false) => {
+  const moveToTrash = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
     // No question first: the trash keeps the project, and the notification
     // carries the way back.
     try {
@@ -326,12 +398,12 @@ export default function Home() {
     }
     const key = `undo-trash-${p.id}`;
     const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, p); };
-    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onClick: () => { undo.current = null; restoreFromTrash(p.id, p.name, p); } });
+    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => { undo.current = null; restoreFromTrash(p.id, p.name, p); } });
     armUndo(key, run);
     loadTrash();
-  };
+  });
 
-  const removeFromList = async (p: ProjectSummary, hadFocus = false) => {
+  const removeFromList = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
     try {
       await exit(p.id, api.removeFromList(p.id), hadFocus);
     } catch (err: any) {
@@ -341,19 +413,20 @@ export default function Home() {
     const key = `undo-remove-${p.id}`;
     const back = async () => {
       undo.current = null;
-      try { await api.markOpened(p.id, p.opened?.branch ?? 'main'); reinsert(p); } catch (err: any) { toast(err.message, 'error'); }
+      // Back as it was: the same open, so a change not seen yet stays marked.
+      try { await api.restoreListing(p.id, p.opened); reinsert(p); } catch (err: any) { toast(err.message, 'error'); }
     };
-    toast(`Removed ${p.name} from your list`, 'info', { label: 'Undo', testId: 'undo-remove', key, onClick: back });
+    toast(`Removed ${p.name} from your list`, 'info', { label: 'Undo', testId: 'undo-remove', key, onExpire: expireUndo(key), onClick: back });
     armUndo(key, () => { dismissToast(key); back(); });
-  };
+  });
 
-  const purge = async (t: TrashedProject, hadFocus = false) => {
+  const purge = (t: TrashedProject, hadFocus = false) => once(t.id, async () => {
     if (!(await dialogs.confirm({ title: `Delete “${t.name}” forever?`, body: 'This cannot be undone.', confirmLabel: 'Delete forever', danger: true }))) return;
     try {
       await exit(t.id, api.deleteProject(t.id, true), hadFocus);
       toast(`Deleted ${t.name} forever`, 'ok');
     } catch (err: any) { toast(err.message, 'error'); }
-  };
+  });
 
   const emptyTrash = async () => {
     const list = trash ?? [];
@@ -370,6 +443,8 @@ export default function Home() {
       try { await api.deleteProject(t.id, true); } catch { failed += 1; }
     }
     flip();
+    // Its own button goes with the last project in the trash.
+    pendingFocus.current = 'title';
     await loadTrash();
     toast(failed ? `Emptied the trash · ${failed} could not be deleted` : 'Emptied the trash', failed ? 'error' : 'ok');
   };
@@ -386,7 +461,7 @@ export default function Home() {
     if (name === null || !name.trim() || name.trim() === p.name) return;
     try {
       const updated = await api.patchProject(p.id, { name: name.trim() });
-      setProjects((cur) => cur?.map((x) => (x.id === p.id ? { ...x, name: updated.name } : x)) ?? cur);
+      change((cur) => cur?.map((x) => (x.id === p.id ? { ...x, name: updated.name } : x)) ?? cur);
     } catch (err: any) { toast(`Could not rename ${p.name}: ${err.message}`, 'error'); }
   };
 
@@ -396,13 +471,13 @@ export default function Home() {
       if (c.remoteError) toast(c.remoteError, 'error');
       flip([c.id]);
       pendingFocus.current = c.id;
-      setProjects((cur) => (cur ? [c, ...cur] : [c]));
+      change((cur) => (cur ? [c, ...cur] : [c]));
       toast(`Duplicated ${p.name} as “${c.name}”`, 'ok');
     } catch (err: any) { toast(`Could not duplicate ${p.name}: ${err.message}`, 'error'); }
   };
 
   const downloadPdf = (p: ProjectSummary) => {
-    const branch = p.thumb?.branch ?? p.compile?.branch ?? 'main';
+    const branch = p.thumb?.branch ?? p.compile?.branch ?? p.opened?.branch ?? 'main';
     download(api.pdfUrl(p.id, branch, pdfOutputPath(p.rootFile)), `${p.name.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
   };
 
@@ -416,7 +491,8 @@ export default function Home() {
       { id: 'open-tab', label: 'Open in new tab', shortcut: isMac ? '⌘↩' : 'Ctrl+↩', onSelect: () => window.open(withBase(href), '_blank', 'noopener'), testId: 'menu-open-tab' },
     ];
     const downloads: MenuEntry[] = [
-      { id: 'pdf', label: 'Download PDF', disabled: !p.thumb, onSelect: () => downloadPdf(p), testId: 'menu-download-pdf' },
+      // A thumbnail is optional (the compiler may render none); a finished typeset is what makes the PDF.
+      { id: 'pdf', label: 'Download PDF', disabled: !p.thumb && p.compile?.status !== 'ok', onSelect: () => downloadPdf(p), testId: 'menu-download-pdf' },
       { id: 'zip', label: 'Download source (.zip)', onSelect: () => download(api.archiveUrl(p.id, p.opened?.branch ?? 'main')), testId: 'menu-download-zip' },
     ];
     const claimItem: MenuEntry[] = authEnabled && !p.ownerId
@@ -435,7 +511,7 @@ export default function Home() {
       { kind: 'separator' },
       { id: 'rename', label: 'Rename…', onSelect: () => rename(p), testId: 'menu-rename' },
       { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicate(p), testId: 'menu-duplicate' },
-      ...(authEnabled ? [{ id: 'share', label: 'Share…', onSelect: () => setSharing(p), testId: `share-${p.id}` } as MenuEntry] : []),
+      ...(authEnabled ? [{ id: 'share', label: 'Share…', disabled: fromCache(p), onSelect: () => setSharing(p), testId: `share-${p.id}` } as MenuEntry] : []),
       { kind: 'separator' },
       ...downloads,
       ...claimItem,
@@ -467,8 +543,20 @@ export default function Home() {
     }
     if (single && tooBig.length) { toast(`ZIP is ${(zips[0].size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
     setImports((cur) => [...jobs.map(({ file: _f, ...j }) => j), ...cur]);
-    const patch = (key: string, p: Partial<ImportJob>) => setImports((cur) => cur.map((j) => (j.key === key ? { ...j, ...p } : j)));
-    const drop = (key: string) => setImports((cur) => cur.filter((j) => j.key !== key));
+    // Progress arrives many times a second: one state update per frame.
+    const pending = new Map<string, Partial<ImportJob>>();
+    let frame = 0;
+    const flush = () => {
+      frame = 0;
+      const batch = new Map(pending);
+      pending.clear();
+      setImports((cur) => cur.map((j) => (batch.has(j.key) ? { ...j, ...batch.get(j.key) } : j)));
+    };
+    const patch = (key: string, p: Partial<ImportJob>) => {
+      pending.set(key, { ...pending.get(key), ...p });
+      if (!frame) frame = requestAnimationFrame(flush);
+    };
+    const drop = (key: string) => { pending.delete(key); setImports((cur) => cur.filter((j) => j.key !== key)); };
     let ok = 0;
     let failed = tooBig.length;
     for (const j of jobs) {
@@ -492,7 +580,7 @@ export default function Home() {
         }
         flip([p.id]);
         drop(j.key);
-        setProjects((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
+        change((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : [p]));
       } catch (err: any) {
         if (err?.name === 'AbortError') { drop(j.key); continue; }
         failed += 1;
@@ -503,7 +591,8 @@ export default function Home() {
           ? `${mb} MB was refused before it reached the app, which allows ${IMPORT_MAX_ZIP_MB} MB`
           : err.message;
         if (single) { drop(j.key); toast(`Import failed: ${msg}`, 'error'); return; }
-        patch(j.key, { state: 'failed', error: msg });
+        pending.delete(j.key);
+        setImports((cur) => cur.map((x) => (x.key === j.key ? { ...x, state: 'failed', error: msg } : x)));
       }
     }
     if (!single && (ok || failed)) {
@@ -532,6 +621,7 @@ export default function Home() {
     const del = e.key === 'Delete' || (e.key === 'Backspace' && (e.metaKey || e.ctrlKey));
     if (!del) return;
     e.preventDefault();
+    if (e.repeat || busy.current.has(key)) return;
     if (show === 'trash') {
       const t = trash?.find((x) => x.id === key);
       if (t) purge(t, true);
@@ -546,7 +636,7 @@ export default function Home() {
       if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z') {
         const u = undo.current;
-        if (!u || Date.now() > u.until || isTyping(e.target) || overlayOpen()) return;
+        if (!u || isTyping(e.target) || overlayOpen()) return;
         e.preventDefault();
         undo.current = null;
         u.run();
@@ -628,6 +718,21 @@ export default function Home() {
     />
   );
 
+  // One object for every sheet, so a sheet re-renders only when its own project does.
+  const latest = useRef({ projectMenu, trashMenu, onItemKeyDown, byId, trash, show });
+  latest.current = { projectMenu, trashMenu, onItemKeyDown, byId, trash, show };
+  const actions: SheetActions = useMemo(() => ({
+    menu: (id) => {
+      const l = latest.current;
+      if (l.show === 'trash') { const t = l.trash?.find((x) => x.id === id); return t ? l.trashMenu(t) : []; }
+      const p = l.byId(id);
+      return p ? l.projectMenu(p) : [];
+    },
+    bind: ctx.bind,
+    onKeyDown: (id, e) => latest.current.onItemKeyDown(id)(e),
+    onFocus: (id) => setActiveKey(id),
+  }), [ctx.bind]);
+
   const filters: { show: Show; label: string; count?: number; testId: string; to: string }[] = [
     { show: 'all', label: 'All', testId: 'filter-all', to: '/' },
     ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: sharedCount || undefined, testId: 'filter-shared', to: '/?show=shared' }] : []),
@@ -644,7 +749,12 @@ export default function Home() {
       return (
         <div role="status" aria-live="polite" data-testid="projects-loading">
           <span className="visually-hidden">Loading projects…</span>
-          {skeleton && <ul role="list" className="shelf__grid">{Array.from({ length: 6 }, (_, i) => <SkeletonSheet key={i} />)}</ul>}
+          {skeleton && (
+            <div className="shelf__section" aria-hidden="true">
+              <span className="shelf__heading--placeholder" />
+              <ul role="list" className="shelf__grid shelf__grid--skeleton">{Array.from({ length: 6 }, (_, i) => <SkeletonSheet key={i} />)}</ul>
+            </div>
+          )}
         </div>
       );
     }
@@ -662,18 +772,10 @@ export default function Home() {
         <section aria-labelledby="sec-trash" className="shelf__section">
           <h2 id="sec-trash" className="visually-hidden">Trash</h2>
           <ul role="list" className="shelf__grid" data-testid="trash-grid">
-            {trashVisible.map((t) => (
-              <TrashSheet
-                key={t.id}
-                t={t}
-                now={now}
-                tabIndex={tabIndexOf(t.id)}
-                menu={() => trashMenu(t)}
-                contextMenu={ctx.bind(() => trashMenu(t))}
-                onKeyDown={onItemKeyDown(t.id)}
-                onFocus={() => setActiveKey(t.id)}
-              />
-            ))}
+            {(() => {
+              const stage = rowStages(trashVisible.map((t) => pageRatio(t.thumb)), cols);
+              return trashVisible.map((t, i) => <TrashSheet key={t.id} t={t} now={now} tabIndex={tabIndexOf(t.id)} actions={actions} stage={stage[i]} />);
+            })()}
           </ul>
         </section>
       );
@@ -688,34 +790,28 @@ export default function Home() {
         </div>
       );
     }
-    return sections.map((s, si) => (
+    return sections.map((s, si) => {
+      const lead = si === 0 ? imports : [];
+      const withBlank = si === sections.length - 1 && blankSheet;
+      const stage = rowStages([...lead.map(() => pageRatio(null)), ...s.items.map(ratioOf), ...(withBlank ? [blankRatio] : [])], cols);
+      return (
       <section key={s.key} aria-labelledby={`sec-${s.key}`} className="shelf__section">
         <h2 id={`sec-${s.key}`} className={s.label ? 'shelf__heading' : 'visually-hidden'}>{s.label ?? (show === 'shared' ? 'Shared with me' : 'All projects')}</h2>
         <ul role="list" className="shelf__grid" data-testid={si === 0 ? 'project-grid' : undefined}>
-          {si === 0 && imports.map((j) => (
-            <ImportSheet key={j.key} testId={j.key} name={j.name} state={j.state} progress={j.progress} error={j.error}
+          {lead.map((j, i) => (
+            <ImportSheet key={j.key} testId={j.key} name={j.name} state={j.state} progress={j.progress} error={j.error} stage={stage[i]}
               onCancel={() => { j.ctrl.abort(); setImports((cur) => cur.filter((x) => x.key !== j.key)); }} />
           ))}
-          {s.items.map((p) => (
-              <ProjectSheet
-                key={p.id}
-                leaving={leaving.has(p.id)}
-                p={p}
-                accounts={authEnabled}
-                myId={myId}
-                now={now}
-                tabIndex={tabIndexOf(p.id)}
-                menu={() => projectMenu(p)}
-                contextMenu={ctx.bind(() => projectMenu(p))}
-                onKeyDown={onItemKeyDown(p.id)}
-                onFocus={() => setActiveKey(p.id)}
-              />
+          {s.items.map((p, i) => (
+              <ProjectSheet key={p.id} leaving={leaving.has(p.id)} p={p} accounts={authEnabled} myId={myId} now={now} tabIndex={tabIndexOf(p.id)} actions={actions} stage={stage[lead.length + i]} />
           ))}
-          {si === sections.length - 1 && blankSheet && (
+          {withBlank && (
             <BlankSheet
+              stage={stage[stage.length - 1]}
               testId="new-project-sheet"
               title="New project"
-              detail="From a template, a ZIP or a repository"
+              detail="Template, ZIP or repository"
+              ratio={blankRatio}
               tabIndex={tabIndexOf('new')}
               onActivate={() => setCreating({})}
               onKeyDown={onItemKeyDown('new')}
@@ -724,8 +820,11 @@ export default function Home() {
           )}
         </ul>
       </section>
-    ));
+      );
+    });
   };
+
+  const blankRatio = visible.length ? ratioOf(visible[visible.length - 1]) : pageRatio(null);
 
   const starterSheets = (() => {
     const list = starters ?? [];
@@ -744,7 +843,7 @@ export default function Home() {
       <main className="shelf-page__main" id="projects" tabIndex={-1}>
         <div className="shelf-page__title-row">
           <h1 className="shelf-page__title" ref={titleRef} tabIndex={-1}>Projects</h1>
-          {projects !== null && projects.length > BLANK_SHEET_MAX && show !== 'trash' && (
+          {(projects === null || projects.length > BLANK_SHEET_MAX) && show !== 'trash' && (
             <MenuButton
               items={() => SORTS.map((s) => ({ id: s.id, label: s.label, checked: sort === s.id, onSelect: () => setSort(s.id), testId: `sort-${s.id}` }))}
               label="Sort by"
@@ -763,15 +862,13 @@ export default function Home() {
         </div>
         {authEnabled && <EmailConfirmBanner />}
         {compact && search}
-        {projects !== null && (
-          <nav className="seg home-filter" aria-label="Show">
-            {filters.map((f) => (
-              <Link key={f.show} to={f.to} className={`seg__btn${show === f.show ? ' seg__btn--active' : ''}`} aria-current={show === f.show ? 'page' : undefined} data-testid={f.testId}>
-                {f.label}{f.count ? <span className="home-filter__count">{f.count}</span> : null}
-              </Link>
-            ))}
-          </nav>
-        )}
+        <nav className="seg home-filter" aria-label="Show">
+          {filters.map((f) => (
+            <Link key={f.show} to={f.to} className={`seg__btn${show === f.show ? ' seg__btn--active' : ''}`} aria-current={show === f.show ? 'page' : undefined} data-testid={f.testId}>
+              {f.label}{f.count ? <span className="home-filter__count">{f.count}</span> : null}
+            </Link>
+          ))}
+        </nav>
         <p className="visually-hidden" aria-live="polite" data-testid="search-status">{searching && projects !== null ? matchSentence(listed, query) : ''}</p>
 
         {loadError && (
@@ -786,9 +883,9 @@ export default function Home() {
             <h2 className="shelf-start__title">Start your first project</h2>
             <p className="shelf-start__text">Pick a starting point. You can change everything later.</p>
             <ul role="list" className="shelf__grid">
-              <BlankSheet testId="start-blank" title="Blank project" detail="An empty main.tex" onActivate={() => setCreating({ template: starters?.some((t) => t.id === 'blank') ? 'blank' : undefined })} />
+              <BlankSheet testId="start-blank" title="Blank project" detail="No files yet" onActivate={() => setCreating({ template: starters?.some((t) => t.id === 'blank') ? 'blank' : undefined })} />
               {starterSheets.map(({ s, t }) => (
-                <TemplateSheet key={t.id} testId={`start-${t.id.replace(/[^a-z0-9-]/gi, '-')}`} title={s.title} name={s.name} detail={s.detail} slide={s.slide} onActivate={() => setCreating({ template: t.id })} />
+                <TemplateSheet key={t.id} testId={`start-${t.id.replace(/[^a-z0-9-]/gi, '-')}`} title={s.title} name={s.name(t)} detail={s.detail} kind={s.kind} onActivate={() => setCreating({ template: t.id })} />
               ))}
               <TemplateSheet testId="start-more" title={(() => { const n = (starters?.length ?? 0) - starterSheets.length - 1; return n > 0 ? `${n} more templates` : 'More templates'; })()} name="More templates…" detail="Journals, conferences, theses" onActivate={() => setCreating({})} />
             </ul>
@@ -824,18 +921,18 @@ export default function Home() {
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} placeholder="Type a command or project…" groupOrder={PALETTE_GROUPS} idleSectionLimit={8} />
 
       {addSheet && (
-        <Modal onClose={() => setAddSheet(false)} label="Start a project" testId="home-add-sheet">
-          <div className="action-sheet">
-            <button type="button" className="action-sheet__item action-sheet__item--primary" data-testid="new-project" onClick={() => { setAddSheet(false); setCreating({}); }}>New project…</button>
-            {startItems(start).map((m) => (m.kind === undefined || m.kind === 'item') ? (
-              <button key={m.id} type="button" className="action-sheet__item" data-testid={m.testId} onClick={() => { setAddSheet(false); m.onSelect(); }}>
-                {m.icon && <span className="action-sheet__icon" aria-hidden="true">{m.icon}</span>}{m.label}
-                {m.shortcut && <span className="action-sheet__detail">{m.shortcut}</span>}
-              </button>
-            ) : null)}
-            <button type="button" className="action-sheet__item action-sheet__cancel" onClick={() => setAddSheet(false)}>Cancel</button>
-          </div>
-        </Modal>
+        <ActionSheet
+          label="Start a project"
+          testId="home-add-sheet"
+          primaryId="new"
+          details
+          onClose={() => setAddSheet(false)}
+          items={[
+            { id: 'new', label: 'New project…', icon: <IconPlus width={15} height={15} strokeWidth={1.8} />, onSelect: () => setCreating({}), testId: 'new-project' },
+            { kind: 'separator' },
+            ...startItems(start).filter((m) => m.kind === undefined || m.kind === 'item'),
+          ]}
+        />
       )}
 
       {sharing && (
@@ -844,7 +941,7 @@ export default function Home() {
           onClose={() => setSharing(null)}
           onSaved={(updated) => {
             setSharing(null);
-            setProjects((cur) => cur?.map((p) => (p.id === updated.id ? { ...p, share: updated.share } : p)) ?? cur);
+            change((cur) => cur?.map((p) => (p.id === updated.id ? { ...p, share: updated.share } : p)) ?? cur);
           }}
         />
       )}
@@ -855,6 +952,12 @@ export default function Home() {
       {creating && <NewProjectDialog remotes={remotes} initialTemplate={creating.template} onClose={() => setCreating(null)} />}
     </div>
   );
+}
+
+/** Each sheet's stage: as tall as the tallest page in its row of `cols`. */
+function rowStages(ratios: number[], cols: number): number[] {
+  const n = Math.max(1, cols);
+  return ratios.map((_, i) => { const start = i - (i % n); return stageRatio(ratios.slice(start, start + n)); });
 }
 
 function NoMatches({ query, onClear }: { query: string; onClear(): void }) {

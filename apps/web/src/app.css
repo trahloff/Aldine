@@ -101,9 +101,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   position: absolute;
   min-width: 220px;
   padding: 5px;
-  background: var(--material-pop);
-  backdrop-filter: var(--material-blur);
-  -webkit-backdrop-filter: var(--material-blur);
+  background: var(--material-menu);
+  backdrop-filter: var(--material-menu-blur);
+  -webkit-backdrop-filter: var(--material-menu-blur);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-pop);
   z-index: 100;
@@ -189,6 +189,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .menu--floating .menu__item:focus .menu__chev { color: inherit; opacity: 0.8; }
 /* thumbs: rows a finger can hit */
 @media (pointer: coarse) { .menu--floating .menu__item { min-height: 44px; } }
+/* no keyboard to press them with */
+@media (hover: none) { .menu__hint { display: none; } }
 /* a long press opens the context menu, not the system's text selection or link preview */
 [data-context-menu] { -webkit-touch-callout: none; }
 @media (hover: none), (pointer: coarse) { [data-context-menu] { -webkit-user-select: none; user-select: none; } }

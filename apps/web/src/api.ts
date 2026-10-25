@@ -393,6 +393,9 @@ export const api = {
     req<{ ok: boolean; opened: { at: string; branch: string } }>(`/api/projects/${id}/opened`, { method: 'POST', body: JSON.stringify({ branch }) }),
   /** "Remove from my list", for anyone but the owner. A member keeps access. */
   removeFromList: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/listing`, { method: 'DELETE' }),
+  /** Undoes removeFromList without counting as an open; `opened` is the row as it was. */
+  restoreListing: (id: string, opened: { at: string; branch: string } | null | undefined) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/listing`, { method: 'PUT', body: JSON.stringify({ opened: opened ?? null }) }),
   /** Duplicate: the caller owns the copy of the source's main branch files. Name defaults to "<name> copy". */
   copyProject: (id: string, name?: string) =>
     req<CreatedProject>(`/api/projects/${id}/copy`, { method: 'POST', body: JSON.stringify(name === undefined ? {} : { name }) }),

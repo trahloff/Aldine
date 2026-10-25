@@ -26,10 +26,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const WIDTH = 360;
+const WIDTH = 720;
 // A page taller than 3:1 is scaled to this height and comes out narrower.
-const MAX_HEIGHT = 1080;
-const QUALITY = 80;
+const MAX_HEIGHT = 2160;
+const QUALITY = 75;
 const RENDER_TIMEOUT_MS = Number(process.env.THUMBNAIL_TIMEOUT_MS || 10_000);
 // One renderer process at a time beside the TeX runs; a burst beyond
 // MAX_QUEUED skips its renders, and the next typeset of each retries.
@@ -150,8 +150,8 @@ async function renderGs(cwd, pdf, out, deadline, job) {
   const info = await run('gs', ['-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-dNODISPLAY', '-dPDFINFO', '-dFirstPage=1', '-dLastPage=1', pdf], cwd, deadline, job);
   if (job.cancelled) return false;
   const size = info.code === 0 ? pageSize(info.out) : null;
-  // 44 dpi is about WIDTH for A4 and Letter, for a report this cannot read.
-  const dpi = Math.min(600, Math.max(1, size ? Math.min((WIDTH * 72) / size.w, (MAX_HEIGHT * 72) / size.h) : 44));
+  // 88 dpi is about WIDTH for A4 and Letter, for a report this cannot read.
+  const dpi = Math.min(600, Math.max(1, size ? Math.min((WIDTH * 72) / size.w, (MAX_HEIGHT * 72) / size.h) : 88));
   const r = await run('gs', [
     '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-dNOPROMPT',
     '-sDEVICE=jpeg', `-dJPEGQ=${QUALITY}`, `-r${dpi.toFixed(4)}`,

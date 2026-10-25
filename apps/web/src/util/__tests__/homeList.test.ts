@@ -51,6 +51,19 @@ describe('sections', () => {
     expect(sectionsOf(many, 'edited', NOW).map((s) => [s.label, s.items.length])).toEqual([['Today', 3], ['Previous 7 days', 5]]);
     expect(sectionsOf(many, 'name', NOW)).toHaveLength(1);
   });
+
+  it('folds months and years with few projects into one "Earlier"', () => {
+    const at = (d: Date) => ({ lastEdit: { at: d.toISOString(), byId: null, byName: null, branch: 'main' } });
+    const list = [
+      ...Array.from({ length: 5 }, (_, i) => p(`t${i}`, at(new Date(NOW - MIN)))),
+      p('june', at(new Date(2026, 5, 10))),
+      ...Array.from({ length: 3 }, (_, i) => p(`may${i}`, at(new Date(2026, 4, 10)))),
+      p('old', at(new Date(2025, 2, 1))),
+    ];
+    expect(sectionsOf(list, 'edited', NOW).map((s) => [s.label, s.items.length])).toEqual([['Today', 5], ['Earlier', 5]]);
+    const dense = [...list.filter((x) => x.id !== 'june' && x.id !== 'old'), p('may3', at(new Date(2026, 4, 11)))];
+    expect(sectionsOf(sortProjects(dense, 'edited'), 'edited', NOW).map((s) => s.label)).toEqual(['Today', 'May']);
+  });
 });
 
 describe('the line under a project', () => {
@@ -58,7 +71,7 @@ describe('the line under a project', () => {
     const mine = p('m', { lastEdit: { at: iso(3 * MIN), byId: 'me', byName: 'Ada Lovelace', branch: 'main' } });
     expect(metaLine(mine, 'me', NOW)).toEqual({ who: null, text: 'Edited 3 minutes ago' });
     const theirs = p('t', { lastEdit: { at: iso(3 * 3600_000), byId: 'grace', byName: 'Grace Hopper', branch: 'main' } });
-    expect(metaLine(theirs, 'me', NOW)).toEqual({ who: 'Grace', text: 'edited 3 hours ago' });
+    expect(metaLine(theirs, 'me', NOW)).toEqual({ who: 'Grace Hopper', text: 'edited 3 hours ago' });
     expect(metaLine(p('old'), 'me', NOW).text).toMatch(/^Created on /);
   });
 

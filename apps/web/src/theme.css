@@ -98,6 +98,11 @@
      document, not another panel: translucent, blurred behind. */
   --material-pop: rgba(255, 255, 255, 0.82);
   --material-blur: blur(24px) saturate(180%);
+  /* Menus open over pages and paper: nearly opaque, so no light content reads through them. */
+  --material-menu: rgba(255, 255, 255, 0.96);
+  --material-menu-blur: blur(30px) saturate(180%);
+  /* the phone's bar carries a centred title over the shelf */
+  --material-bar-compact: rgba(255, 255, 255, 0.92);
   --scrim: rgba(0, 0, 0, 0.28);
 
   /* --ease moves state that is already on screen (hover, toggles); --ease-out
@@ -157,6 +162,8 @@
   --shadow-paper: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.4);
 
   --material-pop: rgba(44, 44, 48, 0.82);
+  --material-menu: rgba(44, 44, 48, 0.96);
+  --material-bar-compact: rgba(28, 28, 30, 0.92);
   /* the panes are dark already, so the scrim has to go further to push them back */
   --scrim: rgba(0, 0, 0, 0.5);
 }
@@ -208,15 +215,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root, :root[data-theme="dark"] { --material-blur: none; }
-  :root { --material-pop: #ffffff; }
-  :root[data-theme="dark"] { --material-pop: #2c2c30; }
+  :root, :root[data-theme="dark"] { --material-blur: none; --material-menu-blur: none; }
+  :root { --material-pop: #ffffff; --material-menu: #ffffff; --material-bar-compact: #ffffff; }
+  :root[data-theme="dark"] { --material-pop: #2c2c30; --material-menu: #2c2c30; --material-bar-compact: #1c1c1e; }
 }
 
 @media (prefers-contrast: more) {
-  :root, :root[data-theme="dark"] { --material-blur: none; }
-  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; --paper: #ffffff; }
-  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; --paper: #ffffff; }
+  :root, :root[data-theme="dark"] { --material-blur: none; --material-menu-blur: none; }
+  :root { --hairline: rgba(0, 0, 0, 0.32); --hairline-strong: rgba(0, 0, 0, 0.5); --text-2: #48484d; --text-3: #55555a; --material-pop: #ffffff; --material-menu: #ffffff; --material-bar-compact: #ffffff; --paper: #ffffff; }
+  :root[data-theme="dark"] { --hairline: rgba(255, 255, 255, 0.34); --hairline-strong: rgba(255, 255, 255, 0.52); --text-2: #c2c2c8; --text-3: #b0b0b8; --material-pop: #2c2c30; --material-menu: #2c2c30; --material-bar-compact: #1c1c1e; --paper: #ffffff; }
 }
 
 /* Theme switch: one short cross-fade of the whole page instead of a jump in

@@ -87,26 +87,27 @@ export function isUnread(p: ProjectSummary, myId: string | null): boolean {
   return time(p.lastEdit!.at) > time(p.opened.at);
 }
 
-/** "Edited 3 minutes ago", "Grace Hopper edited yesterday", "Created 2 days ago". */
+/** "Edited 3 minutes ago", "Grace Hopper edited yesterday", "Created 2 days ago". The name truncates, the time does not. */
 export function metaLine(p: ProjectSummary, myId: string | null, now: number): { who: string | null; text: string } {
   if (!p.lastEdit) return { who: null, text: `Created ${timeAgo(p.createdAt, now)}` };
   const ago = timeAgo(p.lastEdit.at, now);
-  // The first name: "Grace edited 3 hours ago" fits under a sheet, the full name is on the owner chip.
-  if (editedByOther(p, myId)) return { who: firstName(p.lastEdit.byName), text: `edited ${ago}` };
+  if (editedByOther(p, myId)) return { who: p.lastEdit.byName, text: `edited ${ago}` };
   return { who: null, text: `Edited ${ago}` };
 }
 
-/** "Grace" from "Grace Hopper"; a one-word or unusual name stays whole. */
-export function firstName(name: string | null): string | null {
-  if (!name) return name;
-  const first = name.trim().split(/\s+/)[0];
-  return first.length >= 2 ? first : name;
+/** The owner made the last edit: the line under the sheet already names them. */
+export function ownerNamedInMeta(p: ProjectSummary, myId: string | null): boolean {
+  return !!p.ownerId && editedByOther(p, myId) && p.lastEdit?.byId === p.ownerId;
 }
 
 /** Time sections appear from this many projects up, and only under a date sort. */
 export const SECTION_MIN = 8;
 
 export interface ShelfSection { key: string; label: string | null; items: ProjectSummary[] }
+
+/** A month or year with fewer projects than this does not get a heading of its own. */
+export const SECTION_SPARSE = 3;
+const isOld = (key: string) => /^(m\d+|y\d+|older)$/.test(key);
 
 /** The list cut into Today / Yesterday / … sections, or one untitled section. */
 export function sectionsOf(list: readonly ProjectSummary[], sort: SortKey, now: number): ShelfSection[] {
@@ -119,7 +120,13 @@ export function sectionsOf(list: readonly ProjectSummary[], sort: SortKey, now: 
     if (last && last.key === s.key) last.items.push(p);
     else out.push({ key: s.key, label: s.label, items: [p] });
   }
-  return out;
+  // From the first sparse month or year on, the rest is one "Earlier".
+  const at = out.findIndex((s) => isOld(s.key) && s.items.length < SECTION_SPARSE);
+  if (at < 0) return out;
+  const rest = out.slice(at);
+  const old = rest.filter((s) => isOld(s.key));
+  const earlier: ShelfSection = { key: 'earlier', label: 'Earlier', items: old.flatMap((s) => s.items) };
+  return [...out.slice(0, at), earlier, ...rest.filter((s) => !isOld(s.key))];
 }
 
 /** The editor link: on the branch the caller last had open. */

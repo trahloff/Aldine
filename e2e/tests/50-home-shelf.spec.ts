@@ -146,6 +146,24 @@ test.describe('menus', () => {
     } finally { await cleanup(request, id); }
   });
 
+  test('Move to Trash from the menu moves focus to the next project, and Undo brings focus back to it', async ({ page }) => {
+    const prefix = `Menu Trash ${Date.now()}`;
+    const ids = await trio(page, prefix);
+    try {
+      await page.goto('/');
+      await page.getByTestId('home-search').fill(prefix);
+      // newest first: charlie, bravo, alpha
+      await page.getByTestId(`open-${ids[1]}`).focus();
+      await page.getByTestId(`open-${ids[1]}`).press('Shift+F10');
+      await page.getByTestId('menu-trash').press('Enter');
+      await expect(page.getByTestId(`project-card-${ids[1]}`)).toHaveCount(0);
+      await expect.poll(() => focusedTestId(page)).toBe(`open-${ids[0]}`);
+      await page.getByTestId('undo-trash').click();
+      await expect(page.getByTestId(`project-card-${ids[1]}`)).toBeVisible();
+      await expect.poll(() => focusedTestId(page)).toBe(`open-${ids[1]}`);
+    } finally { for (const id of ids) await cleanup(page.request, id); }
+  });
+
   test('Rename and Duplicate', async ({ page, request }) => {
     const id = await createProject(request, `Dup Source ${Date.now()}`);
     let copy: string | undefined;
@@ -207,17 +225,44 @@ test.describe('search, sort and filters', () => {
 
   test('the trash says when each project goes for good and offers to empty it', async ({ page, request }) => {
     const id = await createProject(request, 'Trash Place Paper');
+    const other = await createProject(request, 'Trash Place Other');
     try {
+      // whatever earlier tests left there goes first, so this one knows what Empty trash leaves
+      for (const t of (await (await request.get('/api/projects/trash')).json()) as { id: string }[]) await request.delete(`/api/projects/${t.id}?permanent=1`);
       await request.delete(`/api/projects/${id}`);
+      await request.delete(`/api/projects/${other}`);
       await page.goto('/?show=trash');
       await expect(page.getByTestId(`trash-${id}`)).toContainText('Deleted today · gone');
       await expect(page.getByTestId('empty-trash')).toBeVisible();
       await expect(page.getByTestId('sort-menu')).toHaveCount(0);
-      await page.getByTestId(`trash-open-${id}`).click();
-      await expect(page.getByTestId(`restore-${id}`)).toBeVisible();
+      // the item itself opens its menu and says so
+      const item = page.getByTestId(`trash-open-${id}`);
+      await expect(item).toHaveAttribute('aria-expanded', 'false');
+      await item.focus();
+      await page.keyboard.press('Enter');
+      await expect(item).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.getByTestId(`restore-${id}`)).toBeFocused();
       await expect(page.getByTestId(`purge-${id}`)).toHaveText(/Delete forever…/);
       await page.keyboard.press('Escape');
-    } finally { await cleanup(request, id); }
+      await expect(item).toBeFocused();
+      // the trash lists the last one moved there first
+      await page.keyboard.press('ArrowLeft');
+      await expect(page.getByTestId(`trash-open-${other}`)).toBeFocused();
+      await page.keyboard.press('ArrowRight');
+      await expect(item).toBeFocused();
+
+      // Restore takes it off the trash and focus moves on, not to the page
+      await page.keyboard.press('Enter');
+      await page.getByTestId(`restore-${id}`).press('Enter');
+      await expect(page.getByTestId(`trash-${id}`)).toHaveCount(0);
+      await expect.poll(() => focusedTestId(page)).toBe(`trash-open-${other}`);
+
+      // Empty trash takes its own button away: focus goes to the title
+      await page.getByTestId('empty-trash').click();
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.getByTestId('trash-empty')).toBeVisible();
+      await expect(page.getByRole('heading', { level: 1 })).toBeFocused();
+    } finally { await cleanup(request, id); await cleanup(request, other); }
   });
 });
 
@@ -239,8 +284,42 @@ test.describe('loading', () => {
   });
 });
 
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('a long press opens the project menu as a sheet from the bottom, without key hints', async ({ page, request }) => {
+    const id = await createProject(request, 'Long Press Paper');
+    try {
+      await page.goto('/');
+      const link = page.getByTestId(`open-${id}`);
+      await link.scrollIntoViewIfNeeded();
+      const box = (await link.boundingBox())!;
+      const cdp = await page.context().newCDPSession(page);
+      const at = [{ x: box.x + 20, y: box.y + box.height / 2 }];
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at });
+      await page.waitForTimeout(700);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      const sheet = page.getByTestId('project-menu');
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toHaveAttribute('role', 'dialog');
+      await expect(page.getByTestId('project-menu-title')).toHaveText('Long Press Paper');
+      await expect(page.getByTestId('menu-trash')).toHaveText('Move to Trash');
+      await expect(page.locator('.menu__hint')).toHaveCount(0);
+      // the press did not open the project
+      await expect(page).toHaveURL(/\/$/);
+      await page.getByTestId('project-menu-cancel').click();
+      await expect(sheet).toHaveCount(0);
+
+      // the + sheet: every label starts at the same place
+      await page.getByTestId('home-add').click();
+      const xs = await page.getByTestId('home-add-sheet').locator('.action-sheet__item:not(.action-sheet__cancel) .action-sheet__icon').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
+      expect(new Set(xs).size).toBe(1);
+    } finally { await cleanup(request, id); }
+  });
+});
+
 test.describe('importing several ZIPs', () => {
-  test('each gets a placeholder, and one line sums them up', async ({ page }) => {
+  test('each gets a placeholder with Cancel, and one line sums them up', async ({ page }) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-multi-'));
     const stamp = Date.now();
     const files = ['first', 'second'].map((n) => {
@@ -252,13 +331,29 @@ test.describe('importing several ZIPs', () => {
     fs.writeFileSync(bad, 'not a zip at all');
     try {
       await page.goto('/');
+      // The first upload is held before it reaches the server, so Cancel still calls it off.
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let first = true;
+      await page.route('**/api/projects/import', async (route) => {
+        // the page has called it off by then: it never reaches the server
+        if (first) { first = false; await held; await route.abort().catch(() => {}); return; }
+        await route.continue();
+      });
       await page.getByTestId('import-input').setInputFiles([...files, bad]);
-      await expect(page.locator('.toast', { hasText: 'Imported 2 projects · 1 failed' })).toBeVisible({ timeout: 60_000 });
-      // still on the list, with both new projects and the failure explained
+      const sheet = page.locator('.sheet--import', { hasText: `multi-first-${stamp}` });
+      await expect(sheet).toContainText('Uploading');
+      await sheet.getByRole('button', { name: 'Cancel' }).click();
+      await expect(sheet).toHaveCount(0);
+      release();
+      await expect(page.locator('.toast', { hasText: 'Imported 1 project · 1 failed' })).toBeVisible({ timeout: 60_000 });
+      // still on the list, with the new project and the failure explained; the cancelled one was never made
       await expect(page).toHaveURL(/\/$/);
-      await expect(page.getByTestId('project-grid')).toContainText(`multi-first-${stamp}`);
       await expect(page.getByTestId('project-grid')).toContainText(`multi-second-${stamp}`);
+      await expect(page.getByTestId('project-grid')).not.toContainText(`multi-first-${stamp}`);
       await expect(page.locator('.sheet--failed')).toContainText('Not imported');
+      const names = ((await (await page.request.get('/api/projects')).json()) as { name: string }[]).map((p) => p.name);
+      expect(names).not.toContain(`multi-first-${stamp}`);
     } finally {
       const list = (await (await page.request.get('/api/projects')).json()) as { id: string; name: string }[];
       for (const p of list.filter((x) => x.name.includes(String(stamp)))) await cleanup(page.request, p.id);
@@ -279,6 +374,8 @@ test.describe('accessibility', () => {
         expect(many.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([]);
 
         await page.route(/\/api\/projects$/, (route) => (route.request().method() === 'GET' ? route.fulfill({ json: [] }) : route.continue()));
+        // the list kept for the tab would otherwise be what axe sees first
+        await page.evaluate(() => sessionStorage.clear());
         await page.reload();
         await expect(page.getByTestId('projects-empty')).toBeVisible();
         await expect(page.getByTestId('start-more')).toBeVisible();
