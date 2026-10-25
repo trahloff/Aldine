@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- A new logo: "aldine." set in Geist SemiBold, and an app icon with a
+  lowercase a and a blue full stop.
+
 ## [0.18.0] — 2026-10-25
 
 ### Added

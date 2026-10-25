@@ -222,7 +222,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
   return (
     <main className="login">
       <div className="login__card">
-        <h1 className="home__brand"><Wordmark height={24} /></h1>
+        <h1 className="home__brand"><Wordmark height={21} /></h1>
         <p className="login__tagline">Write LaTeX together. Fast, versioned, yours.</p>
         <h2 className="home__tag login__title">{title}</h2>
 
