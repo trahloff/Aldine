@@ -70,6 +70,15 @@ function symbol(text: string): Decoration {
   return d;
 }
 
+/** Commands the parser does not know whose argument LaTeX typesets as written, escapes included. */
+export const VERBATIM_ARG_CMDS = new Set(['\\path', '\\nolinkurl', '\\Verb', '\\mintinline', '\\detokenize']);
+
+/** Whether `node` (an UnknownCommand) is one of VERBATIM_ARG_CMDS. */
+export function verbatimArgCommand(node: SyntaxNode, doc: Doc): boolean {
+  const seq = node.getChild('CtrlSeq');
+  return !!seq && VERBATIM_ARG_CMDS.has(doc.sliceString(seq.from, seq.to));
+}
+
 /** The span of an escape that typesets as one character, and that character; null for anything else. */
 export function symbolEscape(node: SyntaxNode, doc: Doc): { from: number; to: number; text: string } | null {
   const sym = node.getChild('CtrlSym');
@@ -332,6 +341,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       }
 
       if (n.name === 'UnknownCommand') {
+        if (verbatimArgCommand(n.node, doc)) return false;
         const esc = symbolEscape(n.node, doc);
         if (!esc) return; // an unknown macro's arguments may hold constructs of their own
         if (!intersectsReveal(reveals, esc.from, esc.to)) emit.atomic(esc.from, esc.to, symbol(esc.text));

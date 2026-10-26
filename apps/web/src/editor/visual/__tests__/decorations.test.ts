@@ -133,6 +133,11 @@ describe('escapes, \\url, \\centering and a heading\'s \\label (#150)', () => {
     ]);
   });
 
+  it('leaves escapes in \\path and \\nolinkurl as written, as LaTeX typesets them', () => {
+    const doc = 'a\\_b \\path{c\\_d} \\nolinkurl{e\\_f}\n';
+    expect(shown(state(doc, { anchor: doc.length }))).toEqual(['\\_→_']);
+  });
+
   it('shows \\url as a link, and its source while the caret is in it', () => {
     const doc = 'See \\url{https://example.org/a_b} now.';
     const s = state(doc, { anchor: doc.length });

@@ -1,6 +1,7 @@
 import { WidgetType } from '@codemirror/view';
 import { katexReady, renderMath } from '../katex';
 import { mathliveCanEdit } from '../mathPopover';
+import { macrosUsedBy } from '../preamble';
 import type { MacroSet } from '../preamble';
 import { shortcut } from '../../../platform';
 
@@ -21,8 +22,12 @@ export class MathWidget extends WidgetType {
 
   /** `raw` is the whole construct: equal raw means equal inner offsets, so a
    *  widget kept across edits elsewhere still describes its construct. */
-  constructor(readonly source: string, readonly display: boolean, readonly raw: string, readonly innerStart: number, readonly innerEnd: number, readonly macros: MacroSet) {
+  /** Only the macros this formula uses, so editing another one's definition leaves it as drawn. */
+  readonly macros: MacroSet;
+
+  constructor(readonly source: string, readonly display: boolean, readonly raw: string, readonly innerStart: number, readonly innerEnd: number, macros: MacroSet) {
     super();
+    this.macros = macrosUsedBy(source, macros);
   }
 
   eq(other: MathWidget): boolean {

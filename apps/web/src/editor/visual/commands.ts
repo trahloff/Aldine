@@ -1,11 +1,12 @@
 import { EditorView } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 import { EditorSelection } from '@codemirror/state';
 import type { EditorState, StateCommand } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { insertNewlineKeepIndent } from '@codemirror/commands';
 import type { SyntaxNode } from '@lezer/common';
 import { headingLineTail } from './decorations';
-import { atomicField } from './atomicField';
+import { atomicDecoAt } from './atomicField';
 
 /**
  * All formatting is expressed as ordinary CodeMirror text dispatches, so it
@@ -155,9 +156,17 @@ export const breakAfterHeading: StateCommand = ({ state, dispatch }) => {
 
 const RENDERED_LISTS = new Set(['itemize', 'enumerate', 'description']);
 
-/** The list environment `pos` is directly in (not in a nested one), when Visual renders its items. */
+const MATH_NODES = new Set(['DollarMath', 'BracketMath', 'ParenMath', 'Math']);
+
+/**
+ * The list environment `pos` is directly in (not in a nested one), when
+ * Visual renders its items. Inside any other environment or a formula within
+ * an item, an \item would be written into that construct, so there is none.
+ */
 function listAt(state: EditorState, pos: number): SyntaxNode | null {
   for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); n; n = n.parent) {
+    const inside = n.from < pos && pos < n.to;
+    if (inside && (MATH_NODES.has(n.name) || (n.name.endsWith('Environment') && n.name !== 'ListEnvironment' && n.name !== 'KnownEnvironment'))) return null;
     if (n.name !== 'ListEnvironment') continue;
     const name = n.getChild('BeginEnv')?.getChild('EnvNameGroup')?.getChild('ListEnvName');
     return name && RENDERED_LISTS.has(state.doc.sliceString(name.from, name.to)) ? n : null;
@@ -187,9 +196,10 @@ function aloneOnLine(state: EditorState, node: SyntaxNode): boolean {
 /**
  * Enter at the end of a list item starts the next `\item` on a new line, at
  * the item's indentation. On an empty item it leaves the list: the empty
- * item goes, and the caret lands on a new line after the list (a new item of
- * the enclosing list when it is nested). The only item of a list takes the
- * list with it, since an empty list stops the compile.
+ * last item goes, and the caret lands on a new line after the list (a new
+ * item of the enclosing list when it is nested). The only item of a list
+ * takes the list with it, since an empty list stops the compile; a list that
+ * holds more than that item is left alone.
  */
 export const listItemEnter: StateCommand = ({ state, dispatch }) => {
   const sel = state.selection.main;
@@ -216,11 +226,14 @@ export const listItemEnter: StateCommand = ({ state, dispatch }) => {
     }));
     return true;
   }
-  if (!aloneOnLine(state, end)) return false;
+  // an empty item between others stays a plain line break: leaving would jump the caret past them
+  if (item !== items[items.length - 1] || !aloneOnLine(state, end)) return false;
   const endLine = state.doc.lineAt(end.from);
   if (items.length === 1) {
     const begin = list.getChild('BeginEnv');
     if (!begin || !aloneOnLine(state, begin)) return false;
+    // anything else in the list (a comment, a \setlength) would go with it
+    if (state.doc.sliceString(begin.to, item.from).trim() || state.doc.sliceString(item.to, end.from).trim()) return false;
     const beginLine = state.doc.lineAt(begin.from);
     dispatch(state.update({
       changes: { from: beginLine.from, to: endLine.to, insert: '' },
@@ -265,8 +278,7 @@ export const paragraphEnter: StateCommand = (target) => {
 };
 
 /** Whether `line` is hidden whole by Visual (a list's \begin/\end line, a lone \centering). */
-function hiddenLine(state: EditorState, line: { from: number; to: number }): boolean {
-  const deco = state.field(atomicField, false)?.deco;
+function hiddenLine(deco: DecorationSet | undefined, line: { from: number; to: number }): boolean {
   if (!deco) return false;
   let hidden = false;
   deco.between(line.from, line.to, (from, to, d) => {
@@ -288,8 +300,14 @@ function passHiddenLine(dir: -1 | 1): StateCommand {
     const line = state.doc.lineAt(sel.head);
     if (sel.head !== (dir < 0 ? line.from : line.to)) return false;
     let n = line.number + dir;
-    if (n < 1 || n > state.doc.lines || !hiddenLine(state, state.doc.line(n))) return false;
-    while (n >= 1 && n <= state.doc.lines && hiddenLine(state, state.doc.line(n))) n += dir;
+    if (n < 1 || n > state.doc.lines) return false;
+    const next = state.doc.line(n);
+    // the hidden run ahead is a few lines at most; on a long paper it may not be built yet
+    const deco = dir < 0
+      ? atomicDecoAt(state, Math.max(0, next.from - 2_000), line.to)
+      : atomicDecoAt(state, line.from, Math.min(state.doc.length, next.to + 2_000));
+    if (!hiddenLine(deco, next)) return false;
+    while (n >= 1 && n <= state.doc.lines && hiddenLine(deco, state.doc.line(n))) n += dir;
     if (n < 1 || n > state.doc.lines) return true;
     const target = state.doc.line(n);
     dispatch(state.update({ selection: { anchor: dir < 0 ? target.to : target.from }, scrollIntoView: true, userEvent: 'select' }));

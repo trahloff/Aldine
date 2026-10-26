@@ -6,7 +6,7 @@ import type { SyntaxNode } from '@lezer/common';
 import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import { revealField } from './reveal';
-import { atomicField, atomicFiller } from './atomicField';
+import { atomicDecoAt, atomicField, atomicFiller } from './atomicField';
 import { macroField } from './macros';
 import { markPlugin } from './markPlugin';
 import { visualTheme } from './theme';
@@ -15,7 +15,7 @@ import { registerView, unregisterView } from './refresh';
 import { setVisualContext } from './context';
 import { suggestField, commentRangesField } from './suggestions';
 import { rangeTracker, widgetPos } from './positions';
-import { pasteText } from './clipboard';
+import { pasteText, rawAt } from './clipboard';
 import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } from './mathPopover';
 import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
@@ -54,7 +54,7 @@ const pasteLatex = EditorView.domEventHandlers({
   paste(e, view) {
     const data = e.clipboardData;
     if (!data) return false;
-    const latex = pasteText(data.getData('text/html'), data.getData('text/plain'), view.state.doc.toString());
+    const latex = pasteText(data.getData('text/html'), data.getData('text/plain'), view.state.doc.toString(), rawAt(view.state, view.state.selection.main.head));
     if (latex == null) return false;
     e.preventDefault();
     view.dispatch(view.state.replaceSelection(latex), { userEvent: 'input.paste', scrollIntoView: true });
@@ -85,10 +85,11 @@ const headingCloserStop = EditorState.transactionFilter.of((tr) => {
   if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1) return tr;
   const head = tr.selection.main;
   if (!head.empty) return tr;
-  const deco = tr.startState.field(atomicField, false)?.deco;
-  if (!deco) return tr;
+  if (tr.startState.field(atomicField, false) === undefined) return tr;
   const line = tr.startState.doc.lineAt(head.head);
   if (head.head !== line.to) return tr;
+  const deco = atomicDecoAt(tr.startState, line.from, line.to);
+  if (!deco) return tr;
   let stop = -1;
   deco.between(line.from, line.to, (from, to, d) => {
     if (to === line.to && d.spec.headingCloser) stop = from;

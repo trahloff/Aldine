@@ -108,3 +108,25 @@ export function preambleMacros(preamble: string | null): MacroSet {
   const names = Object.keys(defs).sort();
   return names.length ? { defs, key: names.map((n) => `${n}/${defs[n].args}/${defs[n].def}`).join('\n') } : NO_MACROS;
 }
+
+/**
+ * The part of `set` a formula can reach: the macros its source names, and
+ * those their definitions name in turn. A formula's rendering changes only
+ * when this part does.
+ */
+export function macrosUsedBy(source: string, set: MacroSet): MacroSet {
+  if (set === NO_MACROS) return NO_MACROS;
+  const used = new Set<string>();
+  const queue = [source];
+  while (queue.length) {
+    for (const m of queue.pop()!.matchAll(/\\([A-Za-z]+)/g)) {
+      const def = set.defs[m[1]];
+      if (def && !used.has(m[1])) { used.add(m[1]); queue.push(def.def); }
+    }
+  }
+  if (!used.size) return NO_MACROS;
+  const names = [...used].sort();
+  const defs: Record<string, MacroDef> = {};
+  for (const n of names) defs[n] = set.defs[n];
+  return { defs, key: names.map((n) => `${n}/${defs[n].args}/${defs[n].def}`).join('\n') };
+}

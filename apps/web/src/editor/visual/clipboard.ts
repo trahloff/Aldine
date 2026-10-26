@@ -1,4 +1,8 @@
 import { EditorView } from '@codemirror/view';
+import type { EditorState } from '@codemirror/state';
+import { syntaxTree } from '@codemirror/language';
+import type { SyntaxNode } from '@lezer/common';
+import { verbatimArgCommand } from './decorations';
 import { safeStorage } from '../../util/safeStorage';
 import { escapeLatex, htmlToLatex } from './html2latex';
 import { preambleFor } from './context';
@@ -34,16 +38,40 @@ export function isOwnCopy(text: string): boolean {
   return h === last || h === safeStorage.get(KEY);
 }
 
-/** Clipboard text that is LaTeX already: copied from a .tex file, here or elsewhere. */
-const LATEX_TEXT = /\\(section|textbf|begin|item|cite)\b/;
+/**
+ * Clipboard text that is LaTeX already, copied from a .tex file, a terminal
+ * or a chat: a control word (not a Windows path's `C:\Users`), or a `$…$`
+ * formula (not the `$5 … $10` of prices).
+ */
+const LATEX_TEXT = /(?:^|[^A-Za-z0-9:\\/])\\[A-Za-z]+|\\[A-Za-z]+\s*[{[]|\$[^\s$\d](?:[^$\n]*[^\s$])?\$/;
+
+/** Where text is taken as written (math, verbatim, a path), so an escape would show or break it. */
+const RAW_CONTENT = new Set(['Math', 'VerbatimContent', 'VerbContent', 'LstInlineContent', 'LiteralArgContent']);
+/** Arguments that hold keys or paths, raw strictly between their braces. */
+const RAW_ARGS = new Set(['DollarMath', 'BracketMath', 'ParenMath', 'RefArgument', 'BibKeyArgument', 'LabelArgument', 'UrlArgument', 'FilePathArgument']);
+
+/** Whether a paste at `pos` lands where text is source as written, not prose. */
+export function rawAt(state: EditorState, pos: number): boolean {
+  for (const side of [-1, 1] as const) {
+    for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, side); n; n = n.parent) {
+      if (RAW_CONTENT.has(n.name) && n.from <= pos && pos <= n.to) return true;
+      if (n.from >= pos || pos >= n.to) continue;
+      if (RAW_ARGS.has(n.name)) return true;
+      if (n.name === 'TextArgument' && n.parent?.name === 'UnknownCommand' && verbatimArgCommand(n.parent, state.doc)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * What a paste writes in Visual mode, or null for the editor's own paste.
  * Rich text converts to clean LaTeX; plain prose is escaped, so `50% & $5`
- * stays text. Source copied from an editor pastes as it is.
+ * stays text. Source copied from an editor, and anything pasted where text
+ * is taken as written (`raw`: a formula, a listing, a \ref key), pastes as
+ * it is.
  */
-export function pasteText(html: string, text: string, doc: string): string | null {
-  if (LATEX_TEXT.test(text) || isOwnCopy(text)) return null;
+export function pasteText(html: string, text: string, doc: string, raw = false): string | null {
+  if (raw || LATEX_TEXT.test(text) || isOwnCopy(text)) return null;
   if (!html) {
     const escaped = escapeLatex(text);
     return escaped === text ? null : escaped;

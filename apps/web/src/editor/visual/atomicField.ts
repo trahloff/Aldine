@@ -269,6 +269,17 @@ export const atomicField = StateField.define<AtomicValue>({
   ],
 });
 
+/**
+ * The decorations of `state` with [from,to] built: what a command reading
+ * them sees once a pending region there is filled, so it does not act on a
+ * region that shows nothing yet. Undefined where the field is not installed.
+ */
+export function atomicDecoAt(state: EditorState, from: number, to: number): DecorationSet | undefined {
+  const value = state.field(atomicField, false);
+  if (!value?.pending.some(([a, b]) => b > from && a < to)) return value?.deco;
+  return state.update({ effects: buildPending.of({ from, to }) }).state.field(atomicField).deco;
+}
+
 type Idle = (cb: (deadline: { timeRemaining(): number; didTimeout: boolean }) => void, opts?: { timeout: number }) => number;
 
 /**

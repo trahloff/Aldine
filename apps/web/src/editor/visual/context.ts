@@ -13,7 +13,10 @@ let bib: Map<string, BibEntry> | null = null;
 let bibKey = '';
 let files: { key: string; paths: Set<string> } | null = null;
 let notify: ((text: string) => void) | null = null;
-let rootPreamble: { key: string; text: string | null } | null = null;
+let rootPreamble: { key: string; text: string | null; read: number; reading: boolean; load: () => void } | null = null;
+
+/** How long the root preamble as read stands for the file: it changes in another tab or by a collaborator. */
+const ROOT_STALE_MS = 30_000;
 
 export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string) => void): void {
   const rootDir = rootFile && rootFile.includes('/') ? rootFile.slice(0, rootFile.lastIndexOf('/')) : '';
@@ -30,16 +33,38 @@ export function setVisualContext(projectId: string, branch: string, rootFile?: s
   const rootKey = `${key}::${rootFile ?? ''}`;
   if (!rootFile) rootPreamble = null;
   else if (rootPreamble?.key !== rootKey) {
-    rootPreamble = { key: rootKey, text: null };
-    api.readFile(projectId, branch, rootFile)
-      .then((text) => { if (rootPreamble?.key === rootKey) { rootPreamble.text = preambleOf(text); pokeViews(); } })
-      .catch(() => {});
+    const entry: NonNullable<typeof rootPreamble> = {
+      key: rootKey, text: null, read: 0, reading: false,
+      load() {
+        if (entry.reading) return;
+        entry.reading = true;
+        api.readFile(projectId, branch, rootFile)
+          .then((text) => {
+            entry.read = Date.now();
+            const pre = preambleOf(text);
+            if (rootPreamble === entry && pre !== entry.text) { entry.text = pre; pokeViews(); }
+          })
+          .catch(() => { entry.read = Date.now(); })
+          .finally(() => { entry.reading = false; });
+      },
+    };
+    rootPreamble = entry;
+    entry.load();
+  } else {
+    // a pane mounts on a tab switch, often right after the root file was edited
+    rootPreamble.load();
   }
+}
+
+/** The root preamble as last read; a read older than ROOT_STALE_MS starts another, and views redraw when it differs. */
+function currentRoot(): string | null {
+  if (rootPreamble && !rootPreamble.reading && rootPreamble.read && Date.now() - rootPreamble.read > ROOT_STALE_MS) rootPreamble.load();
+  return rootPreamble?.text ?? null;
 }
 
 /** The root file's preamble as last read, or null. */
 export function rootPreambleText(): string | null {
-  return rootPreamble?.text ?? null;
+  return currentRoot();
 }
 
 /**
@@ -47,7 +72,7 @@ export function rootPreambleText(): string | null {
  * the root file's as last read (a chapter \input by main.tex), or null.
  */
 export function preambleFor(doc: string): string | null {
-  return preambleOf(doc) ?? rootPreamble?.text ?? null;
+  return preambleOf(doc) ?? currentRoot();
 }
 
 /** Tells the person what a widget could not do, once the widget that would say so is gone. */

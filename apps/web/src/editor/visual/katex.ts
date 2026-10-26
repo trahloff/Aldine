@@ -31,11 +31,23 @@ export function katexReady(): boolean {
 const cache = new Map<string, string>();
 const CACHE_MAX = 500;
 
-/** Each distinct macro set gets a short id, so cache keys stay short. */
+/**
+ * Each distinct macro set gets a short id, so cache keys stay short. Typing
+ * a definition makes a new set per keystroke: past MACRO_SETS_MAX the ids
+ * and the renderings made with them go, and ids are never reused.
+ */
 const macroIds = new Map<string, number>();
+const MACRO_SETS_MAX = 16;
+let nextMacroId = 1;
 function macroId(macros: MacroSet): number {
+  if (macros === NO_MACROS || !macros.key) return 0;
   let id = macroIds.get(macros.key);
-  if (id === undefined) macroIds.set(macros.key, id = macroIds.size);
+  if (id !== undefined) return id;
+  if (macroIds.size >= MACRO_SETS_MAX) {
+    macroIds.clear();
+    for (const k of [...cache.keys()]) if (!/^[DI]0:/.test(k)) cache.delete(k);
+  }
+  macroIds.set(macros.key, id = nextMacroId++);
   return id;
 }
 

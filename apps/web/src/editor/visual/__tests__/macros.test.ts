@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
-import { preambleMacros } from '../preamble';
+import { macrosUsedBy, preambleMacros } from '../preamble';
 import { macroField, macrosOf } from '../macros';
 
 describe('preamble macros for formulas (#153)', () => {
@@ -40,5 +40,16 @@ describe('preamble macros for formulas (#153)', () => {
     const at = s.doc.toString().indexOf('\\newcommand{\\R}');
     s = s.update({ changes: { from: at, insert: '% ' } }).state;
     expect(Object.keys(macrosOf(s).defs)).toEqual(['N']);
+  });
+});
+
+describe('the macros a formula uses', () => {
+  it('follows definitions into the macros they use, and nothing else', () => {
+    const set = preambleMacros('\\newcommand{\\R}{\\mathbb{R}}\n\\newcommand{\\Rn}{\\R^n}\n\\newcommand{\\eps}{\\varepsilon}');
+    expect(Object.keys(macrosUsedBy('x \\in \\Rn', set).defs)).toEqual(['R', 'Rn']);
+    expect(macrosUsedBy('x^2', set).key).toBe('');
+    // editing a macro a formula does not use leaves its key as it was
+    const edited = preambleMacros('\\newcommand{\\R}{\\mathbb{R}}\n\\newcommand{\\Rn}{\\R^n}\n\\newcommand{\\eps}{\\epsilon}');
+    expect(macrosUsedBy('x \\in \\Rn', edited).key).toBe(macrosUsedBy('x \\in \\Rn', set).key);
   });
 });
