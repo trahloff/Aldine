@@ -81,7 +81,7 @@ export async function deleteBranch(id: string, name: string): Promise<void> {
     // `worktree remove` gives up on a directory that gains a file while it is
     // emptied (a thumbnail landing in .aldine-out) and keeps the worktree
     // registered, which makes `branch -D` refuse a checked-out branch.
-    removeTree(dir);
+    await removeTree(dir);
     await g.raw(['worktree', 'prune']);
     await g.raw(['branch', '-D', name]);
     // A deleted branch must not keep a stale attribution: nothing can commit

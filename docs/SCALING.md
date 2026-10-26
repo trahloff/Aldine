@@ -53,8 +53,9 @@ unaffected.
    one volume that serialization is gone and aux-file corruption becomes
    reachable; deleting a project forever or deleting a branch waits only for
    the typesets of the node handling the request, so one running on another
-   node can still fail the removal or leave its `.aldine-out` behind), OAuth authorization codes (a Connect whose token exchange
-   lands on another node than its consent fails), and the per-branch
+   node can still fail the removal or leave its `.aldine-out` behind), OAuth
+   authorization codes (a Connect whose token exchange lands on another node
+   than its consent fails), and the per-branch
    `contentVersion` counters behind the Agent API's conflict checks (a
    write answered by another node can be refused as `version_conflict`), and
    the project list's activity overlay (each project's last edit and last

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -1425,6 +1425,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // plan metering: block once a signed-in user is over their monthly compile budget
     if (user && await usage.overQuota(user.id)) {
       return reply.code(402).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'Monthly typeset limit reached — upgrade your plan for more compile time.', quotaExceeded: true });
+    }
+    // Refused before the budget so a typeset that cannot run spends none of it.
+    if (isBranchClosed(req.params.id, branch)) {
+      return reply.code(400).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: 'This branch is being deleted' });
     }
     // optional per-client budget (public demo hardening) — checked before the
     // concurrency gate so a rejected request never holds a slot

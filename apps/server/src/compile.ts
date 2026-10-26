@@ -218,6 +218,11 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
   return result;
 }
 
+/** Whether typesets of the branch are refused because it is being deleted. */
+export function isBranchClosed(projectId: string, branch: string): boolean {
+  return closedBranches.has(`${projectId}::${branch}`);
+}
+
 async function settled(match: (key: string) => boolean): Promise<void> {
   for (;;) {
     const tails = [...compileChain].filter(([k]) => match(k)).map(([, t]) => t);
