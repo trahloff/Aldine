@@ -50,6 +50,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `\providecommand` and `\DeclareMathOperator` definitions (without an
   optional argument). Formulas that use them render with them and open in
   the formula editor, which keeps `\R` as typed (#153).
+- Visual mode on a long paper builds its rendering around the caret and
+  the part in view first and the rest while the browser is idle, so the
+  first switch and KaTeX or the bibliography arriving no longer walk the
+  whole document at once (#154).
 
 ## [1.0.1] — 2026-10-25
 
