@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kit: ${{ fromJSON(github.event_name == 'push' && '["ijcai","icml","iop","frontiers","wiley","optica","tandf","usenix-security","siamart","cellpress"]' || format('["{0}"]', inputs.kit)) }}
+        kit: ${{ fromJSON(github.event_name == 'push' && '["frontiers","wiley","optica","tandf"]' || format('["{0}"]', inputs.kit)) }}
     steps:
       - uses: actions/checkout@v4
       - name: Inspect
@@ -57,8 +57,8 @@ jobs:
           unzip -l "$work/kit.zip" | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           mkdir -p "$work/x" && unzip -q "$work/kit.zip" -d "$work/x" || exit 0
-          find "$work/x" -type f \( -name '*.tex' -o -name '*.cls' -o -name '*.sty' \) -not -path '*__MACOSX*' -print0 |
+          find "$work/x" -type f \( -name '*.tex' -o -name '*.cls' -o -iname '*.sty' \) -not -path '*__MACOSX*' -print0 |
             while IFS= read -r -d '' f; do
               echo "=== ${f#$work/x/}"
-              grep -nE '\\(documentclass|usepackage|RequirePackage|LoadClass|input|include|includegraphics|bibliographystyle|bibliography|graphicspath)\b' "$f" | grep -vE '^[0-9]+:\s*%' | head -80
+              grep -nE '\\(documentclass|usepackage|RequirePackage|LoadClass|input|include|includegraphics|bibliographystyle|bibliography|graphicspath|set(main|sans|mono|math)font|newfontfamily|fontspec)\b|Path *=' "$f" | grep -vE '^[0-9]+:\s*%' | head -80 || true
             done
