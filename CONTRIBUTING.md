@@ -70,6 +70,17 @@ CI runs the typecheck/build/integration checks on pushes to `main` and on PRs
 a real Postgres service. The browser suites are not in CI yet: they need a TeX
 Live image, so run them locally before a PR that touches a headline feature.
 
+### Venue kits
+
+`templates/venues.json` points at publisher downloads, which are never
+committed and are best not fetched on your own machine. The **Venue kit
+inspect** workflow downloads one on a GitHub runner and lists what it holds
+and which files its sources load:
+`gh workflow run venue-kit-inspect.yml -f kit=<id>` (add `-f url=<address>` to
+try another official source). Run **Template previews** on your branch to
+typeset the changed kits; a branch run keeps the images as an artifact rather
+than proposing them.
+
 ## Contributor License Agreement
 
 The first pull request you open gets a `license/cla` status check that links

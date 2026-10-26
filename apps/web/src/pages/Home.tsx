@@ -1007,7 +1007,14 @@ export default function Home() {
       {importFrom && (
         <RemoteImport key={importFrom} provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}
-      {creating && <NewProjectSheet template={creating.template} provisioning={remotes.some((r) => r.provisioning)} onClose={() => setCreating(null)} />}
+      {creating && (
+        <NewProjectSheet
+          template={creating.template}
+          provisioning={remotes.some((r) => r.provisioning)}
+          onClose={() => setCreating(null)}
+          onImportZip={() => zipInput.current?.click()}
+        />
+      )}
     </div>
   );
 }

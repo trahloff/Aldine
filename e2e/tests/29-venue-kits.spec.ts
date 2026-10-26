@@ -96,4 +96,26 @@ test.describe('venue kits fetched from the publisher', () => {
     expect(text).toContain('no-such-kit.zip');
     expect(text).toContain('https://example.org/authors');
   });
+
+  test('a kit the publisher only hands to a browser is downloaded and imported, not created', async ({ page, request }) => {
+    const tiles = await kitTemplates(request);
+    const hand = tiles.find((t) => t.id === 'venue:e2ehand')!;
+    expect(hand, 'the manual fixture venue is listed').toBeTruthy();
+
+    await openGallery(page);
+    await page.getByTestId('template-search').fill('E2E Manual Kit');
+    await expect(page.getByTestId('template-kit-venue:e2ehand')).toContainText(`Download the kit from ${hand.kit!.host}, then import the ZIP`);
+    await pick(page, 'E2E Manual Kit', 'venue:e2ehand');
+    await expect(page.getByTestId('template-choice')).toContainText('does not allow automated downloads');
+
+    // Create is not offered: a project made here would not carry the venue's class.
+    await expect(page.getByTestId('create-project')).toHaveCount(0);
+    await expect(page.getByTestId('kit-download')).toHaveAttribute('href', hand.kit!.url);
+    await expect(page.getByTestId('kit-download')).toHaveAttribute('target', '_blank');
+
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByTestId('kit-import-zip').click();
+    await chooser;
+    await expect(page.getByTestId('new-project-sheet')).toHaveCount(0);
+  });
 });

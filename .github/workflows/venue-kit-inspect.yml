@@ -17,9 +17,10 @@ on:
         description: Inspect this URL instead of the entry's (an alternative official source)
         required: false
         type: string
-  push:
-    branches: [venue-kits-172]
-    paths: [.github/workflows/venue-kit-inspect.yml]
+      grep:
+        description: Also print the lines of every file in the kit that match this extended regex
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -28,16 +29,13 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        kit: ${{ fromJSON(github.event_name == 'push' && '["frontiers","wiley","optica","tandf"]' || format('["{0}"]', inputs.kit)) }}
     steps:
       - uses: actions/checkout@v4
       - name: Inspect
         env:
-          KIT: ${{ matrix.kit }}
+          KIT: ${{ inputs.kit }}
           URL_OVERRIDE: ${{ inputs.url }}
+          GREP: ${{ inputs.grep }}
         run: |
           set -uo pipefail
           url="${URL_OVERRIDE:-$(jq -r --arg id "$KIT" '.venues[] | select(.id == $id) | (.kit.url // .kit.urls[0])' templates/venues.json)}"
@@ -62,3 +60,7 @@ jobs:
               echo "=== ${f#$work/x/}"
               grep -nE '\\(documentclass|usepackage|RequirePackage|LoadClass|input|include|includegraphics|bibliographystyle|bibliography|graphicspath|set(main|sans|mono|math)font|newfontfamily|fontspec)\b|Path *=' "$f" | grep -vE '^[0-9]+:\s*%' | head -80 || true
             done
+          if [ -n "${GREP:-}" ]; then
+            echo "=== lines matching: $GREP"
+            grep -rnIE -- "$GREP" "$work/x" | sed "s|^$work/x/||" | head -200 || true
+          fi
