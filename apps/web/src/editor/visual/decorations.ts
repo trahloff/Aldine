@@ -8,6 +8,7 @@ import { figureChip, tableChip, citeChip, refChip } from './widgets/chips';
 import { TableWidget, tableModel } from './widgets/table';
 import { ItemMarkerWidget } from './widgets/listMarker';
 import { SymbolWidget } from './widgets/symbol';
+import { macrosOf } from './macros';
 
 /** Copied from codemirror-lang-latex (internal SECTION_RANK, not exported). */
 export const SECTION_RANK: Record<string, number> = {
@@ -200,6 +201,7 @@ const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
  */
 export function walk(state: EditorState, reveals: readonly RevealRange[], from: number, to: number, emit: WalkEmit): void {
   const doc = state.doc;
+  const macros = macrosOf(state);
   // enumerate counters per list nesting depth
   const listStack: Array<{ name: string; counter: number }> = [];
   syntaxTree(state).iterate({
@@ -324,7 +326,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       const math = mathParts(n.name, n.node, doc);
       if (math) {
         if (intersectsReveal(reveals, n.from, n.to)) return false;
-        const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from);
+        const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from, macros);
         emit.atomic(n.from, n.to, Decoration.replace({ widget }));
         return false; // math interior is the widget's business
       }

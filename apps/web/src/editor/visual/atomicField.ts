@@ -7,6 +7,7 @@ import type { SyntaxNode, Tree } from '@lezer/common';
 import { revealField, RevealRange, RevealState } from './reveal';
 import { CONSTRUCT_NODES, atomicRangesIn, buildAtomic } from './decorations';
 import { resourceArrived } from './refresh';
+import { macrosOf } from './macros';
 
 interface AtomicValue { deco: DecorationSet; forReveal: RevealState }
 
@@ -176,7 +177,10 @@ export const atomicField = StateField.define<AtomicValue>({
   },
   update(value, tr) {
     const rv = tr.state.field(revealField);
-    if (tr.effects.some((e) => e.is(resourceArrived))) return { deco: buildAtomic(tr.state, rv.ranges), forReveal: rv };
+    // every formula's rendering depends on the macros
+    if (tr.effects.some((e) => e.is(resourceArrived)) || macrosOf(tr.state) !== macrosOf(tr.startState)) {
+      return { deco: buildAtomic(tr.state, rv.ranges), forReveal: rv };
+    }
     if (!tr.docChanged && rv === value.forReveal && syntaxTree(tr.state) === syntaxTree(tr.startState)) return value;
     const deco = update(value, tr, rv) ?? buildAtomic(tr.state, rv.ranges);
     return { deco, forReveal: rv };

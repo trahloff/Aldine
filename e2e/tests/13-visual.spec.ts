@@ -1500,6 +1500,52 @@ test.describe('visual editor: pastes, escapes, keys and formulas', () => {
       await cleanup(request, id);
     }
   });
+
+  test('formulas that use preamble macros open in the formula editor and keep the macros as typed (#153)', async ({ page, request }) => {
+    const doc = [
+      '\\documentclass{article}',
+      '\\usepackage{amsmath,amssymb}',
+      '\\newcommand{\\R}{\\mathbb{R}}',
+      '\\newcommand{\\norm}[1]{\\lVert #1 \\rVert}',
+      '\\DeclareMathOperator*{\\argmax}{arg\\,max}',
+      '\\begin{document}',
+      'Reals $x \\in \\R$ and $\\norm{v}$ and $\\argmax_i f$.',
+      'plain end',
+      '\\end{document}',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Macros', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      const math = page.getByTestId('vis-math');
+      await expect(math).toHaveCount(3);
+      // KaTeX knows the macros too: no red fallback
+      await expect(math.nth(0).locator('.katex-error')).toHaveCount(0);
+      await expect(math.nth(1).locator('.katex-error')).toHaveCount(0);
+
+      await math.nth(0).click();
+      await appendInFormula(page, '+1');
+      let expected = doc.replace('$x \\in \\R$', '$x \\in \\R+1$');
+      await expectStored(request, id, expected);
+
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').nth(1).click();
+      await appendInFormula(page, '+1');
+      expected = expected.replace('$\\norm{v}$', '$\\norm{v}+1$');
+      await expectStored(request, id, expected);
+
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').nth(2).click();
+      await expect(page.getByTestId('math-popover')).toBeVisible();
+      await page.getByTestId('math-popover-done').click();
+
+      await page.waitForTimeout(2500);
+      expect(await stored(request, id)).toBe(expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
 });
 
 test.describe('visual editor on a phone (VIS-21)', () => {

@@ -45,6 +45,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   line's own indentation, and Heading on an empty line writes an empty
   heading with the caret in it (#151).
 
+### Changed
+- Visual mode reads the preamble's `\newcommand`, `\renewcommand`,
+  `\providecommand` and `\DeclareMathOperator` definitions (without an
+  optional argument). Formulas that use them render with them and open in
+  the formula editor, which keeps `\R` as typed (#153).
+
 ## [1.0.1] — 2026-10-25
 
 ### Added

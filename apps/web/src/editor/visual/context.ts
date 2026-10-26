@@ -28,12 +28,18 @@ export function setVisualContext(projectId: string, branch: string, rootFile?: s
       .catch(() => { bib = new Map(); });
   }
   const rootKey = `${key}::${rootFile ?? ''}`;
-  if (rootFile && rootPreamble?.key !== rootKey) {
+  if (!rootFile) rootPreamble = null;
+  else if (rootPreamble?.key !== rootKey) {
     rootPreamble = { key: rootKey, text: null };
     api.readFile(projectId, branch, rootFile)
       .then((text) => { if (rootPreamble?.key === rootKey) { rootPreamble.text = preambleOf(text); pokeViews(); } })
       .catch(() => {});
   }
+}
+
+/** The root file's preamble as last read, or null. */
+export function rootPreambleText(): string | null {
+  return rootPreamble?.text ?? null;
 }
 
 /**

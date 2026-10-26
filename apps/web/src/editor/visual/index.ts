@@ -7,6 +7,7 @@ import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import { revealField } from './reveal';
 import { atomicField } from './atomicField';
+import { macroField } from './macros';
 import { markPlugin } from './markPlugin';
 import { visualTheme } from './theme';
 import { ensureKatex } from './katex';
@@ -183,7 +184,7 @@ export { recordOwnCopies } from './clipboard';
 export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [
-    revealField, atomicField, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle,
+    revealField, macroField, atomicField, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle,
     commentRangesField, suggestField, rangeTracker, remoteCaretReveal(deps.awareness), headingCloserStop,
     Prec.high(keymap.of([
       // elsewhere, and in a formula that only edits as source, Mod-Enter keeps its usual meaning
