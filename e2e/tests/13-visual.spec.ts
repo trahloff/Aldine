@@ -1454,6 +1454,52 @@ test.describe('visual editor: pastes, escapes, keys and formulas', () => {
       await cleanup(request, id);
     }
   });
+
+  test('Enter and Backspace around lists, Enter in body text and a heading on an empty line (#151)', async ({ page, request }) => {
+    const doc = '\\section{List}\nBody text.\n\\begin{itemize}\n\\item One\n\\item Two\n\\end{itemize}\nAfter list.\nplain end\n';
+    const id = await seedDoc(request, 'Visual List Keys', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      // Enter at the end of the last item starts a new one; Enter on the empty one leaves the list
+      await page.locator('.cm-line', { hasText: 'Two' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Three');
+      let expected = doc.replace('\\item Two\n', '\\item Two\n\\item Three\n');
+      await expectStored(request, id, expected);
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Para');
+      expected = expected.replace('\\end{itemize}\n', '\\end{itemize}\nPara\n');
+      await expectStored(request, id, expected);
+      // Backspace at the start of the line after the list goes into it, deleting nothing
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('!');
+      expected = expected.replace('\\item Three\n', '\\item Three!\n');
+      await expectStored(request, id, expected);
+      await expect(page.locator('.cm-content')).not.toContainText('\\end{itemize}');
+      // a new line under body text in a section is not indented
+      await page.locator('.cm-line', { hasText: 'Body text.' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('More');
+      expected = expected.replace('Body text.\n', 'Body text.\nMore\n');
+      await expectStored(request, id, expected);
+      // Heading level on an empty line writes an empty heading to type into
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.getByTestId('format-toolbar').getByLabel('Heading level').selectOption('1');
+      await expect(page.locator('.cm-content')).toBeFocused();
+      await page.keyboard.type('New');
+      expected = expected.replace('plain end\n', 'plain end\n\\section{New}\n');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
 });
 
 test.describe('visual editor on a phone (VIS-21)', () => {

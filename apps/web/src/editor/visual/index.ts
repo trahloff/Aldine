@@ -20,7 +20,7 @@ import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
 import { labelsOnlyTail, mathParts } from './decorations';
-import { breakAfterHeading } from './commands';
+import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter, paragraphEnter } from './commands';
 
 /**
  * Clicking a rendered widget: math opens the MathLive editor; chips put the
@@ -189,6 +189,10 @@ export function visualExtensions(deps: VisualDeps): Extension {
       // elsewhere, and in a formula that only edits as source, Mod-Enter keeps its usual meaning
       { key: 'Mod-Enter', run: (view) => openAtCursor(view) === 'opened' },
       { key: 'Enter', run: breakAfterHeading, shift: breakAfterHeading },
+      { key: 'Enter', run: listItemEnter },
+      { key: 'Enter', run: paragraphEnter },
+      { key: 'Backspace', run: backspaceHiddenLine },
+      { key: 'Delete', run: deleteHiddenLine },
       { key: 'End', run: headingEnd },
       { mac: 'Cmd-ArrowRight', run: headingEnd },
     ])),

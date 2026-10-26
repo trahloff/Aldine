@@ -38,6 +38,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `\url{…}` as a link. `\centering` and a `\label` on a heading's line
   stay hidden until the caret is on them, and End in such a heading stops
   before its brace (#150).
+- Visual mode keys around lists and headings: Enter at the end of a list
+  item starts the next `\item`, and Enter on an empty item leaves the
+  list. Backspace and Delete next to a list's hidden `\begin`/`\end` move
+  the caret past it instead of deleting it. Enter in body text keeps the
+  line's own indentation, and Heading on an empty line writes an empty
+  heading with the caret in it (#151).
 
 ## [1.0.1] — 2026-10-25
 
