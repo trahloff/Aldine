@@ -37,7 +37,7 @@ export interface TemplateInfo {
   origin?: TemplateOrigin;
   source?: TemplateSource;
   /** Fetched-kit venues: the publisher the kit is downloaded from at create time. */
-  kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+  kit?: { host: string; url: string; homepage?: string; termsUrl?: string; manual?: boolean };
   /** Page 1 of the template typeset once per version (templatepreviews.ts); absent until rendered. */
   preview?: { w: number; h: number; v: string };
 }

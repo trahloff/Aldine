@@ -291,7 +291,7 @@ export interface TemplateInfo {
   /** Which listing the template comes from; `label` is the repository label for `repo`. */
   source?: { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string };
   /** Fetched-kit venues: where the official kit is downloaded from at create time. */
-  kit?: { host: string; url: string; homepage?: string; termsUrl?: string };
+  kit?: { host: string; url: string; homepage?: string; termsUrl?: string; manual?: boolean };
   /** Page 1 of the template, typeset once per version by the server. Absent until rendered, and for venues. */
   preview?: { w: number; h: number; v: string };
 }

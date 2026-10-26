@@ -142,6 +142,7 @@ if (!checkOnly && withVenues) {
 if (!checkOnly && withKits) {
   for (const entry of venueKits()) {
     await renderVenue('kit', entry.id, entry.name, kitVersionKey(entry), async () => {
+      if (entry.kit.manual) return { error: `the user downloads the kit by hand (${entry.kit.host} does not allow automated downloads)` };
       const seed = await venueKitSeed(entry);
       return seed.venueKit.ok ? seed.files : { error: `the kit could not be downloaded (${seed.venueKit.reason})` };
     });
