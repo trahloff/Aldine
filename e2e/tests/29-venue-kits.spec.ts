@@ -116,6 +116,6 @@ test.describe('venue kits fetched from the publisher', () => {
     const chooser = page.waitForEvent('filechooser');
     await page.getByTestId('kit-import-zip').click();
     await chooser;
-    await expect(page.getByTestId('new-project-sheet')).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'New project' })).toHaveCount(0);
   });
 });
