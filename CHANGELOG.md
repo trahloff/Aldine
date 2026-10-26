@@ -8,6 +8,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ## [Unreleased]
 
 ### Fixed
+- Deleting a branch while it typesets waits for the typeset, removes the
+  whole worktree and frees the name for a new branch, instead of failing or
+  leaving the old output behind. Typesets asked for during the delete are
+  refused (#161).
 - The ICML, IJCAI, IOP, Frontiers, Optica and Taylor & Francis templates
   create projects that typeset on the first try, and show page 1 in the
   chooser (#172).

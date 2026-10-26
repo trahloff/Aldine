@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -1522,7 +1522,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!name) return reply.code(400).send({ error: 'name required' });
     if (name === 'main') return reply.code(400).send({ error: 'Cannot delete the main branch' });
     try {
-      await gitops.deleteBranch(req.params.id, name);
+      await withBranchTypesetsClosed(req.params.id, name, () => gitops.deleteBranch(req.params.id, name));
     } catch (err) {
       return reply.code(409).send({ error: `Could not delete branch: ${(err as Error).message}` });
     }
