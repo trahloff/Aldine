@@ -136,8 +136,11 @@ same run. Until then nothing a self-hoster pulls has changed.
 npm pkg set version=0.4.0 --workspaces --include-workspace-root
 #    and the ${ALDINE_VERSION:-…} default in docker-compose.yml and the README
 #    block, the image tags and x-casaos version in
-#    deploy/casaos/docker-compose.yml, and the image tags in docs/TRUENAS.md
-#    (scripts/check-release-pins.mjs tells you which one you missed)
+#    deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md,
+#    and the JSON-LD version and date on aldine.dev:
+sed -i '' -E 's/("softwareVersion": )"[^"]+"/\1"0.4.0"/; s/("dateModified": )"[^"]+"/\1"'"$(date +%F)"'"/' site/index.html
+#    (GNU sed: -i without ''; scripts/check-release-pins.mjs tells you which
+#    pin you missed)
 # 3. commit, then tag
 git tag v0.4.0 && git push origin main v0.4.0
 # 4. when the run pauses at "promote", try 0.4.0 somewhere real, then approve

@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/overleaf-compile-timeout/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-24",
+      "dateModified": "2026-10-26",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -254,7 +254,7 @@
     environment:
       COMPILE_TIMEOUT_MS: "300000"</code></pre>
 <p>Then run <code>docker compose up -d</code>. The configuration table in <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">deploy/README.md</a> lists every variable.</p>
-<p>Three things to keep in proportion. A longer timeout does not fix an error or an infinite loop; it only makes you wait longer for the same failure, so the fixes above still apply. Aldine's default of 120 seconds is shorter than the 240 seconds of Overleaf's premium plans until you raise it. And Aldine is self-hosted only: you need a server, it is at v0.x, and it has no keystroke-level track changes. The list is in the <a href="/self-hosting/#other-limits">self-hosting guide</a>, and the install steps are on <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
+<p>Three things to keep in proportion. A longer timeout does not fix an error or an infinite loop; it only makes you wait longer for the same failure, so the fixes above still apply. Aldine's default of 120 seconds is shorter than the 240 seconds of Overleaf's premium plans until you raise it. And Aldine is self-hosted only: you need a server, it is young (1.0 since October 2026), and it has no keystroke-level track changes. The list is in the <a href="/self-hosting/#other-limits">self-hosting guide</a>, and the install steps are on <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
 <div class="cta-row">
 <a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
 <a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>

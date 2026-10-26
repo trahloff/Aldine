@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/self-hosted-overleaf/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-24",
+      "dateModified": "2026-10-26",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -184,7 +184,7 @@ bin/up</code></pre>
 <tr><th scope="row">Compile isolation</th><td>Always on: compiler container without network egress, all capabilities dropped, restricted shell-escape</td><td>No sandboxed compiles (<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">source</a>)</td><td>Sandboxed compiles (<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">source</a>)</td></tr>
 <tr><th scope="row">Zotero</th><td>My Library or a group library, whole or one collection, with <code>.bib</code> refresh</td><td>Overleaf lists Zotero among the third-party integrations of its cloud platform (<a href="https://www.overleaf.com/for/enterprises/when-to-use-overleaf-on-premises-vs-in-the-cloud">source</a>); it is not in the on-premises comparison</td><td>Same as Community Edition (<a href="https://www.overleaf.com/for/enterprises/when-to-use-overleaf-on-premises-vs-in-the-cloud">source</a>)</td></tr>
 <tr><th scope="row">Templates</th><td>4 starter templates, a template per publisher class in the compiler&#39;s TeX Live (15 in the published images), 25 conference and journal kits downloaded from the publisher, plus your own from any git repository</td><td>No private template management (<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">source</a>)</td><td>Private template management system (<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">source</a>)</td></tr>
-<tr><th scope="row">Maturity</th><td>Young: v0.x, first release July 2026</td><td>Overleaf dates from 2011 (<a href="https://www.overleaf.com/about">source</a>)</td><td>Overleaf dates from 2011 (<a href="https://www.overleaf.com/about">source</a>)</td></tr>
+<tr><th scope="row">Maturity</th><td>Young: 1.0 since October 2026, first release July 2026</td><td>Overleaf dates from 2011 (<a href="https://www.overleaf.com/about">source</a>)</td><td>Overleaf dates from 2011 (<a href="https://www.overleaf.com/about">source</a>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -196,7 +196,7 @@ bin/up</code></pre>
 
 <h2 id="when-overleaf">Where Community Edition or Server Pro is the better choice</h2>
 <ul>
-<li><strong>Maturity.</strong> Overleaf dates from 2011. <span class="src">(<a href="https://www.overleaf.com/about">Overleaf: about</a>, as of October 2026)</span> Aldine is at v0.x and its first release was in July 2026.</li>
+<li><strong>Maturity.</strong> Overleaf dates from 2011. <span class="src">(<a href="https://www.overleaf.com/about">Overleaf: about</a>, as of October 2026)</span> Aldine's first release was in July 2026, and 1.0 followed in October 2026.</li>
 <li><strong>Keystroke-level track changes.</strong> Server Pro has real-time track changes. Aldine has review comments with suggested edits, which is a different and smaller feature.</li>
 <li><strong>Templates.</strong> overleaf.com hosts a public template gallery for journals, theses, CVs and presentations <span class="src">(<a href="https://www.overleaf.com/latex/templates">Overleaf template gallery</a>, as of October 2026)</span>, and Server Pro has a private template system. Aldine ships 4 starter templates, a template for each publisher class its TeX Live carries (15 in the published images) and 25 official conference and journal kits it downloads from the publisher, and loads your own from git repositories.</li>
 <li><strong>SAML or LDAP.</strong> Server Pro documents both.</li>
@@ -205,7 +205,7 @@ bin/up</code></pre>
 </ul>
 
 <h2 id="aldine">Where Aldine fits</h2>
-<p>Aldine is for groups that want the features in the Server Pro column that matter to them (review, git, sign-in with their identity provider, isolated compiles) in a free install that is small enough to understand: two containers, flat files, and projects stored as plain git repositories. Postgres is optional. The trade-offs are those of a young project: releases are still v0.x, review works through comments with suggested edits and not through tracked keystrokes, and the supported setup is a single app node that you run yourself. See <a href="/self-hosting/#other-limits">limits to know before you rely on it</a>.</p>
+<p>Aldine is for groups that want the features in the Server Pro column that matter to them (review, git, sign-in with their identity provider, isolated compiles) in a free install that is small enough to understand: two containers, flat files, and projects stored as plain git repositories. Postgres is optional. The trade-offs are those of a young project: the first release was in July 2026, review works through comments with suggested edits and not through tracked keystrokes, and the supported setup is a single app node that you run yourself. See <a href="/self-hosting/#other-limits">limits to know before you rely on it</a>.</p>
 <p>The install steps are on <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>, and <a href="/overleaf-git/">git with Overleaf and a git-native alternative</a> goes deeper on version control.</p>
 <div class="cta-row">
 <a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>

@@ -10,6 +10,8 @@
 //     not apply ${VAR:-default}) and its x-casaos version, which the app store
 //     shows as the release
 //   - the literal image tags in the paste-in YAML of docs/TRUENAS.md
+//   - the JSON-LD "softwareVersion" on aldine.dev (site/index.html), which
+//     search engines show as the current release
 // With --tag vX.Y.Z (the release preflight) the tag must match too, and the
 // CHANGELOG must already carry a "## [X.Y.Z]" heading.
 import { readFileSync } from 'node:fs';
@@ -50,6 +52,8 @@ for (const [file, pin, missing] of pinned) {
 }
 const casaVersion = /^ {2}version: "([^"]+)"$/m.exec(read('deploy/casaos/docker-compose.yml'));
 found.push(['deploy/casaos/docker-compose.yml (x-casaos version)', casaVersion ? casaVersion[1] : '<no x-casaos version>']);
+const siteVersion = /"softwareVersion": "([^"]+)"/.exec(read('site/index.html'));
+found.push(['site/index.html (softwareVersion)', siteVersion ? siteVersion[1] : '<no softwareVersion>']);
 
 const expected = found[0][1];
 const problems = found.filter(([, v]) => v !== expected).map(([where, v]) => `${where}: ${v}`);
@@ -64,7 +68,7 @@ if (tag) {
 if (problems.length) {
   console.error(`check-release-pins: expected every pin to be ${expected} (from package.json), but:`);
   for (const p of problems) console.error(`  - ${p}`);
-  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default, the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, and the image tags in docs/TRUENAS.md.');
+  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default, the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, and softwareVersion (with dateModified) in site/index.html.');
   process.exit(1);
 }
 console.log(`check-release-pins: all ${found.length} pins say ${expected}${tag ? `, tag ${tag} matches` : ''}`);
