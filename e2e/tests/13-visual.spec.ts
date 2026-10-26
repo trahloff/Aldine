@@ -1413,6 +1413,47 @@ test.describe('visual editor: pastes, escapes, keys and formulas', () => {
       await cleanup(request, linked);
     }
   });
+
+  test('escapes, \\ldots and \\url render as what they typeset, \\centering and a heading\'s \\label hide, and no byte changes (#150)', async ({ page, request }) => {
+    const doc = [
+      '\\section{Costs} \\label{sec:costs}',
+      'Save 50\\% \\& \\$5 on \\#3 a\\_b, \\textasciitilde{} and more\\ldots{} at \\url{https://example.org/x}.',
+      '\\begin{table}',
+      '\\centering',
+      '\\begin{tabular}{ll}',
+      'a & b \\\\',
+      '\\end{tabular}',
+      '\\end{table}',
+      'plain end',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Escapes', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await expect(page.getByTestId('vis-table')).toBeVisible();
+      const text = await shownText(page);
+      expect(text).toContain('Save 50% & $5 on #3 a_b, ~ and more… at https://example.org/x.');
+      expect(text).not.toContain('\\centering');
+      expect(text).not.toContain('\\label');
+      await expect(page.locator('.cm-vis-url')).toHaveText('https://example.org/x');
+      // a tour across the escapes, the link and the heading writes nothing
+      await page.locator('.cm-line', { hasText: 'Save 50' }).click();
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 90; i++) await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('End');
+      await page.locator('.cm-line.cm-vis-h1').click();
+      await expect(page.locator('.cm-content')).toContainText('\\label{sec:costs}');
+      await page.waitForTimeout(2500);
+      expect(await stored(request, id)).toBe(doc);
+      // End in the heading stops before the brace its label hides with
+      await page.keyboard.press('End');
+      await page.keyboard.type(' now');
+      await expectStored(request, id, doc.replace('{Costs}', '{Costs now}'));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
 });
 
 test.describe('visual editor on a phone (VIS-21)', () => {

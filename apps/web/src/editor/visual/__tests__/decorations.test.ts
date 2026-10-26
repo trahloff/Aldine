@@ -115,3 +115,45 @@ describe('visual decorations', () => {
     expect(atomicRanges(s).some(([f]) => f === 0)).toBe(true);
   });
 });
+
+describe('escapes, \\url, \\centering and a heading\'s \\label (#150)', () => {
+  function shown(s: EditorState) {
+    const out: string[] = [];
+    buildAtomic(s, s.field(revealField).ranges).between(0, s.doc.length, (from, to, deco) => {
+      const w = deco.spec.widget as { text?: string } | undefined;
+      out.push(`${s.doc.sliceString(from, to)}${w?.text !== undefined ? `→${w.text}` : ''}`);
+    });
+    return out;
+  }
+
+  it('renders escapes and \\ldots as their characters, never \\\\ or an argument', () => {
+    const doc = 'Save 50\\% \\& \\$5 \\#3 a\\_b \\{x\\} c\\textasciitilde{} d\\ldots{} e\\ldots f \\\\ g\\ h \\textasciitilde{x}\n';
+    expect(shown(state(doc, { anchor: doc.length }))).toEqual([
+      '\\%→%', '\\&→&', '\\$→$', '\\#→#', '\\_→_', '\\{→{', '\\}→}', '\\textasciitilde{}→~', '\\ldots{}→…', '\\ldots→…',
+    ]);
+  });
+
+  it('shows \\url as a link, and its source while the caret is in it', () => {
+    const doc = 'See \\url{https://example.org/a_b} now.';
+    const s = state(doc, { anchor: doc.length });
+    expect(shown(s)).toEqual(['\\url{', '}']);
+    expect(markRanges(s).map(([f, t, c]) => [doc.slice(f, t), c])).toEqual([['https://example.org/a_b', 'cm-vis-url']]);
+    expect(shown(state(doc, { anchor: 12 }))).toEqual([]);
+  });
+
+  it('hides \\centering until the caret is on it', () => {
+    const doc = '\\begin{table}\n  \\centering\n\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n\\end{table}\n{\\centering x\\par}\nend';
+    const s = state(doc, { anchor: doc.length });
+    const hidden = shown(s);
+    expect(hidden).toContain('  \\centering');
+    expect(hidden).toContain('\\centering ');
+    const inline = doc.lastIndexOf('\\centering');
+    expect(shown(state(doc, { anchor: inline + 3 }))).not.toContain('\\centering ');
+  });
+
+  it('hides a heading\'s same-line \\label with its brace until the caret is in the heading', () => {
+    const doc = '\\section{Intro} \\label{sec:intro}\nBody';
+    expect(shown(state(doc, { anchor: doc.length }))).toEqual(['\\section{', '} \\label{sec:intro}']);
+    expect(shown(state(doc, { anchor: 10 }))).toEqual([]);
+  });
+});

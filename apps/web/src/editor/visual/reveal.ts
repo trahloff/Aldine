@@ -14,7 +14,7 @@ const UNIT_NAMES = new Set([
   'TextBoldCommand', 'TextItalicCommand', 'EmphasisCommand', 'UnderlineCommand', 'TextSmallCapsCommand',
   'DollarMath', 'BracketMath', 'ParenMath', 'EquationEnvironment', 'EquationArrayEnvironment',
   'FigureEnvironment', 'TableEnvironment', 'TabularEnvironment',
-  'Cite', 'Ref', 'BeginEnv', 'EndEnv', 'Caption',
+  'Cite', 'Ref', 'BeginEnv', 'EndEnv', 'Caption', 'UrlCommand', 'Centering',
 ]);
 // \item reveals only its marker token, not the item's whole content.
 const ITEM = 'Item';
@@ -51,7 +51,7 @@ export function computeRevealRanges(state: EditorState, remote: readonly number[
     const end = line.to - (line.text.length - line.text.trimEnd().length);
     if (start > end || (start === line.from && end === line.to) || (pos > start && pos < end)) return;
     for (let n: SyntaxNode | null = tree.resolveInner(start, 1); n && n.from === start; n = n.parent) {
-      if ((n.name === 'BeginEnv' || n.name === 'EndEnv') && n.to === end) pushUnique(out, { from: n.from, to: n.to });
+      if ((n.name === 'BeginEnv' || n.name === 'EndEnv' || n.name === 'Centering') && n.to === end) pushUnique(out, { from: n.from, to: n.to });
     }
   };
   for (const r of state.selection.ranges) {

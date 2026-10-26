@@ -290,8 +290,8 @@ describe('lists and headings keep the caret inside (VIS-07)', () => {
     expect(lines).toEqual([[1, 'cm-vis-h cm-vis-h1'], [2, 'cm-vis-h cm-vis-h2'], [3, 'cm-vis-h cm-vis-h1']]);
     const runs = marks.filter(([, , c]) => c === 'cm-vis-hrun').map(([f, t]) => doc.slice(f, t));
     expect(runs).toEqual(['Run-in']);
-    // a closer followed by a label is not where End and clicks stop
-    expect(atomics(s).filter((a) => a.spec.headingCloser)).toEqual([]);
+    // a label alone after the closer hides with it, and End stops before both (#150)
+    expect(atomics(s).filter((a) => a.spec.headingCloser).map((a) => doc.slice(a.from, a.to))).toEqual(['}\\label{sec:intro}', '} \\label{sec:setup}']);
   });
 });
 

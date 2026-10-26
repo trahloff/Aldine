@@ -53,6 +53,9 @@ const PAPER = [
   '% a comment with $math$',
   '\\subsection{Details \\textbf{here}}',
   'More \\underline{under} and \\textsc{caps}.',
+  '\\subsection{Costs} \\label{sec:costs}',
+  'Save 50\\% \\& more\\ldots{} at \\url{https://example.org/a_b}, \\{x\\} \\textasciitilde{} ok \\\\ next.',
+  '{\\centering inline centred\\par}',
   '\\end{document}',
   '',
 ].join('\n');
@@ -62,6 +65,7 @@ const TOKENS = [
   '\\begin{enumerate}\n\\item z\n\\end{enumerate}', '%', '\n', '\n\n', 'x', ' ', '&', '\\\\', '\\section{', '}',
   '\\[', '\\]', '\\cite{k}', '\\ref{r}', '\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}', '\\end{figure}',
   '\\begin{verbatim}', '\\caption{c}', '[p.~1]', '  ', '\\label{l}',
+  '\\%', '\\ldots', '{}', '\\url{', '\\centering', '\\centering\n',
 ];
 
 function describeSet(set: DecorationSet, len: number): string[] {

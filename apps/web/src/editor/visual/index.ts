@@ -19,7 +19,7 @@ import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } fr
 import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
-import { mathParts } from './decorations';
+import { labelsOnlyTail, mathParts } from './decorations';
 import { breakAfterHeading } from './commands';
 
 /**
@@ -143,8 +143,8 @@ export function editAtCursor(view: EditorView): 'opened' | 'source' | null {
 }
 
 /**
- * End inside a heading whose `}` ends its line goes to the end of the heading
- * text, before the brace (where a click past the text lands too); only an
+ * End inside a heading whose `}` ends its line (or is followed by nothing
+ * but its \label) goes to the end of the heading text, before the brace (where a click past the text lands too); only an
  * arrow key passes the brace.
  */
 function headingEnd(view: EditorView): boolean {
@@ -155,7 +155,7 @@ function headingEnd(view: EditorView): boolean {
   const close = cmd?.getChild('SectioningArgument')?.getChild('CloseBrace');
   if (!cmd || !close || close.to !== cmd.to || sel.head > close.from) return false;
   const line = state.doc.lineAt(sel.head);
-  if (close.to > line.to || state.doc.sliceString(close.to, line.to).trim()) return false;
+  if (close.to > line.to || !labelsOnlyTail(state.doc.sliceString(close.to, line.to))) return false;
   if (sel.head < close.from) view.dispatch({ selection: { anchor: close.from }, scrollIntoView: true, userEvent: 'select' });
   return true;
 }

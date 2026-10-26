@@ -33,6 +33,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `hyperref` or `biblatex`, and keeps the address as text otherwise. Plain
   text is escaped like rich text, so `50% & $5` stays text; LaTeX copied
   from an editor pastes as it is (#149).
+- Visual mode shows `\%`, `\&`, `\$`, `\#`, `\_`, `\{`, `\}`,
+  `\textasciitilde{}` and `\ldots` as the characters they typeset, and
+  `\url{…}` as a link. `\centering` and a `\label` on a heading's line
+  stay hidden until the caret is on them, and End in such a heading stops
+  before its brace (#150).
 
 ## [1.0.1] — 2026-10-25
 
