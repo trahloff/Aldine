@@ -14,6 +14,7 @@ interface Template {
   category?: string;
   documentClass?: string;
   license?: string;
+  kit?: { manual?: boolean };
 }
 
 async function templates(request: APIRequestContext): Promise<Template[]> {
@@ -30,7 +31,8 @@ async function templates(request: APIRequestContext): Promise<Template[]> {
 async function venuesOrSkip(request: APIRequestContext): Promise<Template[]> {
   let venues: Template[] = [];
   for (let i = 0; i < 15 && venues.length === 0; i++) {
-    venues = (await templates(request)).filter((t) => t.id.startsWith('venue:'));
+    // A manual kit's tile imports a ZIP rather than creating (29-venue-kits).
+    venues = (await templates(request)).filter((t) => t.id.startsWith('venue:') && !t.kit?.manual);
     if (!venues.length) await new Promise((r) => setTimeout(r, 1000));
   }
   test.skip(venues.length === 0, 'the compiler image ships none of the venue classes (BasicTeX): the catalog is empty');

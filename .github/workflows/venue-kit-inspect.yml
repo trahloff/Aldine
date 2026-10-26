@@ -1,0 +1,66 @@
+name: Venue kit inspect
+
+# Downloads one venue kit named in templates/venues.json on the runner and
+# prints what it holds: the HTTP exchange with Aldine's own User-Agent and
+# with a browser one, the archive listing, and the lines of every .tex/.cls/
+# .sty in it that load other files. Publisher kits are only ever downloaded
+# here, never on a developer machine and never committed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kit:
+        description: Venue kit id from templates/venues.json
+        required: true
+        type: string
+      url:
+        description: Inspect this URL instead of the entry's (an alternative official source)
+        required: false
+        type: string
+      grep:
+        description: Also print the lines of every file in the kit that match this extended regex
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect
+        env:
+          KIT: ${{ inputs.kit }}
+          URL_OVERRIDE: ${{ inputs.url }}
+          GREP: ${{ inputs.grep }}
+        run: |
+          set -uo pipefail
+          url="${URL_OVERRIDE:-$(jq -r --arg id "$KIT" '.venues[] | select(.id == $id) | (.kit.url // .kit.urls[0])' templates/venues.json)}"
+          [ -n "$url" ] && [ "$url" != null ] || { echo "no kit $KIT"; exit 1; }
+          echo "## $KIT" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          browser='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+          for ua in "Aldine/1.0 (+https://aldine.dev)" "$browser"; do
+            echo "### User-Agent: $ua"
+            curl -sS -o /dev/null -D - -A "$ua" -H 'accept: */*' "$url" | head -20
+          done
+          work="$RUNNER_TEMP/kit"; mkdir -p "$work"
+          code=$(curl -sSL -A "$browser" -o "$work/kit.zip" -w '%{http_code} %{url_effective}' "$url")
+          echo "Final: $code" | tee -a "$GITHUB_STEP_SUMMARY"
+          file "$work/kit.zip"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$work/kit.zip" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$work/x" && unzip -q "$work/kit.zip" -d "$work/x" || exit 0
+          find "$work/x" -type f \( -name '*.tex' -o -name '*.cls' -o -iname '*.sty' \) -not -path '*__MACOSX*' -print0 |
+            while IFS= read -r -d '' f; do
+              echo "=== ${f#$work/x/}"
+              grep -nE '\\(documentclass|usepackage|RequirePackage|LoadClass|input|include|includegraphics|bibliographystyle|bibliography|graphicspath|set(main|sans|mono|math)font|newfontfamily|fontspec)\b|Path *=' "$f" | grep -vE '^[0-9]+:\s*%' | head -80 || true
+            done
+          if [ -n "${GREP:-}" ]; then
+            echo "=== lines matching: $GREP"
+            grep -rnIE -- "$GREP" "$work/x" | sed "s|^$work/x/||" | head -200 || true
+          fi

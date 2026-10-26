@@ -211,6 +211,8 @@ export function kitVersionKey(e: VenueKitEntry): string {
   const k = e.kit;
   const def = {
     url: k.url ?? null, urls: k.urls ?? null, host: k.host, take: k.take ?? null, rename: k.rename ?? null, flatten: !!k.flatten,
+    // Absent rather than null: every kit without one keeps the key its preview was stored under.
+    ...(k.root ? { root: k.root } : {}),
     documentClass: e.documentClass, classOptions: e.classOptions ?? null, preamble: e.preamble ?? null,
     bibStyle: e.bibStyle ?? null, classSetsBibStyle: !!e.classSetsBibStyle, main: e.main ?? null,
   };

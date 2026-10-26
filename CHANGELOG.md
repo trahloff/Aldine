@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- The ICML, IJCAI, IOP, Frontiers, Optica and Taylor & Francis templates
+  create projects that typeset on the first try, and show page 1 in the
+  chooser (#172).
+- The Wiley template finds its class and logos. Its bundled reference style
+  still fails BibTeX on the sample, which is a bug in Wiley's kit.
+- USENIX Security, SIAM and Cell Press only hand their kits to a browser. Their
+  tiles now link the kit and open the ZIP import instead of creating a project
+  without the venue's class.
+
 ## [1.0.1] — 2026-10-25
 
 ### Added

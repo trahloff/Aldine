@@ -43,43 +43,19 @@
   "kit": {
     "cellpress": {
       "key": "8e89b032edd66861ec4b8339224bb429",
-      "reason": "the kit could not be downloaded (HTTP 403)"
-    },
-    "frontiers": {
-      "key": "51b6a242e65589ba5021b71a1b53eb7f",
-      "reason": "the typeset of kit \"frontiers\" reported errors: LaTeX Error: File `FrontiersinHarvard.cls' not found."
-    },
-    "icml": {
-      "key": "20221d74041efb0f1b7bb7ff476dbfb2",
-      "reason": "the typeset of kit \"icml\" reported errors: LaTeX Error: File `icml_numpapers' not found."
-    },
-    "ijcai": {
-      "key": "b5985ab147455baa371835b122b3e473",
-      "reason": "the kit could not be downloaded (the download redirected to ijcai.org, which is not www.ijcai.org)"
-    },
-    "iop": {
-      "key": "973712f260f114863abc59d4a985247f",
-      "reason": "the typeset of kit \"iop\" reported errors: LaTeX Error: File `orcid' not found."
-    },
-    "optica": {
-      "key": "9bab67038e1ebcd26b841c3484d25d9c",
-      "reason": "the typeset of kit \"optica\" reported errors: LaTeX Error: File `jabbrv.sty' not found."
+      "reason": "the user downloads the kit by hand (www.cell.com does not allow automated downloads)"
     },
     "siamart": {
       "key": "d874f31180278b7c99d98cf7dd2a9fd3",
-      "reason": "the kit could not be downloaded (HTTP 403)"
-    },
-    "tandf": {
-      "key": "3c595bd50b76ef0f5ff55f6994df0949",
-      "reason": "the typeset of kit \"tandf\" reported errors: Package pdftex.def Error: File `graph1-eps-converted-to.pdf' not found: using draft setting."
+      "reason": "the user downloads the kit by hand (epubs.siam.org does not allow automated downloads)"
     },
     "usenix-security": {
       "key": "05b39e5314f359c0d80cf807514bf4da",
-      "reason": "the kit could not be downloaded (HTTP 403)"
+      "reason": "the user downloads the kit by hand (www.usenix.org does not allow automated downloads)"
     },
     "wiley": {
-      "key": "656122c2e0d7dde020726c1c74376e98",
-      "reason": "the typeset of kit \"wiley\" reported errors: LaTeX Error: File `USG.cls' not found."
+      "key": "3c9fe70e2487075c5b5e808f34464b27",
+      "reason": "the typeset of kit \"wiley\" reported errors: BibTeX: short.list is an unknown function"
     }
   }
 }

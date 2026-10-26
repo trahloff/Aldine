@@ -56,6 +56,14 @@ export interface VenueKitSpec {
   rename?: Record<string, string>;
   /** Drop the directories the kit nests files in (Springer's bst/, Frontiers' subfolders). */
   flatten?: boolean;
+  /** The archive folder the kit lives in, when the archive also carries files
+   *  beside it (Wiley's guidelines PDF): only that folder is read, and its
+   *  name is stripped the way a shared prefix is. */
+  root?: string;
+  /** The publisher answers automated downloads with a browser challenge, from
+   *  every network a server runs on: nothing is fetched, and the tile sends the
+   *  user to the kit and the ZIP import instead. */
+  manual?: boolean;
 }
 
 export interface VenueKitEntry {
@@ -163,6 +171,10 @@ export function entryProblem(item: unknown, seen: Set<string> = new Set()): stri
     if (!k.take.some((g) => !/[*?]/.test(g))) return 'take needs at least one exact file name';
     if (e.main && !k.take.some((g) => matches(g, e.main!))) return `main ${JSON.stringify(e.main)} is not in the take list`;
   }
+  if (k.root !== undefined && (!text(k.root) || importPath(k.root) !== k.root || isHiddenPath(k.root))) {
+    return 'kit.root must be a folder path inside the archive, without a trailing slash';
+  }
+  if (k.manual !== undefined && typeof k.manual !== 'boolean') return 'kit.manual must be true or false';
   for (const [from, to] of Object.entries(k.rename || {})) {
     if (!text(to) || importPath(to) !== to || isHiddenPath(to)) return `rename target ${JSON.stringify(to)} is not a project path`;
     if (!text(from)) return 'rename source must be a path';
@@ -207,7 +219,10 @@ export function venueKitTemplates(): TemplateInfo[] {
       licenseUrl: e.termsUrl || e.homepage,
       origin: { url: e.homepage },
       source: { kind: 'kit' as const },
-      kit: { host: e.kit.host, url: e.kit.url || e.kit.urls![0], homepage: e.homepage, termsUrl: e.termsUrl },
+      kit: {
+        host: e.kit.host, url: e.kit.url || e.kit.urls![0], homepage: e.homepage, termsUrl: e.termsUrl,
+        ...(e.kit.manual ? { manual: true } : {}),
+      },
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -344,11 +359,12 @@ export function selectKitFiles(archive: Record<string, Buffer>, spec: VenueKitSp
     usable.push([norm, data]);
   }
   usable.sort((a, b) => a[0].localeCompare(b[0]));
-  const prefix = commonDir(usable.map(([n]) => n));
+  const inRoot = spec.root ? usable.filter(([n]) => n.startsWith(`${spec.root}/`)) : usable;
+  const prefix = spec.root ? `${spec.root}/` : commonDir(usable.map(([n]) => n));
   const take = spec.take || [];
   const out: Record<string, Buffer> = {};
   const matched = new Set<string>();
-  for (const [name, data] of usable) {
+  for (const [name, data] of inRoot) {
     const rel = name.slice(prefix.length);
     if (!rel) continue;
     const glob = take.find((g) => matches(g, rel));
@@ -416,7 +432,10 @@ interface CachedKit { files: Record<string, Buffer>; fetchedAt: number }
  *  the preamble the skeleton writes: a different fingerprint is a cache miss. */
 function kitFingerprint(entry: VenueKitEntry): string {
   const k = entry.kit;
-  return JSON.stringify({ url: k.url ?? null, urls: k.urls ?? null, take: k.take ?? null, rename: k.rename ?? null, flatten: !!k.flatten });
+  // root only when set: a kit without one keeps the cache it already has.
+  return JSON.stringify({
+    url: k.url ?? null, urls: k.urls ?? null, take: k.take ?? null, rename: k.rename ?? null, flatten: !!k.flatten, ...(k.root ? { root: k.root } : {}),
+  });
 }
 
 function readKitCache(entry: VenueKitEntry): CachedKit | null {
@@ -493,6 +512,10 @@ export async function venueKitSeed(entry: VenueKitEntry): Promise<VenueKitSeed> 
   const status = (ok: boolean, reason?: string): VenueKitStatus =>
     ({ id: entry.id, name: entry.name, host: entry.kit.host, url, ok, ...(reason ? { reason } : {}) });
 
+  if (entry.kit.manual) {
+    const reason = `${entry.kit.host} does not allow automated downloads`;
+    return { files: fallbackFiles(entry, reason), venueKit: status(false, reason) };
+  }
   const cached = readKitCache(entry);
   if (cached && Date.now() - cached.fetchedAt < KIT_CACHE_TTL_MS) {
     // A cache that cannot seed a project is a miss, not a failed creation.

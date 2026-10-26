@@ -14,6 +14,8 @@ export interface NewProjectSheetProps {
   template?: string;
   /** The server provisions new projects on GitLab: the group picker is shown. */
   provisioning?: boolean;
+  /** Opens the ZIP import: a kit the publisher only hands to a browser is imported, not created. */
+  onImportZip?: () => void;
 }
 
 const DEFAULT_NAME = 'Untitled project';
@@ -83,7 +85,7 @@ function Preview({ t }: { t: TemplateInfo }) {
  * every template, and the project name in the footer, prefilled and
  * selected so Enter creates. On a phone Modal turns it into a bottom sheet.
  */
-export default function NewProjectSheet({ onClose, template: preselected, provisioning }: NewProjectSheetProps) {
+export default function NewProjectSheet({ onClose, template: preselected, provisioning, onImportZip }: NewProjectSheetProps) {
   const navigate = useNavigate();
   const toast = useToast();
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
@@ -144,6 +146,9 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
   // becomes the choice. When the choice is still on screen, it stands.
   const effective = ordered.some((t) => t.id === template) ? template : ordered[0]?.id ?? template;
   const chosen = all.find((t) => t.id === effective) ?? null;
+  // The publisher answers a server's download with a browser challenge: the
+  // user fetches the kit and imports it, and Create is not offered.
+  const manualKit = chosen?.kit?.manual ? chosen.kit : null;
 
   // The choice line is not live: focus already names a tile the arrows move
   // to. A search moves the choice without moving focus, so it is announced.
@@ -154,7 +159,13 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
       : 'No template matches.');
   }, [query, ordered.length, chosen?.name, templates === null]);
 
+  const importKit = () => {
+    onImportZip?.();
+    onClose();
+  };
+
   const create = async () => {
+    if (manualKit) { if (onImportZip) importKit(); return; }
     if (submitting) return;
     const projectName = name.trim() || DEFAULT_NAME;
     setSubmitting(true);
@@ -252,7 +263,9 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
     <>
       Starting from {chosen ? chosen.name : 'the built-in article'}
       {chosen?.license ? ` (${chosen.license})` : ''}
-      {chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
+      {manualKit
+        ? `. ${manualKit.host} does not allow automated downloads: download the kit there, then import the ZIP.`
+        : chosen?.kit ? `. Aldine downloads the official kit from ${chosen.kit.host} when you create the project.` : ''}
     </>
   ) : null;
 
@@ -337,7 +350,7 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
                             data-testid={`template-${t.id}`}
                             data-template={t.id}
                             onClick={() => setTemplate(t.id)}
-                            onDoubleClick={() => { setTemplate(t.id); create(); }}
+                            onDoubleClick={() => { setTemplate(t.id); if (!t.kit?.manual) create(); }}
                             title={t.description}
                           >
                             <Preview t={t} />
@@ -345,7 +358,11 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
                             {t.description && <span className="tpl__desc">{t.description}</span>}
                             {/* The kit is downloaded when the project is created, not now:
                                 say so before the user picks the tile. */}
-                            {t.kit && <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>Downloads the official kit from {t.kit.host}</span>}
+                            {t.kit && (
+                              <span className="tpl__kit" data-testid={`template-kit-${t.id}`}>
+                                {t.kit.manual ? `Download the kit from ${t.kit.host}, then import the ZIP` : `Downloads the official kit from ${t.kit.host}`}
+                              </span>
+                            )}
                             {(t.license || t.source?.kind === 'repo') && (
                               <span className="tpl__meta">
                                 {t.license && <span className="tpl__license" data-testid={`template-license-${t.id}`}>{t.license}</span>}
@@ -388,7 +405,14 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
           <span className="visually-hidden" role="status" data-testid="template-announce">{announce}</span>
           <div className="chooser__actions">
             <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
+            {manualKit ? (
+              <>
+                <a className={`btn${onImportZip ? '' : ' btn--primary'}`} href={manualKit.url} target="_blank" rel="noopener noreferrer" data-testid="kit-download">Download the kit</a>
+                {onImportZip && <button className="btn btn--primary" onClick={importKit} data-testid="kit-import-zip">Import the ZIP</button>}
+              </>
+            ) : (
+              <button className="btn btn--primary" onClick={create} disabled={submitting} data-testid="create-project">{submitting ? 'Creating…' : 'Create'}</button>
+            )}
           </div>
         </footer>
       </div>

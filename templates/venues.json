@@ -60,7 +60,8 @@
           "example_paper.tex",
           "example_paper.bib",
           "algorithm.sty",
-          "algorithmic.sty"
+          "algorithmic.sty",
+          "icml_numpapers.pdf"
         ]
       },
       "documentClass": "article",
@@ -121,8 +122,8 @@
       "homepage": "https://www.ijcai.org/authors_kit",
       "termsUrl": "https://2026.ijcai.org/ijcai-ecai-2026-call-for-papers-main-track/",
       "kit": {
-        "url": "https://www.ijcai.org/sites/default/files/Guidelines/FormattingGuidelines-IJCAI-ECAI-26.zip",
-        "host": "www.ijcai.org",
+        "url": "https://ijcai.org/sites/default/files/Guidelines/FormattingGuidelines-IJCAI-ECAI-26.zip",
+        "host": "ijcai.org",
         "take": ["ijcai26.sty", "ijcai26.tex", "ijcai26.bib", "named.bst"]
       },
       "documentClass": "article",
@@ -275,6 +276,7 @@
       "kit": {
         "url": "https://www.usenix.org/sites/default/files/conference-files/usenixsecurity2026_latex_templates.zip",
         "host": "www.usenix.org",
+        "manual": true,
         "take": ["usenix.sty", "usenixsecurity2026.tex"]
       },
       "documentClass": "article",
@@ -316,6 +318,7 @@
       "kit": {
         "url": "https://epubs.siam.org/pb-assets/macros/standard/siamart_251216.zip",
         "host": "epubs.siam.org",
+        "manual": true,
         "take": [
           "siamart251216.cls",
           "siamplain.bst",
@@ -397,7 +400,7 @@
       "kit": {
         "url": "https://publishingsupport.iopscience.iop.org/wp-content/uploads/2025/07/ioplatextemplate.zip",
         "host": "publishingsupport.iopscience.iop.org",
-        "take": ["iopjournal.cls", "iopjournal-template.tex", "figure*.pdf"]
+        "take": ["iopjournal.cls", "iopjournal-template.tex", "figure*.pdf", "orcid.pdf"]
       },
       "documentClass": "iopjournal",
       "bibStyle": "unsrt",
@@ -414,7 +417,7 @@
       "kit": {
         "url": "https://files.taylorandfrancis.com/interactcadlatex.zip",
         "host": "files.taylorandfrancis.com",
-        "take": ["interact.cls", "tfcad.bst", "interactcadsample.tex", "interactcadsample.bib"]
+        "take": ["interact.cls", "tfcad.bst", "interactcadsample.tex", "interactcadsample.bib", "*.eps"]
       },
       "documentClass": "interact",
       "bibStyle": "tfcad",
@@ -424,7 +427,7 @@
       "id": "frontiers",
       "name": "Frontiers",
       "category": "Journals",
-      "description": "Frontiers journal article, Vancouver reference style.",
+      "description": "Frontiers journal article, Harvard (author-date) reference style. The Vancouver class and style come along for the journals that use it.",
       "icon": "🏔",
       "homepage": "https://www.frontiersin.org/guidelines/author-guidelines",
       "termsUrl": "https://www.frontiersin.org/guidelines/author-guidelines",
@@ -432,17 +435,21 @@
         "url": "https://www.frontiersin.org/design/zip/Frontiers_LaTeX_Templates.zip",
         "host": "www.frontiersin.org",
         "take": [
+          "FrontiersinHarvard.cls",
+          "Frontiers-Harvard.bst",
           "FrontiersinVancouver.cls",
           "Frontiers-Vancouver.bst",
           "frontiers.tex",
           "test.bib",
           "logo*.pdf",
-          "*-logo.pdf"
+          "logo*.eps",
+          "*-logo.pdf",
+          "*-logo.eps"
         ],
         "flatten": true
       },
-      "documentClass": "FrontiersinVancouver",
-      "bibStyle": "Frontiers-Vancouver",
+      "documentClass": "FrontiersinHarvard",
+      "bibStyle": "Frontiers-Harvard",
       "main": "frontiers.tex"
     },
     {
@@ -480,6 +487,7 @@
       "kit": {
         "url": "https://authors.wiley.com/asset/WileyDesign.zip",
         "host": "authors.wiley.com",
+        "root": "Optimal-Design-layout",
         "take": [
           "USG.cls",
           "wileyNJD-Chicago.bst",
@@ -489,7 +497,11 @@
           "NJDapacite.sty",
           "mla.sty",
           "LETTERSP.STY",
-          "**/Fonts/Stix/*.otf"
+          "**/Fonts/Stix/*.otf",
+          "empty.eps",
+          "empty-eps-converted-to.pdf",
+          "images/*.eps",
+          "images/*.pdf"
         ]
       },
       "documentClass": "USG",
@@ -513,7 +525,9 @@
           "Optica-template.tex",
           "sample.bib",
           "**/styles/*.sty",
-          "opticafig*.pdf"
+          "opticafig*.pdf",
+          "jabbrv.sty",
+          "jabbrv-ltwa-*.ldf"
         ]
       },
       "documentClass": "optica-article",
@@ -531,6 +545,7 @@
       "kit": {
         "url": "https://www.cell.com/pb-assets/journals/platform/authour-resources/cell-press-latex-template-1747231785383.zip",
         "host": "www.cell.com",
+        "manual": true,
         "take": ["article-template.tex", "numbered.bst", "numcompress.sty", "references.bib", "Figure*.jpg"]
       },
       "documentClass": "article",

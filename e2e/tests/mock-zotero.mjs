@@ -152,7 +152,12 @@ const venue = (id, name, file) => ({
 const registry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.data-e2e/venues-e2e.json');
 fs.mkdirSync(path.dirname(registry), { recursive: true });
 fs.writeFileSync(registry, JSON.stringify({
-  venues: [venue('e2ekit', 'E2E Venue Kit', 'venue-kit.zip'), venue('e2egone', 'E2E Missing Kit', 'no-such-kit.zip')],
+  venues: [
+    venue('e2ekit', 'E2E Venue Kit', 'venue-kit.zip'),
+    venue('e2egone', 'E2E Missing Kit', 'no-such-kit.zip'),
+    // A publisher that only hands its kit to a browser: the tile imports, it never creates.
+    (() => { const v = venue('e2ehand', 'E2E Manual Kit', 'venue-kit.zip'); v.kit.manual = true; return v; })(),
+  ],
 }, null, 2));
 
 server.listen(port, () => console.log(`[mock-zotero] on :${port}`));

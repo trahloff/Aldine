@@ -19,6 +19,8 @@
  *  - a kit past the project seed limits, or one naming a path that is both a
  *    file and a directory, is a skeleton rather than a failed creation
  *  - a cache written for a different kit URL or take list is a miss
+ *  - a kit root reads one folder of an archive that carries files beside it
+ *  - a manual kit is never fetched and its tile says so
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -65,6 +67,15 @@ const NESTED_ZIP = buildZip({
   'pack/bst/first.bst': 'first',
   'pack/bst/second.bst': 'second',
 });
+// The kit sits in a folder next to the publisher's guide, so the archive has
+// no shared prefix to strip.
+const ROOTED_ZIP = buildZip({
+  'Guide for authors.pdf': PDF,
+  'layout/venue.sty': STY,
+  'layout/sample.tex': TEX,
+  'layout/images/logo.pdf': PDF,
+  'other/venue.sty': '\\ProvidesPackage{venue}[other]\n',
+});
 const NO_FILES_ZIP = buildZip({ 'kit-1.0/readme.txt': 'nothing useful here' });
 const BIG = Buffer.alloc(1024 * 1024);
 // A second archive for the same venue id, so a registry that changes its kit
@@ -106,6 +117,7 @@ function handler(req, res) {
     case '/inject.zip': return zip(INJECT_ZIP);
     case '/collide.zip': return zip(COLLIDE_ZIP);
     case '/many.zip': return zip(MANY_ZIP);
+    case '/rooted.zip': return zip(ROOTED_ZIP);
     case '/nested.zip': return zip(NESTED_ZIP, 'application/x-zip-compressed');
     case '/paramtype.zip': return zip(GOOD_ZIP, 'application/zip;charset=UTF-8');
     case '/missing.zip': return zip(NO_FILES_ZIP);
@@ -223,6 +235,12 @@ const VENUES = [
     documentClass: 'main', main: 'doc.tex',
   },
   {
+    ...base, id: 'rooted', name: 'ROOTED',
+    kit: { url: `${origin}/rooted.zip`, host: `127.0.0.1:${port}`, root: 'layout', take: ['venue.sty', 'sample.tex', 'images/*.pdf', '*.pdf'] },
+    main: 'sample.tex',
+  },
+  { ...base, id: 'byhand', name: 'BYHAND', kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['venue.sty'], manual: true } },
+  {
     ...base, id: 'bare', name: 'BARE',
     kit: {
       urls: [`${origin}/bare.tex`, `${origin}/bare-2020.sty`],
@@ -238,6 +256,7 @@ const VENUES = [
   { ...base, id: 'globonly', name: 'GLOB', kit: { url: 'https://example.org/kit.zip', host: 'example.org', take: ['*.sty'] }, main: 'a.tex' },
   { ...base, id: 'no-main-no-preamble', name: 'EMPTY', preamble: [], kit: { url: 'https://example.org/k.zip', host: 'example.org', take: ['a.sty'] } },
   { ...base, id: 'good', name: 'DUPLICATE', kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['venue.sty'] }, main: 'venue.sty' },
+  { ...base, id: 'badroot', name: 'BADROOT', kit: { url: 'https://example.org/k.zip', host: 'example.org', take: ['a.sty'], root: 'layout/' }, main: 'a.sty' },
   { ...base, id: 'escape', name: 'ESCAPE', kit: { url: 'https://example.org/k.zip', host: 'example.org', take: ['a.sty'], rename: { 'a.sty': '../a.sty' } }, main: 'a.tex' },
 ];
 fs.writeFileSync(process.env.VENUES_FILE, JSON.stringify({ venues: VENUES }, null, 2));
@@ -248,9 +267,9 @@ const kits = await import('../src/venuekits.ts');
 
 const loaded = kits.venueKits().map((e) => e.id);
 eq(loaded.sort(), [
-  'bare', 'bigdeclared', 'bigstream', 'clsbib', 'clsopts', 'collide', 'corrupt', 'flaky', 'good',
+  'bare', 'bigdeclared', 'bigstream', 'byhand', 'clsbib', 'clsopts', 'collide', 'corrupt', 'flaky', 'good',
   'hop', 'inject', 'loop', 'missing', 'nested', 'notfound', 'notype', 'offhost',
-  'paramtype', 'protomain', 'relhop', 'slow', 'styopts', 'toomany', 'venuecls', 'wrongtype',
+  'paramtype', 'protomain', 'relhop', 'rooted', 'slow', 'styopts', 'toomany', 'venuecls', 'wrongtype',
 ].sort(), 'only entries that pass validation are loaded');
 
 const problem = (over) => kits.entryProblem({ ...archive('x', 'ok.zip'), ...over });
@@ -262,6 +281,7 @@ check(/homepage/.test(problem({ homepage: 'ftp://example.org' })), 'a homepage t
 check(/main file or a preamble/.test(problem({ main: undefined, preamble: [] })), 'an entry with neither a main nor a preamble is refused');
 check(/not in the take list/.test(problem({ main: 'elsewhere.tex' })), 'a main the take list cannot produce is refused');
 check(/rename target/.test(problem({ kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['sample.tex'], rename: { 'sample.tex': '../a.sty' } } })), 'a rename that escapes the project is refused');
+check(/kit.root/.test(problem({ kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['sample.tex'], root: '../up' } })), 'a root outside the archive is refused');
 check(kits.entryProblem(archive('x', 'ok.zip')) === null, 'a well-formed entry has no problem');
 
 // ---- the good path ----
@@ -286,6 +306,17 @@ check((await seed('paramtype')).venueKit.ok, 'content-type parameters (applicati
 const nested = await seed('nested');
 check(nested.venueKit.ok, 'a nested archive unpacks');
 eq(Object.keys(nested.files).sort(), ['first.bst', 'main.cls', 'main.tex', 'second.bst'], 'flatten drops the directories the kit nests files in');
+
+const rooted = await seed('rooted');
+check(rooted.venueKit.ok, 'a kit inside one folder of the archive unpacks');
+eq(Object.keys(rooted.files).sort(), ['images/logo.pdf', 'main.tex', 'venue.sty'], 'only the root folder is read, its name stripped and its subfolders kept');
+eq(rooted.files['venue.sty'].toString('utf8'), STY, 'the root folder\u2019s file wins over a namesake elsewhere in the archive');
+
+const byhand = await seed('byhand');
+check(!byhand.venueKit.ok, 'a manual kit is not a downloaded kit');
+check(byhand.venueKit.reason.includes('does not allow automated downloads'), `a manual kit says why: ${byhand.venueKit.reason}`);
+eq(Object.keys(byhand.files).sort(), ['README-venue.md', 'main.tex', 'references.bib'], 'a manual kit created over the API is the skeleton plus the README');
+eq(hits['/ok.zip'], 1, 'a manual kit is never fetched');
 
 const bare = await seed('bare');
 check(bare.venueKit.ok, 'a venue that publishes bare files instead of an archive works');
@@ -455,6 +486,8 @@ eq(tile.category, 'Conferences', 'the tile keeps its category');
 eq(tile.kit.host, `127.0.0.1:${port}`, 'the tile says which host the kit comes from');
 eq(tile.license, 'Publisher terms', 'the tile does not claim a licence Aldine cannot assert');
 eq(tile.licenseUrl, 'https://example.org/terms', 'the tile links the venue\u2019s terms');
+check(!('manual' in tile.kit), 'a fetched kit\u2019s tile is not marked manual');
+eq(tiles.find((t) => t.id === 'venue:byhand').kit.manual, true, 'a manual kit\u2019s tile says so');
 check(tiles.every((t) => t.id.startsWith('venue:')), 'fetched venues share the venue id space with the installed classes');
 
 server.close();

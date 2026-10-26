@@ -4,8 +4,10 @@
 > was built from, kept for its reasoning. Where the two differ, the code is
 > right: `apps/server/src/venuekits.ts` holds the load-time rules and
 > `templates/venues.json` the entries. The shipped schema also has `urls`
-> (bare files instead of an archive), `flatten`, `icon`, `classOptions` and
-> `classSetsBibStyle`; `category` is one of Journals, Conferences, Theses,
+> (bare files instead of an archive), `flatten`, `root` (read one folder of
+> an archive that carries files beside it), `manual` (the publisher only hands
+> the kit to a browser: nothing is fetched and the tile links the kit and the
+> ZIP import), `icon`, `classOptions` and `classSetsBibStyle`; `category` is one of Journals, Conferences, Theses,
 > Slides or General; an archive's `take` list needs at least one exact file
 > name and must include `main`. Elsevier CAS, SAGE and PLOS did not make the
 > registry.
