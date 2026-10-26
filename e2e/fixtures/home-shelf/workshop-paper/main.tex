@@ -1,0 +1,36 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{amsmath}
+
+\title{\bf Undo Without Coordination}
+\author{L.~Okafor \and A.~Byrne}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Undo in a shared document should revert the user's own last edit, not the
+last edit anyone made. We describe a local undo stack for sequence CRDTs that
+needs no coordination between replicas.
+\end{abstract}
+
+\section{Introduction}
+Collaborative editors usually offer undo, but its meaning changes once several
+people edit at once. A global undo surprises every user except the last one to
+type; a local undo has to find the user's own operation among everyone
+else's.
+
+\section{Approach}
+Each replica keeps the identifiers of its own operations. Undo issues the
+inverse of the most recent one, expressed against the current state, so it
+commutes with concurrent edits like any other operation.
+
+\section{Evaluation}
+On recorded sessions with up to eight authors, local undo restored the
+expected text in every case, with a median cost of one extra operation.
+
+\section{Conclusion}
+Local undo fits the CRDT model without new coordination.
+
+\end{document}

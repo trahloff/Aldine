@@ -1,0 +1,25 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+
+\title{Reading group notes}
+\author{Distributed systems seminar}
+\date{Autumn}
+
+\begin{document}
+\maketitle
+
+\section*{Session 1: Logical clocks}
+Happened-before as a partial order; why a total order needs a tie-breaker.
+Open question from the group: how much of this survives clock skew in practice?
+
+\section*{Session 2: Eventual consistency}
+Convergence as a liveness property. We compared three definitions and agreed
+the strong variant is the one most papers actually use.
+
+\section*{Session 3: Sequence CRDTs}
+Interleaving anomalies, and what fractional indices cost in long sessions.
+
+\section*{Next time}
+Bring one paper on undo in collaborative editors.
+
+\end{document}
