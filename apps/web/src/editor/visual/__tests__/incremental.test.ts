@@ -5,7 +5,8 @@ import { ensureSyntaxTree, syntaxTreeAvailable } from '@codemirror/language';
 import { latex } from 'codemirror-lang-latex';
 import { buildAtomic } from '../decorations';
 import { revealField } from '../reveal';
-import { atomicField } from '../atomicField';
+import { atomicChunking, atomicField, buildPending } from '../atomicField';
+import { resourceArrived } from '../refresh';
 
 const PAPER = [
   '\\documentclass{article}',
@@ -53,6 +54,9 @@ const PAPER = [
   '% a comment with $math$',
   '\\subsection{Details \\textbf{here}}',
   'More \\underline{under} and \\textsc{caps}.',
+  '\\subsection{Costs} \\label{sec:costs}',
+  'Save 50\\% \\& more\\ldots{} at \\url{https://example.org/a_b}, \\{x\\} \\textasciitilde{} ok \\\\ next.',
+  '{\\centering inline centred\\par}',
   '\\end{document}',
   '',
 ].join('\n');
@@ -62,6 +66,7 @@ const TOKENS = [
   '\\begin{enumerate}\n\\item z\n\\end{enumerate}', '%', '\n', '\n\n', 'x', ' ', '&', '\\\\', '\\section{', '}',
   '\\[', '\\]', '\\cite{k}', '\\ref{r}', '\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}', '\\end{figure}',
   '\\begin{verbatim}', '\\caption{c}', '[p.~1]', '  ', '\\label{l}',
+  '\\%', '\\ldots', '{}', '\\url{', '\\centering', '\\centering\n',
 ];
 
 function describeSet(set: DecorationSet, len: number): string[] {
@@ -209,4 +214,84 @@ describe('incremental visual decorations', () => {
     });
     expect(fresh).toBe(0);
   });
+});
+
+describe('a long document builds a chunk at a time (#154)', () => {
+  const LONG = Array.from({ length: 12 }, (_, i) => PAPER.replace(/Introduction/g, `Intro ${i}`)).join('\n');
+  const chunking = atomicChunking.of({ min: 4_000, chunk: 3_000 });
+
+  function startLong(anchor: number): EditorState {
+    return parsed(EditorState.create({ doc: LONG, selection: { anchor }, extensions: [latex(), revealField, chunking, atomicField] }));
+  }
+
+  const outside = (set: DecorationSet, state: EditorState, pending: Array<[number, number]>) =>
+    describeSet(set, state.doc.length).filter((d) => {
+      const [f, t] = d.split(' ')[0].split('-').map(Number);
+      return pending.every(([a, b]) => t <= a || f >= b);
+    });
+
+  function expectRightOutsidePending(state: EditorState, step: string) {
+    const { deco, pending } = state.field(atomicField);
+    expect(outside(deco, state, pending), step).toEqual(outside(buildAtomic(state, state.field(revealField).ranges), state, pending));
+  }
+
+  function drain(state: EditorState): EditorState {
+    for (let i = 0; i < 1_000 && state.field(atomicField).pending.length; i++) state = state.update({ effects: buildPending.of(null) }).state;
+    return state;
+  }
+
+  it('the first build covers the caret\'s part of the document only, and idle steps finish it', () => {
+    const at = Math.floor(LONG.length / 2);
+    let state = startLong(at);
+    const { deco, pending } = state.field(atomicField);
+    expect(pending.length).toBeGreaterThan(0);
+    expect(pending.some(([a, b]) => a <= 10 && b > 10)).toBe(true);
+    let walked = 0;
+    deco.between(0, LONG.length, () => { walked++; });
+    let full = 0;
+    buildAtomic(state, state.field(revealField).ranges).between(0, LONG.length, () => { full++; });
+    expect(walked).toBeLessThan(full / 2);
+    expectRightOutsidePending(state, 'first build');
+    // the viewport's part goes first
+    state = state.update({ effects: buildPending.of({ from: 0, to: 500 }) }).state;
+    expect(state.field(atomicField).pending.some(([a]) => a === 0)).toBe(false);
+    state = drain(state);
+    expect(state.field(atomicField).pending).toEqual([]);
+    expectMatchesFullBuild(state, 'drained');
+  });
+
+  it('edits, caret moves and resources arriving keep it right outside what is pending', () => {
+    for (let run = 1; run <= 4; run++) {
+      const rand = rng(run * 104729);
+      let state = startLong(Math.floor(rand() * LONG.length));
+      for (let step = 0; step < 80; step++) {
+        const len = state.doc.length;
+        const at = Math.floor(rand() * (len + 1));
+        const kind = rand();
+        let label: string;
+        if (kind < 0.35) {
+          const insert = TOKENS[Math.floor(rand() * TOKENS.length)];
+          state = state.update({ changes: { from: at, insert }, selection: { anchor: at + insert.length } }).state;
+          label = `insert ${JSON.stringify(insert)} at ${at}`;
+        } else if (kind < 0.55) {
+          const to = Math.min(len, at + 1 + Math.floor(rand() * 25));
+          label = `delete at ${at}`;
+          state = state.update({ changes: { from: at, to }, selection: { anchor: at } }).state;
+        } else if (kind < 0.7) {
+          state = state.update({ selection: { anchor: at } }).state;
+          label = `caret to ${at}`;
+        } else if (kind < 0.9) {
+          state = state.update({ effects: buildPending.of(rand() < 0.5 ? { from: at, to: Math.min(len, at + 800) } : null) }).state;
+          label = `build pending near ${at}`;
+        } else {
+          state = state.update({ effects: resourceArrived.of({ from: at, to: Math.min(len, at + 800) }) }).state;
+          label = `resource arrived, viewport at ${at}`;
+        }
+        state = parsed(state);
+        expectRightOutsidePending(state, `run ${run} step ${step}: ${label}`);
+      }
+      state = drain(state);
+      expectMatchesFullBuild(state, `run ${run} drained`);
+    }
+  }, 60_000);
 });

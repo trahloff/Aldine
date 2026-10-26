@@ -1,6 +1,8 @@
 import { WidgetType } from '@codemirror/view';
 import { katexReady, renderMath } from '../katex';
 import { mathliveCanEdit } from '../mathPopover';
+import { macrosUsedBy } from '../preamble';
+import type { MacroSet } from '../preamble';
 import { shortcut } from '../../../platform';
 
 /** What a rendered formula stands for, relative to the construct's start. */
@@ -20,12 +22,16 @@ export class MathWidget extends WidgetType {
 
   /** `raw` is the whole construct: equal raw means equal inner offsets, so a
    *  widget kept across edits elsewhere still describes its construct. */
-  constructor(readonly source: string, readonly display: boolean, readonly raw: string, readonly innerStart: number, readonly innerEnd: number) {
+  /** Only the macros this formula uses, so editing another one's definition leaves it as drawn. */
+  readonly macros: MacroSet;
+
+  constructor(readonly source: string, readonly display: boolean, readonly raw: string, readonly innerStart: number, readonly innerEnd: number, macros: MacroSet) {
     super();
+    this.macros = macrosUsedBy(source, macros);
   }
 
   eq(other: MathWidget): boolean {
-    return other.raw === this.raw && other.display === this.display && other.ready === this.ready;
+    return other.raw === this.raw && other.display === this.display && other.ready === this.ready && other.macros.key === this.macros.key;
   }
 
   toDOM(): HTMLElement {
@@ -36,7 +42,7 @@ export class MathWidget extends WidgetType {
       ? `Edit formula (${shortcut('Enter')} in its source)`
       : 'Edit in the source: the formula editor would rewrite its \\label, alignment, comments or line breaks';
     mathSpans.set(el, { raw: this.raw, innerStart: this.innerStart, innerEnd: this.innerEnd });
-    const html = renderMath(this.source, this.display);
+    const html = renderMath(this.source, this.display, this.macros);
     if (html) {
       el.innerHTML = html;
     } else {

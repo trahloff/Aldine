@@ -17,8 +17,11 @@ export function unregisterView(view: EditorView): void {
  *  is not enough, the field returns its old value when neither the document
  *  nor the reveal ranges changed, and the widgets drawn before the resource
  *  arrived would stay as they are. */
-export const resourceArrived = StateEffect.define<null>();
+export const resourceArrived = StateEffect.define<{ from: number; to: number } | null>({
+  map: (v, changes) => v && { from: changes.mapPos(v.from, -1), to: changes.mapPos(v.to, 1) },
+});
 
+/** Each view's viewport goes along: on a long document only that part is redrawn at once. */
 export function pokeViews(): void {
-  for (const v of views) v.dispatch({ effects: resourceArrived.of(null) });
+  for (const v of views) v.dispatch({ effects: resourceArrived.of({ from: v.viewport.from, to: v.viewport.to }) });
 }

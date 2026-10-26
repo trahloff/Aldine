@@ -7,6 +7,8 @@ import { MathWidget } from './widgets/math';
 import { figureChip, tableChip, citeChip, refChip } from './widgets/chips';
 import { TableWidget, tableModel } from './widgets/table';
 import { ItemMarkerWidget } from './widgets/listMarker';
+import { SymbolWidget } from './widgets/symbol';
+import { macrosOf } from './macros';
 
 /** Copied from codemirror-lang-latex (internal SECTION_RANK, not exported). */
 export const SECTION_RANK: Record<string, number> = {
@@ -33,7 +35,7 @@ const MATH_NODES = ['DollarMath', 'BracketMath', 'ParenMath', 'EquationEnvironme
 export const CONSTRUCT_NODES = new Set([
   'ListEnvironment', 'TableEnvironment', 'BeginEnv', 'EndEnv', 'Item', 'Caption',
   'FigureEnvironment', 'TabularEnvironment', 'Cite', 'Ref', 'SectioningCommand',
-  'VerbatimEnvironment', 'Comment',
+  'VerbatimEnvironment', 'Comment', 'UnknownCommand', 'UrlCommand', 'Centering',
   ...MATH_NODES,
   ...Object.keys(STYLE_CLASS),
 ]);
@@ -50,7 +52,56 @@ const styleMarks = Object.fromEntries(
 const headingLines = [1, 2, 3, 4].map((n) => Decoration.line({ class: `cm-vis-h cm-vis-h${n}` }));
 /** A heading sharing its line with body text (\paragraph{Para} text): only the argument is styled. */
 const headingRun = Decoration.mark({ class: 'cm-vis-hrun' });
+const urlMark = Decoration.mark({ class: 'cm-vis-url' });
 
+/** Escapes that typeset as one character: `\%` → %. `\\` and `\ ` are not among them. */
+const CTRL_SYMBOLS: Record<string, string> = {
+  '\\%': '%', '\\&': '&', '\\$': '$', '\\#': '#', '\\_': '_', '\\{': '{', '\\}': '}',
+};
+/** Control words that typeset as one character, written bare or with an empty `{}`. */
+const CTRL_WORDS: Record<string, string> = {
+  '\\ldots': '…', '\\dots': '…', '\\textellipsis': '…',
+  '\\textasciitilde': '~', '\\textasciicircum': '^', '\\textbackslash': '\\',
+};
+const symbolWidgets = new Map<string, Decoration>();
+function symbol(text: string): Decoration {
+  let d = symbolWidgets.get(text);
+  if (!d) symbolWidgets.set(text, d = Decoration.replace({ widget: new SymbolWidget(text) }));
+  return d;
+}
+
+/** Commands the parser does not know whose argument LaTeX typesets as written, escapes included. */
+export const VERBATIM_ARG_CMDS = new Set(['\\path', '\\nolinkurl', '\\Verb', '\\mintinline', '\\detokenize']);
+
+/** Whether `node` (an UnknownCommand) is one of VERBATIM_ARG_CMDS. */
+export function verbatimArgCommand(node: SyntaxNode, doc: Doc): boolean {
+  const seq = node.getChild('CtrlSeq');
+  return !!seq && VERBATIM_ARG_CMDS.has(doc.sliceString(seq.from, seq.to));
+}
+
+/** The span of an escape that typesets as one character, and that character; null for anything else. */
+export function symbolEscape(node: SyntaxNode, doc: Doc): { from: number; to: number; text: string } | null {
+  const sym = node.getChild('CtrlSym');
+  if (sym) {
+    const text = CTRL_SYMBOLS[doc.sliceString(sym.from, sym.to)];
+    return text ? { from: sym.from, to: sym.to, text } : null;
+  }
+  const seq = node.getChild('CtrlSeq');
+  const text = seq && CTRL_WORDS[doc.sliceString(seq.from, seq.to)];
+  if (!seq || !text) return null;
+  const arg = node.getChild('TextArgument');
+  if (!arg) return { from: seq.from, to: seq.to, text };
+  // only an empty {} belongs to the escape; an argument with text is something else
+  if (arg.from !== seq.to || doc.sliceString(arg.from, arg.to) !== '{}') return null;
+  return { from: seq.from, to: arg.to, text };
+}
+
+const LABELS_ONLY = /^(?:\s*\\label\s*\{[^{}]*\})*\s*$/;
+
+/** Whether `rest` after a heading's `}` holds only \label{…}s and spaces, hidden with the brace. */
+export function labelsOnlyTail(rest: string): boolean {
+  return LABELS_ONLY.test(rest);
+}
 /**
  * Whether `rest`, the text after a heading's `}` up to the end of its line,
  * still leaves the heading on a line of its own: whitespace, a \label{…} and
@@ -159,6 +210,7 @@ const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
  */
 export function walk(state: EditorState, reveals: readonly RevealRange[], from: number, to: number, emit: WalkEmit): void {
   const doc = state.doc;
+  const macros = macrosOf(state);
   // enumerate counters per list nesting depth
   const listStack: Array<{ name: string; counter: number }> = [];
   syntaxTree(state).iterate({
@@ -273,7 +325,8 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         const rest = doc.sliceString(parts.closeTo, line.to);
         const ownLine = !doc.sliceString(line.from, cmd.from).trim() && headingLineTail(rest);
         emit.atomic(cmd.from, parts.openEnd, hide);
-        emit.atomic(parts.closeFrom, parts.closeTo, ownLine && !rest.trim() ? hideHeadingCloser : hide);
+        if (ownLine && labelsOnlyTail(rest)) emit.atomic(parts.closeFrom, line.to, hideHeadingCloser);
+        else emit.atomic(parts.closeFrom, parts.closeTo, hide);
         if (ownLine) emit.mark(line.from, line.from, headingLines[rank - 1]);
         else if (parts.openEnd < parts.closeFrom) emit.mark(parts.openEnd, parts.closeFrom, headingRun);
         return; // children of the heading argument render as plain heading text
@@ -282,9 +335,42 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       const math = mathParts(n.name, n.node, doc);
       if (math) {
         if (intersectsReveal(reveals, n.from, n.to)) return false;
-        const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from);
+        const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from, macros);
         emit.atomic(n.from, n.to, Decoration.replace({ widget }));
         return false; // math interior is the widget's business
+      }
+
+      if (n.name === 'UnknownCommand') {
+        if (verbatimArgCommand(n.node, doc)) return false;
+        const esc = symbolEscape(n.node, doc);
+        if (!esc) return; // an unknown macro's arguments may hold constructs of their own
+        if (!intersectsReveal(reveals, esc.from, esc.to)) emit.atomic(esc.from, esc.to, symbol(esc.text));
+        return false;
+      }
+
+      if (n.name === 'UrlCommand') {
+        if (intersectsReveal(reveals, n.from, n.to)) return false;
+        const arg = n.node.getChild('UrlArgument');
+        const open = arg?.getChild('OpenBrace');
+        const close = arg?.getChild('CloseBrace');
+        if (!arg || !open || !close || close.to !== n.to || open.to >= close.from) return false;
+        emit.atomic(n.from, open.to, hide);
+        emit.atomic(close.from, close.to, hide);
+        emit.mark(open.to, close.from, urlMark);
+        return false;
+      }
+
+      if (n.name === 'Centering') {
+        if (intersectsReveal(reveals, n.from, n.to)) return false;
+        const line = doc.lineAt(n.from);
+        if (!doc.sliceString(line.from, n.from).trim() && !doc.sliceString(n.to, line.to).trim()) {
+          emit.atomic(line.from, line.to, hideLine);
+        } else {
+          let to = n.to;
+          while (to < line.to && /[ \t]/.test(doc.sliceString(to, to + 1))) to++;
+          emit.atomic(n.from, to, hide);
+        }
+        return false;
       }
 
       const styleMark = styleMarks[n.name];

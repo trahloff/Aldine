@@ -23,6 +23,7 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-i': { fontStyle: 'italic' },
   '.cm-vis-u': { textDecoration: 'underline' },
   '.cm-vis-sc': { fontVariant: 'small-caps' },
+  '.cm-vis-url': { color: 'var(--accent)', textDecoration: 'underline', textDecorationThickness: '1px', overflowWrap: 'anywhere' },
 
   '.cm-vis-math': { cursor: 'pointer', borderRadius: '4px', padding: '0 1px', position: 'relative' },
   // KaTeX's visually hidden MathML copy (for screen readers) sits inside the formula's box

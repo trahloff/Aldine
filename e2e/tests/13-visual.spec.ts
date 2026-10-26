@@ -683,7 +683,7 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await expect(grid.locator('td', { hasText: /^1$/ })).toHaveCount(1);
       await page.getByTestId('vis-table-addcol').click();
       await expectStored(request, id, doc
-        .replace('{|l|c|}', '{|l|c|l}')
+        .replace('{|l|c|}', '{|l|c|l|}')
         .replace('b \\& c \\\\[2pt]', 'b \\& c &  \\\\[2pt]')
         .replace('1 & 2 \\\\', '1 & 2 &  \\\\'));
     } finally {
@@ -1373,6 +1373,175 @@ test.describe('visual editor: wrapped cells, new rows, collaborators in a table,
       await expect(page.getByTestId('math-popover')).toHaveCount(0);
       expected = expected.replace('\\text{ if }', '\\text{ if and only if }');
       await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
+
+test.describe('visual editor: pastes, escapes, keys and formulas', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('aldine.editorMode', 'visual'));
+  });
+
+  const pasteAtEnd = (page: import('@playwright/test').Page, data: Record<string, string>) => page.evaluate((data) => {
+    const dt = new DataTransfer();
+    for (const [type, value] of Object.entries(data)) dt.setData(type, value);
+    document.querySelector('.cm-content')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, data);
+
+  test('a paste in Visual always typesets: links need \\url to be loaded, plain text is escaped (#149)', async ({ page, request }) => {
+    const article = (pre: string) => `\\documentclass{article}\n${pre}\\begin{document}\nprose here\n\\end{document}\n`;
+    const link = { 'text/html': '<p>See <a href="https://example.org/a_b">the site</a>.</p>', 'text/plain': 'See the site.' };
+    const bare = await seedDoc(request, 'Visual Paste Bare', article(''));
+    const linked = await seedDoc(request, 'Visual Paste Url', article('\\usepackage{hyperref}\n'));
+    try {
+      await openProject(page, bare);
+      await page.locator('.cm-line', { hasText: 'prose here' }).click();
+      await page.keyboard.press('End');
+      await pasteAtEnd(page, link);
+      await expectStored(request, bare, article('').replace('prose here', 'prose hereSee the site (https://example.org/a\\_b).'));
+      await pasteAtEnd(page, { 'text/plain': ' 50% & $5 #3' });
+      await expectStored(request, bare, article('').replace('prose here', 'prose hereSee the site (https://example.org/a\\_b). 50\\% \\& \\$5 \\#3'));
+      await openProject(page, linked);
+      await page.locator('.cm-line', { hasText: 'prose here' }).click();
+      await page.keyboard.press('End');
+      await pasteAtEnd(page, link);
+      await expectStored(request, linked, article('\\usepackage{hyperref}\n').replace('prose here', 'prose hereSee the site (\\url{https://example.org/a_b}).'));
+    } finally {
+      await cleanup(request, bare);
+      await cleanup(request, linked);
+    }
+  });
+
+  test('escapes, \\ldots and \\url render as what they typeset, \\centering and a heading\'s \\label hide, and no byte changes (#150)', async ({ page, request }) => {
+    const doc = [
+      '\\section{Costs} \\label{sec:costs}',
+      'Save 50\\% \\& \\$5 on \\#3 a\\_b, \\textasciitilde{} and more\\ldots{} at \\url{https://example.org/x}.',
+      '\\begin{table}',
+      '\\centering',
+      '\\begin{tabular}{ll}',
+      'a & b \\\\',
+      '\\end{tabular}',
+      '\\end{table}',
+      'plain end',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Escapes', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await expect(page.getByTestId('vis-table')).toBeVisible();
+      const text = await shownText(page);
+      expect(text).toContain('Save 50% & $5 on #3 a_b, ~ and more… at https://example.org/x.');
+      expect(text).not.toContain('\\centering');
+      expect(text).not.toContain('\\label');
+      await expect(page.locator('.cm-vis-url')).toHaveText('https://example.org/x');
+      // a tour across the escapes, the link and the heading writes nothing
+      await page.locator('.cm-line', { hasText: 'Save 50' }).click();
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 90; i++) await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('End');
+      await page.locator('.cm-line.cm-vis-h1').click();
+      await expect(page.locator('.cm-content')).toContainText('\\label{sec:costs}');
+      await page.waitForTimeout(2500);
+      expect(await stored(request, id)).toBe(doc);
+      // End in the heading stops before the brace its label hides with
+      await page.keyboard.press('End');
+      await page.keyboard.type(' now');
+      await expectStored(request, id, doc.replace('{Costs}', '{Costs now}'));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('Enter and Backspace around lists, Enter in body text and a heading on an empty line (#151)', async ({ page, request }) => {
+    const doc = '\\section{List}\nBody text.\n\\begin{itemize}\n\\item One\n\\item Two\n\\end{itemize}\nAfter list.\nplain end\n';
+    const id = await seedDoc(request, 'Visual List Keys', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      // Enter at the end of the last item starts a new one; Enter on the empty one leaves the list
+      await page.locator('.cm-line', { hasText: 'Two' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Three');
+      let expected = doc.replace('\\item Two\n', '\\item Two\n\\item Three\n');
+      await expectStored(request, id, expected);
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Para');
+      expected = expected.replace('\\end{itemize}\n', '\\end{itemize}\nPara\n');
+      await expectStored(request, id, expected);
+      // Backspace at the start of the line after the list goes into it, deleting nothing
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('!');
+      expected = expected.replace('\\item Three\n', '\\item Three!\n');
+      await expectStored(request, id, expected);
+      await expect(page.locator('.cm-content')).not.toContainText('\\end{itemize}');
+      // a new line under body text in a section is not indented
+      await page.locator('.cm-line', { hasText: 'Body text.' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('More');
+      expected = expected.replace('Body text.\n', 'Body text.\nMore\n');
+      await expectStored(request, id, expected);
+      // Heading level on an empty line writes an empty heading to type into
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.getByTestId('format-toolbar').getByLabel('Heading level').selectOption('1');
+      await expect(page.locator('.cm-content')).toBeFocused();
+      await page.keyboard.type('New');
+      expected = expected.replace('plain end\n', 'plain end\n\\section{New}\n');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('formulas that use preamble macros open in the formula editor and keep the macros as typed (#153)', async ({ page, request }) => {
+    const doc = [
+      '\\documentclass{article}',
+      '\\usepackage{amsmath,amssymb}',
+      '\\newcommand{\\R}{\\mathbb{R}}',
+      '\\newcommand{\\norm}[1]{\\lVert #1 \\rVert}',
+      '\\DeclareMathOperator*{\\argmax}{arg\\,max}',
+      '\\begin{document}',
+      'Reals $x \\in \\R$ and $\\norm{v}$ and $\\argmax_i f$.',
+      'plain end',
+      '\\end{document}',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Macros', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      const math = page.getByTestId('vis-math');
+      await expect(math).toHaveCount(3);
+      // KaTeX knows the macros too: no red fallback
+      await expect(math.nth(0).locator('.katex-error')).toHaveCount(0);
+      await expect(math.nth(1).locator('.katex-error')).toHaveCount(0);
+
+      await math.nth(0).click();
+      await appendInFormula(page, '+1');
+      let expected = doc.replace('$x \\in \\R$', '$x \\in \\R+1$');
+      await expectStored(request, id, expected);
+
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').nth(1).click();
+      await appendInFormula(page, '+1');
+      expected = expected.replace('$\\norm{v}$', '$\\norm{v}+1$');
+      await expectStored(request, id, expected);
+
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').nth(2).click();
+      await expect(page.getByTestId('math-popover')).toBeVisible();
+      await page.getByTestId('math-popover-done').click();
+
+      await page.waitForTimeout(2500);
+      expect(await stored(request, id)).toBe(expected);
     } finally {
       await cleanup(request, id);
     }

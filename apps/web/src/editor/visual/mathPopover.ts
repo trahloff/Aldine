@@ -1,5 +1,7 @@
 import type { EditorView } from '@codemirror/view';
 import { trackRange, untrack } from './positions';
+import { macrosOf } from './macros';
+import type { MacroSet } from './preamble';
 
 /**
  * WYSIWYG math editing: clicking a rendered equation opens a floating
@@ -239,6 +241,23 @@ export function mathEdit(raw: string, c0: string, c1: string, s1: string): { fro
   return { from, to, insert };
 }
 
+/**
+ * The document's macros, as MathLive takes them: never expanded, so the
+ * formula's canonical form and what is written back keep `\R` as typed,
+ * and one unit, so a macro's expansion cannot be edited from inside.
+ */
+function setMacros(mf: MathField, macros: MacroSet): boolean {
+  if (!macros.key) return false;
+  const field = mf as unknown as { macros: Record<string, unknown> };
+  const own = Object.fromEntries(Object.entries(macros.defs).map(([name, m]) => [name, { def: m.def, args: m.args, captureSelection: true, expand: false }]));
+  try {
+    field.macros = { ...field.macros, ...own };
+    return true;
+  } catch {
+    return false; // not mounted: the formula is read without them and opens as source if it needs them
+  }
+}
+
 let openPopover: { close(focusView: boolean): void } | null = null;
 let openSeq = 0;
 
@@ -319,6 +338,8 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   bar.append(done, tex);
   pop.appendChild(bar);
   document.body.appendChild(pop);
+  // the field reads its macros once mounted; the formula is parsed again with them
+  if (setMacros(mf, macrosOf(view.state))) mf.value = source;
 
   // MathLive's own canonical form of the untouched formula, read once it is
   // mounted: the baseline an edit is diffed against. A formula it would

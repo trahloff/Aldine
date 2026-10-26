@@ -26,6 +26,43 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - USENIX Security, SIAM and Cell Press only hand their kits to a browser. Their
   tiles now link the kit and open the ZIP import instead of creating a project
   without the venue's class.
+- Visual mode: "+ col" adds the new column inside a table's outer `|` or
+  `@{…}`, so the table keeps its frame and padding (#152).
+- Visual mode: a paste always typesets. A pasted link writes `\url` only
+  when the preamble (the file's own, or the root file's) loads `url`, `xurl`,
+  `hyperref` or `biblatex`, and keeps the address as text otherwise. Plain
+  text is escaped like rich text, so `50% & $5` stays text; LaTeX (any
+  control word or `$…$` formula) pastes as it is, and so does anything
+  pasted into a formula, a listing, a path or a `\ref`/`\cite`/`\label`
+  key. The root file's preamble is read again when a file opens and every
+  30 seconds, so a package removed there stops `\url` in chapters too
+  (#149).
+- Visual mode shows `\%`, `\&`, `\$`, `\#`, `\_`, `\{`, `\}`,
+  `\textasciitilde{}` and `\ldots` as the characters they typeset, and
+  `\url{…}` as a link; inside `\path` and `\nolinkurl` escapes stay as
+  written, as LaTeX prints them. `\centering` and a `\label` on a heading's line
+  stay hidden until the caret is on them, and End in such a heading stops
+  before its brace (#150).
+- Visual mode keys around lists and headings: Enter at the end of a list
+  item starts the next `\item`, and Enter on an empty last item leaves the
+  list. Enter in a formula, listing or other environment inside an item
+  just breaks the line, an empty item between others stays, and a list
+  holding a comment or a setting besides its only item is not removed.
+  Backspace and Delete next to a list's hidden `\begin`/`\end` move the
+  caret past it instead of deleting it, on a long paper too. Enter in body
+  text keeps the line's own indentation, and Heading on an empty line
+  writes an empty heading with the caret in it (#151).
+
+### Changed
+- Visual mode reads the preamble's `\newcommand`, `\renewcommand`,
+  `\providecommand` and `\DeclareMathOperator` definitions (without an
+  optional argument). Formulas that use them render with them and open in
+  the formula editor, which keeps `\R` as typed. Editing one definition
+  redraws only the formulas that use it (#153).
+- Visual mode on a long paper builds its rendering around the caret and
+  the part in view first and the rest while the browser is idle, so the
+  first switch and KaTeX or the bibliography arriving no longer walk the
+  whole document at once (#154).
 
 ## [1.0.1] — 2026-10-25
 

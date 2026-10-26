@@ -1,9 +1,12 @@
 import { EditorView } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 import { EditorSelection } from '@codemirror/state';
 import type { EditorState, StateCommand } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
+import { insertNewlineKeepIndent } from '@codemirror/commands';
 import type { SyntaxNode } from '@lezer/common';
 import { headingLineTail } from './decorations';
+import { atomicDecoAt } from './atomicField';
 
 /**
  * All formatting is expressed as ordinary CodeMirror text dispatches, so it
@@ -94,8 +97,16 @@ export function setSectionLevel(level: 1 | 2 | 3 | 4) {
     const cm = raw.match(/(?:^|[^\\])%/);
     const cmIdx = cm ? cm.index! + cm[0].length - 1 : -1;
     const text = (cmIdx >= 0 ? raw.slice(0, cmIdx) : raw).trim();
-    if (!text) return false; // comment-only or blank line — nothing to turn into a heading
     const trailing = cmIdx >= 0 ? ' ' + raw.slice(cmIdx).trim() : '';
+    if (!text) {
+      // a blank (or comment-only) line gets an empty heading to type into
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: `${cmd}{}${trailing}` },
+        selection: { anchor: line.from + cmd.length + 1 },
+        scrollIntoView: true,
+      });
+      return true;
+    }
     view.dispatch({
       changes: { from: line.from, to: line.to, insert: `${cmd}{${text}}${trailing}` },
       selection: { anchor: line.from + cmd.length + 1 + text.length },
@@ -142,6 +153,170 @@ export const breakAfterHeading: StateCommand = ({ state, dispatch }) => {
   }));
   return true;
 };
+
+const RENDERED_LISTS = new Set(['itemize', 'enumerate', 'description']);
+
+const MATH_NODES = new Set(['DollarMath', 'BracketMath', 'ParenMath', 'Math']);
+
+/**
+ * The list environment `pos` is directly in (not in a nested one), when
+ * Visual renders its items. Inside any other environment or a formula within
+ * an item, an \item would be written into that construct, so there is none.
+ */
+function listAt(state: EditorState, pos: number): SyntaxNode | null {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); n; n = n.parent) {
+    const inside = n.from < pos && pos < n.to;
+    if (inside && (MATH_NODES.has(n.name) || (n.name.endsWith('Environment') && n.name !== 'ListEnvironment' && n.name !== 'KnownEnvironment'))) return null;
+    if (n.name !== 'ListEnvironment') continue;
+    const name = n.getChild('BeginEnv')?.getChild('EnvNameGroup')?.getChild('ListEnvName');
+    return name && RENDERED_LISTS.has(state.doc.sliceString(name.from, name.to)) ? n : null;
+  }
+  return null;
+}
+
+/** The list's own \item tokens, in order (a nested list's are its own). */
+function listItems(list: SyntaxNode): SyntaxNode[] {
+  const out: SyntaxNode[] = [];
+  const text = list.getChild('Content')?.getChild('Text');
+  for (let c = text?.firstChild ?? null; c; c = c.nextSibling) {
+    const item = c.name === 'Command' ? c.getChild('KnownCommand')?.getChild('Item') : null;
+    if (item) out.push(item);
+  }
+  return out;
+}
+
+const indentOf = (text: string) => /^[ \t]*/.exec(text)![0];
+
+/** Whether a line holds nothing but `node` (and spaces). */
+function aloneOnLine(state: EditorState, node: SyntaxNode): boolean {
+  const line = state.doc.lineAt(node.from);
+  return node.to <= line.to && !state.doc.sliceString(line.from, node.from).trim() && !state.doc.sliceString(node.to, line.to).trim();
+}
+
+/**
+ * Enter at the end of a list item starts the next `\item` on a new line, at
+ * the item's indentation. On an empty item it leaves the list: the empty
+ * last item goes, and the caret lands on a new line after the list (a new
+ * item of the enclosing list when it is nested). The only item of a list
+ * takes the list with it, since an empty list stops the compile; a list that
+ * holds more than that item is left alone.
+ */
+export const listItemEnter: StateCommand = ({ state, dispatch }) => {
+  const sel = state.selection.main;
+  if (!sel.empty || state.selection.ranges.length > 1) return false;
+  const pos = sel.head;
+  const line = state.doc.lineAt(pos);
+  if (state.doc.sliceString(pos, line.to).trim()) return false;
+  const list = listAt(state, pos);
+  if (!list) return false;
+  const items = listItems(list);
+  const item = [...items].reverse().find((i) => i.to <= pos);
+  const end = list.getChild('EndEnv');
+  if (!item || !end || pos > end.from) return false;
+  const itemLine = state.doc.lineAt(item.from);
+  const indent = state.doc.sliceString(itemLine.from, item.from).trim() ? '' : indentOf(itemLine.text);
+  const empty = itemLine.number === line.number && state.doc.sliceString(item.to, line.to).trim() === '';
+  if (!empty) {
+    const insert = `${state.lineBreak}${indent}\\item `;
+    dispatch(state.update({
+      changes: { from: pos, to: line.to, insert },
+      selection: { anchor: pos + insert.length },
+      scrollIntoView: true,
+      userEvent: 'input',
+    }));
+    return true;
+  }
+  // an empty item between others stays a plain line break: leaving would jump the caret past them
+  if (item !== items[items.length - 1] || !aloneOnLine(state, end)) return false;
+  const endLine = state.doc.lineAt(end.from);
+  if (items.length === 1) {
+    const begin = list.getChild('BeginEnv');
+    if (!begin || !aloneOnLine(state, begin)) return false;
+    // anything else in the list (a comment, a \setlength) would go with it
+    if (state.doc.sliceString(begin.to, item.from).trim() || state.doc.sliceString(item.to, end.from).trim()) return false;
+    const beginLine = state.doc.lineAt(begin.from);
+    dispatch(state.update({
+      changes: { from: beginLine.from, to: endLine.to, insert: '' },
+      selection: { anchor: beginLine.from },
+      scrollIntoView: true,
+      userEvent: 'delete',
+    }));
+    return true;
+  }
+  const outer = list.parent ? listAt(state, list.from) : null;
+  const outerItem = outer ? [...listItems(outer)].reverse().find((i) => i.to <= list.from) : null;
+  let after = '';
+  if (outer && outerItem) {
+    const l = state.doc.lineAt(outerItem.from);
+    after = `${state.doc.sliceString(l.from, outerItem.from).trim() ? '' : indentOf(l.text)}\\item `;
+  }
+  const changes = state.changes([
+    { from: line.from - 1, to: line.to },
+    { from: endLine.to, insert: state.lineBreak + after },
+  ]);
+  dispatch(state.update({
+    changes,
+    selection: { anchor: changes.mapPos(endLine.to, 1) },
+    scrollIntoView: true,
+    userEvent: 'input',
+  }));
+  return true;
+};
+
+/**
+ * Enter anywhere else in Visual keeps the line's own indentation instead of
+ * the language's, which indents body text under a heading and so shows as an
+ * indented paragraph. A line ending in \begin{…} is left to the environment
+ * closer.
+ */
+export const paragraphEnter: StateCommand = (target) => {
+  const { state } = target;
+  const sel = state.selection.main;
+  const line = state.doc.lineAt(sel.head);
+  if (/\\begin\s*\{[^}]*\}[ \t]*$/.test(state.doc.sliceString(line.from, sel.head))) return false;
+  return insertNewlineKeepIndent(target);
+};
+
+/** Whether `line` is hidden whole by Visual (a list's \begin/\end line, a lone \centering). */
+function hiddenLine(deco: DecorationSet | undefined, line: { from: number; to: number }): boolean {
+  if (!deco) return false;
+  let hidden = false;
+  deco.between(line.from, line.to, (from, to, d) => {
+    if (d.spec.block && from <= line.from && to >= line.to) hidden = true;
+  });
+  return hidden;
+}
+
+/**
+ * Backspace at the start of a line below a hidden line, and Delete at the
+ * end of a line above one, would join the hidden markup to the text and
+ * delete it a character at a time. They move the caret past it instead, to
+ * the nearest line that shows.
+ */
+function passHiddenLine(dir: -1 | 1): StateCommand {
+  return ({ state, dispatch }) => {
+    const sel = state.selection.main;
+    if (!sel.empty || state.selection.ranges.length > 1) return false;
+    const line = state.doc.lineAt(sel.head);
+    if (sel.head !== (dir < 0 ? line.from : line.to)) return false;
+    let n = line.number + dir;
+    if (n < 1 || n > state.doc.lines) return false;
+    const next = state.doc.line(n);
+    // the hidden run ahead is a few lines at most; on a long paper it may not be built yet
+    const deco = dir < 0
+      ? atomicDecoAt(state, Math.max(0, next.from - 2_000), line.to)
+      : atomicDecoAt(state, line.from, Math.min(state.doc.length, next.to + 2_000));
+    if (!hiddenLine(deco, next)) return false;
+    while (n >= 1 && n <= state.doc.lines && hiddenLine(deco, state.doc.line(n))) n += dir;
+    if (n < 1 || n > state.doc.lines) return true;
+    const target = state.doc.line(n);
+    dispatch(state.update({ selection: { anchor: dir < 0 ? target.to : target.from }, scrollIntoView: true, userEvent: 'select' }));
+    return true;
+  };
+}
+
+export const backspaceHiddenLine = passHiddenLine(-1);
+export const deleteHiddenLine = passHiddenLine(1);
 
 /** Wrap the selected lines in an itemize (or unwrap the enclosing list). */
 export function toggleItemize(view: EditorView): boolean {

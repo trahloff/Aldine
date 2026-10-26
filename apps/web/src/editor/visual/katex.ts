@@ -1,4 +1,5 @@
 import { pokeViews } from './refresh';
+import { NO_MACROS, MacroSet } from './preamble';
 
 /**
  * Lazy KaTeX: loaded (with its CSS) only when visual mode first renders math,
@@ -30,10 +31,30 @@ export function katexReady(): boolean {
 const cache = new Map<string, string>();
 const CACHE_MAX = 500;
 
+/**
+ * Each distinct macro set gets a short id, so cache keys stay short. Typing
+ * a definition makes a new set per keystroke: past MACRO_SETS_MAX the ids
+ * and the renderings made with them go, and ids are never reused.
+ */
+const macroIds = new Map<string, number>();
+const MACRO_SETS_MAX = 16;
+let nextMacroId = 1;
+function macroId(macros: MacroSet): number {
+  if (macros === NO_MACROS || !macros.key) return 0;
+  let id = macroIds.get(macros.key);
+  if (id !== undefined) return id;
+  if (macroIds.size >= MACRO_SETS_MAX) {
+    macroIds.clear();
+    for (const k of [...cache.keys()]) if (!/^[DI]0:/.test(k)) cache.delete(k);
+  }
+  macroIds.set(macros.key, id = nextMacroId++);
+  return id;
+}
+
 /** Rendered HTML for a math source, or null while KaTeX is still loading. */
-export function renderMath(source: string, displayMode: boolean): string | null {
+export function renderMath(source: string, displayMode: boolean, macros: MacroSet = NO_MACROS): string | null {
   if (!katex) { ensureKatex(); return null; }
-  const key = `${displayMode ? 'D' : 'I'}:${source}`;
+  const key = `${displayMode ? 'D' : 'I'}${macroId(macros)}:${source}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   let html: string;
@@ -43,7 +64,9 @@ export function renderMath(source: string, displayMode: boolean): string | null 
     // the source is never touched).
     const cleaned = source.replace(/\\label\s*\{[^}]*\}/g, '');
     // MathML is what screen readers read; KaTeX hides its HTML copy from them
-    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, output: 'htmlAndMathml' });
+    // a fresh map each time: KaTeX writes \gdef definitions into the one it gets
+    const katexMacros = Object.fromEntries(Object.entries(macros.defs).map(([name, m]) => [`\\${name}`, m.def]));
+    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, output: 'htmlAndMathml', macros: katexMacros });
   } catch {
     return ''; // signals render failure → widget falls back to raw source
   }

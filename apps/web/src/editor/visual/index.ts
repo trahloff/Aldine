@@ -6,7 +6,8 @@ import type { SyntaxNode } from '@lezer/common';
 import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import { revealField } from './reveal';
-import { atomicField } from './atomicField';
+import { atomicDecoAt, atomicField, atomicFiller } from './atomicField';
+import { macroField } from './macros';
 import { markPlugin } from './markPlugin';
 import { visualTheme } from './theme';
 import { ensureKatex } from './katex';
@@ -14,13 +15,13 @@ import { registerView, unregisterView } from './refresh';
 import { setVisualContext } from './context';
 import { suggestField, commentRangesField } from './suggestions';
 import { rangeTracker, widgetPos } from './positions';
-import { htmlToLatex } from './html2latex';
+import { pasteText, rawAt } from './clipboard';
 import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } from './mathPopover';
 import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
-import { mathParts } from './decorations';
-import { breakAfterHeading } from './commands';
+import { labelsOnlyTail, mathParts } from './decorations';
+import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter, paragraphEnter } from './commands';
 
 /**
  * Clicking a rendered widget: math opens the MathLive editor; chips put the
@@ -48,18 +49,15 @@ const widgetClick = EditorView.domEventHandlers({
   },
 });
 
-/** Rich-text paste converts to clean LaTeX instead of dumping plain text. */
+/** Rich-text paste converts to clean LaTeX; plain prose is escaped. */
 const pasteLatex = EditorView.domEventHandlers({
   paste(e, view) {
-    const html = e.clipboardData?.getData('text/html');
-    if (!html) return false;
-    // skip clipboard that is already LaTeX-ish plain text (own-editor copies)
-    const text = e.clipboardData?.getData('text/plain') ?? '';
-    if (/\\(section|textbf|begin|item|cite)\b/.test(text)) return false;
-    const latex = htmlToLatex(html);
-    if (!latex || latex === text.trim()) return false;
+    const data = e.clipboardData;
+    if (!data) return false;
+    const latex = pasteText(data.getData('text/html'), data.getData('text/plain'), view.state.doc.toString(), rawAt(view.state, view.state.selection.main.head));
+    if (latex == null) return false;
     e.preventDefault();
-    view.dispatch(view.state.replaceSelection(latex));
+    view.dispatch(view.state.replaceSelection(latex), { userEvent: 'input.paste', scrollIntoView: true });
     return true;
   },
 });
@@ -87,10 +85,11 @@ const headingCloserStop = EditorState.transactionFilter.of((tr) => {
   if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1) return tr;
   const head = tr.selection.main;
   if (!head.empty) return tr;
-  const deco = tr.startState.field(atomicField, false)?.deco;
-  if (!deco) return tr;
+  if (tr.startState.field(atomicField, false) === undefined) return tr;
   const line = tr.startState.doc.lineAt(head.head);
   if (head.head !== line.to) return tr;
+  const deco = atomicDecoAt(tr.startState, line.from, line.to);
+  if (!deco) return tr;
   let stop = -1;
   deco.between(line.from, line.to, (from, to, d) => {
     if (to === line.to && d.spec.headingCloser) stop = from;
@@ -146,8 +145,8 @@ export function editAtCursor(view: EditorView): 'opened' | 'source' | null {
 }
 
 /**
- * End inside a heading whose `}` ends its line goes to the end of the heading
- * text, before the brace (where a click past the text lands too); only an
+ * End inside a heading whose `}` ends its line (or is followed by nothing
+ * but its \label) goes to the end of the heading text, before the brace (where a click past the text lands too); only an
  * arrow key passes the brace.
  */
 function headingEnd(view: EditorView): boolean {
@@ -158,7 +157,7 @@ function headingEnd(view: EditorView): boolean {
   const close = cmd?.getChild('SectioningArgument')?.getChild('CloseBrace');
   if (!cmd || !close || close.to !== cmd.to || sel.head > close.from) return false;
   const line = state.doc.lineAt(sel.head);
-  if (close.to > line.to || state.doc.sliceString(close.to, line.to).trim()) return false;
+  if (close.to > line.to || !labelsOnlyTail(state.doc.sliceString(close.to, line.to))) return false;
   if (sel.head < close.from) view.dispatch({ selection: { anchor: close.from }, scrollIntoView: true, userEvent: 'select' });
   return true;
 }
@@ -181,15 +180,21 @@ export interface VisualDeps {
  * ever modified by explicit user edits, the widget editors (table cells, the
  * formula editor) and the formatting commands in ./commands.ts.
  */
+export { recordOwnCopies } from './clipboard';
+
 export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [
-    revealField, atomicField, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle,
+    revealField, macroField, atomicField, atomicFiller, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle,
     commentRangesField, suggestField, rangeTracker, remoteCaretReveal(deps.awareness), headingCloserStop,
     Prec.high(keymap.of([
       // elsewhere, and in a formula that only edits as source, Mod-Enter keeps its usual meaning
       { key: 'Mod-Enter', run: (view) => openAtCursor(view) === 'opened' },
       { key: 'Enter', run: breakAfterHeading, shift: breakAfterHeading },
+      { key: 'Enter', run: listItemEnter },
+      { key: 'Enter', run: paragraphEnter },
+      { key: 'Backspace', run: backspaceHiddenLine },
+      { key: 'Delete', run: deleteHiddenLine },
       { key: 'End', run: headingEnd },
       { mac: 'Cmd-ArrowRight', run: headingEnd },
     ])),
