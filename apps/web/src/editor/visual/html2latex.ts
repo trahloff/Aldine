@@ -20,9 +20,17 @@ function isBlock(el: Element): boolean {
   return /^(p|div|h[1-6]|ul|ol|li|table|tr|blockquote|br|section|article)$/i.test(el.tagName);
 }
 
-/** Formatting already applied by an enclosing command, so nested runs don't repeat it. */
-interface Ctx { bold: boolean; italic: boolean; heading: boolean }
-const PLAIN: Ctx = { bold: false, italic: false, heading: false };
+/**
+ * Formatting already applied by an enclosing command, so nested runs don't
+ * repeat it. `wrapped`: inside any command's argument. `url`: \url is defined.
+ */
+interface Ctx { bold: boolean; italic: boolean; heading: boolean; wrapped: boolean; url: boolean }
+
+/** Whether \url{href} typesets here: % and # read verbatim only outside another command's argument. */
+function urlFits(href: string, ctx: Ctx): boolean {
+  if (!ctx.url || /[{}\\\s]/.test(href)) return false;
+  return !ctx.wrapped || !/[%#]/.test(href);
+}
 
 /** Bold as the element's own style says (Google Docs marks runs with font-weight), or null when it says nothing. */
 function styledBold(el: Element): boolean | null {
@@ -69,7 +77,7 @@ function convertList(el: Element, ordered: boolean, ctx: Ctx): string {
 }
 
 function heading(cmd: string, el: Element, ctx: Ctx): string {
-  return `\n\\${cmd}{${convertChildren(el, { ...ctx, heading: true }).trim()}}\n`;
+  return `\n\\${cmd}{${convertChildren(el, { ...ctx, heading: true, wrapped: true }).trim()}}\n`;
 }
 
 function convertNode(node: Node, ctx: Ctx): string {
@@ -89,11 +97,12 @@ function convertNode(node: Node, ctx: Ctx): string {
       // same-page anchors (a section link, a Wikipedia footnote) and script
       // links lead nowhere from a paper: the text is what was meant
       if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return inner;
-      if (!inner || (el.textContent || '').trim() === href) return `\\url{${href}}`;
       // Never \href: it exists only under hyperref, which many classes (incl.
       // plain article setups) don't load — one pasted link then kills the
-      // compile. \url (url/xurl, pulled in far more widely) plus the link text.
-      return `${inner} (\\url{${href}})`;
+      // compile. \url only where the preamble loads it, else the URL as text.
+      const url = urlFits(href, ctx) ? `\\url{${href}}` : escapeLatex(href);
+      if (!inner || (el.textContent || '').trim() === href) return url;
+      return `${inner} (${url})`;
     }
     case 'ul': return convertList(el, false, ctx);
     case 'ol': return convertList(el, true, ctx);
@@ -114,6 +123,7 @@ function convertNode(node: Node, ctx: Ctx): string {
         if (tag === 'u') wrappers.push('underline');
         if (tag === 'code' || tag === 'tt') wrappers.push('texttt');
       }
+      if (wrappers.length) next.wrapped = true;
       let inner = convertChildren(el, next);
       if (wrappers.length) {
         const text = inner.trim();
@@ -128,9 +138,10 @@ function convertNode(node: Node, ctx: Ctx): string {
   }
 }
 
-export function htmlToLatex(html: string): string {
+/** `url`: whether the document defines \url; without it links keep their address as escaped text. */
+export function htmlToLatex(html: string, opts: { url?: boolean } = {}): string {
   const dom = new DOMParser().parseFromString(html, 'text/html');
-  return convertNode(dom.body, PLAIN)
+  return convertNode(dom.body, { bold: false, italic: false, heading: false, wrapped: false, url: opts.url ?? false })
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

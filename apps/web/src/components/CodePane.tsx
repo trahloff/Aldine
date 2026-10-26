@@ -14,7 +14,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { setComments, CommentRange } from '../editor/commentsEffect';
-import { visualExtensions, editAtCursor, type VisualDeps } from '../editor/visual';
+import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
@@ -417,6 +417,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             }
           }),
           commentField,
+          // outside the mode compartment: a copy in Source pastes as source in Visual
+          recordOwnCopies,
           // outside the mode compartment: Visual's inline suggestions read it when they mount
           commentRangesField,
           flashField,

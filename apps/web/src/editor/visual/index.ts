@@ -14,7 +14,7 @@ import { registerView, unregisterView } from './refresh';
 import { setVisualContext } from './context';
 import { suggestField, commentRangesField } from './suggestions';
 import { rangeTracker, widgetPos } from './positions';
-import { htmlToLatex } from './html2latex';
+import { pasteText } from './clipboard';
 import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } from './mathPopover';
 import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
@@ -48,18 +48,15 @@ const widgetClick = EditorView.domEventHandlers({
   },
 });
 
-/** Rich-text paste converts to clean LaTeX instead of dumping plain text. */
+/** Rich-text paste converts to clean LaTeX; plain prose is escaped. */
 const pasteLatex = EditorView.domEventHandlers({
   paste(e, view) {
-    const html = e.clipboardData?.getData('text/html');
-    if (!html) return false;
-    // skip clipboard that is already LaTeX-ish plain text (own-editor copies)
-    const text = e.clipboardData?.getData('text/plain') ?? '';
-    if (/\\(section|textbf|begin|item|cite)\b/.test(text)) return false;
-    const latex = htmlToLatex(html);
-    if (!latex || latex === text.trim()) return false;
+    const data = e.clipboardData;
+    if (!data) return false;
+    const latex = pasteText(data.getData('text/html'), data.getData('text/plain'), view.state.doc.toString());
+    if (latex == null) return false;
     e.preventDefault();
-    view.dispatch(view.state.replaceSelection(latex));
+    view.dispatch(view.state.replaceSelection(latex), { userEvent: 'input.paste', scrollIntoView: true });
     return true;
   },
 });
@@ -181,6 +178,8 @@ export interface VisualDeps {
  * ever modified by explicit user edits, the widget editors (table cells, the
  * formula editor) and the formatting commands in ./commands.ts.
  */
+export { recordOwnCopies } from './clipboard';
+
 export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [

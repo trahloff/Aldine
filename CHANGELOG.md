@@ -28,6 +28,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   without the venue's class.
 - Visual mode: "+ col" adds the new column inside a table's outer `|` or
   `@{…}`, so the table keeps its frame and padding (#152).
+- Visual mode: a paste always typesets. A pasted link writes `\url` only
+  when the preamble (the file's own, or the root file's) loads `url`, `xurl`,
+  `hyperref` or `biblatex`, and keeps the address as text otherwise. Plain
+  text is escaped like rich text, so `50% & $5` stays text; LaTeX copied
+  from an editor pastes as it is (#149).
 
 ## [1.0.1] — 2026-10-25
 

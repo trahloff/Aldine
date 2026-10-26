@@ -1,6 +1,7 @@
 import { api, BibEntry } from '../../api';
 import { withBase } from '../../basePath';
 import { pokeViews } from './refresh';
+import { preambleOf } from './preamble';
 
 /**
  * Project context for widgets that need more than the document text (cite
@@ -12,6 +13,7 @@ let bib: Map<string, BibEntry> | null = null;
 let bibKey = '';
 let files: { key: string; paths: Set<string> } | null = null;
 let notify: ((text: string) => void) | null = null;
+let rootPreamble: { key: string; text: string | null } | null = null;
 
 export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string) => void): void {
   const rootDir = rootFile && rootFile.includes('/') ? rootFile.slice(0, rootFile.lastIndexOf('/')) : '';
@@ -25,6 +27,21 @@ export function setVisualContext(projectId: string, branch: string, rootFile?: s
       .then((entries) => { bib = new Map(entries.map((e) => [e.key, e])); pokeViews(); })
       .catch(() => { bib = new Map(); });
   }
+  const rootKey = `${key}::${rootFile ?? ''}`;
+  if (rootFile && rootPreamble?.key !== rootKey) {
+    rootPreamble = { key: rootKey, text: null };
+    api.readFile(projectId, branch, rootFile)
+      .then((text) => { if (rootPreamble?.key === rootKey) { rootPreamble.text = preambleOf(text); pokeViews(); } })
+      .catch(() => {});
+  }
+}
+
+/**
+ * The preamble that applies to `doc`: its own when it has one, otherwise
+ * the root file's as last read (a chapter \input by main.tex), or null.
+ */
+export function preambleFor(doc: string): string | null {
+  return preambleOf(doc) ?? rootPreamble?.text ?? null;
 }
 
 /** Tells the person what a widget could not do, once the widget that would say so is gone. */

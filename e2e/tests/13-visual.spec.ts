@@ -1379,6 +1379,42 @@ test.describe('visual editor: wrapped cells, new rows, collaborators in a table,
   });
 });
 
+test.describe('visual editor: pastes, escapes, keys and formulas', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('aldine.editorMode', 'visual'));
+  });
+
+  const pasteAtEnd = (page: import('@playwright/test').Page, data: Record<string, string>) => page.evaluate((data) => {
+    const dt = new DataTransfer();
+    for (const [type, value] of Object.entries(data)) dt.setData(type, value);
+    document.querySelector('.cm-content')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, data);
+
+  test('a paste in Visual always typesets: links need \\url to be loaded, plain text is escaped (#149)', async ({ page, request }) => {
+    const article = (pre: string) => `\\documentclass{article}\n${pre}\\begin{document}\nprose here\n\\end{document}\n`;
+    const link = { 'text/html': '<p>See <a href="https://example.org/a_b">the site</a>.</p>', 'text/plain': 'See the site.' };
+    const bare = await seedDoc(request, 'Visual Paste Bare', article(''));
+    const linked = await seedDoc(request, 'Visual Paste Url', article('\\usepackage{hyperref}\n'));
+    try {
+      await openProject(page, bare);
+      await page.locator('.cm-line', { hasText: 'prose here' }).click();
+      await page.keyboard.press('End');
+      await pasteAtEnd(page, link);
+      await expectStored(request, bare, article('').replace('prose here', 'prose hereSee the site (https://example.org/a\\_b).'));
+      await pasteAtEnd(page, { 'text/plain': ' 50% & $5 #3' });
+      await expectStored(request, bare, article('').replace('prose here', 'prose hereSee the site (https://example.org/a\\_b). 50\\% \\& \\$5 \\#3'));
+      await openProject(page, linked);
+      await page.locator('.cm-line', { hasText: 'prose here' }).click();
+      await page.keyboard.press('End');
+      await pasteAtEnd(page, link);
+      await expectStored(request, linked, article('\\usepackage{hyperref}\n').replace('prose here', 'prose hereSee the site (\\url{https://example.org/a_b}).'));
+    } finally {
+      await cleanup(request, bare);
+      await cleanup(request, linked);
+    }
+  });
+});
+
 test.describe('visual editor on a phone (VIS-21)', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   test.beforeEach(async ({ page }) => {
