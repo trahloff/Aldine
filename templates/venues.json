@@ -490,7 +490,7 @@
         "root": "Optimal-Design-layout",
         "take": [
           "USG.cls",
-          "wileyNJD-Chicago.bst",
+          "wileyNJD-Chicago-lastoo.bst",
           "wileyNJD-Chicago.bib",
           "Optimal-Design-layout.tex",
           "NJDnatbib.sty",
@@ -502,7 +502,8 @@
           "empty-eps-converted-to.pdf",
           "images/*.eps",
           "images/*.pdf"
-        ]
+        ],
+        "rename": { "wileyNJD-Chicago-lastoo.bst": "wileyNJD-Chicago.bst" }
       },
       "documentClass": "USG",
       "bibStyle": "wileyNJD-Chicago",
