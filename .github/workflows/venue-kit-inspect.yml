@@ -17,6 +17,9 @@ on:
         description: Inspect this URL instead of the entry's (an alternative official source)
         required: false
         type: string
+  push:
+    branches: [venue-kits-172]
+    paths: [.github/workflows/venue-kit-inspect.yml]
 
 permissions:
   contents: read
@@ -25,11 +28,15 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        kit: ${{ fromJSON(github.event_name == 'push' && '["ijcai","icml","iop","frontiers","wiley","optica","tandf","usenix-security","siamart","cellpress"]' || format('["{0}"]', inputs.kit)) }}
     steps:
       - uses: actions/checkout@v4
       - name: Inspect
         env:
-          KIT: ${{ inputs.kit }}
+          KIT: ${{ matrix.kit }}
           URL_OVERRIDE: ${{ inputs.url }}
         run: |
           set -uo pipefail
