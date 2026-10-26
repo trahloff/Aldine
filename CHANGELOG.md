@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Elsevier's CAS classes in the template gallery: "Elsevier journal (CAS, one
+  column)" starts from cas-sc and "Elsevier journal (CAS, two columns)" from
+  cas-dc, with the title block, keywords and author-year references their
+  own template uses (#137).
+
 ### Fixed
 - The ICML, IJCAI, IOP, Frontiers, Optica and Taylor & Francis templates
   create projects that typeset on the first try, and show page 1 in the

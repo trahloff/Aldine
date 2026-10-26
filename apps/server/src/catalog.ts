@@ -51,9 +51,12 @@ interface VenueMeta {
    *                       \maketitle (the AMS classes)
    *  - 'acm'            — acmart: every author needs an \affiliation with an
    *                       \institution and a \country, or the class errors
+   *  - 'cas'            — Elsevier CAS: title, labelled author and keyval
+   *                       affiliation, abstract and keywords after
+   *                       \begin{document}, before \maketitle
    * Anything else takes the plain article shape.
    */
-  front?: 'frontmatter' | 'inbody' | 'abstract-first' | 'acm';
+  front?: 'frontmatter' | 'inbody' | 'abstract-first' | 'acm' | 'cas';
 }
 
 /**
@@ -64,6 +67,9 @@ interface VenueMeta {
  */
 export const INSTALLED_VENUES: Record<string, VenueMeta> = {
   elsarticle: { name: 'Elsevier journal', category: 'Journals', description: 'Elsevier submission with the elsarticle class.', options: 'preprint,review,12pt', bibStyle: 'elsarticle-num', front: 'frontmatter' },
+  // cas-model2-names is author-year and needs natbib, which the CAS classes do not load.
+  'elscas-sc': { name: 'Elsevier journal (CAS, one column)', category: 'Journals', description: 'Elsevier submission with the single-column cas-sc class.', options: 'a4paper,fleqn', packages: ['natbib'], bibStyle: 'cas-model2-names', front: 'cas' },
+  'elscas-dc': { name: 'Elsevier journal (CAS, two columns)', category: 'Journals', description: 'Elsevier submission with the double-column cas-dc class.', options: 'a4paper,fleqn', packages: ['natbib'], bibStyle: 'cas-model2-names', front: 'cas' },
   ieeetran: { name: 'IEEE Transactions', category: 'Journals', description: 'IEEE journal submission with the IEEEtran class.', options: 'journal', bibStyle: 'IEEEtran' },
   ieeeconf: { name: 'IEEE conference', category: 'Conferences', description: 'IEEE conference paper with the IEEEconf class.', bibStyle: 'IEEEtran' },
   acmart: { name: 'ACM article', category: 'Conferences', description: 'ACM proceedings or journal paper with the acmart class.', options: 'sigconf', bibStyle: 'ACM-Reference-Format', front: 'acm' },
@@ -340,6 +346,19 @@ export function skeleton(c: CatalogClass, meta: VenueMeta): string {
       + '\\affiliation{\n  \\institution{Your institution}\n  \\city{Your city}\n  \\country{Your country}\n}\n'
       + '\\email{you@example.org}\n\n'
       + abstract
+      + '\\maketitle\n\n'
+      + tail;
+  }
+  if (meta.front === 'cas') {
+    return notice + head + bib.pre
+      + '\n\\begin{document}\n\n'
+      + '\\shorttitle{Short title}\n'
+      + '\\shortauthors{Your Name}\n\n'
+      + '\\title[mode = title]{Your title here}\n\n'
+      + '\\author[1]{Your Name}\n'
+      + '\\affiliation[1]{organization={Your institution}, country={Your country}}\n\n'
+      + abstract
+      + '\\begin{keywords}\nfirst keyword \\sep second keyword\n\\end{keywords}\n\n'
       + '\\maketitle\n\n'
       + tail;
   }
