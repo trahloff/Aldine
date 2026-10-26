@@ -121,8 +121,8 @@
       "homepage": "https://www.ijcai.org/authors_kit",
       "termsUrl": "https://2026.ijcai.org/ijcai-ecai-2026-call-for-papers-main-track/",
       "kit": {
-        "url": "https://www.ijcai.org/sites/default/files/Guidelines/FormattingGuidelines-IJCAI-ECAI-26.zip",
-        "host": "www.ijcai.org",
+        "url": "https://ijcai.org/sites/default/files/Guidelines/FormattingGuidelines-IJCAI-ECAI-26.zip",
+        "host": "ijcai.org",
         "take": ["ijcai26.sty", "ijcai26.tex", "ijcai26.bib", "named.bst"]
       },
       "documentClass": "article",
