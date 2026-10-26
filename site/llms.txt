@@ -7,7 +7,7 @@
 > compiles, a built-in MCP server for Claude, and a byte-stable visual editing
 > mode. AGPL-3.0.
 
-Status: v0.14.4 (October 2026), AGPL-3.0. There is no paid plan and no
+Status: 1.0.1 (October 2026), AGPL-3.0. There is no paid plan and no
 hosted service today; you run it yourself.
 
 Key facts:
@@ -46,7 +46,10 @@ Key facts:
 
 ## Limits
 
-- Young: v0.x. Before 1.0 a minor version may change behaviour or on-disk layout.
+- Young: first release July 2026, 1.0 in October 2026. Within 1.x an upgrade
+  needs no manual step, and stable settings, MCP tools and the plugin API keep
+  their names until 2.0 (https://github.com/trahloff/Aldine/blob/main/docs/STABILITY.md).
+  That covers upgrades, not a long track record.
 - Review is by comments with suggested edits. There are no keystroke-level
   track changes.
 - Single-node by design: one app node is the supported topology, scaled vertically.

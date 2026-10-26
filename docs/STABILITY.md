@@ -5,11 +5,10 @@ not break, what an upgrade will need from you (nothing beyond pulling the
 new images), and what the promise leaves out. It is written for the person
 who runs the instance.
 
-Aldine is at 0.14 today. Until 1.0 the rule in the
-[CHANGELOG](../CHANGELOG.md) still holds: a minor release may change
-behaviour or the on-disk layout, a patch release will not. Where this page
-says "from 1.0", it describes the promise and the check that will back it;
-the last section says which of those checks exist today.
+Aldine 1.0 came out on 25 October 2026, and the promise holds from that
+release on. Before 1.0, a minor release could change behaviour or the on-disk
+layout (see the [CHANGELOG](../CHANGELOG.md)). The last section says which
+check backs each part of the promise.
 
 ## Versions
 

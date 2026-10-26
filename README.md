@@ -33,10 +33,14 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
 
 ![A collaborator's edits stream in live, the PDF recompiles in about two seconds, and double-clicking the PDF jumps the editor to the source line](e2e/shots/demo.gif)
 
-> **Status:** Aldine is young (v0.x). It compiles real papers daily and every
-> headline feature has a Playwright end-to-end test, but expect rough edges.
-> (CI runs typecheck, build, and the integration suites; the browser tests run
-> locally, since they need a TeX Live container.) File issues generously.
+> **Status:** Aldine reached 1.0 in October 2026, three months after its
+> first release. Within 1.x an upgrade starts on older data with no manual
+> step, and stable settings, MCP tools and the plugin API keep their names
+> until 2.0 ([docs/STABILITY.md](docs/STABILITY.md)). That is a promise about
+> upgrades, not a long track record. It compiles real papers daily and every
+> headline feature has a Playwright end-to-end test; CI runs those on every
+> pull request, next to typecheck, build and the integration suites. Expect
+> rough edges, and file issues generously.
 
 ## Features
 
@@ -213,16 +217,17 @@ what `deploy/backup.sh` looks for.
   commands. Your projects live in the `aldine-data` and `aldine-secrets`
   volumes and an image swap does not touch them. `:latest` still exists and
   points at the newest release; pinning is what lets you choose when to move.
-- **Pre-1.0 stability.** Versions follow SemVer with one caveat: before 1.0
-  a minor bump (0.3 to 0.4) may change behaviour or on-disk layout, a patch
-  bump (0.4.0 to 0.4.1) will not. Every release is built from a commit that
+- **Stability.** Versions follow SemVer. A 1.x release starts on data from
+  an earlier 1.x, or from 0.14 or later, with no manual step, and nothing
+  covered is removed before 2.0. Every release is built from a commit that
   passed CI, and its images are booted and made to typeset a real document
-  before `:latest` moves to them. Upgrades across a minor are not yet tested
-  against existing data, so back up first. Watch the repo's Releases for
-  security fixes: per [SECURITY.md](SECURITY.md), only the latest release
-  gets them. What 1.0 will promise (which data, settings and APIs every 1.x
-  keeps working, and how upgrades are checked) is in
-  [docs/STABILITY.md](docs/STABILITY.md).
+  before `:latest` moves to them. Before that, it is also started on volumes
+  left by the previous release and by 0.14.4, on the JSON store and on
+  Postgres, and the projects, comments, shares and tokens have to survive.
+  Back up first anyway. Watch the repo's Releases for security fixes: per
+  [SECURITY.md](SECURITY.md), only the latest release gets them. Which data,
+  settings and APIs every 1.x keeps working, and how each promise is
+  checked, is in [docs/STABILITY.md](docs/STABILITY.md).
 - **The first pull is big.** TeX Live lives in the compiler image: about
   2.4 GB to download, about 5 GB on disk. It carries TeX Live's medium scheme plus
   the pictures, latexextra and bibtexextra collections (pgfplots, tikz-cd,
@@ -282,7 +287,7 @@ what `deploy/backup.sh` looks for.
 | Templates gallery | 4 starter templates, one per publisher class in the compiler's TeX Live (15 in the published images), 25 conference and journal kits fetched from the publisher, plus your own from git repositories | ❌ private template management is Server Pro only ([source][ol-cmp]) | CTAN / your own |
 | Package coverage | TeX Live medium + pictures, latexextra, bibtexextra, publisher classes, most scripts by default (about 5 GB on disk); any extra with one `tlmgr install` line; **all of TeX Live** with `ALDINE_TEXLIVE=-full` | Minimal TeX Live in the image; full with `tlmgr install scheme-full` ([source][ol-tl]) | Whatever you install |
 | Rich-text / visual editing | ✅ byte-stable, WYSIWYG math, editable tables, review suggestions shown inline (accept/dismiss) | ✅ Visual Editor; its code is in the open-source repository ([source][ol-visual]) | ❌ |
-| Maturity | Young (v0.x, 2026) | Overleaf dates from 2011 ([source][ol-about]) | Very mature |
+| Maturity | Young: 1.0 since October 2026, first release July 2026 | Overleaf dates from 2011 ([source][ol-about]) | Very mature |
 | License | AGPL-3.0 | AGPL-3.0 ([source][ol-repo]) | MIT/varies |
 
 [ol-cmp]: https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition
