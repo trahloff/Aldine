@@ -118,6 +118,30 @@ describe('table grid (VIS-06)', () => {
   });
 });
 
+describe('"+ col" (#152)', () => {
+  /** The column spec after "+ col". */
+  function addCol(spec: string) {
+    const doc = `\\begin{tabular}{${spec}}\na & b \\\\\n\\end{tabular}\n`;
+    const s = state(doc, doc.length);
+    const node = nodeNamed(s, 'TabularEnvironment');
+    const model = tableModel(s.doc, node)!;
+    const at = node.from + model.colInsert!.at;
+    const after = doc.slice(0, at) + model.colInsert!.insert + doc.slice(at);
+    return after.slice('\\begin{tabular}{'.length, after.indexOf('}\n'));
+  }
+
+  it('puts the new column inside the outer rule and padding', () => {
+    expect(addCol('ll')).toBe('lll');
+    expect(addCol('|l|c|')).toBe('|l|c|l|');
+    expect(addCol('@{}lr@{}')).toBe('@{}lrl@{}');
+    expect(addCol('l|c')).toBe('l|c|l');
+    expect(addCol('lc|')).toBe('lcl|');
+    expect(addCol('@{}l !{\\quad} r@{\\hspace{1em}}')).toBe('@{}l !{\\quad} rl@{\\hspace{1em}}');
+    expect(addCol('lp{3cm}')).toBe('lp{3cm}l');
+    expect(addCol('|lp{3cm}|')).toBe('|lp{3cm}l|');
+  });
+});
+
 describe('display math (VIS-04)', () => {
   it('$$…$$ renders the formula between the inner dollars', () => {
     const doc = 'x $$ E = mc^2 $$ y';

@@ -683,7 +683,7 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await expect(grid.locator('td', { hasText: /^1$/ })).toHaveCount(1);
       await page.getByTestId('vis-table-addcol').click();
       await expectStored(request, id, doc
-        .replace('{|l|c|}', '{|l|c|l}')
+        .replace('{|l|c|}', '{|l|c|l|}')
         .replace('b \\& c \\\\[2pt]', 'b \\& c &  \\\\[2pt]')
         .replace('1 & 2 \\\\', '1 & 2 &  \\\\'));
     } finally {

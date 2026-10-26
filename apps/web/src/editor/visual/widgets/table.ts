@@ -24,6 +24,8 @@ export interface TableModel {
   cols: number;
   /** column-spec interior range, for add-column */
   colSpec: { from: number; to: number } | null;
+  /** what add-column writes into the spec (offset relative like the rest) */
+  colInsert: { at: number; insert: string } | null;
   /** end offset of each row's last cell — where ` & ` lands for add-column */
   rowEnds: number[];
 }
@@ -139,6 +141,52 @@ function newRow(body: string, base: number, end: number, unbroken: boolean, cols
   return [{ from: base + end, insert: ' \\\\' }, { from: base + at, insert: row }];
 }
 
+/** Start of the braced group that ends at `close` (the index of its `}`), or -1. */
+function groupStart(spec: string, close: number): number {
+  let depth = 0;
+  for (let j = close; j >= 0; j--) {
+    if (spec[j] === '}') depth++;
+    else if (spec[j] === '{' && --depth === 0) return j;
+  }
+  return -1;
+}
+
+function skipSpaceBack(spec: string, i: number): number {
+  while (i > 0 && /\s/.test(spec[i - 1])) i--;
+  return i;
+}
+
+/**
+ * What add-column writes into a column spec, and where: after the last
+ * column, before the outer rule and padding that close the table (trailing
+ * `|`, `@{…}`, `!{…}`). A braced group after anything else (`p{3cm}`) is a
+ * column and ends the scan. When the last column is ruled off from the one
+ * before it, the new one is too.
+ */
+export function specAddColumn(spec: string): { at: number; insert: string } {
+  let end = spec.length;
+  for (;;) {
+    const i = skipSpaceBack(spec, end);
+    if (i > 0 && spec[i - 1] === '|') { end = i - 1; continue; }
+    if (i > 0 && spec[i - 1] === '}') {
+      const open = groupStart(spec, i - 1);
+      const k = skipSpaceBack(spec, open);
+      if (open > 0 && (spec[k - 1] === '@' || spec[k - 1] === '!')) { end = k - 1; continue; }
+    }
+    end = i;
+    break;
+  }
+  // the last column's type letter, past a p{…}/m{…}/b{…} width
+  let col = end;
+  if (col > 0 && spec[col - 1] === '}') {
+    const open = groupStart(spec, col - 1);
+    col = open > 0 ? open - 1 : 0;
+  } else if (col > 0) col--;
+  const before = skipSpaceBack(spec, col);
+  const ruled = before > 0 && spec[before - 1] === '|';
+  return { at: end, insert: ruled ? '|l' : 'l' };
+}
+
 /** A tabular node's grid model, or null when the body can't be mapped to cells. */
 export function tableModel(doc: Text, node: SyntaxNode): TableModel | null {
   const begin = node.getChild('BeginEnv');
@@ -160,6 +208,10 @@ export function tableModel(doc: Text, node: SyntaxNode): TableModel | null {
     cols: Math.max(...parsed.rows.map((r) => r.length)),
     addRow: parsed.addRow,
     colSpec: specOk ? { from: spec!.from + 1 - base, to: spec!.to - 1 - base } : null,
+    colInsert: specOk ? (() => {
+      const c = specAddColumn(doc.sliceString(spec!.from + 1, spec!.to - 1));
+      return { at: spec!.from + 1 - base + c.at, insert: c.insert };
+    })() : null,
   };
 }
 
@@ -392,10 +444,10 @@ export class TableWidget extends WidgetType {
     // every row at the next compile.
     btn('+ col', 'Add a column', () => {
       const at = this.locate(view, wrap);
-      if (at == null || !model.colSpec) return;
+      if (at == null || model.colInsert == null) return;
       view.dispatch({
         changes: [
-          { from: at + model.colSpec.to, insert: 'l' },
+          { from: at + model.colInsert.at, insert: model.colInsert.insert },
           ...model.rowEnds.map((end) => ({ from: at + end, insert: ' & ' })),
         ],
         userEvent: 'input.visual',

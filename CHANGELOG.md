@@ -26,6 +26,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - USENIX Security, SIAM and Cell Press only hand their kits to a browser. Their
   tiles now link the kit and open the ZIP import instead of creating a project
   without the venue's class.
+- Visual mode: "+ col" adds the new column inside a table's outer `|` or
+  `@{…}`, so the table keeps its frame and padding (#152).
 
 ## [1.0.1] — 2026-10-25
 
