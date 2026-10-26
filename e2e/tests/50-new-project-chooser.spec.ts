@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures';
 import type { APIRequestContext, Page } from '@playwright/test';
-import { cleanup } from './helpers';
+import { cleanup, createProject } from './helpers';
 
 /**
  * The New project chooser: a sheet with a category rail, a search, page-1
@@ -34,6 +34,29 @@ async function openChooser(page: Page) {
 const pressed = (page: Page) => page.locator('[data-testid="template-grid"] [role="option"][aria-selected="true"]');
 
 test.describe('New project chooser', () => {
+  // Projects on the shelf put the blank New project tile beside the chooser's
+  // trigger; the tile and the open sheet must never share a test id.
+  const seeded: string[] = [];
+  test.beforeAll(async ({ request }) => {
+    for (const name of ['Chooser shelf one', 'Chooser shelf two']) seeded.push(await createProject(request, name));
+  });
+  test.afterAll(async ({ request }) => {
+    for (const id of seeded) await cleanup(request, id);
+  });
+
+  test('the blank tile on a short shelf opens the same sheet', async ({ page, request }) => {
+    const shelf = (await (await request.get('/api/projects')).json()) as unknown[];
+    test.skip(shelf.length > 3, 'the blank tile ends only a shelf of three or fewer projects');
+    await page.goto('/');
+    const tile = page.getByTestId('new-project-tile');
+    await expect(tile).toBeVisible();
+    await expect(page.getByTestId('new-project-sheet')).toHaveCount(0);
+    await tile.click();
+    await expect(page.getByTestId('new-project-sheet')).toHaveCount(1);
+    await expect(page.getByTestId('new-project-sheet')).toBeVisible();
+    await expect(page.getByTestId('template-article')).toBeVisible();
+  });
+
   test('a sheet with the name prefilled and selected, a rail, and no emoji', async ({ page }) => {
     await openChooser(page);
     // min(960px, 92vw) x min(720px, 86vh) at 1440x900, once the open animation has settled

@@ -318,7 +318,7 @@ export default function Home() {
 
   /** The focusable part of a roving item: a project's link, or the blank "New project" page. */
   const linkFor = (key: string) => (key === 'new'
-    ? shelfRef.current?.querySelector<HTMLElement>('[data-testid="new-project-sheet"]')
+    ? shelfRef.current?.querySelector<HTMLElement>('[data-testid="new-project-tile"]')
     : shelfRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(key)}"] .sheet__link`)) ?? null;
 
   // Focus that has to wait for the list to re-render (after a trash, a duplicate).
@@ -849,7 +849,7 @@ export default function Home() {
           {withBlank && (
             <BlankSheet
               stage={stage[stage.length - 1]}
-              testId="new-project-sheet"
+              testId="new-project-tile"
               title="New project"
               detail="Template, ZIP or repository"
               ratio={blankRatio}
