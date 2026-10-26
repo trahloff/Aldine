@@ -176,6 +176,8 @@ const SAMPLES = {
     { id: 'jfm', cls: 'jfm', kind: 'class', sample: { file: 's.tex', content: doc('% \\includegraphics{teaser}\n\\bibliography{references}') } },
     { id: 'revtex', cls: 'revtex4-2', kind: 'class' },
     { id: 'amsart', cls: 'amsart', kind: 'class' },
+    { id: 'elscas-sc', cls: 'cas-sc', kind: 'class' },
+    { id: 'elscas-dc', cls: 'cas-dc', kind: 'class' },
     // Keys that resolve through Object.prototype on a bare index read.
     { id: 'constructor', cls: 'Object', kind: 'class', license: 'toString' },
   ],
@@ -196,6 +198,16 @@ check(revtex.indexOf('\\begin{abstract}') < revtex.indexOf('\\maketitle'), 'REVT
 const amsart = await generated('amsart');
 check(amsart.indexOf('\\title{') < amsart.indexOf('\\begin{document}'), 'the AMS title block stays in the preamble');
 check(amsart.indexOf('\\begin{abstract}') < amsart.indexOf('\\maketitle'), 'the AMS abstract comes before \\maketitle');
+for (const [id, cls] of [['elscas-sc', 'cas-sc'], ['elscas-dc', 'cas-dc']]) {
+  const cas = await generated(id);
+  check(cas.includes(`{${cls}}`), `${id} starts from the ${cls} class`);
+  check(cas.indexOf('\\begin{document}') < cas.indexOf('\\title[mode = title]{'), `the ${cls} title block sits inside the document`);
+  check(cas.indexOf('\\affiliation[1]{organization=') < cas.indexOf('\\maketitle'), `${cls} gets a labelled keyval affiliation before \\maketitle`);
+  check(cas.indexOf('\\begin{keywords}') < cas.indexOf('\\maketitle'), `${cls} gets its keywords before \\maketitle`);
+  check(cas.includes('\\usepackage{natbib}') && cas.includes('\\bibliographystyle{cas-model2-names}'), `${cls} uses the class\u2019s author-year style with natbib`);
+}
+const casTiles = await catalog.venueTemplates();
+eq(casTiles.filter((t) => t.id.startsWith('venue:elscas-')).map((t) => t.name).sort(), ['Elsevier journal (CAS, one column)', 'Elsevier journal (CAS, two columns)'], 'each CAS layout is its own tile');
 
 const hostile = await catalog.venueTemplates();
 check(!hostile.some((t) => t.id === 'venue:constructor'), 'an id that names an Object.prototype key is not a template');

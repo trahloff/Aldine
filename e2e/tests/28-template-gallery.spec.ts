@@ -114,4 +114,30 @@ test.describe('template gallery', () => {
     expect(source).toContain(venue.documentClass!);
     expect(source).toMatch(/\\(documentclass|usepackage)/);
   });
+
+  test('both Elsevier CAS layouts get a tile whose project typesets', async ({ page, request }) => {
+    const venues = await venuesOrSkip(request);
+    const cas = venues.filter((t) => t.id === 'venue:elscas-sc' || t.id === 'venue:elscas-dc');
+    test.skip(cas.length === 0, 'the compiler image does not ship els-cas-templates');
+    expect(cas.map((t) => t.documentClass).sort()).toEqual(['cas-dc', 'cas-sc']);
+
+    await openGallery(page);
+    await page.getByTestId('template-search').fill('CAS');
+    for (const t of cas) await expect(page.getByTestId(`template-${t.id}`)).toContainText(t.name);
+
+    for (const t of cas) {
+      const created = await request.post('/api/projects', { data: { name: t.name, template: t.id } });
+      expect(created.ok()).toBeTruthy();
+      const { id } = await created.json();
+      const source = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
+      expect(source).toContain(`{${t.documentClass}}`);
+      // The previous test's editor may still hold this client's typeset slot (429).
+      let res = await request.post(`/api/projects/${id}/compile`, { data: { branch: 'main' } });
+      for (let i = 0; i < 60 && res.status() === 429; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        res = await request.post(`/api/projects/${id}/compile`, { data: { branch: 'main' } });
+      }
+      expect((await res.json()).ok, `${t.id} typesets on its first compile`).toBe(true);
+    }
+  });
 });

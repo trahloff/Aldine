@@ -21,6 +21,9 @@ const path = require('path');
  */
 const VENUES = [
   { id: 'elsarticle', pkg: 'elsarticle', files: ['elsarticle.cls'] },
+  // One package, two layouts: each class is its own tile, not a fallback for the other.
+  { id: 'elscas-sc', pkg: 'els-cas-templates', files: ['cas-sc.cls'] },
+  { id: 'elscas-dc', pkg: 'els-cas-templates', files: ['cas-dc.cls'] },
   { id: 'ieeetran', pkg: 'ieeetran', files: ['IEEEtran.cls'] },
   { id: 'ieeeconf', pkg: 'ieeeconf', files: ['IEEEconf.cls'] },
   { id: 'acmart', pkg: 'acmart', files: ['acmart.cls'] },

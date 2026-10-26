@@ -18,6 +18,12 @@
     "cvpr": {
       "reason": "the class is not installed in the compiler image"
     },
+    "elscas-dc": {
+      "reason": "not rendered yet; the Template previews workflow renders it on main"
+    },
+    "elscas-sc": {
+      "reason": "not rendered yet; the Template previews workflow renders it on main"
+    },
     "iclr": {
       "reason": "the class is not installed in the compiler image"
     },

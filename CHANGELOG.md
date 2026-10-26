@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Elsevier's CAS classes in the template gallery: "Elsevier journal (CAS, one
+  column)" starts from cas-sc and "Elsevier journal (CAS, two columns)" from
+  cas-dc, with the title block, keywords and author-year references their
+  own template uses (#137).
+
 ### Fixed
 - Deleting a branch while it typesets waits for the typeset, removes the
   whole worktree and frees the name for a new branch, instead of failing or
