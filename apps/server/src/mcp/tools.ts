@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import * as store from '../store.js';
 import * as gitops from '../gitops.js';
 import * as usage from '../usage.js';
-import { compileProject, outputOnDisk, type CompileError } from '../compile.js';
+import { compileProject, outputOnDisk, isBranchClosed, type CompileError } from '../compile.js';
 import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
@@ -831,6 +831,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (user && await usage.overQuota(user.id)) {
         return fail('Monthly typeset limit reached for this account — the plan quota resets next month');
       }
+      // Refused before the budget and the gates so it spends none of them.
+      if (isBranchClosed(meta.id, branch)) return fail('This branch is being deleted');
       key = compileKey(identity);
       if (compileLimiter && !(await compileLimiter.take(key))) {
         return fail('Typeset budget reached for this minute — try again shortly');

@@ -119,6 +119,8 @@ function relProjectDir(projectId: string, branch: string): string {
  * A queued request coalesces onto the in-flight one's successor.
  */
 const compileChain = new Map<string, Promise<unknown>>();
+/** Branches whose typesets are refused, with how many holders closed each. */
+const closedBranches = new Map<string, number>();
 
 /**
  * Last successful pdfUrl per project::branch. A failed latexmk run leaves the
@@ -202,6 +204,9 @@ export function compilerInfo(): Promise<CompilerInfo> {
 
 export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean } = {}): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
+  // A typeset recreates a missing worktree, so one started while the branch
+  // is deleted would bring its directory back or block `branch -D`.
+  if (closedBranches.has(key)) return Promise.reject(new Error('This branch is being deleted'));
   const prev = compileChain.get(key) || Promise.resolve();
   const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft));
   // The chain tail must never reject (would surface as an unhandled rejection);
@@ -213,6 +218,19 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
   return result;
 }
 
+/** Whether typesets of the branch are refused because it is being deleted. */
+export function isBranchClosed(projectId: string, branch: string): boolean {
+  return closedBranches.has(`${projectId}::${branch}`);
+}
+
+async function settled(match: (key: string) => boolean): Promise<void> {
+  for (;;) {
+    const tails = [...compileChain].filter(([k]) => match(k)).map(([, t]) => t);
+    if (!tails.length) return;
+    await Promise.all(tails);
+  }
+}
+
 /**
  * Resolves once no typeset of the project is queued or running on this node.
  * The compiler writes into the project directory until it answers, so removing
@@ -222,10 +240,23 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
  */
 export async function typesetsSettled(projectId: string): Promise<void> {
   const prefix = `${projectId}::`;
-  for (;;) {
-    const tails = [...compileChain].filter(([k]) => k.startsWith(prefix)).map(([, t]) => t);
-    if (!tails.length) return;
-    await Promise.all(tails);
+  await settled((k) => k.startsWith(prefix));
+}
+
+/**
+ * Runs `fn` once no typeset of the branch is queued or running on this node,
+ * refusing new ones until it returns: deleting a branch removes the worktree
+ * the compiler writes into. Typesets on other nodes are not seen.
+ */
+export async function withBranchTypesetsClosed<T>(projectId: string, branch: string, fn: () => Promise<T>): Promise<T> {
+  const key = `${projectId}::${branch}`;
+  closedBranches.set(key, (closedBranches.get(key) ?? 0) + 1);
+  try {
+    await settled((k) => k === key);
+    return await fn();
+  } finally {
+    const n = (closedBranches.get(key) ?? 1) - 1;
+    if (n <= 0) closedBranches.delete(key); else closedBranches.set(key, n);
   }
 }
 

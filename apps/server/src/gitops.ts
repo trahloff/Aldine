@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { projectsDir } from './config.js';
-import { repoDir, branchDir, git, readMeta } from './store.js';
+import { repoDir, branchDir, git, readMeta, removeTree } from './store.js';
 import { spawn } from 'node:child_process';
 import { BRANCH_RE } from './util.js';
 
@@ -78,6 +78,11 @@ export async function deleteBranch(id: string, name: string): Promise<void> {
     const g = git(repoDir(id));
     const dir = branchDir(id, name);
     try { await g.raw(['worktree', 'remove', '--force', dir]); } catch { /* worktree may be gone */ }
+    // `worktree remove` gives up on a directory that gains a file while it is
+    // emptied (a thumbnail landing in .aldine-out) and keeps the worktree
+    // registered, which makes `branch -D` refuse a checked-out branch.
+    await removeTree(dir);
+    await g.raw(['worktree', 'prune']);
     await g.raw(['branch', '-D', name]);
     // A deleted branch must not keep a stale attribution: nothing can commit
     // under it, and a later branch of the same name would inherit it.
