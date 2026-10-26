@@ -1,0 +1,26 @@
+\documentclass[aspectratio=169]{beamer}
+\usetheme{default}
+\usecolortheme{seagull}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\title{Edits in flight}
+\subtitle{What our latency traces say about convergence}
+\author{Group meeting}
+\date{Week 43}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Where the time goes}
+  \begin{itemize}
+    \item Most sessions converge within one round trip.
+    \item The slow tail comes from offline editors reconnecting.
+    \item Large pastes dominate the remaining delay.
+  \end{itemize}
+\end{frame}
+
+\end{document}

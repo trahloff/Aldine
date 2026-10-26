@@ -2,8 +2,32 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 
 const OUT = new URL('./shots/', import.meta.url).pathname;
-const BASE = 'http://localhost:5173';
+const BASE = process.env.ALDINE_URL || 'http://localhost:5173';
 const browser = await chromium.launch();
+
+// The rest of the Home shelf: one-file projects, typeset once so each shows its first page.
+// Home lists every project on the server, so point this at a stack with an empty data dir.
+const SHELF_DIR = new URL('./fixtures/home-shelf/', import.meta.url).pathname;
+const SHELF = [
+  ['abstract', 'Soil moisture abstract'],
+  ['reading-notes', 'Reading group notes'],
+  ['problem-set', 'Problem set 4'],
+  ['workshop-paper', 'Undo without coordination'],
+  ['letter', 'Cover letter for the revision'],
+  ['proposal', 'Tidal flat sensors proposal'],
+  ['slides', 'Group meeting, week 43'],
+  ['lecture-notes', 'Linear Algebra II notes'],
+  ['thesis', 'Doctoral thesis'],
+];
+const boot = await browser.newContext();
+const shelf = [];
+for (const [dir, name] of SHELF) {
+  const res = await boot.request.post(`${BASE}/api/projects`, { data: { name } });
+  const { id } = await res.json();
+  await boot.request.put(`${BASE}/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: fs.readFileSync(SHELF_DIR + dir + '/main.tex', 'utf8') } });
+  await boot.request.post(`${BASE}/api/projects/${id}/compile`, { data: { branch: 'main' }, timeout: 180000 });
+  shelf.push(id);
+}
 
 const shoot = async (ctx, name, fn) => {
   const page = await ctx.newPage();
@@ -27,6 +51,8 @@ for (const scheme of ['light', 'dark']) {
     const content = fs.readFileSync(PAPER + f, 'utf8');
     await ctx.request.put(`${BASE}/api/projects/${id}/file`, { data: { branch: 'main', path: f, content } });
   }
+  // keep the publish-to-a-git-host nudge out of the shots
+  await ctx.addInitScript((pid) => window.localStorage.setItem(`aldine.remoteNudged.${pid}`, '1'), id);
 
   await shoot(ctx, `editor-${scheme}`, async (p) => {
     await p.goto(`${BASE}/p/${id}`);
@@ -34,6 +60,15 @@ for (const scheme of ['light', 'dark']) {
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
     await p.getByTestId('pdf-status').getByText(/Typeset in/).waitFor({ timeout: 120000 }).catch(() => {});
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
+    await p.waitForTimeout(600);
+  });
+  await shoot(ctx, `home-${scheme}`, async (p) => {
+    await p.goto(`${BASE}/`);
+    await p.getByTestId('wordmark').first().waitFor();
+    await p.waitForFunction((n) => {
+      const imgs = [...document.querySelectorAll('img')];
+      return imgs.length >= n && imgs.every((i) => i.complete && i.naturalWidth > 0);
+    }, SHELF.length + 1, { timeout: 30000 });
     await p.waitForTimeout(600);
   });
   await shoot(ctx, `visual-${scheme}`, async (p) => {
@@ -96,7 +131,9 @@ for (const scheme of ['light', 'dark']) {
     await p.getByTestId('tab-history').click();
     await p.waitForTimeout(400);
   });
-  await ctx.request.delete(`${BASE}/api/projects/${id}`);
+  await ctx.request.delete(`${BASE}/api/projects/${id}?permanent=1`);
   await ctx.close();
 }
+for (const id of shelf) await boot.request.delete(`${BASE}/api/projects/${id}?permanent=1`);
+await boot.close();
 await browser.close();

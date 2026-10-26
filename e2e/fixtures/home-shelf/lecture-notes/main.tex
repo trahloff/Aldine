@@ -1,0 +1,53 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+
+\title{Linear Algebra II\\\large Lecture 7: Eigenvalues and diagonalisation}
+\author{Course notes}
+\date{Winter term}
+
+\begin{document}
+\maketitle
+
+\section{Eigenvalues}
+Let $A \in \mathbb{R}^{n \times n}$. A scalar $\lambda$ is an eigenvalue of
+$A$ when there is a non-zero vector $v$ with
+\begin{equation}
+  A v = \lambda v .
+\end{equation}
+
+\begin{definition}
+The characteristic polynomial of $A$ is $p_A(\lambda) = \det(A - \lambda I)$.
+\end{definition}
+
+\begin{proposition}
+$\lambda$ is an eigenvalue of $A$ if and only if $p_A(\lambda) = 0$.
+\end{proposition}
+
+\begin{proof}
+$A v = \lambda v$ has a non-zero solution exactly when $A - \lambda I$ is
+singular, that is, when its determinant vanishes.
+\end{proof}
+
+\section{Diagonalisation}
+If $A$ has $n$ linearly independent eigenvectors $v_1, \dots, v_n$, collect
+them as the columns of $P$. Then
+\begin{equation}
+  P^{-1} A P = \operatorname{diag}(\lambda_1, \dots, \lambda_n).
+\end{equation}
+
+\paragraph{Example.} For
+$A = \begin{pmatrix} 2 & 1 \\ 1 & 2 \end{pmatrix}$ the eigenvalues are
+$1$ and $3$, with eigenvectors $(1,-1)^\top$ and $(1,1)^\top$.
+
+\section{Exercises}
+\begin{enumerate}
+  \item Show that similar matrices share their characteristic polynomial.
+  \item Find a $2 \times 2$ matrix that is not diagonalisable over $\mathbb{R}$.
+  \item Prove that a symmetric matrix has real eigenvalues.
+\end{enumerate}
+
+\end{document}

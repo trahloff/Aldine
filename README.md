@@ -313,6 +313,13 @@ comparison is at
 ## Screenshots
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="e2e/shots/home-dark.png">
+  <img alt="Home: the project list as a shelf of first pages, each from the project's last typeset" src="e2e/shots/home-light.png">
+</picture>
+
+*Home: every project shows page 1 of its last typeset. Search, sort, or start a new one from a template, a ZIP or a git host.*
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="e2e/shots/visual-dark.png">
   <img alt="Visual editing mode: the same LaTeX paper rendered as formatted text with typeset math, next to the live PDF" src="e2e/shots/visual-light.png">
 </picture>
