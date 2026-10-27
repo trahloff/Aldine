@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-27
+
 ### Added
 - Elsevier's CAS classes in the template gallery: "Elsevier journal (CAS, one
   column)" starts from cas-sc and "Elsevier journal (CAS, two columns)" from
