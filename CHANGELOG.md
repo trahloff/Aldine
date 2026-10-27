@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-10-27
+
 ### Fixed
 - The blank New project tile that ends a short shelf has its own test id,
   `new-project-tile`, instead of sharing `new-project-sheet` with the chooser
