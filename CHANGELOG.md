@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-28
+
 ### Added
 - Sharing a project by email sends the new collaborator an invitation with a
   link to the project, once per added address. The share dialog says who was
