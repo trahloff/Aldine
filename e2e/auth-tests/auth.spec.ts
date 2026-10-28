@@ -242,7 +242,18 @@ test.describe('auth', () => {
     await page.getByTestId('share-save').click();
     await expect(page.getByTestId('share-modal')).toBeVisible(); // refused, still open
 
-    await page.getByTestId('share-emails').fill(uniq());
+    // this server sends no email, so the dialog says to pass it on by hand
+    const invitee = uniq();
+    await page.getByTestId('share-emails').fill(`${invitee}, 0000-0002-1825-0097`);
+    await page.getByTestId('share-save').click();
+    await expect(page.getByTestId('share-invite-manual')).toContainText(invitee);
+    await expect(page.getByTestId('share-invite-manual')).toContainText("Tell them yourself: they'll see the project after signing in with this address.");
+    await expect(page.getByTestId('share-invite-manual')).not.toContainText('0000-0002-1825-0097');
+    await expect(page.getByTestId('share-invite-sent')).toHaveCount(0);
+    await page.getByTestId('share-done').click();
+    await expect(page.getByTestId('share-modal')).toHaveCount(0);
+    // saving the same list again adds nobody, so the dialog just closes
+    await page.getByTestId('share-project').click();
     await page.getByTestId('share-save').click();
     await expect(page.getByTestId('share-modal')).toHaveCount(0);
     const after = await (await page.request.get(`/api/projects/${proj.id}`)).json();

@@ -95,7 +95,7 @@ OPENROUTER_API_KEY=sk-or-...
 # new error (each one is a model call)
 #ALDINE_AI_AUTOFIX=1
 
-# email for sign-up confirmation and password-reset links: SMTP (any provider)
+# email for sign-up confirmation, password-reset links and share invitations: SMTP (any provider)
 # or AWS SES — set one transport (plus ALDINE_PUBLIC_URL). Without one, both
 # kinds of link are logged server-side for you to pass on (reset tokens are
 # echoed in the API response when ALDINE_RESET_ECHO=1 — dev only).
@@ -300,6 +300,12 @@ new password account starts with its address **not confirmed**:
   confirmed: the identity provider vouches for its addresses (see
   `OIDC_EMAIL_VERIFIED` in [docs/OIDC.md](../docs/OIDC.md)). `/admin` marks
   pending accounts "not confirmed".
+- Adding an email address in the share dialog mails that address an
+  invitation with a link to the project, once, when it is added. The owner's
+  own address must be confirmed, and at most `RL_INVITE_BURST` (default 20)
+  invitations go out per owner per hour. Without a transport, without
+  `ALDINE_PUBLIC_URL`, or over the limit, sharing still saves and the dialog
+  tells the owner to let the person know themselves. ORCID iDs get no mail.
 
 Password sign-in is limited per client address (`RL_LOGIN_BURST`) and per
 account across all addresses: after 5 failed tries in a row, each further try
@@ -455,6 +461,7 @@ override file.
 | `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
+| `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email (default 20). Over it, sharing still saves and the owner is told who was not mailed |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
 | `ALDINE_SEARCH_MS` | Time a project search or replace may scan before it is stopped and refused (default 2000 ms). Each scan runs in a worker thread of its own; one per person and four per server at a time |

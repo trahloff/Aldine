@@ -4,7 +4,8 @@
  */
 import net from 'node:net';
 
-export async function startSmtp() {
+/** `reject`: recipients matching it are refused (550), so a send fails. */
+export async function startSmtp({ reject } = {}) {
   const mails = [];
   const server = net.createServer((sock) => {
     let buf = '';
@@ -24,9 +25,11 @@ export async function startSmtp() {
         }
         const nl = buf.indexOf('\r\n');
         if (nl < 0) return;
-        const cmd = buf.slice(0, nl).slice(0, 4).toUpperCase();
+        const line = buf.slice(0, nl);
+        const cmd = line.slice(0, 4).toUpperCase();
         buf = buf.slice(nl + 2);
-        if (cmd === 'DATA') { inData = true; sock.write('354 go ahead\r\n'); }
+        if (cmd === 'RCPT' && reject?.test(line)) sock.write('550 no such user\r\n');
+        else if (cmd === 'DATA') { inData = true; sock.write('354 go ahead\r\n'); }
         else if (cmd === 'QUIT') { sock.end('221 bye\r\n'); return; }
         else sock.write('250 ok\r\n');
       }

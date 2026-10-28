@@ -3,6 +3,7 @@ import { withBase } from '../basePath';
 import { api, ProjectSummary } from '../api';
 import { useToast } from './Toast';
 import Modal from './Modal';
+import { addedEmails, inviteSummary } from '../util/invites';
 
 /** Mirrors the server's collaborator filter (the share route) so an address it
  *  would silently discard is reported here instead of vanishing on save. */
@@ -25,6 +26,10 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   const [mode, setMode] = useState<'private' | 'link'>(project.share?.mode || 'private');
   const [emails, setEmails] = useState((project.share?.collaborators || []).join(', '));
   const [busy, setBusy] = useState(false);
+  // After a save that added addresses the dialog stays open to say who got
+  // mail; the caller hears of the save when it closes, however it closes.
+  const [result, setResult] = useState<{ updated: ProjectSummary; sent: string | null; manual: string | null } | null>(null);
+  const close = () => (result ? onSaved(result.updated) : onClose());
   const toast = useToast();
   const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
   const fileStem = (project.name || 'document').replace(/[\\/:*?"<>|]/g, '-');
@@ -50,8 +55,13 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     setBusy(true);
     try {
       const updated = await api.share(project.id, mode, list);
-      toast('Sharing updated', 'ok');
-      onSaved(updated);
+      const added = addedEmails(project.share?.collaborators || [], list);
+      if (added.length === 0) {
+        toast('Sharing updated', 'ok');
+        onSaved(updated);
+        return;
+      }
+      setResult({ updated, ...inviteSummary(added, updated) });
     } catch (err: any) {
       toast(`Could not update sharing: ${err.message}`, 'error');
     } finally {
@@ -60,10 +70,16 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   };
 
   return (
-    <Modal onClose={onClose} label={`Share ${project.name}`} testId="share-modal">
+    <Modal onClose={close} label={`Share ${project.name}`} testId="share-modal">
       <div>
         <h2>Share “{project.name}”</h2>
-        {canManage ? (
+        {result ? (
+          <div data-testid="share-invite-result">
+            <p className="modal__sub">Sharing updated.</p>
+            {result.sent && <p data-testid="share-invite-sent">{result.sent}</p>}
+            {result.manual && <p data-testid="share-invite-manual">{result.manual}</p>}
+          </div>
+        ) : canManage ? (
           <>
             <p className="modal__sub">Choose who can open and edit this project.</p>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -95,7 +111,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
           <p className="modal__sub">Download the typeset PDF or the whole source.</p>
         )}
 
-        {downloads && (
+        {downloads && !result && (
           <section className="share__downloads" data-testid="share-downloads">
             <div className="menu__label share__label">Download</div>
             <div className="share__buttons">
@@ -111,7 +127,9 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
         )}
 
         <div className="modal__row">
-          {canManage ? (
+          {result ? (
+            <button className="btn btn--primary" onClick={close} data-testid="share-done">Done</button>
+          ) : canManage ? (
             <>
               <button className="btn" onClick={onClose}>Cancel</button>
               <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>

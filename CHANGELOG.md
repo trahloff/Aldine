@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Sharing a project by email sends the new collaborator an invitation with a
+  link to the project, once per added address. The share dialog says who was
+  mailed, and who to tell yourself when the server sends no email or the
+  hourly limit (`RL_INVITE_BURST`, default 20) is reached.
+
 ## [1.1.1] — 2026-10-27
 
 ### Fixed

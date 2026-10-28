@@ -198,6 +198,10 @@ export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_B
 export const replaceLimiter = new RateLimiter('replace', n(process.env.RL_REPLACE_BURST, 30), 0.5);
 /** Duplicate: 10 burst, 1/30s — each copy writes the whole project to disk. */
 export const copyLimiter = new RateLimiter('copy', n(process.env.RL_COPY_BURST, 10), 1 / 30);
+/** Invitation mails per project owner: 20 burst, refill 20 / hour. Over it,
+ *  sharing still saves; the addresses go unmailed. */
+const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
+export const inviteLimiter = new RateLimiter('invite', inviteBurst, Math.max(1, inviteBurst) / 3600);
 /** Every search and replace scans in a worker of its own: one in flight per
  *  client, and at most four per process (key 'all'), so slow scans cannot
  *  take every core. */
