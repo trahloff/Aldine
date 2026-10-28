@@ -34,7 +34,8 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, clientKey } from './ratelimit.js';
+import { newInvitees, invitationMail, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
@@ -748,6 +749,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         ? req.body!.collaborators.map((c) => String(c).trim()).map((c) => (isOrcidId(c) ? c.toUpperCase() : c.toLowerCase()))
           .filter((c) => isOrcidId(c) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
         : (meta.share?.collaborators || []);
+      const invitees = newInvitees(meta.share?.collaborators || [], collaborators, reqUser(req)?.email);
       meta.share = { mode, collaborators };
       await store.writeMeta(meta);
       // Access is checked when a collab socket connects, so a session already
@@ -757,8 +759,44 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // reaches peer nodes (multi-node deploys) with the same effect.
       closeProjectConnections(meta.id);
       publishProjectEvent({ type: 'access-changed', projectId: meta.id });
-      return publicMeta(meta, reqUser(req));
+      const invites = await sendInvitations(invitees, meta, reqUser(req));
+      return { ...(await publicMeta(meta, reqUser(req))), ...invites };
     });
+
+  /** Mail each newly added address once, within the owner's budget. Never
+   *  throws: the share is saved before this runs, and a mail that cannot go
+   *  out is reported for the owner to pass the news on themselves. */
+  const sendInvitations = async (to: string[], meta: store.ProjectMeta, owner: auth.PublicUser | null): Promise<InviteReport> => {
+    if (to.length === 0) return { invited: 0, notEmailed: [] };
+    const skip = (reason: InviteReport['reason'], addrs = to): InviteReport => ({ invited: 0, notEmailed: addrs, reason });
+    if (!auth.AUTH_ENABLED || !owner) return skip('accounts-off');
+    if (!sendsEmail()) return skip('no-mail');
+    // An unconfirmed address is whatever the person typed at sign-up: a
+    // throwaway account must not get this instance to mail strangers.
+    if (owner.emailPending) return skip('unconfirmed');
+    const link = `${config.publicUrl}/p/${encodeURIComponent(meta.id)}`;
+    const ownerLabel = owner.name || owner.email || '';
+    const allowed: string[] = [];
+    const limited: string[] = [];
+    for (const addr of to) {
+      if (limited.length === 0 && await inviteLimiter.take(`u:${owner.id}`)) allowed.push(addr);
+      else limited.push(addr);
+    }
+    // SMTP/SES can hang; past the wait the mail still goes out, it is just
+    // not reported as failed.
+    const results = await Promise.all(allowed.map((addr) => {
+      const sent = email.sendMail(invitationMail(addr, ownerLabel, meta.name, link)).then(() => true, (err) => {
+        console.error(`[aldine] invitation email to ${addr} failed:`, err?.message || err);
+        return false;
+      });
+      return Promise.race([sent, new Promise<boolean>((r) => setTimeout(() => r(true), 10_000).unref?.())]);
+    }));
+    const failed = allowed.filter((_, i) => !results[i]);
+    const invited = allowed.length - failed.length;
+    if (limited.length) return { invited, notEmailed: [...failed, ...limited], reason: 'limit' };
+    if (failed.length) return { invited, notEmailed: failed, reason: 'failed' };
+    return { invited, notEmailed: [] };
+  };
 
   // Claim an ownerless legacy project (created before auth was enabled).
   // First successful claim wins: the claimer becomes owner, sharing resets to

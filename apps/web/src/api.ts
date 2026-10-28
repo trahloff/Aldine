@@ -1,5 +1,6 @@
 import { withBase } from './basePath';
 import { safeStorage } from './util/safeStorage';
+import type { InviteReport } from './util/invites';
 
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
 /** `emailPending`: a password sign-up whose address is not confirmed yet;
@@ -576,7 +577,7 @@ export const api = {
   postOAuthConsent: (body: { [param: string]: string | string[] | null | undefined; decision: 'allow' | 'deny'; projectIds: string[] | null }) =>
     oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
-    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
+    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
 };
 
 // No violet: #a78bfa (and the violet family generally) is reserved for the
