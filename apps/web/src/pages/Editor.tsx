@@ -1515,7 +1515,7 @@ export default function Editor() {
             )}
             <div className="zoom" data-testid="zoom-controls">
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" aria-label="Zoom out">−</button>
-              <button className="zoom__label" onClick={() => setZoom(1)} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
+              <button className="zoom__label" onClick={() => { if (zoom === 1) pdfRef.current?.refit(); else setZoom(1); }} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} title="Zoom in" aria-label="Zoom in">+</button>
             </div>
             <button

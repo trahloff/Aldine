@@ -16,6 +16,9 @@ const cMapUrl = new URL('../cmaps/', pdfjs.GlobalWorkerOptions.workerSrc).toStri
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */
   showForward(page: number, y: number, h?: number): void;
+  /** Re-run the fit-to-width layout without changing zoom — the zoom label's
+   *  reset is a no-op at 100%, which is exactly where a stale fit hurts. */
+  refit(): void;
 }
 
 interface Props {
@@ -66,6 +69,9 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       innerRef.current?.appendChild(flash);
       setTimeout(() => flash.remove(), 1400);
     },
+    refit() {
+      setRefitTick((n) => n + 1);
+    },
   }), []);
 
   // auto-typeset once when the pane first mounts with no pdf
@@ -90,6 +96,29 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
     return () => clearTimeout(t);
   }, [zoom]);
+
+  // A width change (splitter drag, window resize) must re-run the fit-to-width
+  // layout: the render pass below reads scroller.clientWidth once and bakes it
+  // into every canvas size, so without tracking it the pages keep their old
+  // width and zooming is the only way out. Debounced like zoom bursts — a drag
+  // emits a resize event per frame. widthTick is purely the layout trigger;
+  // the pass reads the live width itself.
+  const [widthTick, setWidthTick] = useState(0);
+  const [refitTick, setRefitTick] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    let last = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        if (el.clientWidth !== last) { last = el.clientWidth; setWidthTick((n) => n + 1); }
+      }, 150);
+    });
+    ro.observe(el);
+    return () => { clearTimeout(t); ro.disconnect(); };
+  }, []);
 
   // A branch switch nulls pdfUrl, which alone never touches the canvases —
   // the pane would keep showing the previous branch's pages, and a failed
@@ -222,7 +251,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       observer?.disconnect();
       Promise.resolve(doc).then((d) => { try { d?.destroy(); } catch { /* already gone */ } });
     };
-  }, [pdfUrl, layoutZoom]);
+  }, [pdfUrl, layoutZoom, widthTick, refitTick]);
 
   const handleDblClick = (e: React.MouseEvent) => {
     if (!onInverse) return;
