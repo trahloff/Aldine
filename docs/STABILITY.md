@@ -42,7 +42,7 @@ releases, not a build of `main`.
 | Projects | `DATA_DIR/projects/<id>`: one git repository per project, with `main` checked out | git |
 | Other branches | `DATA_DIR/worktrees/<id>/<branch>`: a git worktree each | git |
 | Compile output, the page-1 thumbnail included (`.<root>.thumb.jpg` and `.json`) | `.aldine-out/` beside the root file, kept out of git | rebuilt on the next typeset |
-| Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`) and each project's last edit and typesets (`activity.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
+| Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`), each project's last edit and typesets (`activity.json`) and invitations (`invitations.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
 | The same, with `DATABASE_URL` set | the Postgres database | tables Aldine creates |
 | Collaboration state | `META_DIR/yjs/`, one `.ybin` file per document | Yjs binary update |
 | Signing secret for PDF links and sign-in device cookies | `META_DIR/output-signing-secret`, unless `ALDINE_SIGNING_SECRET` is set | text |
@@ -75,6 +75,9 @@ two paths stay as they are within 1.x.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.
+- **Invitations.** `invitations.json` (the `invitations` table) starts empty
+  on an upgrade. A project's share list stays what it was: an address on it
+  keeps its access and needs no invitation.
 - **Project list state.** `opens.json` and `activity.json` (the
   `project_opens` and `project_activity` tables) start empty on an upgrade.
   A project without a recorded last edit gets one from its git history, the

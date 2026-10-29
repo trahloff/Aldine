@@ -56,6 +56,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   anything from the server, and compile output, whose file names a document
   can choose, is sent with `X-Content-Type-Options: nosniff`.
 
+### Changed
+- Adding an email address or ORCID iD in the share dialog now sends an
+  invitation the person accepts, instead of giving access at once. The link
+  works only for an account whose confirmed address, or ORCID iD, is the one
+  invited, so a forwarded link opens nothing for anyone else. Invitations
+  also wait on the invitee's Home page, which is how they arrive on a server
+  that sends no email: the dialog says so and offers Copy invite link. The
+  owner sees each invitation as pending, declined or expired (after 14 days)
+  and can resend, withdraw or invite again. People already on a share list
+  keep their access as before.
+
 ## [1.2.0] — 2026-10-28
 
 ### Added

@@ -19,6 +19,7 @@ const loadEditor = () => import('./pages/Editor');
 const Editor = lazy(loadEditor);
 const OAuthConsent = lazy(() => import('./pages/OAuthConsent'));
 const Admin = lazy(() => import('./pages/Admin'));
+const Invite = lazy(() => import('./pages/Invite'));
 
 function NotFound() {
   useDocumentTitle('Page not found');
@@ -46,6 +47,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/p/:id" element={<Editor />} />
                 <Route path="/oauth/authorize" element={<OAuthConsent />} />
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/invite/:id" element={<Invite />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>

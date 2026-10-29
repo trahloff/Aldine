@@ -69,6 +69,11 @@ const list = async (who) => {
   return res.json();
 };
 const row = async (who, id) => (await list(who)).find((r) => r.id === id);
+/** An invited person accepts their invitation to `id`. */
+const accept = async (who, id) => {
+  const inv = (await send('GET', '/api/invitations', who)).json().find((i) => i.project.id === id);
+  eq((await send('POST', `/api/invitations/${inv.id}/accept`, who)).statusCode, 200, `${who} accepts the invitation`);
+};
 const doc = '\\documentclass{article}\\begin{document}Hi\\end{document}\n';
 const create = async (name) => {
   const res = await send('POST', '/api/projects', 'ada', { name, files: { 'main.tex': doc } });
@@ -148,6 +153,7 @@ try {
 
   // ---- a link visitor: listed once they opened it, until they remove it ----
   eq((await send('POST', `/api/projects/${p2.id}/share`, 'ada', { mode: 'link', collaborators: ['dana@example.com'] })).statusCode, 200, 'P2 is link-shared, Dana invited');
+  await accept('dana', p2.id);
   check(!(await row('carol', p2.id)), 'a link-shared project is not on a stranger\'s list');
   eq((await send('GET', `/api/projects/${p2.id}`, 'carol')).statusCode, 200, 'the link opens it');
   check(!(await row('carol', p2.id)), 'reading it is not opening it');

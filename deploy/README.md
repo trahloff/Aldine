@@ -300,8 +300,9 @@ new password account starts with its address **not confirmed**:
   it expires.
 - Until the address is confirmed, the account signs in and works on its own
   projects, but projects shared with that address do not appear, and
-  `ALDINE_ADMIN_EMAILS` does not count it. Once it is confirmed, the shares
-  apply at once; no invite has to be sent again.
+  `ALDINE_ADMIN_EMAILS` does not count it. Once it is confirmed, invitations
+  to the address wait on the account's Home page; nobody has to invite it
+  again.
 - The link confirms only while the account it was sent for is signed in.
 - A completed password reset from an emailed (or logged) link also confirms
   the address. With `ALDINE_RESET_ECHO=1` it does not, because the API hands
@@ -310,12 +311,30 @@ new password account starts with its address **not confirmed**:
   confirmed: the identity provider vouches for its addresses (see
   `OIDC_EMAIL_VERIFIED` in [docs/OIDC.md](../docs/OIDC.md)). `/admin` marks
   pending accounts "not confirmed".
-- Adding an email address in the share dialog mails that address an
-  invitation with a link to the project, once, when it is added. The owner's
-  own address must be confirmed, and at most `RL_INVITE_BURST` (default 20)
-  invitations go out per owner per hour. Without a transport, without
-  `ALDINE_PUBLIC_URL`, or over the limit, sharing still saves and the dialog
-  tells the owner to let the person know themselves. ORCID iDs get no mail.
+- Adding an email address or ORCID iD in the share dialog makes an
+  **invitation**, not a collaborator. It grants nothing until its person
+  accepts it, signed in to an account whose confirmed address (or ORCID iD)
+  is the one invited; accepting puts them on the project's share list. The
+  invitation link carries a random id, but it is not a credential: anyone
+  else who opens it, signed in or not, sees only who the invitation is for
+  and from whom, never the project. So the link is safe to send over any
+  channel. An invitation is open for 14 days, and the owner sees it as
+  pending, declined or expired in the share dialog, with Copy invite link,
+  Resend, Withdraw and Invite again.
+- With a transport and `ALDINE_PUBLIC_URL`, the invitation is mailed once
+  when it is made, with a link to accept it; Resend mails it again. The
+  owner's own address must be confirmed, and at most `RL_INVITE_BURST`
+  (default 20) invitation mails go out per owner per hour.
+- **Without email** (no transport, no `ALDINE_PUBLIC_URL`, an unconfirmed
+  owner, or over the limit) the invitation is made all the same. The share
+  dialog says it was not mailed and offers Copy invite link, built from
+  `ALDINE_PUBLIC_URL` or, without it, from the address the owner uses. The
+  invitation also waits on the invitee's Home page once they sign in with the
+  invited address, so the owner can just tell them to sign in. ORCID iDs never
+  get mail and work the same way.
+- People already on a share list before invitations existed keep their
+  access, with nothing to accept. Without accounts (`AUTH_ENABLED` off) there
+  are no invitations: every project is open anyway.
 
 Password sign-in is limited per client address (`RL_LOGIN_BURST`) and per
 account across all addresses: after 5 failed tries in a row, each further try
@@ -366,12 +385,14 @@ server log naming the administrator, the action and the account
   its name) and to choose what happens to the projects it owns, the ones in
   its trash included. Give them to another enabled account, yours included,
   which becomes their owner (their Zotero links are removed, since they hold
-  the deleted person's key). Or move them to the trash, where nobody can
+  the deleted person's key, and their open invitations are withdrawn, since
+  the new owner made none of them). Or move them to the trash, where nobody can
   restore them and the daily sweep purges them after `ALDINE_TRASH_DAYS`;
   as when an owner trashes a project, a GitLab repository Aldine created for
   it is deleted with it. The account comes off every share list that names
-  its ORCID iD or its confirmed address (an invite to an address it never
-  confirmed stays, for whoever owns the address), and its sessions, access
+  its ORCID iD or its confirmed address, and open invitations to either are
+  withdrawn (an invite to an address it never confirmed stays, for whoever
+  owns the address), and its sessions, access
   tokens, connector grants, linked GitHub/GitLab/Gitea connections and
   project-list state are removed. Its compile seconds stay in the instance
   totals, and comments and commits keep the name they were written under.
@@ -530,7 +551,7 @@ override file.
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
-| `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email (default 20). Over it, sharing still saves and the owner is told who was not mailed |
+| `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
 | `ALDINE_SEARCH_MS` | Time a project search or replace may scan before it is stopped and refused (default 2000 ms). Each scan runs in a worker thread of its own; one per person and four per server at a time |

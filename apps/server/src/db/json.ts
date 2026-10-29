@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, replaceFileDurable, writeFileSynced } from '../durable.js';
-import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+
+const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
+const byCreated = (a: Invitation, b: Invitation) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 
 const errCode = (err: unknown) => (err as NodeJS.ErrnoException)?.code ?? '';
 
@@ -32,7 +35,7 @@ function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
  * deployments keep working:
  *   <metaRoot>/users.json  sessions.json  resets.json  usage.json
  *   <metaRoot>/oauth_clients.json  refresh_tokens.json  visits.json
- *   <metaRoot>/opens.json  activity.json
+ *   <metaRoot>/opens.json  activity.json  invitations.json
  *   <metaRoot>/meta/<id>.json          (project metadata)
  *   <metaRoot>/comments/<id>.json      (review comments)
  * Each file has a `<file>.bak` beside it: the version before the last write,
@@ -52,6 +55,7 @@ export class JsonStore implements DataStore {
   private visitsPath: string;
   private opensPath: string;
   private activityPath: string;
+  private invitationsPath: string;
   private metaDir: string;
   private commentsDir: string;
   private flat: Set<string>;
@@ -68,9 +72,10 @@ export class JsonStore implements DataStore {
     this.visitsPath = path.join(metaRoot, 'visits.json');
     this.opensPath = path.join(metaRoot, 'opens.json');
     this.activityPath = path.join(metaRoot, 'activity.json');
+    this.invitationsPath = path.join(metaRoot, 'invitations.json');
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
-    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath]);
+    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath, this.invitationsPath]);
   }
 
   async init(): Promise<void> {
@@ -376,6 +381,16 @@ export class JsonStore implements DataStore {
     fs.rmSync(p, { force: true });
     fs.rmSync(`${p}.bak`, { force: true });
   }
+  async addShareEntry(projectId: string, entry: string) {
+    const file = this.metaPath(projectId);
+    const meta = this.load<ProjectMeta>(file);
+    if (!meta) return false;
+    const share = meta.share ?? { mode: 'private' as const, collaborators: [] };
+    if (meta.share && share.collaborators.includes(entry)) return true;
+    meta.share = { ...share, collaborators: [...share.collaborators, entry] };
+    this.write(file, meta);
+    return true;
+  }
   async listMeta() {
     if (!fs.existsSync(this.metaDir)) return [];
     const out: ProjectMeta[] = [];
@@ -516,6 +531,59 @@ export class JsonStore implements DataStore {
     if (!m[projectId]) return;
     delete m[projectId];
     this.write(this.activityPath, m);
+  }
+
+  // ---- invitations ----
+  // Keyed `{ [id]: row }`.
+  private invitations() { return this.read<Record<string, Invitation>>(this.invitationsPath, {}); }
+  async setInvitation(inv: Invitation): Promise<void> {
+    if (!INVITATION_ID_RE.test(inv.id)) throw new Error('bad invitation id');
+    if (!PROJECT_ID_RE.test(inv.projectId)) throw new Error('bad project id');
+    const m = this.invitations();
+    m[inv.id] = this.clone(inv);
+    this.write(this.invitationsPath, m);
+  }
+  async getInvitation(id: string): Promise<Invitation | null> {
+    if (!INVITATION_ID_RE.test(id)) return null;
+    return this.clone(this.invitations()[id] ?? null);
+  }
+  async listProjectInvitations(projectId: string): Promise<Invitation[]> {
+    return Object.values(this.invitations()).filter((i) => i.projectId === projectId).sort(byCreated).map((i) => this.clone(i));
+  }
+  async listInvitationsTo(to: string[]): Promise<Invitation[]> {
+    const want = new Set(to);
+    return Object.values(this.invitations()).filter((i) => want.has(i.to)).sort(byCreated).map((i) => this.clone(i));
+  }
+  async settleInvitation(id: string, status: 'accepted' | 'declined' | 'withdrawn', at: string): Promise<boolean> {
+    const m = this.invitations();
+    const inv = INVITATION_ID_RE.test(id) ? m[id] : undefined;
+    if (!inv || inv.status !== 'pending') return false;
+    inv.status = status;
+    inv.respondedAt = at;
+    this.write(this.invitationsPath, m);
+    return true;
+  }
+  async updatePendingInvitation(id: string, fields: { expiresAt?: string; emailedAt?: string }): Promise<boolean> {
+    const m = this.invitations();
+    const inv = INVITATION_ID_RE.test(id) ? m[id] : undefined;
+    if (!inv || inv.status !== 'pending') return false;
+    if (fields.expiresAt !== undefined) inv.expiresAt = fields.expiresAt;
+    if (fields.emailedAt !== undefined) inv.emailedAt = fields.emailedAt;
+    this.write(this.invitationsPath, m);
+    return true;
+  }
+  async deleteInvitation(id: string): Promise<void> {
+    const m = this.invitations();
+    if (!INVITATION_ID_RE.test(id) || !m[id]) return;
+    delete m[id];
+    this.write(this.invitationsPath, m);
+  }
+  async deleteProjectInvitations(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const m = this.invitations();
+    let changed = false;
+    for (const [k, v] of Object.entries(m)) if (v.projectId === projectId) { delete m[k]; changed = true; }
+    if (changed) this.write(this.invitationsPath, m);
   }
 
   // ---- connections ----

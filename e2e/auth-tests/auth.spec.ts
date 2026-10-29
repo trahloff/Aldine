@@ -17,6 +17,14 @@ async function confirmEmail(request: import('@playwright/test').APIRequestContex
   expect(r.ok(), `confirming ${email}`).toBeTruthy();
 }
 
+/** Accept, as the account `request` is signed in to, its invitation to `projectId`. */
+async function acceptInvitation(request: import('@playwright/test').APIRequestContext, projectId: string) {
+  const mine = await (await request.get('/api/invitations')).json();
+  const inv = mine.find((i: { project: { id: string } }) => i.project.id === projectId);
+  expect(inv, 'an invitation waits for this account').toBeTruthy();
+  expect((await request.post(`/api/invitations/${inv.id}/accept`)).ok()).toBeTruthy();
+}
+
 async function register(page: import('@playwright/test').Page, email: string, password = 'password123', name = 'Tester') {
   await page.goto('/');
   await expect(page.getByTestId('auth-email')).toBeVisible();
@@ -104,7 +112,7 @@ test.describe('auth', () => {
     await expect(page.getByTestId('auth-error')).toContainText(/incorrect/i);
   });
 
-  test('a second user cannot access a private project but can after it is shared', async ({ browser, request }) => {
+  test('a second user cannot access a private project but can after accepting the invitation', async ({ browser, request }) => {
     // Alice (API) creates a project
     const alice = await browser.newContext();
     const aEmail = uniq();
@@ -123,9 +131,11 @@ test.describe('auth', () => {
     const shared = await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [bEmail] } });
     expect(shared.ok()).toBeTruthy();
 
-    // …which applies once Bob has confirmed the address
+    // …which grants nothing, not even once Bob has confirmed the address
     expect((await bob.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
     await confirmEmail(bob.request, bEmail);
+    expect((await bob.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await acceptInvitation(bob.request, proj.id);
 
     // Bob can now open it and it shows in his list
     const allowed = await bob.request.get(`/api/projects/${proj.id}`);
@@ -182,6 +192,7 @@ test.describe('auth', () => {
     const dana = await browser.newContext();
     await dana.request.post('/api/auth/register', { data: { email: dEmail, password: 'password123' } });
     await confirmEmail(dana.request, dEmail);
+    await acceptInvitation(dana.request, proj.id);
     const danaList = await (await dana.request.get('/api/projects')).json();
     expect(danaList.some((p: { id: string }) => p.id === proj.id)).toBeTruthy();
 
@@ -238,8 +249,9 @@ test.describe('auth', () => {
     expect(detail.isOwner).toBeFalsy();
     expect(detail.isMember).toBeFalsy();
     // …while the owner still sees who she invited
-    const own = await (await alice.request.get(`/api/projects/${proj.id}`)).json();
-    expect(own.share.collaborators).toEqual([invitee]);
+    const invited = await (await alice.request.get(`/api/projects/${proj.id}/invitations`)).json();
+    expect(invited.map((i: { to: string }) => i.to)).toEqual([invitee]);
+    expect((await carol.request.get(`/api/projects/${proj.id}/invitations`)).status()).toBe(403);
 
     // and cannot reconfigure the project or reach the owner's linked accounts
     expect((await carol.request.patch(`/api/projects/${proj.id}`, { data: { name: 'Renamed by a stranger' } })).status()).toBe(403);
@@ -273,14 +285,16 @@ test.describe('auth', () => {
     await page.getByTestId('share-save').click();
     await expect(page.getByTestId('share-modal')).toBeVisible(); // refused, still open
 
-    // this server sends no email, so the dialog says to pass it on by hand
+    // this server sends no email, so the dialog offers the invite links
     const invitee = uniq();
     await page.getByTestId('share-emails').fill(`${invitee}, 0000-0002-1825-0097`);
     await page.getByTestId('share-save').click();
-    await expect(page.getByTestId('share-invite-manual')).toContainText(invitee);
-    await expect(page.getByTestId('share-invite-manual')).toContainText("Tell them yourself: they'll see the project after signing in with this address.");
-    await expect(page.getByTestId('share-invite-manual')).not.toContainText('0000-0002-1825-0097');
+    await expect(page.getByTestId('share-invite-manual')).toContainText(`This server doesn’t send email, so copy the invite link for ${invitee} and send it yourself.`);
+    await expect(page.getByTestId('share-invite-manual')).toContainText('ORCID iDs get no email: copy the invite link for 0000-0002-1825-0097');
     await expect(page.getByTestId('share-invite-sent')).toHaveCount(0);
+    await expect(page.getByTestId('invite-row')).toHaveCount(2);
+    await expect(page.locator(`[data-testid="invite-row"][data-to="${invitee}"]`).getByTestId('invite-state')).toHaveText('Pending · not emailed');
+    await expect(page.getByTestId('invite-resend')).toHaveCount(0); // nothing to resend without email
     await page.getByTestId('share-done').click();
     await expect(page.getByTestId('share-modal')).toHaveCount(0);
     // saving the same list again adds nobody, so the dialog just closes
@@ -390,8 +404,131 @@ test.describe('abuse controls', () => {
   });
 });
 
+test.describe('invitations', () => {
+  test('an invitation works only for the address it names, waits on Home without email, and can be declined or withdrawn', async ({ browser }) => {
+    // The owner, on a server that sends no email (this suite configures none).
+    const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const ownerPage = await owner.newPage();
+    const aEmail = uniq();
+    await register(ownerPage, aEmail, 'password123', 'Olive Owner');
+    await confirmEmail(ownerPage.request, aEmail);
+    const name = `Invited paper ${Date.now()}`;
+    const proj = await (await ownerPage.request.post('/api/projects', { data: { name } })).json();
+    await ownerPage.goto(`/p/${proj.id}`);
+    await expect(ownerPage.getByTestId('editor-shell')).toBeVisible();
+
+    const bEmail = uniq();
+    await ownerPage.getByTestId('share-project').click();
+    await ownerPage.getByTestId('share-emails').fill(bEmail);
+    await ownerPage.getByTestId('share-save').click();
+    await expect(ownerPage.getByTestId('share-invite-manual')).toContainText(`This server doesn’t send email, so copy the invite link for ${bEmail} and send it yourself. The invitation also waits on their Home once they sign in with that address.`);
+    const bRow = ownerPage.locator(`[data-testid="invite-row"][data-to="${bEmail}"]`);
+    await expect(bRow.getByTestId('invite-state')).toHaveText('Pending · not emailed');
+    await bRow.getByTestId('invite-copy').click();
+    await expect(ownerPage.locator('.toast', { hasText: `Invite link for ${bEmail} copied` })).toBeVisible();
+    const link = await ownerPage.evaluate(() => navigator.clipboard.readText());
+    expect(link).toMatch(/\/invite\/[0-9a-f]{32}$/);
+    await ownerPage.getByTestId('share-done').click();
+    expect((await (await ownerPage.request.get(`/api/projects/${proj.id}`)).json()).share.collaborators).toEqual([]);
+
+    // B follows the link signed out: the address is filled in, and after
+    // signing up the same page asks to confirm it first.
+    const b = await browser.newContext();
+    const bPage = await b.newPage();
+    await bPage.goto(link);
+    await expect(bPage.getByTestId('auth-email')).toHaveValue(bEmail);
+    await expect(bPage.getByTestId('auth-info')).toContainText(`Olive Owner invited ${bEmail} to a project.`);
+    await expect(bPage.locator('body')).not.toContainText(name);
+    await bPage.getByTestId('auth-switch').click();
+    await bPage.getByTestId('auth-name').fill('Bob');
+    await bPage.getByTestId('auth-password').fill('password123');
+    await bPage.getByTestId('auth-submit').click();
+    await expect(bPage.getByTestId('invite-unconfirmed')).toBeVisible();
+    await expect(bPage.getByTestId('invite-unconfirmed')).not.toContainText(name);
+    expect((await b.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await confirmEmail(b.request, bEmail);
+    expect((await b.request.get(`/api/projects/${proj.id}`)).status()).toBe(403); // confirmed, not accepted
+
+    // C, signed in as someone else, opens B's link: no project, no access
+    const c = await browser.newContext();
+    const cPage = await c.newPage();
+    const cEmail = uniq();
+    await register(cPage, cEmail, 'password123', 'Carol');
+    await confirmEmail(c.request, cEmail);
+    await cPage.goto(link);
+    const mismatch = cPage.getByTestId('invite-mismatch');
+    await expect(mismatch).toContainText(`This invitation is for ${bEmail}. You’re signed in as ${cEmail}. Sign in with ${bEmail}, or ask Olive Owner to invite ${cEmail}.`);
+    await expect(mismatch).not.toContainText(name);
+    expect((await c.request.post(`${new URL(link).pathname.replace('/invite/', '/api/invitations/')}/accept`)).status()).toBe(403);
+    expect((await c.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    // B finds the invitation on Home and accepts it there
+    await bPage.goto('/');
+    const offer = bPage.locator(`[data-testid="home-invitation"][data-project="${proj.id}"]`);
+    await expect(offer).toContainText(`Olive Owner invited you to ${name}`);
+    await expect(bPage.getByTestId(`project-card-${proj.id}`)).toHaveCount(0);
+    await offer.getByTestId('home-invitation-accept').click();
+    await expect(bPage.locator('.toast', { hasText: `You joined “${name}”` })).toBeVisible();
+    await expect(bPage.getByTestId(`project-card-${proj.id}`)).toBeVisible();
+    await bPage.locator('.toast', { hasText: `You joined “${name}”` }).getByTestId('home-invitation-open').click();
+    await expect(bPage.getByTestId('editor-shell')).toBeVisible();
+    await bPage.goto(link);
+    await expect(bPage.getByTestId('invite-accepted')).toBeVisible();
+    await bPage.getByTestId('invite-open').click();
+    await expect(bPage).toHaveURL(new RegExp(`/p/${proj.id}`));
+
+    // C is invited too, and accepts from the invitation page
+    const cInvite = await (await ownerPage.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: cEmail } })).json();
+    const cLink = cInvite.invitations.find((i: { to: string }) => i.to === cEmail).link;
+    await cPage.goto(cLink);
+    await expect(cPage.getByTestId('invite-pending')).toContainText(`Olive Owner invited you to “${name}”`);
+    await cPage.getByTestId('invite-accept').click();
+    await expect(cPage.getByTestId('editor-shell')).toBeVisible();
+    expect((await c.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
+
+    // D declines; the owner sees it and can invite again
+    const dEmail = uniq();
+    const d = await browser.newContext();
+    const dPage = await d.newPage();
+    await register(dPage, dEmail, 'password123', 'Dave');
+    await confirmEmail(d.request, dEmail);
+    const dInvite = await (await ownerPage.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: dEmail } })).json();
+    await dPage.goto(dInvite.invitations.find((i: { to: string }) => i.to === dEmail).link);
+    await dPage.getByTestId('invite-decline').click();
+    await dPage.getByTestId('dialog-confirm').click();
+    await expect(dPage.getByTestId('invite-declined-now')).toBeVisible();
+    expect((await d.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    // E is withdrawn before answering
+    const eEmail = uniq();
+    await ownerPage.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: eEmail } });
+    await ownerPage.getByTestId('share-project').click();
+    const dRow = ownerPage.locator(`[data-testid="invite-row"][data-to="${dEmail}"]`);
+    await expect(dRow.getByTestId('invite-state')).toHaveText('Declined');
+    await expect(dRow.getByTestId('invite-again')).toBeVisible();
+    await expect(ownerPage.locator(`[data-testid="invite-row"][data-to="${bEmail}"]`)).toHaveCount(0); // accepted: on the list of people instead
+    await expect(ownerPage.getByTestId('share-emails')).toHaveValue(`${bEmail}, ${cEmail}`);
+    const eRow = ownerPage.locator(`[data-testid="invite-row"][data-to="${eEmail}"]`);
+    const eLink = (await (await ownerPage.request.get(`/api/projects/${proj.id}/invitations`)).json()).find((i: { to: string }) => i.to === eEmail).link;
+    await eRow.getByTestId('invite-withdraw').click();
+    await expect(eRow).toHaveCount(0);
+    await ownerPage.keyboard.press('Escape');
+    const e = await browser.newContext();
+    const ePage = await e.newPage();
+    await register(ePage, eEmail, 'password123', 'Erin');
+    await confirmEmail(e.request, eEmail);
+    await ePage.goto('/');
+    await expect(ePage.getByTestId('home-invitations')).toHaveCount(0);
+    await ePage.goto(eLink);
+    await expect(ePage.getByTestId('invite-withdrawn')).toContainText('Olive Owner withdrew this invitation.');
+    expect((await e.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    for (const ctx of [owner, b, c, d, e]) await ctx.close();
+  });
+});
+
 test.describe('email confirmation', () => {
-  test('an invite by email applies once the invitee confirms the address', async ({ page, browser }) => {
+  test('an invitation by email waits until the invitee confirms the address', async ({ page, browser }) => {
     const alice = await browser.newContext();
     await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
     const proj = await (await alice.request.post('/api/projects', { data: { name: 'Shared Before Signup' } })).json();
@@ -418,11 +555,18 @@ test.describe('email confirmation', () => {
     await page.getByTestId('email-confirm-notice-close').click();
     await expect(banner).toBeVisible();
 
+    await expect(page.getByTestId('home-invitations')).toHaveCount(0); // not offered to an unconfirmed address
+
     await page.goto(first);
     await expect(page.getByTestId('email-confirm-notice')).toContainText('Your email address is confirmed.');
     await expect(page).not.toHaveURL(/confirm_email/);
-    await expect(page.getByTestId('project-grid')).toContainText('Shared Before Signup');
     await expect(banner).toHaveCount(0);
+    const offer = page.locator(`[data-testid="home-invitation"][data-project="${proj.id}"]`);
+    await expect(offer).toContainText('Alice invited you to Shared Before Signup');
+    expect((await page.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await offer.getByTestId('home-invitation-accept').click();
+    await expect(page.getByTestId('home-invitations')).toHaveCount(0);
+    await expect(page.getByTestId('project-grid')).toContainText('Shared Before Signup');
     expect((await page.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
     await alice.close();
   });
@@ -916,6 +1060,13 @@ test.describe('ORCID sign-in', () => {
 
     const shared = await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [ORCID_PRIVATE.toLowerCase()] } });
     expect(shared.ok()).toBeTruthy();
+    expect((await orcid.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await page.reload();
+    const offer = page.locator(`[data-testid="home-invitation"][data-project="${proj.id}"]`);
+    await expect(offer).toContainText('Alice invited you to Invite by iD');
+    await offer.getByTestId('home-invitation-accept').click();
+    await expect(offer).toHaveCount(0);
+    await expect(page.getByTestId('project-grid')).toContainText('Invite by iD');
     expect((await orcid.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
     const list = await (await orcid.request.get('/api/projects')).json();
     expect(list.some((p: { id: string }) => p.id === proj.id)).toBeTruthy();

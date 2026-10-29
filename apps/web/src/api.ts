@@ -1,6 +1,6 @@
 import { withBase } from './basePath';
 import { safeStorage } from './util/safeStorage';
-import type { InviteReport } from './util/invites';
+import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from './util/invites';
 
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
 /** `emailPending`: a password sign-up whose address is not confirmed yet;
@@ -601,8 +601,25 @@ export const api = {
     oauthReq<OAuthClientInfo>(`/api/oauth/client?${new URLSearchParams(authorizeParams)}`),
   postOAuthConsent: (body: { [param: string]: string | string[] | null | undefined; decision: 'allow' | 'deny'; projectIds: string[] | null }) =>
     oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
-  share: (id: string, mode: 'private' | 'link', collaborators: string[]) =>
-    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators }) }),
+  /** `previous`: the list the dialog started from, so that only what the
+   *  owner took off it is removed (someone may have accepted meanwhile). */
+  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[]) =>
+    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous }) }),
+  /** The owner's view: open, declined and expired invitations of a project. */
+  projectInvitations: (id: string) => req<OwnerInvitation[]>(`/api/projects/${id}/invitations`),
+  /** Invite one address or ORCID iD: someone new, or again after a decline or expiry. */
+  invite: (id: string, to: string) =>
+    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify({ to }) }),
+  resendInvitation: (id: string, invite: string) =>
+    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations/${invite}/resend`, { method: 'POST' }),
+  /** Withdraws an open invitation, or clears a declined or expired one. */
+  withdrawInvitation: (id: string, invite: string) =>
+    req<{ invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations/${invite}`, { method: 'DELETE' }),
+  myInvitations: () => req<MyInvitation[]>('/api/invitations'),
+  invitation: (invite: string) => req<InvitationView>(`/api/invitations/${encodeURIComponent(invite)}`),
+  acceptInvitation: (invite: string) =>
+    req<{ ok: true; projectId: string; already?: boolean }>(`/api/invitations/${encodeURIComponent(invite)}/accept`, { method: 'POST' }),
+  declineInvitation: (invite: string) => req<{ ok: true }>(`/api/invitations/${encodeURIComponent(invite)}/decline`, { method: 'POST' }),
 };
 
 // No violet: #a78bfa (and the violet family generally) is reserved for the

@@ -88,6 +88,16 @@ async function project(cookie, name) {
   return res.json().id;
 }
 const listed = async (cookie) => (await call('GET', '/api/projects', cookie)).json().map((p) => p.id);
+/** Entries on a project's share list, as an accepted invitation leaves them. */
+async function shareWith(id, collaborators, mode = 'private') {
+  await db().writeMeta({ ...(await db().readMeta(id)), share: { mode, collaborators } });
+}
+const invite = async (cookie, id, to) => {
+  const res = await call('POST', `/api/projects/${id}/invitations`, cookie, { to });
+  eq(res.statusCode, 200, `invite ${to}`);
+  return res.json().invitations.find((i) => i.to === to).id;
+};
+const invitationState = async (id) => (await db().getInvitation(id))?.status;
 const bearer = (token) => ({ authorization: `Bearer ${token}` });
 const row = async (id) => (await call('GET', '/api/admin/users', root.cookie)).json().find((u) => u.id === id);
 
@@ -140,7 +150,7 @@ try {
   eq((await call('GET', '/api/projects', null, undefined, bearer(bobPat.token))).statusCode, 200, 'before: Bob\'s access token works');
   const pair = await exchangeCode(ISSUER, code(bob.id));
   // Bob's outside credentials, lent to the members of his project.
-  eq((await call('POST', `/api/projects/${bobProject}/share`, bob.cookie, { mode: 'private', collaborators: ['carol@example.org'] })).statusCode, 200, 'Bob shares his paper with Carol');
+  await shareWith(bobProject, ['carol@example.org']);
   await db().writeMeta({ ...(await db().readMeta(bobProject)), zotero: { apiKey: 'bobs-key', userId: 7, libraryPrefix: 'users/7', bibFile: 'zotero.bib' } });
   await db().setConnection(bob.id, 'github', { token: 'bobs-github-token', login: 'bob' });
   const link = { provider: 'github', fullName: 'bob/paper', owner: 'bob', repo: 'paper', remoteBranch: 'main', cloneUrl: 'https://github.com/bob/paper.git', connectedBy: bob.id };
@@ -248,7 +258,7 @@ try {
   // ---- confirm an address by hand ----
   const dan = await signUp('dan@example.org', 'Dan', false);
   const shared = await project(root.cookie, 'For Dan');
-  eq((await call('POST', `/api/projects/${shared}/share`, root.cookie, { mode: 'private', collaborators: ['dan@example.org'] })).statusCode, 200, 'Root shares a project with Dan\'s address');
+  await shareWith(shared, ['dan@example.org']);
   check(!(await listed(dan.cookie)).includes(shared), 'before: the share does not count for an unconfirmed address');
   const confirmed = await act(root.cookie, dan.id, 'confirm-email');
   eq([confirmed.statusCode, confirmed.json().emailPending], [200, false], 'the administrator confirms Dan\'s address');
@@ -279,12 +289,15 @@ try {
   const frank = await signUp('frank@example.org', 'Frank');
   const live = await project(erin.cookie, 'Erin live');
   const binned = await project(erin.cookie, 'Erin binned');
-  eq((await call('POST', `/api/projects/${live}/share`, erin.cookie, { mode: 'private', collaborators: ['carol@example.org', 'dan@example.org'] })).statusCode, 200, 'Erin shares with Carol and Dan');
+  await shareWith(live, ['carol@example.org', 'dan@example.org']);
+  const erinsInvite = await invite(erin.cookie, live, 'zoe@example.org');
   const meta = await db().readMeta(live);
   await db().writeMeta({ ...meta, zotero: { apiKey: 'erins-key', userId: 7, libraryPrefix: 'users/7', bibFile: 'zotero.bib' } });
   eq((await call('DELETE', `/api/projects/${binned}`, erin.cookie)).statusCode, 200, 'Erin trashes one project');
   const franks = await project(frank.cookie, 'Frank paper');
-  eq((await call('POST', `/api/projects/${franks}/share`, frank.cookie, { mode: 'link', collaborators: ['Erin@Example.org', 'dan@example.org'] })).statusCode, 200, 'Frank shares with Erin');
+  await shareWith(franks, ['Erin@Example.org', 'dan@example.org'], 'link');
+  const forErin = await project(frank.cookie, 'For Erin');
+  const toErin = await invite(frank.cookie, forErin, 'erin@example.org');
   const erinPat = await auth.createAccessToken(erin.id, 'cli', null, null);
 
   const wrong = await act(root.cookie, erin.id, 'delete', { projects: 'transfer', transferTo: carol.id, confirm: 'erin' });
@@ -310,6 +323,8 @@ try {
   check((await call('GET', '/api/projects/trash', carol.cookie)).json().some((p) => p.id === binned), 'the trashed one is in Carol\'s trash');
   check((await listed(dan.cookie)).includes(live), 'Dan keeps his access');
   eq((await db().readMeta(franks)).share.collaborators, ['dan@example.org'], 'Erin is off Frank\'s share list');
+  eq(await invitationState(toErin), 'withdrawn', 'an open invitation to her address is withdrawn');
+  eq(await invitationState(erinsInvite), 'withdrawn', 'and so are the ones she made on a project that changed hands');
   eq(await db().getUser(erin.id), null, 'the account is gone');
   eq((await call('GET', '/api/auth/me', erin.cookie)).json().user, null, 'and its session');
   eq((await call('GET', '/api/projects', null, undefined, bearer(erinPat.token))).statusCode, 401, 'and its access token');
@@ -320,16 +335,18 @@ try {
   // ---- delete, moving the projects to the trash ----
   const gus = await signUp('gus@example.org', 'Gus');
   const gusProject = await project(gus.cookie, 'Gus paper');
-  eq((await call('POST', `/api/projects/${gusProject}/share`, gus.cookie, { mode: 'private', collaborators: ['dan@example.org'] })).statusCode, 200, 'Gus shares with Dan');
+  await shareWith(gusProject, ['dan@example.org']);
   const binnedAll = await act(root.cookie, gus.id, 'delete', { projects: 'trash', confirm: 'gus@example.org' });
   eq([binnedAll.statusCode, binnedAll.json().trashed, binnedAll.json().transferred], [200, 1, 0], 'deleting Gus trashes his project');
   check(audited(`deleted gus@example.org [${gus.id}] (1 project to the trash, taken off 0 share lists)`), 'the log says so');
   check(typeof (await db().readMeta(gusProject)).deletedAt === 'string', 'the project is in the trash');
   check(!(await listed(dan.cookie)).includes(gusProject), 'and gone for its collaborators');
   const forThird = await project(root.cookie, 'For the real third');
-  await call('POST', `/api/projects/${forThird}/share`, root.cookie, { mode: 'private', collaborators: ['third@example.org'] });
+  await shareWith(forThird, ['third@example.org']);
+  const toThird = await invite(root.cookie, await project(root.cookie, 'Invite for the real third'), 'third@example.org');
   eq((await act(root.cookie, squatter.id, 'delete', { projects: 'trash', confirm: 'third@example.org' })).statusCode, 200, 'the squatter on an admin address can be deleted');
   eq((await db().readMeta(forThird)).share.collaborators, ['third@example.org'], 'an invite to the address it never confirmed stays, for the address\'s owner');
+  eq(await invitationState(toThird), 'pending', 'an invitation to it as well');
   // An account without an address confirms with its name.
   eq((await act(root.cookie, orla.id, 'delete', { projects: 'trash', confirm: 'orcid' })).json().error, 'Type Orla to confirm.', 'an account without an address is confirmed by its name');
   eq((await act(root.cookie, orla.id, 'delete', { projects: 'trash', confirm: 'Orla' })).statusCode, 200, 'and deleted');

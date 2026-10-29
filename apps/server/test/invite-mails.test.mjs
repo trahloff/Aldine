@@ -1,9 +1,10 @@
 /**
- * Sharing a project mails each newly added address once: not ORCID iDs, not
- * addresses already on the list, not on a re-save. Owner and project names
+ * Sharing a project mails each newly invited address once: not ORCID iDs, not
+ * addresses already on the list or invited, not on a re-save. Owner and project names
  * are the owner's own text, escaped in the HTML part. A per-owner budget
  * caps the mails; over it, and when a send fails or the server sends no
- * email, the share still saves and the response names who was not mailed.
+ * email, the invitation is still made and the response names who was not
+ * mailed.
  *
  * Real route table (Fastify inject), real SMTP backend against a local
  * listener; env is set before any src import.
@@ -73,19 +74,21 @@ let base = smtp.mails.length;
 let r = await share(owner, project.id, ['Grace@Example.org', '0000-0002-1825-0097', 'owner@example.com']);
 eq(r.invited, 1, 'one invitation for the one new address');
 eq(r.notEmailed, [], 'nobody left unmailed');
-eq(r.share.collaborators.length, 3, 'the share holds every entry');
+eq(r.share.collaborators, [], 'nobody has access before accepting');
+eq(r.invitations.map((i) => i.to).sort(), ['0000-0002-1825-0097', 'grace@example.org'], 'the address and the iD are invited, the owner is not');
+const graceLink = `https://aldine.test/write/invite/${r.invitations.find((i) => i.to === 'grace@example.org').id}`;
 const raw = await smtp.waitFor(base + 1);
 await settle();
 eq(smtp.mails.length, base + 1, 'no mail for the ORCID iD or the owner’s own address');
 const html = part(raw, 'text/html');
 const text = part(raw, 'text/plain');
 check(raw.includes('To: grace@example.org'), 'the invitation goes to the added address');
-check(decoded(raw).includes(`https://aldine.test/write/p/${project.id}`), 'the link is the project on the public URL, base path included');
-check(/sign in or create an account with this address/.test(decoded(raw)), 'the mail says how to get in');
+check(decoded(raw).includes(graceLink), 'the link is the invitation on the public URL, base path included');
+check(/sign in or create an account with this address/.test(decoded(raw)), 'the mail says how to accept');
 check(!html.includes('<script>') && !html.includes('<b>'), 'no owner-chosen markup in the HTML part');
 check(html.includes('&#60;script&#62;') && html.includes('Ada &#60;b&#62;Lovelace&#60;/b&#62; &#38; &#34;co&#34;'), 'the names are escaped in the HTML part');
 eq((html.match(/<a /g) || []).length, 1, 'the HTML part has one link');
-check(text.includes('Ada <b>Lovelace</b> & "co" shared the LaTeX project “Notes <script>alert(1)</script> & things”'), 'and plain in the text part');
+check(text.includes('Ada <b>Lovelace</b> & "co" invited you to the LaTeX project “Notes <script>alert(1)</script> & things”'), 'and plain in the text part');
 
 // ---- re-saving the same list mails nobody ----
 base = smtp.mails.length;
@@ -106,7 +109,7 @@ check(!decoded(longRaw).includes('x'.repeat(101)), 'the project name is capped')
 // ---- a failed send still saves the share and is reported ----
 base = smtp.mails.length;
 r = await share(owner, project.id, ['grace@example.org', 'bounce@example.org']);
-eq(r.share.collaborators.includes('bounce@example.org'), true, 'the share saves despite the failure');
+eq(r.invitations.some((i) => i.to === 'bounce@example.org' && i.state === 'pending' && !i.emailedAt), true, 'the invitation is made despite the failure');
 eq(r.invited, 0, 'the failed mail is not counted');
 eq(r.notEmailed, ['bounce@example.org'], 'the failed address is reported');
 eq(r.reason, 'failed', 'with the reason');
@@ -118,7 +121,7 @@ r = await share(owner, project.id, ['grace@example.org', 'bounce@example.org', .
 eq(r.invited, 3, 'mails go out while the budget lasts (bounce used one)');
 eq(r.notEmailed, ['d@example.org', 'e@example.org', 'f@example.org'], 'the rest are reported');
 eq(r.reason, 'limit', 'as over the limit');
-eq(r.share.collaborators.length, 8, 'and still shared');
+eq(r.invitations.length, 9, 'and still invited');
 await smtp.waitFor(base + 3);
 await settle();
 eq(smtp.mails.length, base + 3, 'no mail past the limit');

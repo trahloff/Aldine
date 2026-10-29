@@ -6,6 +6,7 @@ import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import EmailConfirmBanner from '../components/EmailConfirmBanner';
+import InvitationsStrip from '../components/home/InvitationsStrip';
 import ShareModal from '../components/ShareModal';
 import { appearanceCommands } from '../components/Appearance';
 import AccountSettings from '../components/AccountSettings';
@@ -27,6 +28,7 @@ import CommandPalette, { Command, usePaletteHotkey } from '../components/Command
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { useMinuteTick } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
+import { INVITE_RESUME_KEY } from '../util/invites';
 import { importSummary } from '../util/engines';
 import { safeSession, safeStorage } from '../util/safeStorage';
 import { gridMove, isGridKey } from '../util/rovingGrid';
@@ -245,12 +247,16 @@ export default function Home() {
   }, [projects]);
 
   // Signed in through an SSO provider while an app was waiting on
-  // /oauth/authorize: the provider callback lands here, so resume the consent.
+  // /oauth/authorize, or from an invitation's page: the provider callback
+  // lands here, so go back to where the sign-in started.
   useEffect(() => {
     if (!authEnabled || !user) return;
     const resume = safeSession.get(OAUTH_RESUME_KEY);
     safeSession.remove(OAUTH_RESUME_KEY);
+    const invite = safeSession.get(INVITE_RESUME_KEY);
+    safeSession.remove(INVITE_RESUME_KEY);
     if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
+    else if (invite?.startsWith('/invite/')) navigate(invite, { replace: true });
   }, []);
   useEffect(() => {
     api.remotes().then((list) => {
@@ -917,6 +923,7 @@ export default function Home() {
           )}
         </div>
         {authEnabled && <EmailConfirmBanner />}
+        {authEnabled && show !== 'trash' && <InvitationsStrip onAccepted={() => { load(); }} />}
         {compact && search}
         <nav className="seg home-filter" aria-label="Show">
           {filters.map((f) => (
