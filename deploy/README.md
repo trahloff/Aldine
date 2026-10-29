@@ -259,6 +259,16 @@ the app is running, and asks before it overwrites anything (`--yes` skips the
 question). Afterwards people are still signed in and access tokens still
 work.
 
+Each file of the JSON datastore (`users.json`, `sessions.json` and the
+others at the top of the secrets volume, and those in `meta/` and
+`comments/`) keeps a `.bak` beside it: the version before its last write. If
+a crash or the volume going read-only leaves a file empty or cut short, the
+server restores it from the `.bak` the next time it reads it (the top-level
+files at startup) and logs both names; only the last change to that file is
+lost. When neither can be read, the server refuses to start, or that project
+fails to open, with the file named: restore from a backup. The backups carry
+the `.bak` files along, and a restore puts them back with the rest.
+
 Every release runs exactly these steps on an empty Docker, for both
 datastores, before it can become `latest`: `scripts/lifecycle/drill.sh
 restore` seeds a stack, backs it up while it runs, deletes it with its
@@ -349,6 +359,9 @@ changes the password keeps its exemption).
   Postgres: an instance switched over starts with no accounts and lists no
   projects, so choose the backend before people use it. `deploy/backup.sh`
   puts a dump of the bundled database in its tarball (section 4).
+  On Kubernetes, or wherever the secrets volume is network storage, use
+  Postgres even for one node: the JSON files are only as safe as that
+  volume's handling of a crash or a forced read-only remount.
   Enabling Redis works the same way: `--profile redis` plus the `REDIS_URL`
   line in `.env`.
 
@@ -469,7 +482,7 @@ override file.
 | `ALDINE_PROTECTED_PROJECTS` | Comma-separated project ids that every visitor may read and typeset and nobody may change (a public demo's sample papers) |
 | `LOG_LEVEL` | Server log level (default `info`; `warn` keeps only warnings and errors) |
 | `DATA_DIR` | Project git repositories, their branch worktrees and each branch's `.aldine-out` compile output. The image sets `/data`. The compiler's `DATA_DIR` must be the same volume |
-| `META_DIR` | Secrets and metadata: the JSON datastore, the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
+| `META_DIR` | Secrets and metadata: the JSON datastore (each file with its last-good `.bak`), the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
 | `CACHE_DIR` | Template-repository checkouts and downloaded venue kits (default `.cache/latex` in the install directory, which in the image is not on a volume: the cache starts empty when the container is recreated) |
 | `COMPILER_URL` | Where the app reaches the compiler (default `http://localhost:4020`; the image sets `http://compiler:4020`) |
 | `PORT` | Port inside the container: the app listens on `3000`, the compiler on `4020` |

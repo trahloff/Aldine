@@ -225,6 +225,9 @@ export interface DataStore {
   /** create tables / ensure directories. Called once at startup. */
   init(): Promise<void>;
   close(): Promise<void>;
+  /** Throws when the store cannot serve reads (/api/health). Postgres has
+   *  none: a lost connection fails the query that meets it and recovers. */
+  check?(): Promise<void>;
 
   // users
   createUser(u: User): Promise<void>;

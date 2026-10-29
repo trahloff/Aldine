@@ -13,6 +13,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   palette. u and Ctrl-R undo and redo your own edits, never a collaborator's.
   The keybindings download only when first turned on (#188).
 
+### Fixed
+- A crash or a volume that goes read-only no longer leaves the JSON datastore
+  with an empty `users.json` and every request failing. Writes of datastore
+  files, collaboration snapshots and the signing secret now wait until the
+  disk has them, and each datastore file keeps its previous version as a
+  `.bak`, which a damaged file is restored from, with a log line naming both.
+  With no usable `.bak` the server refuses to start and names the file to
+  restore from a backup, and `/api/health` answers 503 instead of ok. A
+  damaged collaboration snapshot is ignored and the document loads from its
+  file (#199).
+
 ## [1.2.0] — 2026-10-28
 
 ### Added
