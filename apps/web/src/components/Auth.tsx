@@ -3,8 +3,7 @@ import { withBase } from '../basePath';
 import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
 import Wordmark from './Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
-import { forgetInviteResume } from '../util/invites';
-import { forgetOAuthResume } from '../util/oauthParams';
+import { appSignInStarts } from '../util/signInStart';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -119,7 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         providers={providers}
         passwordAuth={passwordAuth}
         onAuthed={(u) => setUser(u)}
-        onStart={() => { forgetInviteResume(); forgetOAuthResume(); }}
+        onStart={() => appSignInStarts()}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
       />
     );

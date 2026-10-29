@@ -6,8 +6,8 @@ import EmailConfirmBanner from '../components/EmailConfirmBanner';
 import { useDialogs } from '../components/Dialogs';
 import Wordmark from '../components/Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
-import { forgetInviteResume, isOrcidEntry, rememberInviteResume, type InvitationView } from '../util/invites';
-import { forgetOAuthResume } from '../util/oauthParams';
+import { forgetInviteResume, isOrcidEntry, type InvitationView } from '../util/invites';
+import { inviteSignInStarts } from '../util/signInStart';
 
 type Loaded = { status: 'loading' } | { status: 'missing'; message: string } | { status: 'ok'; view: InvitationView };
 
@@ -114,7 +114,7 @@ function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parame
       onAuthed={onAuthed}
       // An SSO provider's callback lands on "/", and Home brings the person
       // back here: only for a sign-in started here, and not long after.
-      onStart={() => { forgetOAuthResume(); rememberInviteResume(view.id); }}
+      onStart={() => inviteSignInStarts(view.id)}
       heading={orcid ? 'Sign in with ORCID to answer the invitation.' : 'Sign in to answer the invitation.'}
       registerHeading="Create an account to answer the invitation."
       notice={orcid
