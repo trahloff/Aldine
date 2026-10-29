@@ -27,7 +27,7 @@ import About from '../components/About';
 import CommandPalette, { Command, usePaletteHotkey } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { useMinuteTick } from '../util/dates';
-import { OAUTH_RESUME_KEY } from '../util/oauthParams';
+import { takeOAuthResume } from '../util/oauthParams';
 import { takeInviteResume } from '../util/invites';
 import { importSummary } from '../util/engines';
 import { safeSession, safeStorage } from '../util/safeStorage';
@@ -251,10 +251,9 @@ export default function Home() {
   // lands here, so go back to where the sign-in started.
   useEffect(() => {
     if (!authEnabled || !user) return;
-    const resume = safeSession.get(OAUTH_RESUME_KEY);
-    safeSession.remove(OAUTH_RESUME_KEY);
+    const resume = takeOAuthResume();
     const invite = takeInviteResume();
-    if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
+    if (resume) navigate(resume, { replace: true });
     else if (invite) navigate(invite, { replace: true });
   }, []);
   useEffect(() => {

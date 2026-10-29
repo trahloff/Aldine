@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, AuthUser, OAuthApiError, OAuthClientInfo, ProjectSummary } from '../api';
 import { LoginScreen, useAuth } from '../components/Auth';
-import { consentBody, OAUTH_RESUME_KEY, readAuthorizeParams } from '../util/oauthParams';
-import { safeSession } from '../util/safeStorage';
+import { consentBody, forgetOAuthResume, readAuthorizeParams, rememberOAuthResume } from '../util/oauthParams';
+import { forgetInviteResume } from '../util/invites';
 import Wordmark from '../components/Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
 
@@ -92,16 +92,15 @@ export default function OAuthConsent() {
 
 function SignInStep({ client, onAuthed, notice }: { client: OAuthClientInfo; onAuthed(u: AuthUser): void; notice?: string }) {
   const { providers, passwordAuth } = useAuth();
-  // An SSO provider's callback lands on "/"; Home reads this key and brings
-  // the user straight back here with the same request.
-  useEffect(() => {
-    safeSession.set(OAUTH_RESUME_KEY, window.location.search);
-  }, []);
   return (
     <LoginScreen
       providers={providers}
       passwordAuth={passwordAuth}
       onAuthed={onAuthed}
+      // An SSO provider's callback lands on "/", and Home brings the person
+      // back here with the same request: only for a sign-in started here,
+      // and not long after.
+      onStart={() => { forgetInviteResume(); rememberOAuthResume(window.location.search); }}
       heading={`Sign in to connect ${client.name}.`}
       registerHeading={`Create an account to connect ${client.name}.`}
       notice={notice}
@@ -122,7 +121,7 @@ function ConsentStep({ client, params, onSessionEnded }: { client: OAuthClientIn
   const [error, setError] = useState('');
 
   useEffect(() => {
-    safeSession.remove(OAUTH_RESUME_KEY);
+    forgetOAuthResume();
     api.listProjects().then(setProjects).catch(() => setProjects('error'));
   }, []);
 
