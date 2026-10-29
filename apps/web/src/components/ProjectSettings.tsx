@@ -10,6 +10,8 @@ interface Props {
   files: TreeEntry[];
   /** The auto-typeset switch lives in localStorage, not in the project. */
   autoTypeset: boolean;
+  /** Vim keybindings, also this browser's. */
+  vim: boolean;
   /** Shown under the compiler picker right after an import: where the choice came from. */
   importNote?: string;
   onClose(): void;
@@ -19,6 +21,7 @@ interface Props {
   onSetStopOnFirstError(on: boolean): Promise<void>;
   onSetManualCommits(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
+  onToggleVim(): void;
   /** Opened from the palette's shortcut command: scroll to that section. */
   focus?: 'shortcuts';
 }
@@ -96,7 +99,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, focus }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -215,6 +218,19 @@ export default function ProjectSettings({ project, files, autoTypeset, importNot
               checked={autoTypeset}
               onChange={onToggleAutoTypeset}
               data-testid="settings-auto-typeset"
+            />
+          </Row>
+          <Row
+            label="Vim keybindings"
+            htmlFor="settings-vim"
+            hint={vim ? 'Esc for normal mode, i to insert' : 'Standard editing keys'}
+          >
+            <input
+              id="settings-vim"
+              type="checkbox"
+              checked={vim}
+              onChange={onToggleVim}
+              data-testid="settings-vim"
             />
           </Row>
           <Row label="Appearance" htmlFor="settings-theme">

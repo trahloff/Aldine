@@ -58,6 +58,8 @@ const PINNED_PANELS = ['plugin:references'];
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
 /** Source or Visual, the last one this browser chose; Source until then. */
 const EDITOR_MODE = 'aldine.editorMode';
+/** Vim keybindings in the code editor, '1' when on. */
+const VIM = 'aldine.vim';
 
 /** A text field that is not the code editor. */
 function inTextField(target: EventTarget | null): boolean {
@@ -166,6 +168,8 @@ export default function Editor() {
     try { if (!window.matchMedia('(max-width: 640px)').matches) safeStorage.set(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* no matchMedia: this visit only */ }
   }, []);
   const [spellcheck, setSpellcheck] = useState(() => safeStorage.get('aldine.spellcheck') === '1');
+  const [vim, setVim] = useState(() => safeStorage.get(VIM) === '1');
+  const toggleVim = useCallback(() => setVim((v) => { safeStorage.set(VIM, v ? '0' : '1'); return !v; }), []);
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
   const agentPresenceEnabled = safeStorage.get('aldine.experimental.agentPresence') === '1';
   const [mode, setMode] = useState<EditorMode>(() => {
@@ -992,6 +996,7 @@ export default function Editor() {
       { id: 'stop-on-error', group: 'Actions', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Actions', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
       { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { safeStorage.set('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
+      { id: 'vim', group: 'Actions', title: vim ? 'Turn Vim keybindings off' : 'Turn Vim keybindings on', run: () => { toggleVim(); requestAnimationFrame(() => codeRef.current?.focus()); } },
       ...appearanceCommands(appearance),
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
@@ -1073,7 +1078,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1337,6 +1342,7 @@ export default function Editor() {
                 onDocChanged={onDocChanged}
                 onStats={setStats}
                 spellcheck={spellcheck}
+                vim={vim}
                 mode={paneMode}
                 identity={identity}
               />
@@ -1594,6 +1600,7 @@ export default function Editor() {
           project={project}
           files={files}
           autoTypeset={auto}
+          vim={vim}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
           onClose={() => setSettingsOpen(false)}
           onRename={saveName}
@@ -1602,6 +1609,7 @@ export default function Editor() {
           onSetStopOnFirstError={setStopOnFirstError}
           onSetManualCommits={setManualCommits}
           onToggleAutoTypeset={toggleAuto}
+          onToggleVim={toggleVim}
           focus={settingsOpen === 'shortcuts' ? 'shortcuts' : undefined}
         />
       )}
