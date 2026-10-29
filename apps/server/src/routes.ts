@@ -36,7 +36,7 @@ import * as email from './email.js';
 import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, clientKey } from './ratelimit.js';
-import { newInvitees, invitationMail, type InviteReport } from './invites.js';
+import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
@@ -127,10 +127,11 @@ function oauthProviders(): Array<{ id: string; label: string }> {
 export const IMPORT_MAX_ZIP_BYTES = 60 * 1024 * 1024;
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
+/** Collaborators and open invitations a project holds at most, together. */
+const MAX_SHARE_ENTRIES = 50;
+
 /** Engines the compiler distinguishes; anything else silently became pdflatex. */
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
-
-const isOrcidId = (s: string) => /^\d{4}-\d{4}-\d{4}-\d{3}[\dXx]$/.test(s);
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
   const { zotero: z, ownerId, share, github: _legacy, remote: _remote, ...rest } = meta;
@@ -750,19 +751,41 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // ---------- sharing (owner only) ----------
-  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[] } }>(
+  // The share list is the only source of access. With accounts on, an address
+  // or ORCID iD added to it becomes an invitation instead, and joins the list
+  // when its person accepts (POST /api/invitations/:invite/accept).
+  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[]; previous?: string[] } }>(
     '/api/projects/:id/share', async (req, reply) => {
       const meta = await store.readMeta(req.params.id);
-      if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can change sharing' });
+      const user = reqUser(req);
+      if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
       const mode = req.body?.mode === 'link' ? 'link' : 'private';
+      const prev = (meta.share?.collaborators || []).map(normalizeEntry);
       // An entry is an email address or an ORCID iD (the only way to invite a
       // researcher whose ORCID account shares no email).
-      const collaborators = Array.isArray(req.body?.collaborators)
-        ? req.body!.collaborators.map((c) => String(c).trim()).map((c) => (isOrcidId(c) ? c.toUpperCase() : c.toLowerCase()))
-          .filter((c) => isOrcidId(c) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)).slice(0, 50)
-        : (meta.share?.collaborators || []);
-      const invitees = newInvitees(meta.share?.collaborators || [], collaborators, reqUser(req)?.email);
-      meta.share = { mode, collaborators };
+      const requested = Array.isArray(req.body?.collaborators)
+        ? [...new Set(req.body!.collaborators.map((c) => normalizeEntry(String(c).trim())).filter((c) => isOrcidId(c) || isEmailAddress(c)))].slice(0, MAX_SHARE_ENTRIES)
+        : prev;
+      const added = requested.filter((c) => !prev.includes(c));
+      if (!auth.AUTH_ENABLED || !user) {
+        // Nobody signs in to accept anything: the list is the share.
+        meta.share = { mode, collaborators: requested };
+        await store.writeMeta(meta);
+        closeProjectConnections(meta.id);
+        publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+        return { ...(await publicMeta(meta, user)), invited: 0, notEmailed: added.filter((c) => !isOrcidId(c)), reason: 'accounts-off' };
+      }
+      const own = new Set([...recipientKeys(user), ...(user.email ? [user.email.toLowerCase()] : [])]);
+      // `previous` is the list the owner's dialog started from: only what they
+      // took off it goes, so someone who accepted while it was open stays.
+      const previous = Array.isArray(req.body?.previous) ? new Set(req.body!.previous.map((c) => normalizeEntry(String(c).trim()))) : null;
+      const kept = previous ? prev.filter((c) => requested.includes(c) || !previous.has(c)) : requested.filter((c) => prev.includes(c));
+      const open = (await store.listProjectInvitations(meta.id)).filter((i) => stateOf(i) === 'pending');
+      const fresh = added.filter((c) => !own.has(c) && !open.some((i) => i.to === c));
+      if (kept.length + open.length + fresh.length > MAX_SHARE_ENTRIES) {
+        return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together; this would make ${kept.length + open.length + fresh.length}` });
+      }
+      meta.share = { mode, collaborators: kept };
       await store.writeMeta(meta);
       // Access is checked when a collab socket connects, so a session already
       // in the document would survive being revoked. Drop this project's
@@ -771,44 +794,260 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // reaches peer nodes (multi-node deploys) with the same effect.
       closeProjectConnections(meta.id);
       publishProjectEvent({ type: 'access-changed', projectId: meta.id });
-      const invites = await sendInvitations(invitees, meta, reqUser(req));
-      return { ...(await publicMeta(meta, reqUser(req))), ...invites };
+      const staged = await stageInvitations(meta, user, fresh);
+      const report = await sendInvitations(staged, meta, user);
+      return { ...(await publicMeta(meta, user)), ...report, invitations: await ownerInvitations(req, meta.id) };
     });
 
-  /** Mail each newly added address once, within the owner's budget. Never
-   *  throws: the share is saved before this runs, and a mail that cannot go
-   *  out is reported for the owner to pass the news on themselves. */
-  const sendInvitations = async (to: string[], meta: store.ProjectMeta, owner: auth.PublicUser | null): Promise<InviteReport> => {
+  /** The address an invitation link is copied with: the configured public
+   *  URL, else this request's origin, base path included either way. */
+  const inviteLink = (req: FastifyRequest, id: string) => `${publicBase(req)}/invite/${id}`;
+  /** What the share dialog lists: open, declined and expired invitations.
+   *  An accepted one is a share entry by now; a withdrawn one is gone. */
+  const ownerInvitations = async (req: FastifyRequest, projectId: string) => (await store.listProjectInvitations(projectId))
+    .map((i) => ({ id: i.id, to: i.to, state: stateOf(i), createdAt: i.createdAt, expiresAt: i.expiresAt, emailedAt: i.emailedAt, respondedAt: i.respondedAt, link: inviteLink(req, i.id) }))
+    .filter((i) => i.state === 'pending' || i.state === 'declined' || i.state === 'expired');
+
+  /** A new invitation for each entry. An earlier one to the same entry that
+   *  is no longer open is replaced, and its link stops working. */
+  const stageInvitations = async (meta: store.ProjectMeta, owner: auth.PublicUser, to: string[]): Promise<store.Invitation[]> => {
+    if (!to.length) return [];
+    const existing = await store.listProjectInvitations(meta.id);
+    const now = Date.now();
+    const staged: store.Invitation[] = [];
+    for (const entry of to) {
+      for (const old of existing) if (old.to === entry) await store.deleteInvitation(old.id);
+      const inv: store.Invitation = {
+        id: newInvitationId(), projectId: meta.id, to: entry, invitedBy: owner.id, createdAt: new Date(now).toISOString(),
+        expiresAt: inviteExpiry(now), status: 'pending', respondedAt: null, emailedAt: null,
+      };
+      await store.setInvitation(inv);
+      staged.push(inv);
+    }
+    return staged;
+  };
+
+  /** Mail each invitation to an address once, within the owner's budget.
+   *  Never throws: the invitation is saved before this runs, and one that
+   *  cannot be mailed is reported for the owner to send the link themselves.
+   *  ORCID iDs have no address to mail and are not reported. */
+  const sendInvitations = async (invs: store.Invitation[], meta: store.ProjectMeta, owner: auth.PublicUser): Promise<InviteReport> => {
+    const to = invs.filter((i) => !isOrcidId(i.to));
     if (to.length === 0) return { invited: 0, notEmailed: [] };
-    const skip = (reason: InviteReport['reason'], addrs = to): InviteReport => ({ invited: 0, notEmailed: addrs, reason });
-    if (!auth.AUTH_ENABLED || !owner) return skip('accounts-off');
+    const skip = (reason: InviteReport['reason'], addrs = to.map((i) => i.to)): InviteReport => ({ invited: 0, notEmailed: addrs, reason });
     if (!sendsEmail()) return skip('no-mail');
     // An unconfirmed address is whatever the person typed at sign-up: a
     // throwaway account must not get this instance to mail strangers.
     if (owner.emailPending) return skip('unconfirmed');
-    const link = `${config.publicUrl}/p/${encodeURIComponent(meta.id)}`;
     const ownerLabel = owner.name || owner.email || '';
-    const allowed: string[] = [];
+    const allowed: store.Invitation[] = [];
     const limited: string[] = [];
-    for (const addr of to) {
-      if (limited.length === 0 && await inviteLimiter.take(`u:${owner.id}`)) allowed.push(addr);
-      else limited.push(addr);
+    for (const inv of to) {
+      if (limited.length === 0 && await inviteLimiter.take(`u:${owner.id}`)) allowed.push(inv);
+      else limited.push(inv.to);
     }
     // SMTP/SES can hang; past the wait the mail still goes out, it is just
     // not reported as failed.
-    const results = await Promise.all(allowed.map((addr) => {
-      const sent = email.sendMail(invitationMail(addr, ownerLabel, meta.name, link)).then(() => true, (err) => {
-        console.error(`[aldine] invitation email to ${addr} failed:`, err?.message || err);
+    const results = await Promise.all(allowed.map((inv) => {
+      const sent = email.sendMail(invitationMail(inv.to, ownerLabel, meta.name, `${config.publicUrl}/invite/${inv.id}`)).then(() => true, (err) => {
+        console.error(`[aldine] invitation email to ${inv.to} failed:`, err?.message || err);
         return false;
       });
       return Promise.race([sent, new Promise<boolean>((r) => setTimeout(() => r(true), 10_000).unref?.())]);
     }));
-    const failed = allowed.filter((_, i) => !results[i]);
+    const at = new Date().toISOString();
+    for (const [i, inv] of allowed.entries()) if (results[i]) await store.updatePendingInvitation(inv.id, { emailedAt: at });
+    const failed = allowed.filter((_, i) => !results[i]).map((i) => i.to);
     const invited = allowed.length - failed.length;
     if (limited.length) return { invited, notEmailed: [...failed, ...limited], reason: 'limit' };
     if (failed.length) return { invited, notEmailed: failed, reason: 'failed' };
     return { invited, notEmailed: [] };
   };
+
+  /** The owner's own invitation of this project, or null after replying. */
+  const ownedInvitation = async (req: any, reply: any): Promise<{ meta: store.ProjectMeta; inv: store.Invitation } | null> => {
+    const meta = await requireOwner(req, reply, 'manage invitations');
+    if (!meta) return null;
+    if (!auth.AUTH_ENABLED) { reply.code(404).send({ error: 'Invitations need accounts' }); return null; }
+    const inv = await store.getInvitation(String(req.params.invite));
+    if (!inv || inv.projectId !== meta.id) { reply.code(404).send({ error: 'No such invitation on this project' }); return null; }
+    return { meta, inv };
+  };
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/invitations', async (req, reply) => {
+    const meta = await requireOwner(req, reply, 'see its invitations');
+    if (!meta) return;
+    return auth.AUTH_ENABLED ? ownerInvitations(req, meta.id) : [];
+  });
+
+  // Invite one address or iD: a new person, or again after a decline or expiry.
+  app.post<{ Params: { id: string }; Body: { to?: string } }>('/api/projects/:id/invitations', async (req, reply) => {
+    const meta = await requireOwner(req, reply, 'invite people');
+    if (!meta) return;
+    const user = reqUser(req);
+    if (!auth.AUTH_ENABLED || !user) return reply.code(404).send({ error: 'Invitations need accounts' });
+    const entry = normalizeEntry(String(req.body?.to ?? '').trim());
+    if (!isOrcidId(entry) && !isEmailAddress(entry)) return reply.code(400).send({ error: 'Not an email address or ORCID iD' });
+    if (recipientKeys(user).includes(entry) || entry === user.email?.toLowerCase()) return reply.code(400).send({ error: 'That is you: you own this project' });
+    const kept = meta.share?.collaborators || [];
+    if (kept.includes(entry)) return reply.code(409).send({ error: `${entry} already has access` });
+    const open = (await store.listProjectInvitations(meta.id)).filter((i) => stateOf(i) === 'pending');
+    if (open.some((i) => i.to === entry)) return reply.code(409).send({ error: `${entry} already has an open invitation` });
+    if (kept.length + open.length + 1 > MAX_SHARE_ENTRIES) return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together` });
+    const staged = await stageInvitations(meta, user, [entry]);
+    const report = await sendInvitations(staged, meta, user);
+    return { ...report, invitations: await ownerInvitations(req, meta.id) };
+  });
+
+  // Mail an open invitation again, and give it a fresh 14 days. An expired
+  // one opens again under the same link.
+  app.post<{ Params: { id: string; invite: string } }>('/api/projects/:id/invitations/:invite/resend', async (req, reply) => {
+    const found = await ownedInvitation(req, reply);
+    if (!found) return;
+    const { meta, inv } = found;
+    if (inv.status !== 'pending') return reply.code(409).send({ error: inv.status === 'declined' ? `${inv.to} declined this invitation: invite them again instead` : 'This invitation is no longer open' });
+    if (stateOf(inv) === 'expired') {
+      const open = (await store.listProjectInvitations(meta.id)).filter((i) => stateOf(i) === 'pending');
+      if ((meta.share?.collaborators.length ?? 0) + open.length + 1 > MAX_SHARE_ENTRIES) return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together` });
+    }
+    if (!(await store.updatePendingInvitation(inv.id, { expiresAt: inviteExpiry() }))) return reply.code(409).send({ error: 'This invitation was answered a moment ago' });
+    const report = await sendInvitations([inv], meta, reqUser(req)!);
+    return { ...report, invitations: await ownerInvitations(req, meta.id) };
+  });
+
+  // Withdraw an open invitation (its link then says so), or clear a declined
+  // or expired one from the list.
+  app.delete<{ Params: { id: string; invite: string } }>('/api/projects/:id/invitations/:invite', async (req, reply) => {
+    const found = await ownedInvitation(req, reply);
+    if (!found) return;
+    const { meta, inv } = found;
+    if (inv.status === 'accepted') return reply.code(409).send({ error: `${inv.to} accepted already: remove them from the people with access instead` });
+    if (inv.status === 'pending') {
+      if (!(await store.settleInvitation(inv.id, 'withdrawn', new Date().toISOString()))) return reply.code(409).send({ error: `${inv.to} answered this invitation a moment ago` });
+    } else await store.deleteInvitation(inv.id);
+    return { invitations: await ownerInvitations(req, meta.id) };
+  });
+
+  // ---------- invitations (the invitee's side) ----------
+  // The link is not a credential: each of these takes a signed-in account
+  // whose confirmed address, or ORCID iD, is the one invited. A bearer token
+  // never reaches them (the guard above refuses tokens off the project
+  // surface): accepting is the person's decision, not an agent's.
+  /** The invitation behind a link, with its project, or null after replying.
+   *  A trashed project's invitations behave as gone, like the project. */
+  const linkedInvitation = async (req: any, reply: any): Promise<{ inv: store.Invitation; meta: store.ProjectMeta } | null> => {
+    const id = String(req.params.invite);
+    const inv = auth.AUTH_ENABLED && INVITE_ID_RE.test(id) ? await store.getInvitation(id) : null;
+    const meta = inv ? await store.readMeta(inv.projectId).catch(() => null) : null;
+    if (!inv || !meta || meta.deletedAt) {
+      reply.code(404).send({ error: 'This invitation does not exist. The owner may have sent a newer one, or deleted the project.' });
+      return null;
+    }
+    return { inv, meta };
+  };
+  /** How the signed-in account relates to an invitation. */
+  const relation = (inv: store.Invitation, user: auth.PublicUser | null): 'signed-out' | 'match' | 'unconfirmed' | 'other' => {
+    if (!user) return 'signed-out';
+    if (recipientKeys(user).includes(inv.to)) return 'match';
+    if (user.emailPending && user.email?.toLowerCase() === inv.to) return 'unconfirmed';
+    return 'other';
+  };
+  const mismatch = (reply: any, inv: store.Invitation, rel: string, user: auth.PublicUser | null) => {
+    if (rel === 'signed-out') return reply.code(401).send({ error: 'Sign in to answer this invitation' });
+    if (rel === 'unconfirmed') return reply.code(403).send({ error: `Confirm your email address (${inv.to}) first, then answer the invitation` });
+    return reply.code(403).send({ error: `This invitation is for ${inv.to}, and you are signed in as ${user?.email || user?.orcid || user?.name}` });
+  };
+  const closed = (reply: any, state: string) => reply.code(410).send({
+    error: state === 'expired' ? 'This invitation expired. Ask the owner to send a new one.'
+      : state === 'withdrawn' ? 'The owner withdrew this invitation.'
+      : state === 'declined' ? 'You declined this invitation. Ask the owner to invite you again.'
+      : 'This invitation was used already. Ask the owner to invite you again.',
+    state,
+  });
+
+  // Pending invitations to the signed-in account, for its Home page.
+  app.get('/api/invitations', async (req, reply) => {
+    const user = reqUser(req);
+    if (!auth.AUTH_ENABLED) return [];
+    if (!user) return reply.code(401).send({ error: 'Sign in required' });
+    const keys = recipientKeys(user);
+    const now = Date.now();
+    const rows = await Promise.all((keys.length ? await store.listInvitationsTo(keys) : []).filter((i) => stateOf(i, now) === 'pending').map(async (inv) => {
+      const meta = await store.readMeta(inv.projectId).catch(() => null);
+      if (!meta || meta.deletedAt) return null;
+      return { id: inv.id, to: inv.to, state: 'pending' as const, createdAt: inv.createdAt, expiresAt: inv.expiresAt, project: { id: meta.id, name: meta.name }, ownerName: (await ownerName(meta)) ?? null };
+    }));
+    return rows.filter((r) => r !== null);
+  });
+
+  // What the invitation page shows. The project's name only to the person
+  // invited: a link that reached someone else names the owner, never the work.
+  app.get<{ Params: { invite: string } }>('/api/invitations/:invite', async (req, reply) => {
+    const found = await linkedInvitation(req, reply);
+    if (!found) return;
+    const { inv, meta } = found;
+    const user = reqUser(req);
+    const rel = relation(inv, user);
+    return {
+      id: inv.id,
+      to: inv.to,
+      state: stateOf(inv),
+      expiresAt: inv.expiresAt,
+      ownerName: (await ownerName(meta)) ?? null,
+      relation: rel,
+      signedInAs: user ? (user.email || user.orcid || user.name) : null,
+      ...(rel === 'match' ? { project: { id: meta.id, name: meta.name }, member: isMember(meta, user) } : {}),
+    };
+  });
+
+  app.post<{ Params: { invite: string } }>('/api/invitations/:invite/accept', async (req, reply) => {
+    const found = await linkedInvitation(req, reply);
+    if (!found) return;
+    const { inv } = found;
+    const user = reqUser(req);
+    const rel = relation(inv, user);
+    if (rel !== 'match') return mismatch(reply, inv, rel, user);
+    const state = stateOf(inv);
+    const settled = state === 'pending' && await store.settleInvitation(inv.id, 'accepted', new Date().toISOString());
+    if (settled) {
+      // Gaining access needs no socket to reconnect, so no access-changed event.
+      try {
+        if (!(await store.addShareEntry(inv.projectId, inv.to))) return reply.code(404).send({ error: 'The project of this invitation was deleted' });
+      } catch (err) {
+        await store.setInvitation(inv);
+        throw err;
+      }
+      // Taken off the list earlier: accepting puts it back.
+      const open = await store.getProjectOpen(user!.id, inv.projectId);
+      if (open?.hidden) await store.setProjectOpen({ ...open, hidden: false });
+      return { ok: true, projectId: inv.projectId };
+    }
+    if (state === 'pending') {
+      // Lost the race to an accept from another tab (only this identity can
+      // accept), or to a decline or withdrawal.
+      if ((await store.getInvitation(inv.id))?.status === 'accepted' && await store.addShareEntry(inv.projectId, inv.to)) return { ok: true, projectId: inv.projectId, already: true };
+      return reply.code(409).send({ error: 'This invitation was answered or withdrawn a moment ago. Reload the page.' });
+    }
+    if (state === 'accepted' && isMember(await store.readMeta(inv.projectId), user)) return { ok: true, projectId: inv.projectId, already: true };
+    return closed(reply, state);
+  });
+
+  app.post<{ Params: { invite: string } }>('/api/invitations/:invite/decline', async (req, reply) => {
+    const found = await linkedInvitation(req, reply);
+    if (!found) return;
+    const { inv } = found;
+    const user = reqUser(req);
+    const rel = relation(inv, user);
+    if (rel !== 'match') return mismatch(reply, inv, rel, user);
+    const state = stateOf(inv);
+    if (state === 'declined') return { ok: true };
+    if (state === 'accepted') return reply.code(409).send({ error: 'You accepted this invitation already. To leave the project, ask its owner to remove you.' });
+    if (state !== 'pending') return closed(reply, state);
+    if (!(await store.settleInvitation(inv.id, 'declined', new Date().toISOString()))) {
+      return reply.code(409).send({ error: 'This invitation was answered or withdrawn a moment ago. Reload the page.' });
+    }
+    return { ok: true };
+  });
 
   // Claim an ownerless legacy project (created before auth was enabled).
   // First successful claim wins: the claimer becomes owner, sharing resets to

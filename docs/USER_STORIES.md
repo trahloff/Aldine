@@ -255,6 +255,9 @@ Forgejo (Codeberg) share one API, so one provider covers both.*
 - **AUTH-5** — Project sharing (invite-only or link) grants the right access;
   the collab socket is access-checked.
 - **AUTH-6** — Per-user compile quota returns HTTP 402 past the limit.
+- **AUTH-7** — An invitation by email or ORCID iD grants nothing until the
+  invited person accepts it; its link opens nothing for another account; on
+  a server without email it waits on the invitee's Home page.
 
 ## Visual editor (VIS)
 

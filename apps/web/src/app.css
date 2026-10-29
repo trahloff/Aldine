@@ -686,6 +686,17 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .share__downloads { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hairline); }
 .share__label { margin: 0 0 8px; padding: 0; }
 .share__buttons { display: flex; gap: 8px; margin-bottom: 6px; }
+#share-emails-hint { margin: 4px 0 0; }
+/* Share: invitations waiting for an answer */
+.share__invites { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.share__invite-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.share__invite { display: grid; gap: 6px; }
+.share__invite-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: var(--text-s); }
+.share__invite-to { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.share__invite-state { color: var(--text-3); font-size: var(--text-xs); }
+.share__invite-state--declined, .share__invite-state--expired { color: var(--warn-text); }
+.share__invite-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.share__invite-link { font-size: var(--text-s); }
 
 /* the word count follows the typeset status, a dot between when both show */
 .pdf-status:not(:empty) + .pdf-words::before { content: '·'; color: var(--text-3); }
@@ -710,6 +721,14 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .email-banner__text { flex: 1; min-width: 14em; overflow-wrap: anywhere; }
 .email-banner--ok { background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
 .email-banner--error { background: color-mix(in srgb, var(--error) 8%, var(--bg-panel)); }
+/* Home: invitations waiting for an answer, above the shelf */
+.invites-strip { margin: 6px 0 20px; padding: 10px 14px; background: var(--bg-panel); border: 1px solid var(--hairline); border-radius: var(--radius-s); }
+.invites-strip__title { margin: 0 0 6px; font-size: var(--text-s); font-weight: 600; color: var(--text-2); }
+.invites-strip__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.invites-strip__item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--text-s); line-height: 1.45; }
+.invites-strip__text { flex: 1; min-width: 14em; overflow-wrap: anywhere; }
+.invites-strip__project { font-weight: 600; }
+.invites-strip__actions { display: flex; gap: 6px; margin-left: auto; }
 .home__section { margin: 26px 0 10px; font-size: var(--text-m); font-weight: 600; color: var(--text-2); }
 
 /* ---------- editor shell ---------- */
@@ -1566,6 +1585,10 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .consent__error .btn { display: inline-flex; vertical-align: baseline; }
 .consent__hint { color: var(--text-2); font-size: var(--text-s); line-height: 1.45; margin: 0 0 14px; }
 .consent__back { align-self: flex-start; }
+.invite__title { margin-top: 18px; overflow-wrap: anywhere; }
+.invite__actions { flex-wrap: wrap; }
+.consent .consent__hint strong { overflow-wrap: anywhere; }
+.consent .email-banner { margin: 0 0 14px; }
 
 /* The typesetting log opens at its first error; mark it so the eye lands there. */
 .logview__hit {

@@ -146,7 +146,8 @@ db().setLastEdit = async (projectId, value) => { sumWrites.push({ projectId, val
 try {
   const p = await ok('POST', '/api/projects', 'ada', { name: 'Paper', files: { 'main.tex': doc, 'notes.tex': 'notes\n' } }, 'Ada creates the paper');
   const id = p.id;
-  await ok('POST', `/api/projects/${id}/share`, 'ada', { mode: 'private', collaborators: ['bob@example.com'] }, 'Bob is invited');
+  const shared = await ok('POST', `/api/projects/${id}/share`, 'ada', { mode: 'private', collaborators: ['bob@example.com'] }, 'Bob is invited');
+  await ok('POST', `/api/invitations/${shared.invitations[0].id}/accept`, 'bob', undefined, 'Bob accepts');
 
   // ---- typing: whoever sent the last update ----
   const created = await lastEdit(id);

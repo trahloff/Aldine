@@ -1,6 +1,7 @@
 /**
  * A password sign-up proves its address before the address grants anything:
- * invites by email and ALDINE_ADMIN_EMAILS skip the account until it follows
+ * share entries, invitations by email and ALDINE_ADMIN_EMAILS skip the
+ * account until it follows
  * the one-time link mailed at sign-up (or logged, without a transport), and
  * apply from then on. Confirming takes the session of that account; a mailed
  * resend replaces the link, a logged one keeps the earlier links working; a
@@ -69,6 +70,10 @@ const project = (await call('POST', '/api/projects', alice.cookie, { name: 'Secr
 check(project.id, 'a pending account creates projects of its own');
 eq((await call('GET', `/api/projects/${project.id}`, alice.cookie)).statusCode, 200, 'and opens them');
 eq((await call('POST', `/api/projects/${project.id}/share`, alice.cookie, { mode: 'private', collaborators: ['bob@uni.example'] })).statusCode, 200, 'and shares them');
+// An entry on the share list from before invitations, for the same address.
+const withEntry = await db().readMeta(project.id);
+withEntry.share.collaborators = ['bob@uni.example'];
+await db().writeMeta(withEntry);
 
 // ---- whoever registers the invited address first sees nothing until confirmed ----
 const bob = await signUp('bob@uni.example', 'Bob');
@@ -79,6 +84,7 @@ eq((await call('POST', `/api/projects/${project.id}/opened`, bob.cookie, { branc
 eq((await call('POST', `/api/projects/${project.id}/copy`, bob.cookie, {})).statusCode, 403, 'nor duplicate it');
 await db().setProjectOpen({ userId: bob.id, projectId: project.id, at: new Date().toISOString(), branch: 'main', hidden: false });
 check(!(await listed(bob.cookie, project.id)), 'an open row of its own does not list it either');
+eq((await call('GET', '/api/invitations', bob.cookie)).json(), [], 'nor is the invitation offered');
 
 // ---- confirming takes that account's session and the current link ----
 eq((await call('POST', '/api/auth/confirm-email', null, { token: bob.token })).statusCode, 401, 'confirming signed out is refused');
@@ -92,8 +98,9 @@ const confirmed = await call('POST', '/api/auth/confirm-email', bob.cookie, { to
 eq(confirmed.statusCode, 200, 'the right session with the link confirms');
 eq(confirmed.json().user.emailPending, undefined, 'the response says the address is confirmed');
 check(!(await db().getUser(bob.id)).emailPending, 'the marker is gone from the store');
-eq((await call('GET', `/api/projects/${project.id}`, bob.cookie)).statusCode, 200, 'the invite applies once confirmed');
+eq((await call('GET', `/api/projects/${project.id}`, bob.cookie)).statusCode, 200, 'the share entry applies once confirmed');
 check(await listed(bob.cookie, project.id), 'and the project is listed');
+eq((await call('GET', '/api/invitations', bob.cookie)).json().map((i) => i.project.id), [project.id], 'the invitation waits for an answer');
 eq((await call('POST', '/api/auth/confirm-email', bob.cookie, { token: bob.token })).statusCode, 200, 'confirming again is not an error');
 eq((await call('POST', '/api/auth/confirm-email/resend', bob.cookie)).json(), { ok: true, confirmed: true }, 'a confirmed account gets no new link');
 
@@ -146,7 +153,9 @@ check((await db().getUser(erin.id)).emailPending, 'with ALDINE_RESET_ECHO=1 a re
 // ---- accounts without the marker count as confirmed ----
 await db().createUser({ id: 'legacy-frank', email: 'frank@example.com', name: 'Frank', salt: 's', hash: 'h', createdAt: '2026-01-01T00:00:00.000Z' });
 const frank = `${auth.COOKIE}=${await auth.createSession('legacy-frank')}`;
-await call('POST', `/api/projects/${project.id}/share`, alice.cookie, { mode: 'private', collaborators: ['bob@uni.example', 'frank@example.com', 'gina@example.com'] });
+const entries = await db().readMeta(project.id);
+entries.share.collaborators = ['bob@uni.example', 'frank@example.com', 'gina@example.com'];
+await db().writeMeta(entries);
 eq((await call('GET', `/api/projects/${project.id}`, frank)).statusCode, 200, 'an account from before the marker is matched by its address');
 const gina = await auth.register('gina@example.com', '', 'Gina', 'github', 'github:42');
 check(!gina.emailPending && !(await db().getUser(gina.id)).emailPending, 'a single sign-on account has no marker');

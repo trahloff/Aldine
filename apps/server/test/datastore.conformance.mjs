@@ -320,6 +320,20 @@ async function runSuite(store, label) {
   await throws(() => store.writeMeta({ ...older, id: '../evil' }), 'bad project id', `${label}: writeMeta bad id throws`);
   await throws(() => store.deleteMeta('../evil'), 'bad project id', `${label}: deleteMeta bad id throws`);
 
+  // one share entry added in place, the rest of the metadata kept
+  check(await store.addShareEntry(older.id, 'ada@example.org'), `${label}: addShareEntry on a project`);
+  eq((await store.readMeta(older.id)).share, { mode: 'private', collaborators: ['ada@example.org'] }, `${label}: addShareEntry starts a share list where there was none`);
+  await store.writeMeta({ ...(await store.readMeta(older.id)), share: { mode: 'link', collaborators: ['ada@example.org'] } });
+  await Promise.all([store.addShareEntry(older.id, 'bob@example.org'), store.addShareEntry(older.id, '0000-0002-1825-0097')]);
+  const shared = await store.readMeta(older.id);
+  eq([shared.share.mode, [...shared.share.collaborators].sort()], ['link', ['0000-0002-1825-0097', 'ada@example.org', 'bob@example.org']], `${label}: two entries added at once both stay, the mode with them`);
+  eq(shared.name, 'Renamed', `${label}: and the rest of the metadata is untouched`);
+  await store.addShareEntry(older.id, 'bob@example.org');
+  eq((await store.readMeta(older.id)).share.collaborators.length, 3, `${label}: adding an entry twice keeps one`);
+  check(!(await store.addShareEntry(`zz${t}`, 'ada@example.org')), `${label}: addShareEntry of a missing project is false`);
+  check((await store.readMeta(`zz${t}`)) === null, `${label}: and creates nothing`);
+  await throws(() => store.addShareEntry('../evil', 'ada@example.org'), 'bad project id', `${label}: addShareEntry bad id throws`);
+
   await store.deleteMeta(older.id);
   check((await store.readMeta(older.id)) === null, `${label}: deleteMeta`);
 
@@ -454,6 +468,65 @@ async function runSuite(store, label) {
   await store.deleteProjectActivity(pa);
   eq(ours(await store.listProjectActivity()).map((r) => r.projectId), [pb], `${label}: deleteProjectActivity removes one project's row`);
   await store.deleteProjectActivity(pb);
+
+  // ---- invitations ----
+  const pi = `i1${t}`;
+  const pj = `i2${t}`;
+  const iid = (n) => crypto.createHash('sha256').update(`${t}-${n}`).digest('hex').slice(0, 32);
+  const to = `inv-${t}@example.org`;
+  const orcid = `0000-0002-${t.slice(0, 4).replace(/\D/g, '1').padEnd(4, '1')}-000X`;
+  check((await store.getInvitation(iid(1))) === null, `${label}: unknown invitation → null`);
+  eq(await store.listProjectInvitations(pi), [], `${label}: no invitations → []`);
+  const inv = { id: iid(1), projectId: pi, to, invitedBy: user.id, createdAt: '2026-10-29T08:00:00.000Z', expiresAt: '2026-11-12T08:00:00.000Z', status: 'pending', respondedAt: null, emailedAt: null };
+  await store.setInvitation(inv);
+  eq(await store.getInvitation(inv.id), inv, `${label}: invitation roundtrip`);
+  const mailed = { ...inv, emailedAt: '2026-10-29T08:00:01.000Z', expiresAt: '2026-11-13T08:00:00.000Z' };
+  await store.setInvitation(mailed);
+  eq(await store.getInvitation(inv.id), mailed, `${label}: setInvitation replaces by id`);
+  const second = { ...inv, id: iid(2), to: orcid, createdAt: '2026-10-29T09:00:00.000Z' };
+  const elsewhere = { ...inv, id: iid(3), projectId: pj, createdAt: '2026-10-29T07:00:00.000Z' };
+  await store.setInvitation(second);
+  await store.setInvitation(elsewhere);
+  eq((await store.listProjectInvitations(pi)).map((i) => i.id), [inv.id, second.id], `${label}: listProjectInvitations is per project, oldest first`);
+  eq((await store.listInvitationsTo([to])).map((i) => i.id), [elsewhere.id, inv.id], `${label}: listInvitationsTo finds an address across projects, oldest first`);
+  eq((await store.listInvitationsTo([to, orcid])).map((i) => i.id), [elsewhere.id, inv.id, second.id], `${label}: and several recipients at once`);
+  eq(await store.listInvitationsTo([`nobody-${t}@example.org`]), [], `${label}: listInvitationsTo of nobody → []`);
+  eq(await store.listInvitationsTo([]), [], `${label}: listInvitationsTo of no recipients → []`);
+  const iAlias = await store.getInvitation(inv.id);
+  iAlias.status = 'accepted';
+  eq((await store.getInvitation(inv.id)).status, 'pending', `${label}: getInvitation result is a copy`);
+
+  check(await store.updatePendingInvitation(inv.id, { emailedAt: '2026-10-30T08:00:00.000Z' }), `${label}: updatePendingInvitation on a pending invitation`);
+  eq(await store.getInvitation(inv.id), { ...mailed, emailedAt: '2026-10-30T08:00:00.000Z' }, `${label}: sets only the field given`);
+  check(await store.updatePendingInvitation(inv.id, { expiresAt: '2026-11-14T08:00:00.000Z' }), `${label}: and the expiry`);
+  const renewedRow = { ...mailed, emailedAt: '2026-10-30T08:00:00.000Z', expiresAt: '2026-11-14T08:00:00.000Z' };
+  eq(await store.getInvitation(inv.id), renewedRow, `${label}: keeping the other fields`);
+  check(await store.settleInvitation(inv.id, 'accepted', '2026-10-29T10:00:00.000Z'), `${label}: settling a pending invitation wins`);
+  eq(await store.getInvitation(inv.id), { ...renewedRow, status: 'accepted', respondedAt: '2026-10-29T10:00:00.000Z' }, `${label}: and records status and time`);
+  check(!(await store.updatePendingInvitation(inv.id, { expiresAt: '2027-01-01T00:00:00.000Z', emailedAt: '2027-01-01T00:00:00.000Z' })), `${label}: updatePendingInvitation leaves a settled invitation alone`);
+  eq((await store.getInvitation(inv.id)).expiresAt, renewedRow.expiresAt, `${label}: unchanged`);
+  check(!(await store.updatePendingInvitation(iid(9), { emailedAt: '2027-01-01T00:00:00.000Z' })), `${label}: updatePendingInvitation of an unknown id is false`);
+  check(!(await store.settleInvitation(inv.id, 'declined', '2026-10-29T10:00:01.000Z')), `${label}: a settled invitation cannot be settled again`);
+  eq((await store.getInvitation(inv.id)).status, 'accepted', `${label}: the first answer stands`);
+  const race = await Promise.all([store.settleInvitation(second.id, 'accepted', '2026-10-29T11:00:00.000Z'), store.settleInvitation(second.id, 'withdrawn', '2026-10-29T11:00:00.000Z')]);
+  eq(race.filter(Boolean).length, 1, `${label}: two concurrent answers, one winner`);
+  check(!(await store.settleInvitation(iid(9), 'accepted', '2026-10-29T11:00:00.000Z')), `${label}: settling an unknown invitation is false`);
+  check(!(await store.settleInvitation('../evil', 'accepted', '2026-10-29T11:00:00.000Z')), `${label}: settling a malformed id is false`);
+
+  check((await store.getInvitation('../evil')) === null, `${label}: getInvitation bad id → null`);
+  await throws(() => store.setInvitation({ ...inv, id: 'not-hex' }), 'bad invitation id', `${label}: setInvitation bad id throws`);
+  await throws(() => store.setInvitation({ ...inv, id: iid(4), projectId: '../evil' }), 'bad project id', `${label}: setInvitation bad project id throws`);
+  await throws(() => store.deleteProjectInvitations('../evil'), 'bad project id', `${label}: deleteProjectInvitations bad id throws`);
+
+  await store.deleteInvitation(second.id);
+  check((await store.getInvitation(second.id)) === null, `${label}: deleteInvitation`);
+  await store.deleteInvitation(second.id); // no throw on a missing row
+  await store.deleteInvitation('../evil'); // nor on a malformed id
+  await store.setInvitation(second);
+  await store.deleteProjectInvitations(pi);
+  eq(await store.listProjectInvitations(pi), [], `${label}: deleteProjectInvitations clears the project`);
+  eq((await store.listProjectInvitations(pj)).map((i) => i.id), [elsewhere.id], `${label}: and leaves another project's alone`);
+  await store.deleteProjectInvitations(pj);
 
   // ---- usage ----
   const month = '2026-08';

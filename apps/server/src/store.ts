@@ -4,9 +4,9 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName } from './util.js';
 import { db } from './db/index.js';
-import type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink } from './db/types.js';
+import type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
 
-export type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink } from './db/types.js';
+export type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
 
 export function repoDir(id: string): string {
   if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
@@ -57,6 +57,38 @@ export function listProjectOpens(userId: string): Promise<ProjectOpen[]> {
 
 export function getProjectOpen(userId: string, id: string): Promise<ProjectOpen | null> {
   return db().getProjectOpen(userId, id);
+}
+
+export function addShareEntry(id: string, entry: string): Promise<boolean> {
+  return db().addShareEntry(id, entry);
+}
+
+export function setInvitation(inv: Invitation): Promise<void> {
+  return db().setInvitation(inv);
+}
+
+export function getInvitation(id: string): Promise<Invitation | null> {
+  return db().getInvitation(id);
+}
+
+export function listProjectInvitations(id: string): Promise<Invitation[]> {
+  return db().listProjectInvitations(id);
+}
+
+export function listInvitationsTo(to: string[]): Promise<Invitation[]> {
+  return db().listInvitationsTo(to);
+}
+
+export function settleInvitation(id: string, status: 'accepted' | 'declined' | 'withdrawn', at: string): Promise<boolean> {
+  return db().settleInvitation(id, status, at);
+}
+
+export function updatePendingInvitation(id: string, fields: { expiresAt?: string; emailedAt?: string }): Promise<boolean> {
+  return db().updatePendingInvitation(id, fields);
+}
+
+export function deleteInvitation(id: string): Promise<void> {
+  return db().deleteInvitation(id);
 }
 
 export function setProjectOpen(o: ProjectOpen): Promise<void> {
@@ -215,6 +247,7 @@ export async function deleteProject(id: string): Promise<void> {
   await db().deleteProjectVisits(id);
   await db().deleteProjectOpens(id);
   await db().deleteProjectActivity(id);
+  await db().deleteProjectInvitations(id);
 }
 
 /** Move a project to trash: data stays on disk, listings hide it, purge collects it later. */

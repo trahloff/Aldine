@@ -41,8 +41,10 @@ function stripConfirmParam() {
 
 /** The OAuth consent page validates the requesting client BEFORE asking for
  *  credentials and renders the sign-in form itself, so the provider's gate
- *  must let it mount while signed out. */
+ *  must let it mount while signed out. So does an invitation page, which
+ *  says who the invitation is for before asking anyone to sign in. */
 const SELF_GATED_PATHS = ['/oauth/authorize'];
+const SELF_GATED_PREFIXES = ['/invite/'];
 
 export function useAuth() { return useContext(Ctx); }
 
@@ -97,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     api.confirmEmail(token).then(
-      (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: 'Your email address is confirmed. Projects shared with it are in your list now.' }); },
+      (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.' }); },
       (err: any) => setEmailNotice({ tone: 'error', text: err.message }),
     );
   }, [confirmToken, user]);
@@ -107,7 +109,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Show the login/reset screen when signed out, OR when a reset link was opened
   // in an already-signed-in session (otherwise the ?reset_token= link does nothing).
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
-  const selfGated = typeof window !== 'undefined' && SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p));
+  const selfGated = typeof window !== 'undefined' && (SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p))
+    || SELF_GATED_PREFIXES.some((p) => window.location.pathname.startsWith(withBase(p))));
   if (authEnabled && (!user || hasResetToken) && !selfGated) {
     return (
       <LoginScreen
@@ -142,10 +145,11 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
 /** `heading`/`registerHeading` keep the caller's context ("connect Claude")
  *  on both the sign-in and the sign-up step; `notice` is an info line shown
  *  on arrival (why the person is back at the form) — `noticeTone` 'warn' for
- *  a setback (an ended session), the default green for a completed step. */
-export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice, noticeTone }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string; noticeTone?: 'ok' | 'warn' }) {
+ *  a setback (an ended session), the default green for a completed step.
+ *  `initialEmail` fills the address in (the one an invitation is for). */
+export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice, noticeTone, initialEmail }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string; noticeTone?: 'ok' | 'warn'; initialEmail?: string }) {
   const [mode, setMode] = useState<Mode>('login');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail ?? '');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');

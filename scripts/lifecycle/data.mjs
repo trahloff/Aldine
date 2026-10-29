@@ -284,7 +284,14 @@ async function seed() {
   await commit('revision', 'Rewrite the introduction on a branch');
   ok('commits on main and on branch revision');
 
-  const shared = await expect200('POST', `${p}/share`, { as: owner, body: { mode: 'private', collaborators: [accounts.collaborator.email] } }, 'share');
+  let shared = await expect200('POST', `${p}/share`, { as: owner, body: { mode: 'private', collaborators: [accounts.collaborator.email] } }, 'share');
+  // From 1.3 an address on the share list is an invitation until its person
+  // accepts it; releases before that share at once and answer no invitations.
+  const invitation = shared.invitations?.find((i) => i.to === accounts.collaborator.email);
+  if (invitation) {
+    await expect200('POST', `/api/invitations/${invitation.id}/accept`, { as: collab }, 'accept the invitation');
+    shared = await expect200('GET', p, { as: owner }, 'read the share');
+  }
   check(same(shared.share, { mode: 'private', collaborators: [accounts.collaborator.email] }), 'the share did not take', shared.share);
   ok(`shared with ${accounts.collaborator.email}`);
 

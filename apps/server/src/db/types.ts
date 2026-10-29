@@ -203,6 +203,28 @@ export interface ProjectOpen {
   hidden: boolean;
 }
 
+/**
+ * An owner's invitation to one address or ORCID iD. It grants nothing: the
+ * project's share list is the only source of access, and accepting adds
+ * `to` there. `id` is the random secret in the invitation link (128 bits, so
+ * links cannot be guessed), but it is not a credential: accepting takes a
+ * session whose confirmed address, or ORCID iD, is `to`. A pending
+ * invitation past `expiresAt` is expired; `respondedAt` is set with any
+ * other status. `emailedAt` is the last mail sent for it, null when none.
+ */
+export interface Invitation {
+  id: string;
+  projectId: string;
+  /** Lowercased email address, or an ORCID iD with an uppercase X. */
+  to: string;
+  invitedBy: string;
+  createdAt: string;
+  expiresAt: string;
+  status: 'pending' | 'accepted' | 'declined' | 'withdrawn';
+  respondedAt: string | null;
+  emailedAt: string | null;
+}
+
 /** The last change to a project's files, on any branch. `byId` is the
  *  account; agent writes carry the agent's name with a null id; both are null
  *  when nobody is known (read from git history, or a write without accounts). */
@@ -315,6 +337,10 @@ export interface DataStore {
   writeMeta(meta: ProjectMeta): Promise<void>;
   listMeta(): Promise<ProjectMeta[]>;
   deleteMeta(id: string): Promise<void>;
+  /** Add one entry to a project's share list in a single write that keeps
+   *  the rest of the metadata: two accepts landing together must both stay.
+   *  False when the project does not exist. */
+  addShareEntry(projectId: string, entry: string): Promise<boolean>;
 
   // review comments (stored per project)
   loadComments(projectId: string): Promise<Comment[]>;
@@ -347,6 +373,26 @@ export interface DataStore {
   setCompileMark(projectId: string, branch: string, mark: CompileMark | null): Promise<void>;
   /** Purge; called when the project itself is deleted. */
   deleteProjectActivity(projectId: string): Promise<void>;
+
+  // invitations: staged shares, keyed by their link id
+  /** Insert or replace by id. */
+  setInvitation(inv: Invitation): Promise<void>;
+  getInvitation(id: string): Promise<Invitation | null>;
+  /** A project's invitations, oldest first. */
+  listProjectInvitations(projectId: string): Promise<Invitation[]>;
+  /** Invitations to any of `to` (addresses and iDs as stored), oldest first. */
+  listInvitationsTo(to: string[]): Promise<Invitation[]>;
+  /** Compare-and-set: moves a pending invitation to `status` and reports
+   *  whether this call did. An accept racing a decline or a withdrawal must
+   *  see exactly one winner. */
+  settleInvitation(id: string, status: 'accepted' | 'declined' | 'withdrawn', at: string): Promise<boolean>;
+  /** Set the given fields alone, and only while the invitation is pending,
+   *  reporting whether it was: a resend or a mail racing an accept must not
+   *  write a stale copy over the answer. */
+  updatePendingInvitation(id: string, fields: { expiresAt?: string; emailedAt?: string }): Promise<boolean>;
+  deleteInvitation(id: string): Promise<void>;
+  /** Purge; called when the project itself is deleted. */
+  deleteProjectInvitations(projectId: string): Promise<void>;
 
   // compile-time usage metering: seconds consumed per (user, month YYYY-MM)
   getUsageSeconds(userId: string, month: string): Promise<number>;

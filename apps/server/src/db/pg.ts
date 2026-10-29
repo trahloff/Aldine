@@ -1,5 +1,7 @@
 import { PROJECT_ID_RE } from '../util.js';
-import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+
+const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 
 /**
  * Postgres DataStore — the horizontally-scalable backend. Multiple app nodes
@@ -125,6 +127,14 @@ export class PgStore implements DataStore {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_pending jsonb;
       -- 1.3: NULL = enabled, so every row from before the column is.
       ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at text;
+      -- 1.3: invitations, staged before they become share entries.
+      CREATE TABLE IF NOT EXISTS invitations (
+        id text PRIMARY KEY, project_id text NOT NULL, recipient text NOT NULL,
+        invited_by text NOT NULL, created_at text NOT NULL, expires_at text NOT NULL,
+        status text NOT NULL, responded_at text, emailed_at text
+      );
+      CREATE INDEX IF NOT EXISTS invitations_project_idx ON invitations(project_id);
+      CREATE INDEX IF NOT EXISTS invitations_recipient_idx ON invitations(recipient);
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
@@ -352,6 +362,21 @@ export class PgStore implements DataStore {
     if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
     await this.pool.query(`DELETE FROM project_meta WHERE id=$1`, [id]);
   }
+  // One statement: concurrent updates of the row queue on its lock and each
+  // sees the list the one before it wrote.
+  async addShareEntry(projectId: string, entry: string) {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    const { rows } = await this.pool.query(
+      `UPDATE project_meta SET data = jsonb_set(data, '{share}', jsonb_build_object(
+         'mode', COALESCE(data#>>'{share,mode}', 'private'),
+         'collaborators', CASE WHEN COALESCE(data#>'{share,collaborators}', '[]'::jsonb) @> jsonb_build_array($2::text)
+           THEN COALESCE(data#>'{share,collaborators}', '[]'::jsonb)
+           ELSE COALESCE(data#>'{share,collaborators}', '[]'::jsonb) || jsonb_build_array($2::text) END))
+       WHERE id=$1 RETURNING id`,
+      [projectId, entry],
+    );
+    return rows.length === 1;
+  }
   async listMeta() {
     const { rows } = await this.pool.query(`SELECT data FROM project_meta ORDER BY created_at DESC`);
     return rows.map((r) => r.data as ProjectMeta);
@@ -484,6 +509,62 @@ export class PgStore implements DataStore {
   async deleteProjectActivity(projectId: string): Promise<void> {
     if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
     await this.pool.query(`DELETE FROM project_activity WHERE project_id=$1`, [projectId]);
+  }
+
+  // ---- invitations ----
+  private rowToInvitation(r: any): Invitation {
+    return {
+      id: r.id, projectId: r.project_id, to: r.recipient, invitedBy: r.invited_by, createdAt: r.created_at,
+      expiresAt: r.expires_at, status: r.status, respondedAt: r.responded_at ?? null, emailedAt: r.emailed_at ?? null,
+    };
+  }
+  async setInvitation(inv: Invitation): Promise<void> {
+    if (!INVITATION_ID_RE.test(inv.id)) throw new Error('bad invitation id');
+    if (!PROJECT_ID_RE.test(inv.projectId)) throw new Error('bad project id');
+    await this.pool.query(
+      `INSERT INTO invitations(id,project_id,recipient,invited_by,created_at,expires_at,status,responded_at,emailed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT(id) DO UPDATE SET project_id=EXCLUDED.project_id, recipient=EXCLUDED.recipient, invited_by=EXCLUDED.invited_by,
+         created_at=EXCLUDED.created_at, expires_at=EXCLUDED.expires_at, status=EXCLUDED.status, responded_at=EXCLUDED.responded_at, emailed_at=EXCLUDED.emailed_at`,
+      [inv.id, inv.projectId, inv.to, inv.invitedBy, inv.createdAt, inv.expiresAt, inv.status, inv.respondedAt, inv.emailedAt],
+    );
+  }
+  async getInvitation(id: string): Promise<Invitation | null> {
+    if (!INVITATION_ID_RE.test(id)) return null;
+    const { rows } = await this.pool.query(`SELECT * FROM invitations WHERE id=$1`, [id]);
+    return rows[0] ? this.rowToInvitation(rows[0]) : null;
+  }
+  async listProjectInvitations(projectId: string): Promise<Invitation[]> {
+    const { rows } = await this.pool.query(`SELECT * FROM invitations WHERE project_id=$1 ORDER BY created_at, id`, [projectId]);
+    return rows.map((r) => this.rowToInvitation(r));
+  }
+  async listInvitationsTo(to: string[]): Promise<Invitation[]> {
+    if (!to.length) return [];
+    const { rows } = await this.pool.query(`SELECT * FROM invitations WHERE recipient = ANY($1::text[]) ORDER BY created_at, id`, [to]);
+    return rows.map((r) => this.rowToInvitation(r));
+  }
+  async settleInvitation(id: string, status: 'accepted' | 'declined' | 'withdrawn', at: string): Promise<boolean> {
+    if (!INVITATION_ID_RE.test(id)) return false;
+    const { rows } = await this.pool.query(
+      `UPDATE invitations SET status=$2, responded_at=$3 WHERE id=$1 AND status='pending' RETURNING id`,
+      [id, status, at],
+    );
+    return rows.length === 1;
+  }
+  async updatePendingInvitation(id: string, fields: { expiresAt?: string; emailedAt?: string }): Promise<boolean> {
+    if (!INVITATION_ID_RE.test(id)) return false;
+    const { rows } = await this.pool.query(
+      `UPDATE invitations SET expires_at=COALESCE($2, expires_at), emailed_at=COALESCE($3, emailed_at) WHERE id=$1 AND status='pending' RETURNING id`,
+      [id, fields.expiresAt ?? null, fields.emailedAt ?? null],
+    );
+    return rows.length === 1;
+  }
+  async deleteInvitation(id: string): Promise<void> {
+    if (!INVITATION_ID_RE.test(id)) return;
+    await this.pool.query(`DELETE FROM invitations WHERE id=$1`, [id]);
+  }
+  async deleteProjectInvitations(projectId: string): Promise<void> {
+    if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
+    await this.pool.query(`DELETE FROM invitations WHERE project_id=$1`, [projectId]);
   }
 
   // ---- connections ----

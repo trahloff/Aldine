@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from './db/index.js';
-import type { ProjectMeta, User } from './db/types.js';
+import type { Invitation, ProjectMeta, User } from './db/types.js';
 import * as auth from './auth.js';
 import * as email from './email.js';
 import * as store from './store.js';
@@ -178,6 +178,12 @@ function namesAccount(u: User, entry: string): boolean {
   return (!!address && entry.toLowerCase() === address) || (!!orcid && entry === orcid);
 }
 
+/** Withdraw the open ones: an invitation nobody may accept any more. */
+async function withdrawOpen(invitations: Invitation[]): Promise<void> {
+  const at = new Date().toISOString();
+  for (const inv of invitations) if (inv.status === 'pending') await store.settleInvitation(inv.id, 'withdrawn', at);
+}
+
 async function transferProject(meta: ProjectMeta, to: User): Promise<void> {
   meta.ownerId = to.id;
   const share = meta.share ?? { mode: 'private' as const, collaborators: [] };
@@ -186,6 +192,8 @@ async function transferProject(meta: ProjectMeta, to: User): Promise<void> {
   // their whole personal library.
   delete meta.zotero;
   await store.writeMeta(meta);
+  // The new owner invited nobody.
+  await withdrawOpen(await store.listProjectInvitations(meta.id));
 }
 
 async function removeFromShares(u: User): Promise<number> {
@@ -197,6 +205,9 @@ async function removeFromShares(u: User): Promise<number> {
     await store.writeMeta(meta);
     removed++;
   }
+  // Open invitations to the account go the same way as its share entries.
+  const keys = [...(u.email && !u.emailPending ? [u.email.toLowerCase()] : []), ...(auth.orcidOf(u) ? [auth.orcidOf(u)!] : [])];
+  if (keys.length) await withdrawOpen(await store.listInvitationsTo(keys));
   return removed;
 }
 
