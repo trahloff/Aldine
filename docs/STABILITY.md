@@ -175,7 +175,8 @@ The `/api` routes are the web app's own and are not documented. They are not
 covered and may change in a minor release. Personal access tokens work
 against them, but a script that should survive upgrades uses the MCP tools.
 One exception: `GET /api/health` keeps answering `{"ok":true,"name":"aldine"}`
-while the app is up, because healthchecks rely on it.
+while the app is up, because healthchecks rely on it. When its datastore
+cannot be read it answers 503 with `"ok":false`.
 
 ## Deprecation
 

@@ -1,8 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { PROJECT_ID_RE } from '../util.js';
+import { LINK_UNSUPPORTED, replaceFileDurable, writeFileSynced } from '../durable.js';
 import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord } from './types.js';
+
+const errCode = (err: unknown) => (err as NodeJS.ErrnoException)?.code ?? '';
+
+/** A datastore file that exists but does not parse, with no usable last-good
+ *  copy beside it. Never answered with an empty default: a later write would
+ *  then replace what an admin could still restore. */
+export class DamagedStoreFileError extends Error {
+  constructor(readonly file: string, message: string) {
+    super(message);
+    this.name = 'DamagedStoreFileError';
+  }
+}
 
 /**
  * OAuth-minted (family set) and revoked before `cutoff` (ms epoch). An
@@ -23,8 +35,10 @@ function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
  *   <metaRoot>/opens.json  activity.json
  *   <metaRoot>/meta/<id>.json          (project metadata)
  *   <metaRoot>/comments/<id>.json      (review comments)
- * Writes are atomic (temp + rename). Node's synchronous fs calls don't
- * interleave, so a single process is race-free; multi-node needs Postgres.
+ * Each file has a `<file>.bak` beside it: the version before the last write,
+ * which a file torn by a crash is restored from on read. Writes are atomic
+ * and flushed (durable.ts). Node's synchronous fs calls don't interleave, so
+ * a single process is race-free; multi-node needs Postgres.
  */
 export class JsonStore implements DataStore {
   private usersPath: string;
@@ -61,8 +75,17 @@ export class JsonStore implements DataStore {
 
   async init(): Promise<void> {
     for (const d of [this.metaRoot, this.metaDir, this.commentsDir]) fs.mkdirSync(d, { recursive: true });
+    // A damaged file without a usable .bak fails startup, naming the file,
+    // instead of every request that reads it.
+    await this.check();
   }
   async close(): Promise<void> {}
+
+  /** Throws when a flat file can be neither read nor restored from its .bak.
+   *  Cached files cost nothing; one dropped after a failed write is re-read. */
+  async check(): Promise<void> {
+    for (const p of this.flat) this.read(p, {});
+  }
 
   // Write-through cache of the FLAT JSON files only (users/sessions/resets/usage/
   // connections) — per-id meta/comment files are read straight from disk, so
@@ -72,31 +95,87 @@ export class JsonStore implements DataStore {
   private cache = new Map<string, unknown>();
   private read<T>(p: string, dflt: T): T {
     if (this.cache.has(p)) return this.cache.get(p) as T;
-    let v: T;
-    try {
-      v = JSON.parse(fs.readFileSync(p, 'utf8')) as T;
-    } catch (err: unknown) {
-      // Only a genuinely-absent file means "empty" (a fresh store). A transient
-      // read error (EMFILE/EIO/EACCES) or a corrupt/partial file must NOT be
-      // cached as the empty default — a later write would then persist that
-      // default OVER real data. Fail loud so the next call retries the disk.
-      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
-      v = dflt;
-    }
+    // Only a genuinely-absent file means "empty" (a fresh store). A transient
+    // read error (EMFILE/EIO/EACCES) or a damaged file must NOT be cached as
+    // the empty default — a later write would then persist that default OVER
+    // real data. load() throws for both, so the next call retries the disk.
+    const v = this.load<T>(p) ?? dflt;
     this.cache.set(p, v);
     return v;
   }
-  private write(p: string, v: unknown): void {
+
+  /** A JSON file's content, or null when it does not exist. A file that does
+   *  not parse (a write torn by a crash: empty, cut short, zero-filled) is
+   *  restored from its .bak when that parses, else DamagedStoreFileError. */
+  private load<T>(p: string): T | null {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(p, 'utf8');
+    } catch (err) {
+      if (errCode(err) === 'ENOENT') return null;
+      throw err;
+    }
+    try {
+      return JSON.parse(raw) as T;
+    } catch (err) {
+      return this.restore<T>(p, raw.length ? (err as Error).message : 'the file is empty');
+    }
+  }
+
+  private restore<T>(p: string, why: string): T {
+    const bak = `${p}.bak`;
+    let v: T;
+    try {
+      v = JSON.parse(fs.readFileSync(bak, 'utf8')) as T;
+    } catch (err) {
+      const bakWhy = errCode(err) === 'ENOENT' ? 'does not exist' : `cannot be read either (${(err as Error).message})`;
+      const dir = path.dirname(p);
+      let tmps: string[] = [];
+      try { tmps = fs.readdirSync(dir).filter((f) => f.startsWith(`${path.basename(p)}.`) && f.endsWith('.tmp')); } catch { /* the message names no candidates */ }
+      throw new DamagedStoreFileError(p,
+        `Datastore file ${p} cannot be read (${why}), and its last-good copy ${bak} ${bakWhy}. ` +
+        'Restore it from a backup (deploy/restore.sh; deploy/README.md, "Restore"); with none, deleting it starts it over empty.' +
+        (tmps.length ? ` Interrupted writes left ${tmps.map((f) => path.join(dir, f)).join(', ')}, which may hold a newer copy.` : ''));
+    }
+    console.error(`[store] ${p} cannot be read (${why}); restoring it from ${bak}. The last change written to it before the damage is lost.`);
+    try {
+      this.write(p, v, { keepPrevious: false }); // the damaged file must not become the .bak
+    } catch (err) {
+      throw new DamagedStoreFileError(p, `Datastore file ${p} cannot be read (${why}); ${bak} is good, but restoring ${path.basename(p)} from it failed: ${(err as Error).message}`);
+    }
+    return v;
+  }
+
+  private write(p: string, v: unknown, opts: { keepPrevious?: boolean } = {}): void {
     if (this.flat.has(p)) this.cache.set(p, v); // only flat files are served from cache
     try {
-      const tmp = `${p}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(v, null, 2), { mode: 0o600 });
-      fs.renameSync(tmp, p);
+      if (opts.keepPrevious !== false) this.keepPrevious(p);
+      replaceFileDurable(p, JSON.stringify(v, null, 2), { mode: 0o600 });
     } catch (err) {
       // The in-memory entry now holds an unpersisted (caller-mutated) value; drop
       // it so the next read re-reads authoritative disk instead of serving it.
       this.cache.delete(p);
       throw err;
+    }
+  }
+
+  /** Make the current file `<file>.bak` before it is replaced: a hard link,
+   *  so it costs no copy and keeps the file's 0600 mode. */
+  private keepPrevious(p: string): void {
+    // Flat files were parsed (or restored) by read() before any write; a
+    // per-project file may be written unread, and a torn one must not
+    // replace a good .bak.
+    if (!this.flat.has(p)) {
+      try { JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return; }
+    }
+    const bak = `${p}.bak`;
+    fs.rmSync(bak, { force: true });
+    try {
+      fs.linkSync(p, bak);
+    } catch (err) {
+      if (errCode(err) === 'ENOENT') return; // nothing written yet
+      if (!LINK_UNSUPPORTED.has(errCode(err))) throw err;
+      writeFileSynced(bak, fs.readFileSync(p), { mode: 0o600 });
     }
   }
 
@@ -251,25 +330,42 @@ export class JsonStore implements DataStore {
 
   // ---- project meta ----
   private metaPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.metaDir, `${id}.json`); }
-  async readMeta(id: string) { try { return JSON.parse(fs.readFileSync(this.metaPath(id), 'utf8')) as ProjectMeta; } catch { return null; } }
+  // A damaged file without a usable .bak throws (it reads as "not found" to
+  // callers that catch); any other failure, a malformed id among them, reads
+  // as absent.
+  async readMeta(id: string) {
+    try { return this.load<ProjectMeta>(this.metaPath(id)); }
+    catch (err) { if (err instanceof DamagedStoreFileError) throw err; return null; }
+  }
   async writeMeta(meta: ProjectMeta) { this.write(this.metaPath(meta.id), meta); }
-  async deleteMeta(id: string) { fs.rmSync(this.metaPath(id), { force: true }); }
+  async deleteMeta(id: string) {
+    const p = this.metaPath(id);
+    fs.rmSync(p, { force: true });
+    fs.rmSync(`${p}.bak`, { force: true });
+  }
   async listMeta() {
     if (!fs.existsSync(this.metaDir)) return [];
     const out: ProjectMeta[] = [];
     for (const f of fs.readdirSync(this.metaDir)) {
       if (!f.endsWith('.json')) continue;
-      // Skip an unreadable/corrupt file rather than failing the whole listing —
-      // matches readMeta's null-on-error semantics (one bad project ≠ dead dashboard).
-      try { out.push(JSON.parse(fs.readFileSync(path.join(this.metaDir, f), 'utf8')) as ProjectMeta); }
-      catch (err) { console.error(`[store] skipping unreadable meta ${f}:`, (err as Error).message); }
+      // Skip an unreadable/damaged file rather than failing the whole listing
+      // (one bad project ≠ dead dashboard).
+      try {
+        const m = this.load<ProjectMeta>(path.join(this.metaDir, f));
+        if (m) out.push(m);
+      } catch (err) { console.error(`[store] skipping unreadable meta ${f}:`, (err as Error).message); }
     }
     return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   // ---- comments ----
   private commentPath(id: string) { if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id'); return path.join(this.commentsDir, `${id}.json`); }
-  async loadComments(projectId: string) { try { return JSON.parse(fs.readFileSync(this.commentPath(projectId), 'utf8')) as Comment[]; } catch { return []; } }
+  // A damaged file without a usable .bak throws: an empty list here would be
+  // saved over it with the next comment.
+  async loadComments(projectId: string) {
+    try { return this.load<Comment[]>(this.commentPath(projectId)) ?? []; }
+    catch (err) { if (err instanceof DamagedStoreFileError) throw err; return []; }
+  }
   async saveComments(projectId: string, list: Comment[]) { this.write(this.commentPath(projectId), list); }
 
   // ---- agent-review marks ----

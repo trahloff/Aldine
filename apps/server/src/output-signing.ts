@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { LINK_UNSUPPORTED, fsyncDir, writeFileSynced } from './durable.js';
 
 /**
  * HMAC-signed links for GET /api/projects/:id/output — and for nothing else.
@@ -68,10 +69,10 @@ function loadSecret(): Buffer {
       return true;
     } catch (err) {
       if (code(err) === 'EEXIST') return false;
-      if (!['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes(code(err) ?? '')) throw err;
+      if (!LINK_UNSUPPORTED.has(code(err) ?? '')) throw err;
     }
     try {
-      fs.writeFileSync(file, payload, { mode: 0o600, flag: 'wx' });
+      writeFileSynced(file, payload, { mode: 0o600, flag: 'wx' });
       return true;
     } catch (err) {
       if (code(err) !== 'EEXIST') throw err;
@@ -79,12 +80,17 @@ function loadSecret(): Buffer {
     }
   };
   try {
-    fs.writeFileSync(tmp, payload, { mode: 0o600, flag: 'w' });
+    // Flushed before it is published: a crash must not leave the real name
+    // on an empty file, which no later boot could read or replace.
+    writeFileSynced(tmp, payload, { mode: 0o600, flag: 'w' });
     if (publish()) {
+      fsyncDir(config.metaRoot);
       secret = fresh;
     } else {
       const raced = read();
-      if (!raced) throw new Error(`unreadable ${file}`);
+      if (!raced) {
+        throw new Error(`${file} exists but holds no usable secret (empty or shorter than ${MIN_SECRET_BYTES} bytes, e.g. a write cut off by a crash). Delete it to have a new one generated (PDF links already handed out then expire), or set ALDINE_SIGNING_SECRET.`);
+      }
       secret = raced;
     }
   } finally {

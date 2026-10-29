@@ -16,6 +16,7 @@ import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
 import { noteEdit, editorOf, forgetBranch, activitySnapshot, backfillLastEdits } from './activity.js';
 import type { ProjectActivity } from './db/types.js';
+import { db } from './db/index.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
@@ -218,7 +219,15 @@ export function repoQuery(raw: unknown): string {
   return q.replace(/\.git$/, '').replace(/^\/+|\/+$/g, '');
 }
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/health', async () => ({ ok: true, name: 'aldine' }));
+  app.get('/api/health', async (req, reply) => {
+    try {
+      await db().check?.();
+    } catch (err) {
+      req.log.error({ err }, 'datastore unreadable');
+      return reply.code(503).send({ ok: false, name: 'aldine', error: 'The datastore cannot be read; the server log names the file' });
+    }
+    return { ok: true, name: 'aldine' };
+  });
 
   // Showcase projects (ALDINE_PROTECTED_PROJECTS): every visitor may read and
   // typeset them, nobody may change them — a public demo's sample paper must

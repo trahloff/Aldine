@@ -8,6 +8,7 @@ import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
 import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
 import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
+import { replaceFileDurable } from './durable.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
@@ -51,16 +52,53 @@ const TEXT_KEY = 'content';
 const YJS_DIR = path.join(config.metaRoot, 'yjs');
 const snapPath = (name: string) => path.join(YJS_DIR, crypto.createHash('sha1').update(name).digest('hex') + '.ybin');
 
+/** sha1 of the snapshot last written per loaded doc. Each write waits for
+ *  the disk (milliseconds), and every flush before a typeset or commit
+ *  stores every open doc of the branch, changed or not. Dropped on unload
+ *  and with the snapshot file. */
+const lastSnapshot = new Map<string, string>();
+
 function writeSnapshot(name: string, document: Y.Doc): void {
   try {
+    const state = Y.encodeStateAsUpdate(document);
+    const hash = crypto.createHash('sha1').update(state).digest('hex');
+    if (lastSnapshot.get(name) === hash) return;
     fs.mkdirSync(YJS_DIR, { recursive: true });
-    fs.writeFileSync(snapPath(name), Buffer.from(Y.encodeStateAsUpdate(document)));
+    replaceFileDurable(snapPath(name), state);
+    lastSnapshot.set(name, hash);
   } catch (err) { console.error('[collab] snapshot write failed', (err as Error).message); }
 }
+
+/** Why a snapshot's bytes are not a document state, or null when they are.
+ *  A write torn by a crash leaves an empty, cut-short or zero-filled file.
+ *  Decoded into a scratch doc: a cut-short update can throw after part of
+ *  it was applied, and the live doc must start from nothing or the whole. */
+function snapshotDamage(bytes: Uint8Array): string | null {
+  if (bytes.length === 0) return 'empty file';
+  // An empty doc encodes as [0, 0]; anything longer has a nonzero byte.
+  if (bytes.length > 2 && bytes.every((b) => b === 0)) return 'zero-filled';
+  const scratch = new Y.Doc();
+  try {
+    Y.applyUpdate(scratch, bytes);
+    return null;
+  } catch (err) {
+    return `does not decode: ${(err as Error).message}`;
+  } finally {
+    scratch.destroy();
+  }
+}
+
+/** A damaged snapshot reads as none: the doc then seeds from its file. */
 function readSnapshot(name: string): Uint8Array | null {
-  try { return fs.readFileSync(snapPath(name)); } catch { return null; }
+  let bytes: Uint8Array;
+  try { bytes = fs.readFileSync(snapPath(name)); } catch { return null; }
+  const damage = snapshotDamage(bytes);
+  if (!damage) return bytes;
+  console.error(`[collab] ignoring the snapshot of ${name} (${damage}); the document loads from its file`);
+  return null;
 }
 function deleteSnapshot(name: string): void {
+  lastSnapshot.delete(name);
   try { fs.rmSync(snapPath(name), { force: true }); } catch { /* best effort */ }
 }
 
@@ -466,6 +504,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // the map is bounded by live docs and a reopened doc never trusts a stale hash.
   async afterUnloadDocument({ documentName }: { documentName: string }) {
     lastWritten.delete(documentName);
+    lastSnapshot.delete(documentName);
     crlfDocs.delete(documentName);
   },
 });
