@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-29
+
+Share invitations that the invited person accepts, previews for images and PDFs in the file tree, Vim keybindings, account management for administrators, and a fix for a crash that could leave the JSON datastore empty (#199). Upgrading from 1.2 needs no manual step; people already on a share list keep their access.
+
 ### Added
 - Vim keybindings for the editor, in Source and Visual: turn them on under
   Settings → This browser, or with "Turn Vim keybindings on" in the command
