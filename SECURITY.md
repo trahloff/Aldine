@@ -52,7 +52,19 @@ you in the fix's release notes unless you prefer otherwise.
 - Single-sign-on accounts have no password and cannot be given one, so a
   person the IdP disables (or `OIDC_ALLOWED_GROUPS` stops admitting) cannot
   sign in again. Existing sessions end at their expiry (30 days) unless an
-  operator removes them; docs/OIDC.md shows how.
+  administrator disables the account on `/admin` or an operator removes
+  them; docs/OIDC.md shows how.
+- An administrator (`ALDINE_ADMIN_EMAILS`) can disable or delete an account
+  on `/admin`. A disabled account is refused on every path: its sessions end
+  at once, password and single sign-on are refused, its access tokens,
+  OAuth refresh tokens and MCP calls are rejected, and its collab sockets are
+  closed on every app node. The page cannot disable or delete its own
+  account or another one on `ALDINE_ADMIN_EMAILS`, nor confirm an address on
+  that list by hand or show its reset link. Every account action is logged
+  with who did what to whom (deploy/README.md, "Managing accounts").
+  An administrator is trusted with the accounts: on a server without email
+  the reset link they are shown lets them set any other password account's
+  password, and deleting an account can give its projects to them.
 
 ## Hall of fame
 

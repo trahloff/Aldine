@@ -16,6 +16,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   pixels, so long file names and the tab labels fit. The arrow keys move the
   divider too, a double-click restores the default width, and this browser
   remembers the width you chose (#193).
+- Account management on `/admin` (#192): Manage on each row disables or
+  enables an account, confirms its address by hand (for servers without
+  email), sends a password reset email or, without email, shows the
+  administrator a one-time reset link, and deletes it. A disabled account is
+  signed out at once and refused everywhere: password, ORCID and single
+  sign-on, access tokens, the Claude connector, MCP and collab sockets.
+  Enabling it lets its tokens work again unless the administrator revoked
+  them. Deleting asks for the address to be typed and for its projects to go
+  to another account or to the trash, and takes it off every share list
+  that names it. Administrators cannot disable or delete themselves or
+  another account on `ALDINE_ADMIN_EMAILS`. Every action is logged. The
+  accounts table shows whether each address is confirmed and each account
+  is disabled.
 
 ### Fixed
 - A crash or a volume that goes read-only no longer leaves the JSON datastore

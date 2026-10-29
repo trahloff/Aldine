@@ -3,13 +3,14 @@ import { Link } from 'react-router-dom';
 import { api, ApiError, AdminStats, AdminUserRow } from '../api';
 import { useAuth } from '../components/Auth';
 import Wordmark from '../components/Wordmark';
+import AdminAccountDialog from '../components/AdminAccountDialog';
 import { useDocumentTitle } from '../util/documentTitle';
 
 /**
- * Instance administration: who is on this server and how busy it is.
- * Everything shown is metadata the server already holds about accounts and
- * projects — never a project's files. The server guards the routes; this
- * page only decides what to render.
+ * Instance administration: who is on this server and how busy it is, and
+ * the account actions (Manage on each row). Everything shown is metadata the
+ * server already holds about accounts and projects — never a project's
+ * files. The server guards the routes; this page only decides what to render.
  */
 
 function ago(iso: string | undefined, now: number): string {
@@ -39,11 +40,13 @@ function Stat({ label, value, hint, testId }: { label: string; value: string | n
 }
 
 export default function Admin() {
-  const { authEnabled, admin } = useAuth();
+  const { authEnabled, admin, user: me, sendsEmail, passwordAuth } = useAuth();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [managing, setManaging] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   useDocumentTitle('Server admin');
 
   const load = async () => {
@@ -91,6 +94,7 @@ export default function Admin() {
         </header>
 
         {error && <p className="admin__error" data-testid="admin-error">{error}</p>}
+        {notice && <p className="admin__notice" role="status" data-testid="admin-notice">{notice}</p>}
 
         {stats && (
           <>
@@ -118,18 +122,36 @@ export default function Admin() {
             <div className="admin__table-wrap">
               <table className="admin__table" data-testid="admin-users">
                 <thead>
-                  <tr><th>Name</th><th>Email</th><th>Sign-in</th><th>Joined</th><th>Last seen</th><th className="admin__num">Projects</th><th className="admin__num">Compile, this month</th></tr>
+                  <tr>
+                    <th>Name</th><th>Email</th><th>Address</th><th>Account</th><th>Sign-in</th><th>Joined</th><th>Last seen</th>
+                    <th className="admin__num">Projects</th><th className="admin__num">Compile, this month</th><th><span className="visually-hidden">Actions</span></th>
+                  </tr>
                 </thead>
                 <tbody>
                   {(users || []).map((u) => (
                     <tr key={u.id} data-testid="admin-user-row">
                       <td>{u.name}{u.admin && <span className="admin__badge" title="On the admin list">admin</span>}</td>
-                      <td>{u.email || <span className="admin__muted">no email</span>}{u.emailPending && <span className="admin__muted" data-testid="admin-email-pending" title="Invites by email and the admin list ignore this address until it is confirmed"> not confirmed</span>}</td>
-                      <td>{u.provider || 'password'}</td>
+                      <td>{u.email || <span className="admin__muted">no email</span>}</td>
+                      <td>
+                        {!u.email ? <span className="admin__muted">—</span>
+                          : u.emailPending ? <span className="admin__muted" data-testid="admin-email-pending" title="Invites by email and the admin list ignore this address until it is confirmed">Not confirmed</span>
+                            : 'Confirmed'}
+                      </td>
+                      <td>
+                        {u.disabledAt
+                          ? <span className="admin__status admin__status--off" data-testid="admin-status-disabled" title={`Disabled ${new Date(u.disabledAt).toLocaleString()}`}>Disabled</span>
+                          : <span className="admin__status" data-testid="admin-status-active">Active</span>}
+                      </td>
+                      <td>{u.signIn}</td>
                       <td title={u.createdAt}>{new Date(u.createdAt).toLocaleDateString()}</td>
                       <td title={u.lastSeenAt}>{ago(u.lastSeenAt, now)}</td>
                       <td className="admin__num">{u.projects}</td>
                       <td className="admin__num">{minutes(u.compileSecondsThisMonth)}</td>
+                      <td>
+                        {authEnabled && (
+                          <button className="btn btn--small" onClick={() => { setNotice(null); setManaging(u.id); }} aria-label={`Manage ${u.email ?? u.name}`} data-testid="admin-manage">Manage</button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -141,6 +163,23 @@ export default function Admin() {
             </p>
           </>
         )}
+        {managing && users && (() => {
+          const u = users.find((x) => x.id === managing);
+          if (!u) return null;
+          return (
+            <AdminAccountDialog
+              user={u}
+              accounts={users}
+              meId={me?.id ?? null}
+              admins={stats?.admins ?? []}
+              sendsEmail={sendsEmail}
+              passwordAuth={passwordAuth}
+              onChanged={(row) => setUsers((cur) => (cur || []).map((x) => (x.id === row.id ? row : x)))}
+              onDeleted={(message) => { setManaging(null); setNotice(message); load(); }}
+              onClose={() => setManaging(null)}
+            />
+          );
+        })()}
       </div>
     </div>
   );

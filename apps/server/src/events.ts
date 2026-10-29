@@ -3,15 +3,16 @@
  * REDIS_URL) never need this: the publisher always applies the effect locally
  * first, so the channel only exists to reach OTHER nodes.
  *
- * Today's one event, 'access-changed', makes sharing revocation and claiming
- * effective on every node: each subscriber closes its local collab sockets for
- * the project so clients reconnect and re-run onAuthenticate.
+ * 'access-changed' makes sharing revocation and claiming effective on every
+ * node: each subscriber closes its local collab sockets for the project so
+ * clients reconnect and re-run onAuthenticate. 'account-ended' does the same
+ * for one account's sockets when an administrator disables or deletes it.
  */
 import { getSharedRedis, createDedicatedClient } from './redis.js';
 
 export const PROJECT_EVENTS_CHANNEL = 'aldine:project-events';
 
-export interface ProjectEvent { type: 'access-changed'; projectId: string }
+export type ProjectEvent = { type: 'access-changed'; projectId: string } | { type: 'account-ended'; userId: string };
 
 /**
  * Fire-and-forget fanout to peer nodes. Must never fail the calling route:
@@ -29,7 +30,7 @@ export function publishProjectEvent(evt: ProjectEvent): void {
  * ioredis's offline queue and completes on connect; reconnects re-subscribe
  * automatically. Malformed or unknown payloads are ignored (forward compat).
  */
-export function initProjectEvents(handlers: { onAccessChanged: (projectId: string) => void }): void {
+export function initProjectEvents(handlers: { onAccessChanged: (projectId: string) => void; onAccountEnded: (userId: string) => void }): void {
   const sub = createDedicatedClient('events-sub');
   if (!sub) return;
   sub.subscribe(PROJECT_EVENTS_CHANNEL)
@@ -41,6 +42,8 @@ export function initProjectEvents(handlers: { onAccessChanged: (projectId: strin
       const evt = JSON.parse(message) as ProjectEvent;
       if (evt.type === 'access-changed' && typeof evt.projectId === 'string') {
         handlers.onAccessChanged(evt.projectId);
+      } else if (evt.type === 'account-ended' && typeof evt.userId === 'string') {
+        handlers.onAccountEnded(evt.userId);
       }
     } catch { /* ignore malformed payloads */ }
   });

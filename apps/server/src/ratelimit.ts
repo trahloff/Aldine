@@ -202,6 +202,9 @@ export const copyLimiter = new RateLimiter('copy', n(process.env.RL_COPY_BURST, 
  *  sharing still saves; the addresses go unmailed. */
 const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
 export const inviteLimiter = new RateLimiter('invite', inviteBurst, Math.max(1, inviteBurst) / 3600);
+/** Account changes on the admin page: 30 burst, 1 / 2 s per administrator.
+ *  Bounds the reset mails and project rewrites one session can set off. */
+export const adminLimiter = new RateLimiter('admin', n(process.env.RL_ADMIN_BURST, 30), 0.5);
 /** Every search and replace scans in a worker of its own: one in flight per
  *  client, and at most four per process (key 'all'), so slow scans cannot
  *  take every core. */

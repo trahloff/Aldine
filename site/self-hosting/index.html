@@ -197,7 +197,7 @@ OIDC_ALLOWED_GROUPS=</code></pre>
 <ul>
 <li><code>AUTH_ENABLED=1</code> turns on login, per-project ownership and sharing (invite-only or by link).</li>
 <li>Each provider is independent. Email and password works without any of them; <code>ALDINE_SSO_ONLY=1</code> disables passwords entirely.</li>
-<li><code>ALDINE_ADMIN_EMAILS=you@example.org</code> opens <code>/admin</code>: accounts, active users, projects and compile time. Metadata only. Neither compose file passes this variable through, so add <code>ALDINE_ADMIN_EMAILS: ${ALDINE_ADMIN_EMAILS:-}</code> under <code>environment:</code> of the <code>app</code> service.</li>
+<li><code>ALDINE_ADMIN_EMAILS=you@example.org</code> opens <code>/admin</code>: accounts, active users, projects and compile time, and per account disable, confirm address, password reset and delete. Never project content. Neither compose file passes this variable through, so add <code>ALDINE_ADMIN_EMAILS: ${ALDINE_ADMIN_EMAILS:-}</code> under <code>environment:</code> of the <code>app</code> service.</li>
 <li>Every sign-in variable, the redirect URIs and recipes for Keycloak, Authentik, Authelia, Pocket ID and Dex are in the <a href="/sso/">single sign-on guide</a>.</li>
 </ul>
 

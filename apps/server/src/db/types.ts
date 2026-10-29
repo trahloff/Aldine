@@ -29,6 +29,10 @@ export interface User {
    *  sign-on account. Invites by email and ALDINE_ADMIN_EMAILS skip an
    *  account while it is set. */
   emailPending?: EmailPending;
+  /** When an administrator disabled the account; absent means enabled,
+   *  which every account from before the field is. A disabled account has no
+   *  session and no credential that works. Only setDisabled changes it. */
+  disabledAt?: string;
 }
 
 /** The one-time confirmation link of a pending address: `hash` is the
@@ -234,6 +238,9 @@ export interface DataStore {
   getUser(id: string): Promise<User | null>;
   findUserByEmail(emailLower: string): Promise<User | null>;
   findUserBySubject(subject: string): Promise<User | null>;
+  /** Writes every field but disabledAt, which keeps its stored value: a copy
+   *  read before an administrator disabled the account must not enable it
+   *  again when a sign-in or password change writes it back. */
   updateUser(u: User): Promise<void>;
   /** Every account, oldest first. Instance administration only. */
   listUsers(): Promise<User[]>;
@@ -243,6 +250,16 @@ export interface DataStore {
   /** Set (a new link) or clear (confirmed) emailPending alone, for the same
    *  reason as touchUser. */
   setEmailPending(id: string, pending: EmailPending | null): Promise<void>;
+  /** Disable (the time it happened) or enable (null) the account, writing
+   *  that field alone. */
+  setDisabled(id: string, disabledAt: string | null): Promise<void>;
+  /** Remove the account and every row that exists only for it: sessions,
+   *  reset links, access and refresh tokens, linked connections, its project
+   *  list rows and review marks. Usage seconds stay, they make up the
+   *  instance totals. The projects it owns and the shares naming it are the
+   *  caller's to settle first. The account row goes last, so a removal cut
+   *  short can be run again. */
+  deleteUser(id: string): Promise<void>;
 
   // sessions (revocable)
   createSession(sid: string, userId: string, exp: number): Promise<void>;

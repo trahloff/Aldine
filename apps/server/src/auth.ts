@@ -173,9 +173,17 @@ function refuseSsoAccount(user: User): void {
   if (user.provider) throw new Error(`This account signs in with ${providerLabel(user.provider)}, which manages its password.`);
 }
 
+/** Said only to someone who just proved the identity (the password, or the
+ *  provider's sign-in), so it never tells a stranger the account exists. */
+export const ACCOUNT_DISABLED = 'This account is disabled. Ask the administrator of this server to enable it.';
+function refuseDisabled(user: User): void {
+  if (user.disabledAt) throw new Error(ACCOUNT_DISABLED);
+}
+
 export async function login(email: string, password: string): Promise<PublicUser> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
   if (!user || user.provider || !user.hash || !(await verifyPassword(password, user))) throw new Error('Incorrect email or password');
+  refuseDisabled(user);
   return pub(user);
 }
 
@@ -196,6 +204,7 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   if (profile.subject) {
     const bySubject = await db().findUserBySubject(profile.subject);
     if (bySubject) {
+      refuseDisabled(bySubject);
       // An account created while the IdP had no verified address for the
       // person takes the first one it reports. An address already on the
       // account is kept: project invites and shares are matched by it.
@@ -218,6 +227,7 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
     if (profile.subject && existing.subject && existing.subject !== profile.subject) {
       throw new Error(`An account with this email already belongs to a different ${providerLabel(provider)} identity — ask the administrator for help.`);
     }
+    refuseDisabled(existing);
     if (profile.subject && existing.subject !== profile.subject) {
       // First sign-in since the provider started reporting subjects: bind it
       // so a later change of the public email cannot detach the account.
@@ -248,9 +258,13 @@ export async function changePassword(userId: string, current: string, next: stri
 export async function requestReset(email: string): Promise<{ token: string; user: PublicUser } | null> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
   if (!user || user.provider) return null; // do not leak which emails exist
+  return { token: await newReset(user.id), user: pub(user) };
+}
+
+async function newReset(userId: string): Promise<string> {
   const token = crypto.randomBytes(24).toString('base64url');
-  await db().createReset(token, user.id, Date.now() + RESET_TTL_MS);
-  return { token, user: pub(user) };
+  await db().createReset(token, userId, Date.now() + RESET_TTL_MS);
+  return token;
 }
 
 /** Returns how many access tokens were revoked with the old password. */
@@ -306,7 +320,63 @@ export async function verifyToken(sid: string | undefined): Promise<PublicUser |
   const s = await db().getSession(sid);
   if (!s || s.exp < Date.now()) return null;
   const user = await db().getUser(s.userId);
-  return user ? pub(user) : null;
+  return user && !user.disabledAt ? pub(user) : null;
+}
+
+// ---------- account administration (admin.ts decides who may) ----------
+
+/** A password account: the only kind a reset link can serve. */
+export const hasPassword = (u: User) => !u.provider && !!u.email;
+
+/**
+ * Disable an account. Its sessions end now and every credential it holds is
+ * refused while it stays disabled: access tokens, OAuth refresh tokens, and
+ * authorization codes not yet exchanged (dropped, they live minutes).
+ * Enabling it again restores the tokens unless `revokeAgents` ended them for
+ * good. Collab sockets are the caller's to close.
+ */
+export async function disableAccount(userId: string, revokeAgents: boolean): Promise<void> {
+  await db().setDisabled(userId, new Date().toISOString());
+  await revokeUser(userId);
+  discardCodesForUser(userId);
+  if (revokeAgents) await revokeAgentAccess(userId);
+}
+
+/**
+ * Enable an account again. What a request already under way when it was
+ * disabled created afterwards goes: an access token or OAuth grant minted
+ * since then (none could be legitimately), and a session from a sign-in
+ * whose password check was running. Whoever signs in after this does so
+ * afresh.
+ */
+export async function enableAccount(userId: string): Promise<void> {
+  const since = (await db().getUser(userId))?.disabledAt;
+  if (since) {
+    for (const t of await db().listTokensForUser(userId)) {
+      if (!t.revokedAt && t.createdAt >= since) await revokeAccessToken(userId, t.id);
+    }
+  }
+  await db().setDisabled(userId, null);
+  await revokeUser(userId);
+}
+
+/** Confirm an address on the administrator's word, as the link would. */
+export function confirmEmailForAccount(userId: string): Promise<void> {
+  return db().setEmailPending(userId, null);
+}
+
+/** A reset link's secret for a password account, as the forgot-password
+ *  form issues it; null for any other account. */
+export async function issueReset(userId: string): Promise<{ token: string; user: PublicUser } | null> {
+  const user = await db().getUser(userId);
+  if (!user || !hasPassword(user)) return null;
+  return { token: await newReset(user.id), user: pub(user) };
+}
+
+/** Remove the account and its credentials for good. */
+export async function deleteAccount(userId: string): Promise<void> {
+  discardCodesForUser(userId);
+  await db().deleteUser(userId);
 }
 
 // ---------- personal access tokens (headless agent credentials) ----------
@@ -393,7 +463,7 @@ export async function userFromToken(authorizationHeader: string | undefined): Pr
   if (rec.revokedAt) return null;
   if (rec.expiresAt && Date.parse(rec.expiresAt) <= Date.now()) return null;
   const user = await db().getUser(rec.userId);
-  if (!user) return null;
+  if (!user || user.disabledAt) return null;
   if (!rec.lastUsedAt || Date.now() - Date.parse(rec.lastUsedAt) >= LAST_USED_THROTTLE_MS) {
     // best effort: a bookkeeping write must never fail an authenticated request.
     // touchToken, never updateToken(rec): writing this whole in-memory record

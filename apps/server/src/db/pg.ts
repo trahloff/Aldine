@@ -123,19 +123,21 @@ export class PgStore implements DataStore {
       );
       -- 1.0: NULL = confirmed, so every row from before the column is.
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_pending jsonb;
+      -- 1.3: NULL = enabled, so every row from before the column is.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at text;
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
 
   // ---- users ----
   private rowToUser(r: any): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: r.email_pending } : {}) };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: r.email_pending } : {}), ...(r.disabled_at ? { disabledAt: r.disabled_at } : {}) };
   }
   async createUser(u: User) {
     try {
       await this.pool.query(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null],
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending,disabled_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null, u.disabledAt ?? null],
       );
     } catch (err: any) {
       // Same messages as the JSON backend, so register() surfaces one
@@ -159,6 +161,23 @@ export class PgStore implements DataStore {
   }
   async touchUser(id: string, lastSeenAt: string) {
     await this.pool.query(`UPDATE users SET last_seen_at=$2 WHERE id=$1`, [id, lastSeenAt]);
+  }
+  async setDisabled(id: string, disabledAt: string | null) {
+    await this.pool.query(`UPDATE users SET disabled_at=$2 WHERE id=$1`, [id, disabledAt]);
+  }
+  // One statement, so the account and its rows go together or not at all.
+  async deleteUser(id: string) {
+    await this.pool.query(
+      `WITH s AS (DELETE FROM sessions WHERE user_id=$1),
+            r AS (DELETE FROM resets WHERE user_id=$1),
+            t AS (DELETE FROM tokens WHERE user_id=$1),
+            f AS (DELETE FROM refresh_tokens WHERE user_id=$1),
+            c AS (DELETE FROM connections WHERE user_id=$1),
+            o AS (DELETE FROM project_opens WHERE user_id=$1),
+            v AS (DELETE FROM project_visits WHERE user_id=$1)
+       DELETE FROM users WHERE id=$1`,
+      [id],
+    );
   }
   async setEmailPending(id: string, pending: EmailPending | null) {
     await this.pool.query(`UPDATE users SET email_pending=$2 WHERE id=$1`, [id, pending ? jsonb(pending) : null]);

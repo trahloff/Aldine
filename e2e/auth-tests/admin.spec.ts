@@ -70,3 +70,126 @@ test.describe('server admin', () => {
     expect(stats.users.total).toBe(total);
   });
 });
+
+/** A browser of its own, signing in from its own address: the auth suite
+ *  shares one per-address sign-in budget (RL_LOGIN_BURST), and these tests
+ *  sign in often. TRUST_PROXY=1 on this stack makes the header count. */
+async function ownBrowser(browser: import('@playwright/test').Browser) {
+  const addr = `198.18.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+  return (await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': addr } })).newPage();
+}
+
+test.describe('account actions on the admin page', () => {
+  test('disable signs the account out and keeps it out; enable lets it back in', async ({ browser }) => {
+    const victimEmail = uniq('victim');
+    const victim = await ownBrowser(browser);
+    await signIn(victim, victimEmail, 'Victim');
+
+    const page = await ownBrowser(browser);
+    await signIn(page, ADMIN_EMAIL, 'Admin');
+    await page.goto('/admin');
+    const row = page.getByTestId('admin-user-row').filter({ hasText: victimEmail });
+    await expect(row.getByTestId('admin-status-active')).toBeVisible();
+    await row.getByTestId('admin-manage').click();
+    await page.getByTestId('admin-disable').click();
+    await expect(page.getByTestId('admin-action-message')).toContainText('signed out everywhere');
+    await page.getByTestId('admin-action-confirm').click();
+    await expect(page.getByTestId('admin-account-status')).toContainText('Disabled since');
+    await page.getByTestId('admin-account-close').click();
+    await expect(row.getByTestId('admin-status-disabled')).toBeVisible();
+
+    // The victim's next request is signed out, and signing in again fails.
+    expect((await victim.request.get('/api/projects')).status()).toBe(401);
+    await victim.reload();
+    await expect(victim.getByTestId('auth-email')).toBeVisible();
+    await victim.getByTestId('auth-email').fill(victimEmail);
+    await victim.getByTestId('auth-password').fill('password123');
+    await victim.getByTestId('auth-submit').click();
+    await expect(victim.getByTestId('auth-error')).toContainText('This account is disabled');
+
+    await row.getByTestId('admin-manage').click();
+    await page.getByTestId('admin-enable').click();
+    await page.getByTestId('admin-action-confirm').click();
+    await expect(page.getByTestId('admin-account-status')).toHaveText('Active');
+    await page.getByTestId('admin-account-close').click();
+    await expect(row.getByTestId('admin-status-active')).toBeVisible();
+
+    await victim.getByTestId('auth-submit').click();
+    await expect(victim.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await victim.context().close();
+    await page.context().close();
+  });
+
+  test('the admin cannot disable or delete their own account', async ({ browser }) => {
+    const page = await ownBrowser(browser);
+    await signIn(page, ADMIN_EMAIL, 'Admin');
+    await page.goto('/admin');
+    await page.getByTestId('admin-user-row').filter({ hasText: ADMIN_EMAIL }).getByTestId('admin-manage').click();
+    await expect(page.getByTestId('admin-disable')).toBeDisabled();
+    await expect(page.getByTestId('admin-delete')).toBeDisabled();
+    await expect(page.getByTestId('admin-account-dialog')).toContainText('You cannot disable or delete your own account.');
+    await page.context().close();
+  });
+
+  test('confirm an address by hand, and hand out a reset link', async ({ browser }) => {
+    const email = uniq('pending');
+    const other = (await ownBrowser(browser)).context();
+    expect((await other.request.post('/api/auth/register', { data: { email, password: 'password123', name: 'Pending' } })).ok()).toBeTruthy();
+
+    const page = await ownBrowser(browser);
+    await signIn(page, ADMIN_EMAIL, 'Admin');
+    await page.goto('/admin');
+    const row = page.getByTestId('admin-user-row').filter({ hasText: email });
+    await expect(row.getByTestId('admin-email-pending')).toBeVisible();
+    await row.getByTestId('admin-manage').click();
+    await page.getByTestId('admin-confirm-email').click();
+    await page.getByTestId('admin-action-confirm').click();
+    await expect(page.getByTestId('admin-confirm-email')).toHaveCount(0);
+    expect((await (await other.request.get('/api/auth/me')).json()).user.emailPending).toBeUndefined();
+
+    // This stack sends no email: the link comes back to the administrator.
+    await page.getByTestId('admin-reset-link').click();
+    await expect(page.getByTestId('admin-action-message')).toContainText('sends no email');
+    await page.getByTestId('admin-action-confirm').click();
+    const link = await page.getByTestId('admin-reset-link-value').inputValue();
+    const token = new URL(link).searchParams.get('reset_token');
+    expect(token).toBeTruthy();
+    expect((await other.request.post('/api/auth/reset', { data: { token, newPassword: 'reset-by-admin' } })).ok()).toBeTruthy();
+    expect((await other.request.post('/api/auth/login', { data: { email, password: 'reset-by-admin' } })).ok()).toBeTruthy();
+    await other.close();
+    await page.context().close();
+  });
+
+  test('delete an account and give its projects to another', async ({ browser }) => {
+    const ownerEmail = uniq('leaving');
+    const heirEmail = uniq('heir');
+    const owner = (await ownBrowser(browser)).context();
+    expect((await owner.request.post('/api/auth/register', { data: { email: ownerEmail, password: 'password123', name: 'Leaving' } })).ok()).toBeTruthy();
+    const name = `Handover ${Date.now()}`;
+    expect((await owner.request.post('/api/projects', { data: { name } })).ok()).toBeTruthy();
+    const heir = await ownBrowser(browser);
+    await signIn(heir, heirEmail, 'Heir');
+
+    const page = await ownBrowser(browser);
+    await signIn(page, ADMIN_EMAIL, 'Admin');
+    await page.goto('/admin');
+    await page.getByTestId('admin-user-row').filter({ hasText: ownerEmail }).getByTestId('admin-manage').click();
+    await page.getByTestId('admin-delete').click();
+    await expect(page.getByTestId('admin-delete-submit')).toBeDisabled();
+    await page.getByTestId('admin-delete-transfer').check();
+    await page.getByTestId('admin-delete-transfer-to').selectOption({ label: `Heir — ${heirEmail}` });
+    await page.getByTestId('admin-delete-confirm-input').fill('not the address');
+    await expect(page.getByTestId('admin-delete-submit')).toBeDisabled();
+    await page.getByTestId('admin-delete-confirm-input').fill(ownerEmail);
+    await page.getByTestId('admin-delete-submit').click();
+    await expect(page.getByTestId('admin-notice')).toHaveText(`Deleted ${ownerEmail}. ${heirEmail} now owns 1 project.`);
+    await expect(page.getByTestId('admin-user-row').filter({ hasText: ownerEmail })).toHaveCount(0);
+
+    expect((await owner.request.get('/api/projects')).status()).toBe(401);
+    await heir.goto('/');
+    await expect(heir.getByTestId('project-grid')).toContainText(name, { timeout: 15_000 });
+    await owner.close();
+    await heir.context().close();
+    await page.context().close();
+  });
+});

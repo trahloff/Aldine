@@ -617,6 +617,19 @@ export function closeProjectConnections(projectId: string): void {
 }
 
 /**
+ * Drop every live collab socket of one account on this node, the way
+ * closeProjectConnections does for a project: the client reconnects and the
+ * auth hook refuses an account that was disabled or deleted meanwhile.
+ */
+export function closeUserConnections(userId: string): void {
+  hocuspocus.documents.forEach((doc) => {
+    for (const c of doc.getConnections()) {
+      if (c.context?.userId === userId) c.close({ code: 4205, reason: 'Reset Connection' });
+    }
+  });
+}
+
+/**
  * Apply a suggestion replacement to the LIVE collab doc when one is open.
  * A disk read-modify-write would rebuild the doc from a stale snapshot and
  * silently revert every collaborator's unflushed edits — the CRDT edit below

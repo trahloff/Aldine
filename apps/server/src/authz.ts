@@ -59,9 +59,12 @@ export function isOwner(meta: ProjectMeta, user: PublicUser | null): boolean {
 
 /**
  * Instance administrator: may read server-wide metadata (accounts, counts,
- * usage). Deliberately NOT a superset of canAccess — an admin sees that a
- * project exists and who owns it, never its content. With auth off there is
- * nobody to distinguish, so the admin surface is open like everything else.
+ * usage) and disable, reset or delete accounts. Deliberately NOT a superset
+ * of canAccess — an admin sees that a project exists and who owns it, never
+ * its content, unless they take it over: by giving a deleted account's
+ * projects to themselves, or, on a server without email, with a reset link
+ * for someone else's password (admin.ts). With auth off there is nobody to
+ * distinguish, so the admin surface is open like everything else.
  */
 export function isAdmin(user: PublicUser | null): boolean {
   if (!AUTH_ENABLED) return true;
