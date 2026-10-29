@@ -80,6 +80,8 @@ test.describe('file previews', () => {
   test('images, PDFs and other files open as previews from the tree; a .tex opens the editor again', async ({ page, request }) => {
     const id = await createProject(request, 'File Previews');
     try {
+      // a document any TeX Live typesets, for the typeset PDF's page field
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n' } });
       await openProject(page, id);
       const texName = (await page.getByTestId('active-file').textContent())!.trim();
       await page.getByTestId('upload-input').setInputFiles([
@@ -151,7 +153,8 @@ test.describe('file previews', () => {
       await expect(preview).toHaveAttribute('data-kind', 'pdf');
       const pages = page.getByTestId('preview-pdf-page');
       await expect(pages).toHaveCount(3);
-      await expect(page.getByTestId('preview-pages')).toHaveText('Page 1 / 3');
+      const indicator = page.getByTestId('preview-page-indicator');
+      await expect(indicator).toHaveText('1 / 3');
       await expect.poll(() => pages.first().evaluate((c: HTMLCanvasElement) => c.width)).toBeGreaterThan(0);
       const fitWidth = (await pages.first().boundingBox())!.width;
       await page.getByTestId('preview-zoom-in').click();
@@ -161,9 +164,30 @@ test.describe('file previews', () => {
       await expect(zoomLabel).toHaveText('100%');
       await expect.poll(async () => Math.round((await pages.first().boundingBox())!.width)).toBe(Math.round(fitWidth));
       await stage.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-      await expect(page.getByTestId('preview-pages')).toHaveText('Page 3 / 3');
+      await expect(indicator).toHaveText('3 / 3');
       await expect.poll(() => pages.last().evaluate((c: HTMLCanvasElement) => c.width)).toBeGreaterThan(0);
+      // the page field of the typeset PDF: a page typed and Enter goes there
+      await indicator.click();
+      const input = page.getByTestId('preview-page-input');
+      await expect(input).toHaveValue('3');
+      await input.fill('2');
+      await input.press('Enter');
+      await expect(indicator).toHaveText('2 / 3');
+      await expect(indicator).toBeFocused();
+      const offset = await stage.evaluate((el) => el.querySelector<HTMLElement>('canvas[data-page="2"]')!.offsetTop - el.scrollTop);
+      expect(offset).toBeGreaterThanOrEqual(0);
+      expect(offset).toBeLessThan(20);
+      // 0 typed there is a digit, not the zoom key
+      await indicator.click();
+      await expect(input).toBeFocused();
+      await page.keyboard.type('10');
+      await page.keyboard.press('Enter');
+      await expect(indicator).toHaveText('3 / 3');
+      await expect(zoomLabel).toHaveText('100%');
+      // the typeset PDF beside it keeps a page field of its own
       await expect(page.getByTestId('pdf-pane')).toBeVisible();
+      await expect(page.getByTestId('pdf-page-indicator')).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByTestId('preview-page-nav')).toHaveCount(1);
       expect(await previewViolations(page)).toEqual([]);
 
       // ---- any other file: name, size and a download ----

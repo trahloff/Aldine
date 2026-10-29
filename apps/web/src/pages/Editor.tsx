@@ -1408,6 +1408,7 @@ export default function Editor() {
                 onStats={setStats}
                 spellcheck={spellcheck}
                 vim={vim}
+                onWrite={doCompile}
                 mode={paneMode}
                 identity={identity}
               />

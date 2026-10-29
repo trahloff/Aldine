@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, pageAt, PDF_ZOOM_STEPS, previewKind } from '../filePreview';
+import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind } from '../filePreview';
 
 describe('previewKind', () => {
   it('shows images and PDFs as previews, whatever the case of the extension', () => {
@@ -42,23 +42,5 @@ describe('nextZoom', () => {
     expect(nextZoom(3, 1, PDF_ZOOM_STEPS)).toBe(3);
     expect(nextZoom(0.5, -1, PDF_ZOOM_STEPS)).toBe(0.5);
     expect(nextZoom(0.01, -1, IMAGE_ZOOM_STEPS)).toBe(0.1);
-  });
-});
-
-describe('pageAt', () => {
-  const tops = [18, 900, 1782, 2664];
-  it('is the last page whose top passed the line', () => {
-    expect(pageAt(tops, 0)).toBe(1);
-    expect(pageAt(tops, 899)).toBe(1);
-    expect(pageAt(tops, 900)).toBe(2);
-    expect(pageAt(tops, 5000)).toBe(4);
-  });
-
-  it('counts the end of the scroll as the last page', () => {
-    expect(pageAt(tops, 1900, true)).toBe(4);
-  });
-
-  it('has no page without pages', () => {
-    expect(pageAt([], 10)).toBe(0);
   });
 });

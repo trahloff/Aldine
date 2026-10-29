@@ -10,8 +10,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ### Added
 - Vim keybindings for the editor, in Source and Visual: turn them on under
   Settings → This browser, or with "Turn Vim keybindings on" in the command
-  palette. u and Ctrl-R undo and redo your own edits, never a collaborator's.
-  The keybindings download only when first turned on (#188).
+  palette. u and Ctrl-R undo and redo your own edits, never a collaborator's,
+  and :w typesets like the Typeset button (:wq and :x too; they close
+  nothing). The keybindings download only when first turned on (#188).
 - The sidebar beside the editor is as wide as you drag it, from 180 to 520
   pixels, so long file names and the tab labels fit. The arrow keys move the
   divider too, a double-click restores the default width, and this browser
@@ -32,8 +33,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Clicking an image (PNG, JPEG, GIF, WebP or SVG) or a PDF in the file tree
   opens a preview where the code editor was. An image fits the pane, zooms
   with − and + (or the keys), shows transparency on a checkerboard and
-  gives its size in pixels; a PDF opens at the width of the pane, zooms and
-  shows the page you are on. Any other file that is not text shows its name
+  gives its size in pixels; a PDF opens at the width of the pane, zooms
+  and, like the typeset PDF, shows the page you are on ("3 / 12") and goes
+  to a page you type. Any other file that is not text shows its name
   and size with a Download button. The typeset PDF beside it is unchanged
   (#194).
 - The PDF preview shows the page on screen and the page count ("3 / 12")

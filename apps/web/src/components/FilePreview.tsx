@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import { api, type TreeEntry } from '../api';
-import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, pageAt, PDF_ZOOM_STEPS, previewKind } from '../util/filePreview';
+import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind } from '../util/filePreview';
+import { createPdfPagesStore, pagesOnScreen, scrollTopForPage } from '../util/pdfPages';
 import { IconFile } from './Icons';
+import PdfPageNav from './PdfPageNav';
 
 if (!pdfjs.GlobalWorkerOptions.workerSrc) {
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -75,10 +77,11 @@ function ZoomControls({ label, fitLabel, onZoom }: { label: string; fitLabel: st
   );
 }
 
-/** + and - zoom, 0 fits, wherever focus is inside the preview. */
+/** + and - zoom, 0 fits, wherever focus is inside the preview but in the
+ *  page field, where 0 is a digit of the page number. */
 function zoomKeys(onZoom: (dir: 1 | -1 | 0) => void) {
   return (e: KeyboardEvent<HTMLElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
     const dir = e.key === '+' || e.key === '=' ? 1 : e.key === '-' ? -1 : e.key === '0' ? 0 : null;
     if (dir === null) return;
     e.preventDefault();
@@ -163,7 +166,7 @@ function PdfPreview({ url, path, name }: { url: string; path: string; name: stri
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [zoom, setZoom] = useState(1); // a multiple of fit width
   const [width, setWidth] = useState(0);
-  const [page, setPage] = useState(1);
+  const [pages] = useState(createPdfPagesStore);
   /** The middle of the view as a fraction of the content height: a zoom or a resize keeps it in place. */
   const anchor = useRef(0);
   const generation = useRef(0);
@@ -216,10 +219,15 @@ function PdfPreview({ url, path, name }: { url: string; path: string; name: stri
     const el = scrollRef.current;
     if (!el) return;
     anchor.current = el.scrollHeight ? (el.scrollTop + el.clientHeight / 2) / el.scrollHeight : 0;
-    const scrollable = el.scrollHeight > el.clientHeight + 2;
-    const atEnd = scrollable && el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
-    const tops = pagesRef.current.map((c) => c?.offsetTop ?? 0);
-    setPage(Math.max(1, pageAt(tops, el.scrollTop + el.clientHeight / 3, atEnd)));
+    pages.set(pagesOnScreen(el, pagesRef.current.length, (i) => pagesRef.current[i]));
+  };
+
+  const goToPage = (page: number) => {
+    const el = scrollRef.current, canvases = pagesRef.current;
+    if (!el || !canvases.length) return;
+    const i = Math.min(Math.max(1, page), canvases.length) - 1;
+    const canvas = canvases[i];
+    if (canvas) el.scrollTo({ top: scrollTopForPage(canvas, canvases[i - 1]) });
   };
 
   useLayoutEffect(() => {
@@ -300,12 +308,8 @@ function PdfPreview({ url, path, name }: { url: string; path: string; name: stri
   return (
     <div className="file-preview" data-testid="file-preview" data-kind="pdf" onKeyDown={doc ? zoomKeys(onZoom) : undefined}>
       <PreviewHeader path={path}>
-        {doc && (
-          <span className="file-preview__meta" data-testid="preview-pages" aria-label={`Page ${page} of ${sizes.length}`}>
-            Page {page} / {sizes.length}
-          </span>
-        )}
         <span className="toolbar__spacer" />
+        {doc && <PdfPageNav store={pages} onGo={goToPage} testId="preview-page" />}
         {doc && <ZoomControls label={`${Math.round(zoom * 100)}%`} fitLabel="Fit width" onZoom={onZoom} />}
         <DownloadLink url={url} name={name} />
       </PreviewHeader>
