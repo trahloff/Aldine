@@ -110,6 +110,39 @@ test.describe('Vim keybindings', () => {
     }
   });
 
+  test('Escape with the completion list open closes it and leaves insert mode at once', async ({ page, request }) => {
+    const id = await createProject(request, 'Vim Completion');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Hello.\n' } });
+      await page.addInitScript(() => localStorage.setItem('aldine.vim', '1'));
+      await openProject(page, id);
+      const panel = page.locator('.cm-vim-panel');
+      const list = page.locator('.cm-tooltip-autocomplete');
+      await expect(panel).toContainText('--NORMAL--');
+      await line(page, 'Hello.').click();
+      await page.keyboard.press('A');
+      await page.keyboard.type(' \\sect');
+      await expect(list).toBeVisible();
+      await expect(panel).toContainText('--INSERT--');
+      // As in Vim: one Escape ends the completion and insert mode, and keeps
+      // what was typed rather than the highlighted suggestion.
+      await page.keyboard.press('Escape');
+      await expect(list).toHaveCount(0);
+      await expect(panel).toContainText('--NORMAL--');
+      await expectStored(request, id, 'Hello. \\sect\n');
+      // Normal mode for real: x deletes the t under the caret instead of typing an x.
+      await page.keyboard.press('x');
+      await expectStored(request, id, 'Hello. \\sec\n');
+      // A second Escape changes nothing.
+      await page.keyboard.press('Escape');
+      await expect(panel).toContainText('--NORMAL--');
+      await expect(list).toHaveCount(0);
+    } finally {
+      await page.evaluate(() => localStorage.removeItem('aldine.vim')).catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
   test('Vim motions in Visual editing never change a byte of source', async ({ page, request }) => {
     const DOC = [
       '\\section{Introduction}',

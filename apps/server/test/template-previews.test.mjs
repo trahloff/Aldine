@@ -47,7 +47,8 @@ process.env.TEMPLATES_DIR = path.join(tmp, 'templates');
 process.env.TEMPLATE_PREVIEWS_DIR = path.join(tmp, 'shipped-previews');
 process.env.VENUES_FILE = path.join(tmp, 'venues.json');
 process.env.TEMPLATE_PREVIEW_WAIT_MS = '3000';
-process.env.TEMPLATE_PREVIEW_RETRY_MS = '400';
+const RETRY_MS = 60_000;
+process.env.TEMPLATE_PREVIEW_RETRY_MS = String(RETRY_MS);
 delete process.env.DATABASE_URL;
 delete process.env.REDIS_URL;
 delete process.env.TEMPLATE_REPOS_FILE;
@@ -155,7 +156,6 @@ const rows = async () => (await app.inject({ method: 'GET', url: '/api/templates
 const row = async (id) => (await rows()).find((t) => t.id === id);
 const preview = (query, headers = { cookie }) => app.inject({ method: 'GET', url: `/api/templates/preview?${query}`, headers });
 const sync = async () => { await repos.syncTemplateRepo(repos.templateRepo('lab')); await previews.previewsSettled(); };
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const repoImages = () => { try { return fs.readdirSync(path.join(process.env.CACHE_DIR, 'template-previews', 'lab')).filter((f) => f.endsWith('.jpg')); } catch { return []; } };
 const thesisId = encodeURIComponent('repo:lab/thesis');
 
@@ -263,8 +263,11 @@ try {
   await sync();
   eq(compiles.length, 4, 'and is not retried before the backoff');
   stub.errors = false;
-  await sleep(500);
-  await sync();
+  // Past the backoff by the clock, not by waiting: under load a sync takes
+  // longer than any backoff short enough to wait out in a test.
+  const realNow = Date.now;
+  Date.now = () => realNow() + RETRY_MS;
+  try { await sync(); } finally { Date.now = realNow; }
   eq(compiles.length, 5, 'it is retried on a sync after the backoff');
   check((await row('repo:lab/poster')).preview, 'and its preview is stored then');
 

@@ -1,18 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState, EditorSelection } from '@codemirror/state';
-import { ensureSyntaxTree } from '@codemirror/language';
 import { latex } from 'codemirror-lang-latex';
 import { buildAtomic, buildMarks } from '../decorations';
 import { computeRevealRanges, revealField } from '../reveal';
+import { parsedState } from './parsedState';
 
 function state(doc: string, selection?: { anchor: number; head?: number }) {
-  const s = EditorState.create({
+  return parsedState({
     doc,
     selection: selection ? EditorSelection.single(selection.anchor, selection.head ?? selection.anchor) : undefined,
     extensions: [latex(), revealField],
   });
-  ensureSyntaxTree(s, s.doc.length, 5_000);
-  return s;
 }
 
 function atomicRanges(s: EditorState) {
