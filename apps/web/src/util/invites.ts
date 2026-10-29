@@ -5,7 +5,7 @@ import { safeSession, type SafeStore } from './safeStorage';
 export interface InviteReport {
   invited?: number;
   notEmailed?: string[];
-  reason?: 'accounts-off' | 'no-mail' | 'unconfirmed' | 'failed';
+  reason?: 'accounts-off' | 'no-mail' | 'unconfirmed' | 'limit' | 'failed';
   /** The project's open, declined and expired invitations (servers with invitations). */
   invitations?: OwnerInvitation[];
 }
@@ -65,6 +65,7 @@ const WHY: Record<NonNullable<InviteReport['reason']>, string> = {
   'accounts-off': 'Not emailed',
   'no-mail': 'This server doesn’t send email',
   unconfirmed: 'Not emailed while your own email address is unconfirmed',
+  limit: 'Not emailed because the hourly invitation email limit is reached',
   failed: 'The email could not be sent',
 };
 

@@ -17,6 +17,11 @@ describe('inviteSummary', () => {
     expect(s.sent).toBeNull();
     expect(s.manual).toBe('This server doesn’t send email, so copy the invite link for a@x.io and send it yourself. The invitation also waits on their Home once they sign in with that address.');
   });
+  it('splits a partial send over the hourly email limit', () => {
+    const s = inviteSummary(['a@x.io', 'b@x.io', 'c@x.io'], { invited: 1, notEmailed: ['b@x.io', 'c@x.io'], reason: 'limit' });
+    expect(s.sent).toBe('Invitation emailed to a@x.io.');
+    expect(s.manual).toBe('Not emailed because the hourly invitation email limit is reached, so copy the invite link for b@x.io, c@x.io and send it yourself. The invitation also waits on their Home once they sign in with those addresses.');
+  });
   it('splits a send where one mail failed', () => {
     const s = inviteSummary(['a@x.io', 'b@x.io'], { invited: 1, notEmailed: ['b@x.io'], reason: 'failed' });
     expect(s.sent).toBe('Invitation emailed to a@x.io.');

@@ -200,12 +200,16 @@ export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_B
 export const replaceLimiter = new RateLimiter('replace', n(process.env.RL_REPLACE_BURST, 30), 0.5);
 /** Duplicate: 10 burst, 1/30s — each copy writes the whole project to disk. */
 export const copyLimiter = new RateLimiter('copy', n(process.env.RL_COPY_BURST, 10), 1 / 30);
-/** Invitations per project owner: 20 burst, refill 20 / hour. Each address
- *  or ORCID iD invited, invited again or resent costs one; a mail goes out
- *  only with one of those, so mail needs no budget of its own. Over it the
- *  request is refused and nothing is saved. */
-export const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
+/** Invitation mails per project owner: 20 burst, refill 20 / hour, Resend
+ *  included. Over it, the invitation is still made; the address goes
+ *  unmailed and the owner is told to send the link. */
+const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
 export const inviteLimiter = new RateLimiter('invite', inviteBurst, Math.max(1, inviteBurst) / 3600);
+/** Invitations made per project owner: 200 burst, refill 200 / hour. Each
+ *  address or ORCID iD invited from the share dialog, and each Invite again,
+ *  costs one. Over it the request is refused and nothing of it is saved. */
+export const shareBurst = n(process.env.RL_SHARE_BURST, 200);
+export const shareLimiter = new RateLimiter('share', shareBurst, Math.max(1, shareBurst) / 3600);
 /** Account changes on the admin page: 30 burst, 1 / 2 s per administrator.
  *  Bounds the reset mails and project rewrites one session can set off. */
 export const adminLimiter = new RateLimiter('admin', n(process.env.RL_ADMIN_BURST, 30), 0.5);
