@@ -12,6 +12,8 @@
 //   - the literal image tags in the paste-in YAML of docs/TRUENAS.md
 //   - the JSON-LD "softwareVersion" on aldine.dev (site/index.html), which
 //     search engines show as the current release
+//   - the "Status:" line of site/llms.txt, which language models quote as the
+//     current release
 // With --tag vX.Y.Z (the release preflight) the tag must match too, and the
 // CHANGELOG must already carry a "## [X.Y.Z]" heading.
 import { readFileSync } from 'node:fs';
@@ -54,6 +56,8 @@ const casaVersion = /^ {2}version: "([^"]+)"$/m.exec(read('deploy/casaos/docker-
 found.push(['deploy/casaos/docker-compose.yml (x-casaos version)', casaVersion ? casaVersion[1] : '<no x-casaos version>']);
 const siteVersion = /"softwareVersion": "([^"]+)"/.exec(read('site/index.html'));
 found.push(['site/index.html (softwareVersion)', siteVersion ? siteVersion[1] : '<no softwareVersion>']);
+const llmsVersion = /^Status: (\S+) \(/m.exec(read('site/llms.txt'));
+found.push(['site/llms.txt (Status)', llmsVersion ? llmsVersion[1] : '<no Status: line>']);
 
 const expected = found[0][1];
 const problems = found.filter(([, v]) => v !== expected).map(([where, v]) => `${where}: ${v}`);
@@ -68,7 +72,7 @@ if (tag) {
 if (problems.length) {
   console.error(`check-release-pins: expected every pin to be ${expected} (from package.json), but:`);
   for (const p of problems) console.error(`  - ${p}`);
-  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default, the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, and softwareVersion (with dateModified) in site/index.html.');
+  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default, the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, softwareVersion (with dateModified) in site/index.html, and the Status: line in site/llms.txt.');
   process.exit(1);
 }
 console.log(`check-release-pins: all ${found.length} pins say ${expected}${tag ? `, tag ${tag} matches` : ''}`);

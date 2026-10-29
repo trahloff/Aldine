@@ -148,8 +148,9 @@ npm pkg set version=0.4.0 --workspaces --include-workspace-root
 #    and the ${ALDINE_VERSION:-…} default in docker-compose.yml and the README
 #    block, the image tags and x-casaos version in
 #    deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md,
-#    and the JSON-LD version and date on aldine.dev:
+#    and the JSON-LD version and date and the llms.txt status on aldine.dev:
 sed -i '' -E 's/("softwareVersion": )"[^"]+"/\1"0.4.0"/; s/("dateModified": )"[^"]+"/\1"'"$(date +%F)"'"/' site/index.html
+sed -i '' -E "s/^Status: [^ ]+ \\([A-Za-z]+ [0-9]{4}\\)/Status: 0.4.0 ($(LC_ALL=C date '+%B %Y'))/" site/llms.txt
 #    (GNU sed: -i without ''; scripts/check-release-pins.mjs tells you which
 #    pin you missed)
 # 3. commit, then tag
