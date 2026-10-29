@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, AuthUser, OAuthApiError, OAuthClientInfo, ProjectSummary } from '../api';
 import { LoginScreen, useAuth } from '../components/Auth';
-import { consentBody, forgetOAuthResume, readAuthorizeParams, rememberOAuthResume } from '../util/oauthParams';
-import { forgetInviteResume } from '../util/invites';
+import { consentBody, forgetOAuthResume, readAuthorizeParams } from '../util/oauthParams';
+import { consentSignInStarts } from '../util/signInStart';
 import Wordmark from '../components/Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
 
@@ -100,7 +100,7 @@ function SignInStep({ client, onAuthed, notice }: { client: OAuthClientInfo; onA
       // An SSO provider's callback lands on "/", and Home brings the person
       // back here with the same request: only for a sign-in started here,
       // and not long after.
-      onStart={() => { forgetInviteResume(); rememberOAuthResume(window.location.search); }}
+      onStart={() => consentSignInStarts(window.location.search)}
       heading={`Sign in to connect ${client.name}.`}
       registerHeading={`Create an account to connect ${client.name}.`}
       notice={notice}
