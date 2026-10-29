@@ -11,6 +11,8 @@ import FileTree, { stemEnd } from '../components/FileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import { setVisualFiles } from '../editor/visual/context';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
+import FilePreview from '../components/FilePreview';
+import { previewKind } from '../util/filePreview';
 import BranchMenu from '../components/BranchMenu';
 import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
@@ -221,6 +223,9 @@ export default function Editor() {
   // the remembered choice applies again at the next .tex
   const visualFile = !!activeFile && /\.tex$/i.test(activeFile);
   const paneMode: EditorMode = visualFile ? mode : 'source';
+  const activeEntry = activeFile ? files.find((f) => f.path === activeFile) : undefined;
+  // Images, PDFs and other binary files open as a preview, never a collab doc.
+  const previewing = !!activeFile && previewKind(activeFile, activeEntry) !== null;
   const [comments, setComments] = useState<Comment[]>([]);
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
   const codeRef = useRef<CodePaneHandle>(null);
@@ -1110,7 +1115,7 @@ export default function Editor() {
     ]) {
       cmds.push({ id: `snippet-${s.id}`, group: 'Insert', title: s.title, run: () => insertAtCursor(s.text) });
     }
-    for (const f of files.filter((f) => f.type === 'file' && !f.binary)) {
+    for (const f of files.filter((f) => f.type === 'file')) {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
@@ -1380,7 +1385,9 @@ export default function Editor() {
         )}
 
         <main className="pane pane--editor" aria-label="Editor" style={{ flex: 1 }}>
-          {activeFile ? (
+          {activeFile && previewing ? (
+            <FilePreview key={`${id}::${branch}::${activeFile}`} projectId={id} branch={branch} path={activeFile} entry={activeEntry} />
+          ) : activeFile ? (
             <>
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
@@ -1519,7 +1526,7 @@ export default function Editor() {
                 {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
               </>)}
             </span>
-            {activeFile && (() => {
+            {activeFile && !previewing && (() => {
               // document total with the open file's count kept live; a file
               // outside the include graph falls back to its own count
               const inDoc = !!(docWords && docWords.files[activeFile] != null);
@@ -1537,7 +1544,7 @@ export default function Editor() {
               );
             })()}
             <span className="toolbar__spacer" />
-            {activeFile && (
+            {activeFile && !previewing && (
               <button
                 className="btn btn--ghost btn--small"
                 onClick={() => jumpToPdf()}

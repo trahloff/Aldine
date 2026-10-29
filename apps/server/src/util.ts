@@ -204,6 +204,28 @@ export function isTextFile(p: string): boolean {
   return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|tsv|dat|log|json|yml|yaml|xml|svg|lua|py|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
 }
 
+const RAW_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
+
+/** The Content-Type a project file is served with: the previewable formats
+ *  as themselves, other text as plain text, everything else as a download.
+ *  Markup other than SVG (.html, .xhtml, .xml) is never served as markup. */
+export function rawFileType(rel: string): string {
+  return RAW_TYPES[path.extname(rel).toLowerCase()] ?? (isTextFile(rel) ? 'text/plain; charset=utf-8' : 'application/octet-stream');
+}
+
+/** For project files served from the app's origin. An SVG opened as a page
+ *  runs nothing (sandbox, no script source) and fetches nothing; inline
+ *  styles and data: images keep figures from plotting tools intact. */
+export const RAW_FILE_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox";
+
 /** Bytes that cannot be served as text: a NUL in the head, or a head that is
  *  not UTF-8. Checked on content, not the extension — a `.dat` of numbers is
  *  text, a `.tex` with a NUL is not. `more`: `data` is only the file's start. */

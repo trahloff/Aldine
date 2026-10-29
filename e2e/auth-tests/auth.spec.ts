@@ -190,6 +190,37 @@ test.describe('auth', () => {
     await dana.close();
   });
 
+  test('a file preview is served to people who can open the project and to nobody else', async ({ browser }) => {
+    const alice = await browser.newContext();
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const proj = await (await alice.request.post('/api/projects', { data: { name: 'Figures' } })).json();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
+    expect((await alice.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'fig.svg', content: svg } })).ok()).toBeTruthy();
+    const url = `/api/projects/${proj.id}/file?branch=main&path=fig.svg`;
+    const own = await alice.request.get(url);
+    expect(own.status()).toBe(200);
+    expect(own.headers()['content-type']).toBe('image/svg+xml');
+
+    const bob = await browser.newContext();
+    await bob.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
+    expect((await bob.request.get(url)).status()).toBe(403);
+    const anon = await browser.newContext();
+    expect((await anon.request.get(url)).status()).toBe(401);
+
+    // a link lets a signed-in visitor in, and the editor previews the file
+    expect((await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+    expect((await bob.request.get(url)).status()).toBe(200);
+    expect((await anon.request.get(url)).status()).toBe(401);
+    const bobPage = await bob.newPage();
+    await bobPage.goto(`/p/${proj.id}`);
+    await bobPage.getByTestId('file-fig.svg').click();
+    await expect(bobPage.getByTestId('preview-dimensions')).toHaveText('10 × 10 px');
+
+    await alice.close();
+    await bob.close();
+    await anon.close();
+  });
+
   test('a link visitor gets the document, not the project: no roster, no rename, no Zotero, no remote', async ({ browser }) => {
     const alice = await browser.newContext();
     await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });

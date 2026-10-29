@@ -38,7 +38,7 @@ import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, clientKey } from './ratelimit.js';
 import { newInvitees, invitationMail, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
-import { safeJoin, isTextFile, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
+import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
@@ -1183,11 +1183,6 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     flushBranchDocs(req.params.id, branch);
     try {
       const buf = store.readFile(req.params.id, branch, rel);
-      const ext = path.extname(rel).toLowerCase();
-      const mime = ext === '.pdf' ? 'application/pdf'
-        : ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'].includes(ext)
-          ? `image/${ext === '.jpg' ? 'jpeg' : ext.slice(1)}`
-          : 'text/plain; charset=utf-8';
       // A committed .svg (or sniffed .html) served on our own origin would run its
       // scripts on top-level navigation, acting as the viewer. nosniff pins the
       // type and the sandbox CSP neutralizes any script while <img> embeds still render.
@@ -1198,8 +1193,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         .header('x-aldine-content-version', String(contentVersion(req.params.id, branch)))
         .header('x-aldine-file-version', String(fileVersion(req.params.id, branch, rel)))
         .header('X-Content-Type-Options', 'nosniff')
-        .header('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox")
-        .type(mime).send(buf);
+        .header('Content-Security-Policy', RAW_FILE_CSP)
+        .type(rawFileType(rel)).send(buf);
     } catch {
       return reply.code(404).send({ error: 'file not found' });
     }
@@ -1423,7 +1418,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // fetch. No Content-Length: a concurrent recompile can change the file size
       // between stat and read, and a fixed length would then hang/truncate the
       // client — chunked transfer sends exactly what's read and ends cleanly.
-      return reply.type(type).header('cache-control', 'no-store').send(fs.createReadStream(abs));
+      // TeX writes whatever names the document asks for here (\openout), so
+      // the type is pinned against sniffing as on the project files' route.
+      return reply.type(type).header('cache-control', 'no-store').header('x-content-type-options', 'nosniff').send(fs.createReadStream(abs));
     } catch {
       return reply.code(404).send({ error: 'artifact not found' });
     }

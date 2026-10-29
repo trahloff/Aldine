@@ -246,7 +246,8 @@ export async function purgeExpiredTrash(days: number, beforeDelete?: (meta: Proj
   return purged;
 }
 
-export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; binary?: boolean }
+/** `mtime` (ms) is what a client keys a cached copy of the bytes on: a replaced file gets a new one. */
+export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; mtime?: number; binary?: boolean }
 
 export function listFiles(id: string, branch: string): TreeEntry[] {
   const base = branchDir(id, branch);
@@ -261,7 +262,8 @@ export function listFiles(id: string, branch: string): TreeEntry[] {
         out.push({ path: relPath, type: 'dir' });
         walk(relPath);
       } else {
-        out.push({ path: relPath, type: 'file', size: fs.statSync(path.join(base, relPath)).size, binary: !isTextFile(relPath) });
+        const st = fs.statSync(path.join(base, relPath));
+        out.push({ path: relPath, type: 'file', size: st.size, mtime: Math.floor(st.mtimeMs), binary: !isTextFile(relPath) });
       }
     }
   };
