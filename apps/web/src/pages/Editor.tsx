@@ -13,6 +13,8 @@ import { setVisualFiles } from '../editor/visual/context';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import FilePreview from '../components/FilePreview';
 import { previewKind } from '../util/filePreview';
+import PdfPageNav from '../components/PdfPageNav';
+import { createPdfPagesStore } from '../util/pdfPages';
 import BranchMenu from '../components/BranchMenu';
 import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
@@ -230,6 +232,7 @@ export default function Editor() {
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
   const codeRef = useRef<CodePaneHandle>(null);
   const pdfRef = useRef<PdfPaneHandle>(null);
+  const [pdfPages] = useState(createPdfPagesStore);
   const compilingRef = useRef(false);
   const pendingRef = useRef(false);
   /** A queued typeset owes a full run (someone asked for one while a draft ran). */
@@ -1554,6 +1557,7 @@ export default function Editor() {
                 Jump<span className="jump__more"> to PDF</span> <span className="kbd">{keys.jump}</span>
               </button>
             )}
+            <PdfPageNav store={pdfPages} onGo={(page) => pdfRef.current?.goToPage(page)} />
             <div className="zoom" data-testid="zoom-controls">
               <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" aria-label="Zoom out">−</button>
               <button className="zoom__label" onClick={() => { if (zoom === 1) pdfRef.current?.refit(); else setZoom(1); }} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
@@ -1585,6 +1589,7 @@ export default function Editor() {
             hasTex={hasTex}
             onFirstOpen={() => { if (autoRef.current && hasTexRef.current) doCompile(); }}
             onInverse={onPdfInverse}
+            pages={pdfPages}
           />
         </section>
       </div>
