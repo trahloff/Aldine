@@ -72,8 +72,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   also wait on the invitee's Home page, which is how they arrive on a server
   that sends no email: the dialog says so and offers Copy invite link. The
   owner sees each invitation as pending, declined or expired (after 14 days)
-  and can resend, withdraw or invite again. People already on a share list
-  keep their access as before.
+  and can resend, withdraw or invite again. `RL_INVITE_BURST` (default 20)
+  now caps the invitations an owner sends per hour, Resend and Invite again
+  included, where it capped only their mails: past it the share dialog says
+  so and saves nothing of the change. Signing in with ORCID or single
+  sign-on from an invitation's page brings you back to it, within 30
+  minutes; a sign-in started anywhere else goes to your projects as usual.
+  People already on a share list keep their access as before.
 
 ## [1.2.0] — 2026-10-28
 

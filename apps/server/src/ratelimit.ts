@@ -19,15 +19,16 @@ export async function initRateLimit(): Promise<void> {
   if (redis) console.log('[aldine] rate limiting: redis (shared across nodes)');
 }
 
-// Atomic refill+consume. KEYS[1]=bucket, ARGV=capacity, refillPerSec, now(ms).
+// Atomic refill+consume. KEYS[1]=bucket, ARGV=capacity, refillPerSec, now(ms), cost.
 const BUCKET_LUA = `
 local d = redis.call('HMGET', KEYS[1], 't', 'l')
 local tokens = tonumber(d[1]); local last = tonumber(d[2])
 local cap = tonumber(ARGV[1]); local rate = tonumber(ARGV[2]); local now = tonumber(ARGV[3])
+local cost = tonumber(ARGV[4]) or 1
 if tokens == nil then tokens = cap; last = now end
 tokens = math.min(cap, tokens + ((now - last) / 1000) * rate)
 local ok = 0
-if tokens >= 1 then tokens = tokens - 1; ok = 1 end
+if tokens >= cost then tokens = tokens - cost; ok = 1 end
 redis.call('HMSET', KEYS[1], 't', tokens, 'l', now)
 redis.call('PEXPIRE', KEYS[1], 3600000)
 return ok`;
@@ -38,24 +39,25 @@ export class RateLimiter {
     setInterval(() => this.sweep(), 300_000).unref?.();
   }
 
-  /** Returns true if allowed (and consumes a token), false if rate-limited. */
-  async take(key: string, now = Date.now()): Promise<boolean> {
+  /** Returns true if allowed (and consumes `cost` tokens), false if
+   *  rate-limited. All or nothing: a refused take consumes none. */
+  async take(key: string, now = Date.now(), cost = 1): Promise<boolean> {
     if (redis) {
       try {
-        const ok = await redis.eval(BUCKET_LUA, 1, `rl:${this.name}:${key}`, this.capacity, this.refillPerSec, now);
+        const ok = await redis.eval(BUCKET_LUA, 1, `rl:${this.name}:${key}`, this.capacity, this.refillPerSec, now, cost);
         return ok === 1;
       } catch { /* redis hiccup → fall back to this node's in-memory bucket */ }
     }
-    return this.takeLocal(key, now);
+    return this.takeLocal(key, now, cost);
   }
 
-  private takeLocal(key: string, now: number): boolean {
+  private takeLocal(key: string, now: number, cost: number): boolean {
     let b = this.buckets.get(key);
     if (!b) { b = { tokens: this.capacity, last: now }; this.buckets.set(key, b); }
     b.tokens = Math.min(this.capacity, b.tokens + ((now - b.last) / 1000) * this.refillPerSec);
     b.last = now;
-    if (b.tokens < 1) return false;
-    b.tokens -= 1;
+    if (b.tokens < cost) return false;
+    b.tokens -= cost;
     return true;
   }
 
@@ -198,9 +200,11 @@ export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_B
 export const replaceLimiter = new RateLimiter('replace', n(process.env.RL_REPLACE_BURST, 30), 0.5);
 /** Duplicate: 10 burst, 1/30s — each copy writes the whole project to disk. */
 export const copyLimiter = new RateLimiter('copy', n(process.env.RL_COPY_BURST, 10), 1 / 30);
-/** Invitation mails per project owner: 20 burst, refill 20 / hour. Over it,
- *  sharing still saves; the addresses go unmailed. */
-const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
+/** Invitations per project owner: 20 burst, refill 20 / hour. Each address
+ *  or ORCID iD invited, invited again or resent costs one; a mail goes out
+ *  only with one of those, so mail needs no budget of its own. Over it the
+ *  request is refused and nothing is saved. */
+export const inviteBurst = n(process.env.RL_INVITE_BURST, 20);
 export const inviteLimiter = new RateLimiter('invite', inviteBurst, Math.max(1, inviteBurst) / 3600);
 /** Account changes on the admin page: 30 burst, 1 / 2 s per administrator.
  *  Bounds the reset mails and project rewrites one session can set off. */

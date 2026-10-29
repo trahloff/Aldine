@@ -1,10 +1,11 @@
 /**
  * Sharing a project mails each newly invited address once: not ORCID iDs, not
  * addresses already on the list or invited, not on a re-save. Owner and project names
- * are the owner's own text, escaped in the HTML part. A per-owner budget
- * caps the mails; over it, and when a send fails or the server sends no
- * email, the invitation is still made and the response names who was not
- * mailed.
+ * are the owner's own text, escaped in the HTML part. When a send fails
+ * or the server sends no email, the invitation is still made and the
+ * response names who was not mailed. A per-owner budget caps the
+ * invitations themselves, Resend and Invite again included: over it the
+ * request is refused whole and nothing is saved or mailed.
  *
  * Real route table (Fastify inject), real SMTP backend against a local
  * listener; env is set before any src import.
@@ -114,17 +115,38 @@ eq(r.invited, 0, 'the failed mail is not counted');
 eq(r.notEmailed, ['bounce@example.org'], 'the failed address is reported');
 eq(r.reason, 'failed', 'with the reason');
 
-// ---- the per-owner budget (6 here: 2 used) ----
+// ---- the per-owner budget (6 here), on an owner of its own ----
+const busy = await signUp('busy@example.com', 'Busy');
+const bp = (await call('POST', '/api/projects', busy, { name: 'Popular' })).json();
+const people = (...cs) => cs.map((c) => `${c}@example.org`);
+const unchanged = async (what) => {
+  const meta = (await call('GET', `/api/projects/${bp.id}`, busy)).json();
+  eq(meta.share, { mode: 'private', collaborators: [] }, `${what}: the share list and mode are as they were`);
+  return (await call('GET', `/api/projects/${bp.id}/invitations`, busy)).json().map((i) => i.to).sort();
+};
+const OVER_SHARE = 'You can send at most 6 invitations an hour, so nothing was saved. Invite fewer people at once, or try again later.';
+const OVER_ONE = 'You can send at most 6 invitations an hour. Try again later.';
 base = smtp.mails.length;
-const many = ['a', 'b', 'c', 'd', 'e', 'f'].map((c) => `${c}@example.org`);
-r = await share(owner, project.id, ['grace@example.org', 'bounce@example.org', ...many]);
-eq(r.invited, 3, 'mails go out while the budget lasts (bounce used one)');
-eq(r.notEmailed, ['d@example.org', 'e@example.org', 'f@example.org'], 'the rest are reported');
-eq(r.reason, 'limit', 'as over the limit');
-eq(r.invitations.length, 9, 'and still invited');
-await smtp.waitFor(base + 3);
+let res = await call('POST', `/api/projects/${bp.id}/share`, busy, { mode: 'link', collaborators: people('a', 'b', 'c', 'd', 'e', 'f', 'g') });
+eq([res.statusCode, res.json().error], [429, OVER_SHARE], 'more people at once than the budget holds are refused, saying so');
+eq(await unchanged('refused whole'), [], 'and nobody is invited');
+r = await share(busy, bp.id, [...people('a', 'b', 'c', 'd'), '0000-0002-1825-0097']);
+eq([r.invited, r.invitations.length], [4, 5], 'within it every invitation is made, an ORCID iD costing one too');
+res = await call('POST', `/api/projects/${bp.id}/share`, busy, { mode: 'link', collaborators: [...people('a', 'b', 'c', 'd', 'e', 'f'), '0000-0002-1825-0097'] });
+eq([res.statusCode, res.json().error], [429, OVER_SHARE], 'two more with one left are refused');
+eq(await unchanged('refused with one left'), [...people('a', 'b', 'c', 'd'), '0000-0002-1825-0097'].sort(), 'and neither is invited');
+res = await call('POST', `/api/projects/${bp.id}/invitations`, busy, { to: 'e@example.org' });
+eq(res.statusCode, 200, 'Invite again (or one more person) takes the last one');
+const aInv = res.json().invitations.find((i) => i.to === 'a@example.org');
+res = await call('POST', `/api/projects/${bp.id}/invitations/${aInv.id}/resend`, busy);
+eq([res.statusCode, res.json().error], [429, OVER_ONE], 'a Resend past the budget is refused');
+eq((await call('GET', `/api/projects/${bp.id}/invitations`, busy)).json().find((i) => i.id === aInv.id).expiresAt, aInv.expiresAt, 'and does not reopen the invitation');
+res = await call('POST', `/api/projects/${bp.id}/invitations`, busy, { to: 'f@example.org' });
+eq([res.statusCode, res.json().error], [429, OVER_ONE], 'so is inviting one more person');
+eq((await unchanged('after the budget ran out')).includes('f@example.org'), false, 'who is not invited');
+await smtp.waitFor(base + 5);
 await settle();
-eq(smtp.mails.length, base + 3, 'no mail past the limit');
+eq(smtp.mails.length, base + 5, 'mail went only with the invitations the budget allowed');
 
 // ---- an unconfirmed owner mails nobody ----
 const fresh = await signUp('fresh@example.com', 'Fresh', false);
