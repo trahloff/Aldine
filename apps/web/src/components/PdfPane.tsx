@@ -1,6 +1,7 @@
-import { useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import { useShortcutLabel } from '../util/shortcuts';
+import { pageInView, type PdfPagesStore } from '../util/pdfPages';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -19,6 +20,8 @@ export interface PdfPaneHandle {
   /** Re-run the fit-to-width layout without changing zoom — the zoom label's
    *  reset is a no-op at 100%, which is exactly where a stale fit hurts. */
   refit(): void;
+  /** Scroll so the top of a page (1-based, clamped) is at the top of the pane. */
+  goToPage(page: number): void;
 }
 
 interface Props {
@@ -40,9 +43,11 @@ interface Props {
   onFirstOpen(): void;
   /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
   onInverse?(page: number, x: number, y: number): void;
+  /** Receives the page on screen and the page count; null while no PDF shows. */
+  pages?: PdfPagesStore;
 }
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
@@ -72,7 +77,50 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     refit() {
       setRefitTick((n) => n + 1);
     },
+    goToPage(page) {
+      const info = pageInfo.current;
+      const scroller = scrollRef.current;
+      if (!info.length || !scroller) return;
+      const i = Math.min(Math.max(1, Math.round(page)), info.length) - 1;
+      const el = info[i].el;
+      // Half the gap above the page stays in view, so the page reads as the
+      // start of the view rather than as cut off; page 1 goes to the very top.
+      const prev = info[i - 1]?.el;
+      const above = prev ? (el.offsetTop - (prev.offsetTop + prev.offsetHeight)) / 2 : el.offsetTop;
+      scroller.scrollTo({ top: Math.max(0, el.offsetTop - above) });
+    },
   }), []);
+
+  // The page on screen, for the page field in the preview's header. Measured
+  // at most once a frame while scrolling, and only around the viewport.
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  const measureFrame = useRef(0);
+  const measurePage = useCallback(() => {
+    if (measureFrame.current) return;
+    measureFrame.current = requestAnimationFrame(() => {
+      measureFrame.current = 0;
+      const store = pagesRef.current, scroller = scrollRef.current;
+      if (!store || !scroller) return;
+      const info = pageInfo.current;
+      if (!info.length) { store.set(null); return; }
+      const { scrollTop, clientHeight, scrollHeight } = scroller;
+      const atEnd = scrollTop > 0 && scrollTop + clientHeight >= scrollHeight - 2;
+      const current = pageInView(info.length, (i) => ({ top: info[i].el.offsetTop, height: info[i].el.offsetHeight }), scrollTop, clientHeight, atEnd);
+      store.set({ current, total: info.length });
+    });
+  }, []);
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    scroller.addEventListener('scroll', measurePage, { passive: true });
+    return () => {
+      scroller.removeEventListener('scroll', measurePage);
+      cancelAnimationFrame(measureFrame.current);
+      measureFrame.current = 0;
+      pagesRef.current?.set(null);
+    };
+  }, [measurePage]);
 
   // auto-typeset once when the pane first mounts with no pdf
   useEffect(() => {
@@ -93,6 +141,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const w = Number(el.dataset.w), h = Number(el.dataset.h);
       if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
     }
+    measurePage();
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
     return () => clearTimeout(t);
   }, [zoom]);
@@ -111,6 +160,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     let t: ReturnType<typeof setTimeout> | undefined;
     let last = el.clientWidth;
     const ro = new ResizeObserver(() => {
+      measurePage(); // a taller or shorter pane can put another page on screen
       clearTimeout(t);
       t = setTimeout(() => {
         if (el.clientWidth !== last) { last = el.clientWidth; setWidthTick((n) => n + 1); }
@@ -128,6 +178,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     innerRef.current?.replaceChildren();
     pageInfo.current = [];
     setRendered(false);
+    pagesRef.current?.set(null);
   }, [branch]);
 
   useEffect(() => {
@@ -228,6 +279,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         await chain;
         if (my !== renderTask.current) return;
         setRendered(true);
+        measurePage();
 
         observer = new IntersectionObserver((entries) => {
           for (const entry of entries) {
@@ -251,7 +303,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       observer?.disconnect();
       Promise.resolve(doc).then((d) => { try { d?.destroy(); } catch { /* already gone */ } });
     };
-  }, [pdfUrl, layoutZoom, widthTick, refitTick]);
+  }, [pdfUrl, layoutZoom, widthTick, refitTick, measurePage]);
 
   const handleDblClick = (e: React.MouseEvent) => {
     if (!onInverse) return;

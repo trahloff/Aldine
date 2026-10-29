@@ -69,7 +69,7 @@ test.describe('the editor never scrolls sideways', () => {
         const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
         expect(over).toBeLessThanOrEqual(0);
         // Typeset is the one button that must never be pushed out
-        for (const t of ['typeset-button', 'zoom-controls', 'pdf-status', 'auto-toggle']) {
+        for (const t of ['typeset-button', 'zoom-controls', 'pdf-page-nav', 'pdf-status', 'auto-toggle']) {
           const b = await page.getByTestId(t).boundingBox();
           if (b) expect(b.x + b.width).toBeLessThanOrEqual(s.w);
         }

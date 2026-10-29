@@ -36,6 +36,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   shows the page you are on. Any other file that is not text shows its name
   and size with a Download button. The typeset PDF beside it is unchanged
   (#194).
+- The PDF preview shows the page on screen and the page count ("3 / 12")
+  beside the zoom. Click it, type a page number and press Enter to go there;
+  Escape keeps your place (#198).
 
 ### Fixed
 - A crash or a volume that goes read-only no longer leaves the JSON datastore

@@ -809,11 +809,11 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 
 /* A narrow preview drops the shortcut hint, then "to PDF", then the switch's
    "Auto" (its tooltip and label stay) before anything wraps; the query is on the pane, not the window, since the pane is
-   resizable. */
+   resizable. The page number (about 52px with its gap) is counted in. */
 .pane--preview { container-type: inline-size; }
-@container (max-width: 520px) { .pane__header .kbd { display: none; } }
-@container (max-width: 470px) { .jump__more { display: none; } }
-@container (max-width: 440px) { .auto-toggle__label { display: none; } }
+@container (max-width: 572px) { .pane__header .kbd { display: none; } }
+@container (max-width: 522px) { .jump__more { display: none; } }
+@container (max-width: 492px) { .auto-toggle__label { display: none; } }
 
 .pane__header {
   display: flex;
@@ -1023,6 +1023,33 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 }
 @media (hover: hover) and (pointer: fine) { .zoom__label:hover { background: var(--bg-hover); } }
 .zoom__label:active { background: var(--bg-active); }
+
+/* page on screen / page count, a field while choosing a page to go to */
+.pdf-pages { display: flex; align-items: center; gap: 4px; color: var(--text-2); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pdf-pages__label {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  min-width: 44px;
+  height: 22px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+@media (hover: hover) and (pointer: fine) { .pdf-pages__label:hover { background: var(--bg-hover); } }
+.pdf-pages__label:active { background: var(--bg-active); }
+.pdf-pages__input {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  outline: none;
+}
 
 .auto-toggle {
   display: inline-flex;
