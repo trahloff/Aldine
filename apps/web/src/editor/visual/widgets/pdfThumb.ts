@@ -17,10 +17,7 @@ export function pdfThumbnail(url: string): Promise<string | null> {
 }
 
 async function render(url: string): Promise<string | null> {
-  const pdfjs = await import('pdfjs-dist');
-  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-  }
+  const { pdfjs } = await import('../../../util/pdfjs');
   const doc = await pdfjs.getDocument({ url }).promise;
   try {
     const page = await doc.getPage(1);
