@@ -28,7 +28,7 @@ import CommandPalette, { Command, usePaletteHotkey } from '../components/Command
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { useMinuteTick } from '../util/dates';
 import { OAUTH_RESUME_KEY } from '../util/oauthParams';
-import { INVITE_RESUME_KEY } from '../util/invites';
+import { takeInviteResume } from '../util/invites';
 import { importSummary } from '../util/engines';
 import { safeSession, safeStorage } from '../util/safeStorage';
 import { gridMove, isGridKey } from '../util/rovingGrid';
@@ -253,10 +253,9 @@ export default function Home() {
     if (!authEnabled || !user) return;
     const resume = safeSession.get(OAUTH_RESUME_KEY);
     safeSession.remove(OAUTH_RESUME_KEY);
-    const invite = safeSession.get(INVITE_RESUME_KEY);
-    safeSession.remove(INVITE_RESUME_KEY);
+    const invite = takeInviteResume();
     if (resume) navigate(`/oauth/authorize${resume}`, { replace: true });
-    else if (invite?.startsWith('/invite/')) navigate(invite, { replace: true });
+    else if (invite) navigate(invite, { replace: true });
   }, []);
   useEffect(() => {
     api.remotes().then((list) => {

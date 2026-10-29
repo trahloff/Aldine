@@ -3,6 +3,7 @@ import { withBase } from '../basePath';
 import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
 import Wordmark from './Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
+import { forgetInviteResume } from '../util/invites';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -117,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         providers={providers}
         passwordAuth={passwordAuth}
         onAuthed={(u) => setUser(u)}
+        onStart={() => forgetInviteResume()}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
       />
     );
@@ -147,7 +149,18 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  on arrival (why the person is back at the form) — `noticeTone` 'warn' for
  *  a setback (an ended session), the default green for a completed step.
  *  `initialEmail` fills the address in (the one an invitation is for). */
-export function LoginScreen({ providers, passwordAuth, onAuthed, heading, registerHeading, notice, noticeTone, initialEmail }: { providers: OAuthProviderInfo[]; passwordAuth: boolean; onAuthed(u: AuthUser): void; heading?: string; registerHeading?: string; notice?: string; noticeTone?: 'ok' | 'warn'; initialEmail?: string }) {
+export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail }: {
+  providers: OAuthProviderInfo[];
+  passwordAuth: boolean;
+  onAuthed(u: AuthUser): void;
+  /** A sign-in starts here: a provider link followed, or the form sent to sign in or register. */
+  onStart?(): void;
+  heading?: string;
+  registerHeading?: string;
+  notice?: string;
+  noticeTone?: 'ok' | 'warn';
+  initialEmail?: string;
+}) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState(initialEmail ?? '');
   const [name, setName] = useState('');
@@ -191,6 +204,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
     if (busy || waitLeft > 0) return;
     reset();
     setBusy(true);
+    if (mode === 'login' || mode === 'register') onStart?.();
     try {
       if (mode === 'login') onAuthed((await api.login(email.trim(), password)).user);
       else if (mode === 'register') onAuthed((await api.register(email.trim(), password, name.trim() || undefined)).user);
@@ -231,7 +245,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, heading, regist
         <h2 className="home__tag login__title">{title}</h2>
 
         {providers.map((p) => (
-          <a key={p.id} className="btn login__oauth" href={withBase(`/api/auth/oauth/${p.id}`)} data-testid={`oauth-${p.id}`}>
+          <a key={p.id} className="btn login__oauth" href={withBase(`/api/auth/oauth/${p.id}`)} onClick={onStart} data-testid={`oauth-${p.id}`}>
             {PROVIDER_ICON[p.id]}
             {p.label === 'Single sign-on' ? 'Continue with single sign-on' : `Continue with ${p.label}`}
           </a>

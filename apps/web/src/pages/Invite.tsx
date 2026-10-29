@@ -6,8 +6,7 @@ import EmailConfirmBanner from '../components/EmailConfirmBanner';
 import { useDialogs } from '../components/Dialogs';
 import Wordmark from '../components/Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
-import { safeSession } from '../util/safeStorage';
-import { INVITE_RESUME_KEY, isOrcidEntry, type InvitationView } from '../util/invites';
+import { forgetInviteResume, isOrcidEntry, rememberInviteResume, type InvitationView } from '../util/invites';
 
 type Loaded = { status: 'loading' } | { status: 'missing'; message: string } | { status: 'ok'; view: InvitationView };
 
@@ -31,7 +30,7 @@ export default function Invite() {
   }, [id]);
   useEffect(() => { load(); }, [load, user?.id, user?.emailPending]);
   // Signed in here: an SSO return must not bring anyone back to this page later.
-  useEffect(() => { if (user) safeSession.remove(INVITE_RESUME_KEY); }, [user]);
+  useEffect(() => { if (user) forgetInviteResume(); }, [user]);
 
   if (!authEnabled) return <Card title="Invitations need accounts" testId="invite-missing"><p className="consent__hint">This server runs without sign-in, so every project is open to everyone who can reach it.</p><BackLink /></Card>;
   if (loaded.status === 'loading') return <div className="login"><div className="spinner" /></div>;
@@ -107,14 +106,14 @@ function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parame
   const { providers, passwordAuth } = useAuth();
   const owner = view.ownerName || 'Someone';
   const orcid = isOrcidEntry(view.to);
-  // An SSO provider's callback lands on "/"; Home reads this key and brings
-  // the person back here.
-  useEffect(() => { safeSession.set(INVITE_RESUME_KEY, `/invite/${view.id}`); }, [view.id]);
   return (
     <LoginScreen
       providers={providers}
       passwordAuth={passwordAuth}
       onAuthed={onAuthed}
+      // An SSO provider's callback lands on "/", and Home brings the person
+      // back here: only for a sign-in started here, and not long after.
+      onStart={() => rememberInviteResume(view.id)}
       heading={orcid ? 'Sign in with ORCID to answer the invitation.' : 'Sign in to answer the invitation.'}
       registerHeading="Create an account to answer the invitation."
       notice={orcid

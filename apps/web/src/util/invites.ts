@@ -1,9 +1,11 @@
+import { safeSession, type SafeStore } from './safeStorage';
+
 /** What the share route reports about invitation mails (absent on servers
  *  from before invitations). */
 export interface InviteReport {
   invited?: number;
   notEmailed?: string[];
-  reason?: 'accounts-off' | 'no-mail' | 'unconfirmed' | 'limit' | 'failed';
+  reason?: 'accounts-off' | 'no-mail' | 'unconfirmed' | 'failed';
   /** The project's open, declined and expired invitations (servers with invitations). */
   invitations?: OwnerInvitation[];
 }
@@ -63,7 +65,6 @@ const WHY: Record<NonNullable<InviteReport['reason']>, string> = {
   'accounts-off': 'Not emailed',
   'no-mail': 'This server doesn’t send email',
   unconfirmed: 'Not emailed while your own email address is unconfirmed',
-  limit: 'Not emailed because the hourly invitation limit is reached',
   failed: 'The email could not be sent',
 };
 
@@ -102,3 +103,34 @@ export function invitationStatus(inv: Pick<OwnerInvitation, 'state' | 'emailedAt
 /** Where a signed-out invitee returns after signing in through an SSO
  *  provider, whose callback always lands on "/". */
 export const INVITE_RESUME_KEY = 'aldine.invite.resume';
+/** A sign-in started longer ago than this was abandoned, not finished. */
+export const INVITE_RESUME_MAX_AGE_MS = 30 * 60_000;
+/** An invitation page of this app: one path segment after /invite/, so
+ *  nothing stored here can lead off the app or elsewhere in it. */
+const INVITE_PATH_RE = /^\/invite\/[A-Za-z0-9_-]+$/;
+
+/** A sign-in starts on the invitation page `id`: bring it back there. */
+export function rememberInviteResume(id: string, store: SafeStore = safeSession, now = Date.now()): void {
+  const path = `/invite/${id}`;
+  if (INVITE_PATH_RE.test(path)) store.setJSON(INVITE_RESUME_KEY, { path, at: now });
+  else store.remove(INVITE_RESUME_KEY);
+}
+
+/** A sign-in starts anywhere else: whatever an invitation page left behind
+ *  belongs to a sign-in that was abandoned. */
+export function forgetInviteResume(store: SafeStore = safeSession): void {
+  store.remove(INVITE_RESUME_KEY);
+}
+
+/** The invitation page to return to after signing in, once: the entry is
+ *  gone after this call whatever it held, and it counts only for an
+ *  invitation page and for INVITE_RESUME_MAX_AGE_MS after it was written. */
+export function takeInviteResume(store: SafeStore = safeSession, now = Date.now()): string | null {
+  const entry = store.getJSON<unknown>(INVITE_RESUME_KEY, null);
+  store.remove(INVITE_RESUME_KEY);
+  if (!entry || typeof entry !== 'object') return null;
+  const { path, at } = entry as { path?: unknown; at?: unknown };
+  if (typeof path !== 'string' || !INVITE_PATH_RE.test(path) || typeof at !== 'number') return null;
+  const age = now - at;
+  return age >= 0 && age <= INVITE_RESUME_MAX_AGE_MS ? path : null;
+}

@@ -1075,6 +1075,41 @@ test.describe('ORCID sign-in', () => {
     await orcid.close();
   });
 
+  test('an invitation page brings back only a sign-in started there', async ({ browser }) => {
+    const alice = await browser.newContext();
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const proj = await (await alice.request.post('/api/projects', { data: { name: `Come back ${Date.now()}` } })).json();
+    const sent = await (await alice.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: ORCID_PRIVATE } })).json();
+    const link: string = sent.invitations.find((i: { to: string }) => i.to === ORCID_PRIVATE).link;
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    const pending = () => page.evaluate(() => sessionStorage.getItem('aldine.invite.resume'));
+
+    // A sign-in started on the invitation page and abandoned at the provider…
+    await page.goto(link);
+    await page.getByTestId('oauth-orcid').click();
+    await expect(page.getByTestId('persona-private')).toBeVisible();
+    // …does not take over a later one in the same tab, started from the projects page.
+    await signInWithOrcid(page, 'private');
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/$/);
+    expect(await pending()).toBeNull();
+
+    // One started there comes back to it.
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    await page.goto(link);
+    await page.getByTestId('oauth-orcid').click();
+    await page.getByTestId('persona-private').click();
+    await expect(page.getByTestId('invite-pending')).toContainText('Alice invited you to');
+    await expect(page).toHaveURL(link);
+    expect(await pending()).toBeNull();
+
+    await alice.close();
+    await ctx.close();
+  });
+
   test('a public ORCID email never signs into a password account with that address', async ({ page, request }) => {
     // The address the public persona exposes; registered as a password account
     // first (a re-run finds it already there, which is the same situation).

@@ -323,10 +323,14 @@ new password account starts with its address **not confirmed**:
   Resend, Withdraw and Invite again.
 - With a transport and `ALDINE_PUBLIC_URL`, the invitation is mailed once
   when it is made, with a link to accept it; Resend mails it again. The
-  owner's own address must be confirmed, and at most `RL_INVITE_BURST`
-  (default 20) invitation mails go out per owner per hour.
-- **Without email** (no transport, no `ALDINE_PUBLIC_URL`, an unconfirmed
-  owner, or over the limit) the invitation is made all the same. The share
+  owner's own address must be confirmed.
+- An owner can send at most `RL_INVITE_BURST` (default 20) invitations an
+  hour: each address or ORCID iD invited, invited again or resent counts
+  once, mailed or not. Past that, the share dialog says so and saves
+  nothing of the change, and Resend and Invite again are refused; the
+  budget comes back gradually over the hour.
+- **Without email** (no transport, no `ALDINE_PUBLIC_URL`, or an
+  unconfirmed owner) the invitation is made all the same. The share
   dialog says it was not mailed and offers Copy invite link, built from
   `ALDINE_PUBLIC_URL` or, without it, from the address the owner uses. The
   invitation also waits on the invitee's Home page once they sign in with the
@@ -551,7 +555,7 @@ override file.
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
-| `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
+| `RL_INVITE_BURST` | Invitations a project owner may send per hour (default 20): each address or ORCID iD invited from the share dialog, invited again or resent counts once, and its mail goes with it. Over it, the request is refused and nothing of it is saved |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
 | `ALDINE_SEARCH_MS` | Time a project search or replace may scan before it is stopped and refused (default 2000 ms). Each scan runs in a worker thread of its own; one per person and four per server at a time |

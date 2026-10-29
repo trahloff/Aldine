@@ -3,7 +3,7 @@ import type { Mail } from './email.js';
 import type { Invitation } from './db/types.js';
 
 /** Why some addresses were not mailed. One per response: the first cause hit. */
-export type NotEmailedReason = 'accounts-off' | 'no-mail' | 'unconfirmed' | 'limit' | 'failed';
+export type NotEmailedReason = 'accounts-off' | 'no-mail' | 'unconfirmed' | 'failed';
 
 export interface InviteReport {
   invited: number;
