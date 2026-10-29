@@ -6,14 +6,13 @@ import { latex } from 'codemirror-lang-latex';
 import { revealField } from '../reveal';
 import { atomicChunking, atomicField } from '../atomicField';
 import { backspaceHiddenLine, deleteHiddenLine, listItemEnter, paragraphEnter } from '../commands';
+import { parsedState } from './parsedState';
 
 /** Runs `cmd` with the caret where `|` stands; the result shows the caret as `|` too. */
 function run(cmd: StateCommand, marked: string) {
   const at = marked.indexOf('|');
   const doc = marked.slice(0, at) + marked.slice(at + 1);
-  let s = EditorState.create({ doc, selection: { anchor: at }, extensions: [latex(), indentUnit.of('  '), revealField, atomicField] });
-  ensureSyntaxTree(s, s.doc.length, 5_000);
-  s = s.update({}).state;
+  let s = parsedState({ doc, selection: { anchor: at }, extensions: [latex(), indentUnit.of('  '), revealField, atomicField] });
   const ran = cmd({ state: s, dispatch: (tr) => { s = tr.state; } });
   const head = s.selection.main.head;
   const text = s.doc.toString();

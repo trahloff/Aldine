@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { ensureSyntaxTree } from '@codemirror/language';
 import { latex } from 'codemirror-lang-latex';
 import { pasteText, rawAt, recordOwnCopies } from '../clipboard';
 import { definesUrl, preambleOf } from '../preamble';
+import { parsedState } from './parsedState';
 
 describe('plain-text paste in Visual (#149)', () => {
   it('escapes prose so it typesets', () => {
@@ -36,9 +36,7 @@ describe('paste where text is source as written', () => {
   const at = (marked: string) => {
     const pos = marked.indexOf('|');
     const doc = marked.slice(0, pos) + marked.slice(pos + 1);
-    const s = EditorState.create({ doc, extensions: [latex()] });
-    ensureSyntaxTree(s, doc.length, 5_000);
-    return rawAt(s, pos);
+    return rawAt(parsedState({ doc, extensions: [latex()] }), pos);
   };
 
   it('pastes as it is into math, verbatim, paths and reference keys', () => {

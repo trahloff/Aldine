@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Compartment, EditorState, EditorSelection } from '@codemirror/state';
-import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
+import { syntaxTree } from '@codemirror/language';
 import { closeBrackets, insertBracket } from '@codemirror/autocomplete';
 import { latex } from 'codemirror-lang-latex';
 import { buildAtomic, buildMarks, headingLineTail, mathParts } from '../decorations';
@@ -12,11 +12,10 @@ import { mathEdit, mathliveCanEdit, roundTrips } from '../mathPopover';
 import { commentRangesField, suggestField } from '../suggestions';
 import { setComments } from '../../commentsEffect';
 import { closeBeginBrace } from '../../beginEnv';
+import { parsedState } from './parsedState';
 
 function state(doc: string, anchor = doc.length) {
-  const s = EditorState.create({ doc, selection: { anchor }, extensions: [latex(), revealField] });
-  ensureSyntaxTree(s, s.doc.length, 5_000);
-  return s;
+  return parsedState({ doc, selection: { anchor }, extensions: [latex(), revealField] });
 }
 
 function atomics(s: EditorState) {
@@ -297,8 +296,7 @@ describe('lists and headings keep the caret inside (VIS-07)', () => {
 
 describe('Enter at a heading\'s closing brace', () => {
   function enter(doc: string, at: number, head = at) {
-    let s = EditorState.create({ doc, selection: { anchor: at, head }, extensions: [latex(), revealField] });
-    ensureSyntaxTree(s, s.doc.length, 5_000);
+    let s = parsedState({ doc, selection: { anchor: at, head }, extensions: [latex(), revealField] });
     const ran = breakAfterHeading({ state: s, dispatch: (tr) => { s = tr.state; } });
     return { ran, doc: s.doc.toString(), head: s.selection.main.head };
   }
@@ -385,8 +383,7 @@ describe('typing \\begin{name} (VIS-12)', () => {
 describe('selections', () => {
   it('a selection over a hidden list line reveals it', () => {
     const doc = '\\begin{itemize}\n\\item A\n\\end{itemize}\nx';
-    const s = EditorState.create({ doc, selection: EditorSelection.single(0, doc.length), extensions: [latex(), revealField] });
-    ensureSyntaxTree(s, doc.length, 5_000);
+    const s = parsedState({ doc, selection: EditorSelection.single(0, doc.length), extensions: [latex(), revealField] });
     expect(atomics(s).filter((a) => a.spec.block)).toEqual([]);
   });
 });
