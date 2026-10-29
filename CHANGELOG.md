@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Vim keybindings for the editor, in Source and Visual: turn them on under
+  Settings → This browser, or with "Turn Vim keybindings on" in the command
+  palette. u and Ctrl-R undo and redo your own edits, never a collaborator's.
+  The keybindings download only when first turned on (#188).
+
 ## [1.2.0] — 2026-10-28
 
 ### Added

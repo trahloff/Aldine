@@ -17,6 +17,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.8",
     "@hocuspocus/provider": "^2.15.2",
+    "@replit/codemirror-vim": "6.4.0",
     "codemirror-lang-latex": "^0.4.1",
     "katex": "^0.18.1",
     "mathlive": "^0.110.0",

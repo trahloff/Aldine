@@ -24,6 +24,7 @@ import type { PresenceUser } from './Presence';
 import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
 import { safeStorage } from '../util/safeStorage';
+import { loadVim, vimIfLoaded } from '../editor/vim';
 
 export type EditorMode = 'source' | 'visual';
 
@@ -140,6 +141,8 @@ interface Props {
   onDocChanged?(local: boolean): void;
   onStats?(stats: { words: number; selWords: number | null }): void;
   spellcheck?: boolean;
+  /** Vim keybindings (this browser's choice). */
+  vim?: boolean;
   mode?: EditorMode;
   /** Who this client is to collaborators (awareness): the account when
    *  signed in; without one the browser's anonymous "Writer N". */
@@ -205,7 +208,7 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, mode = 'source', identity }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, mode = 'source', identity }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats });
@@ -214,7 +217,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const toastRef = useRef(toast);
   toastRef.current = toast;
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
-  const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; deps: VisualDeps } | null>(null);
+  const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; deps: VisualDeps } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
@@ -342,6 +345,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const awareness = provider.awareness!;
     const modeComp = new Compartment();
     const spellComp = new Compartment();
+    const vimComp = new Compartment();
     const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text) => toastRef.current(text, 'error') };
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
@@ -368,6 +372,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       state: EditorState.create({
         doc: ytext.toString(),
         extensions: [
+          // first, though its own precedence already puts it ahead of every keymap
+          vimComp.of((vim && vimIfLoaded()) || []),
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightSpecialChars(),
@@ -437,7 +443,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       }),
     });
     viewRef.current = view;
-    reconfRef.current = { modeComp, spellComp, deps };
+    reconfRef.current = { modeComp, spellComp, vimComp, deps };
 
     syncedRef.current = false;
     const initialStats = () => {
@@ -482,6 +488,20 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     if (!view || !rc) return;
     view.dispatch({ effects: rc.spellComp.reconfigure(spellcheckAttrs(spellcheck, filePath)) });
   }, [spellcheck, filePath]);
+  // Vim is keybindings only: switching it changes how keys move and edit,
+  // never the document, so it swaps in place like the two above.
+  useEffect(() => {
+    const view = viewRef.current, rc = reconfRef.current;
+    if (!view || !rc) return;
+    if (!vim) { view.dispatch({ effects: rc.vimComp.reconfigure([]) }); return; }
+    let live = true;
+    loadVim().then((ext) => {
+      if (live && viewRef.current === view && rc.vimComp.get(view.state) !== ext) view.dispatch({ effects: rc.vimComp.reconfigure(ext) });
+    }, () => {
+      if (live) toastRef.current('Could not load the Vim keybindings — check the connection and turn them on again', 'error');
+    });
+    return () => { live = false; };
+  }, [vim, projectId, branch, filePath]);
 
   return <div ref={hostRef} className="code-pane" data-testid="code-pane" />;
 });

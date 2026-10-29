@@ -123,8 +123,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   the project; plus your group's own templates from any git repository
   (`TEMPLATE_REPOS`). Or import an existing project from an Overleaf ZIP.
 - **Editor niceties**: auto-typeset on idle, live whole-document word count,
-  spellcheck, PDF zoom + download, drag-drop figure upload, plain-English
-  error hints + raw log, command palette (⌘K / Ctrl+K).
+  spellcheck, Vim keybindings, PDF zoom + download, drag-drop figure upload,
+  plain-English error hints + raw log, command palette (⌘K / Ctrl+K).
 - **Search and replace across the project**: every text file on the branch,
   open or not, with match case, whole word and regular expressions; Replace
   all changes open documents live for everyone and lands as one commit.
