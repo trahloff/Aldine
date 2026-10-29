@@ -1044,29 +1044,40 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .zoom__label:active { background: var(--bg-active); }
 
 /* page on screen / page count, a field while choosing a page to go to */
-.pdf-pages { display: flex; align-items: center; gap: 4px; color: var(--text-2); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pdf-pages { display: flex; align-items: center; color: var(--text-2); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pdf-pages__label {
+  display: inline-flex;
+  align-items: center;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
-  min-width: 44px;
   height: 22px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 0 4px 0 0;
   border-radius: var(--radius-xs);
 }
-@media (hover: hover) and (pointer: fine) { .pdf-pages__label:hover { background: var(--bg-hover); } }
-.pdf-pages__label:active { background: var(--bg-active); }
+@media (hover: hover) and (pointer: fine) { .pdf-pages__label:not(.pdf-pages__label--editing):hover { background: var(--bg-hover); } }
+.pdf-pages__label:not(.pdf-pages__label--editing):active { background: var(--bg-active); }
+.pdf-pages__label--editing { cursor: default; }
+/* the label's number and the field are the same box: right-aligned digits at one width */
+.pdf-pages__num {
+  box-sizing: border-box;
+  display: inline-block;
+  width: calc(var(--page-digits, 2) * 1ch + 8px);
+  margin-right: 4px;
+  padding: 0 2px 0 6px;
+  text-align: right;
+}
 .pdf-pages__input {
-  height: 22px;
-  padding: 0 4px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-xs);
-  background: var(--bg-panel);
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--bg-active);
+  box-shadow: 0 0 0 1px var(--accent);
   color: var(--text);
   font: inherit;
-  text-align: right;
+  font-variant-numeric: tabular-nums;
   outline: none;
 }
 

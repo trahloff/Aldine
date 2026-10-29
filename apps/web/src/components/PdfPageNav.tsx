@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { parsePageInput, type PdfPagesStore } from '../util/pdfPages';
 
 /**
@@ -33,19 +33,21 @@ export default function PdfPageNav({ store, onGo, testId = 'pdf-page' }: { store
     setEditing(false);
   };
 
+  // The number and the field share one width, so opening the field moves nothing beside it.
+  const digits = { '--page-digits': String(total).length } as CSSProperties;
+
   return (
-    <div className="pdf-pages" data-testid={`${testId}-nav`}>
+    <div className="pdf-pages" style={digits} data-testid={`${testId}-nav`}>
       {editing ? (
-        <>
+        <span className="pdf-pages__label pdf-pages__label--editing">
           <input
-            className="pdf-pages__input"
+            className="pdf-pages__num pdf-pages__input"
             type="text"
             inputMode="numeric"
             autoComplete="off"
             enterKeyHint="go"
             autoFocus
             value={draft}
-            size={Math.max(2, String(total).length)}
             onChange={(e) => setDraft(e.target.value)}
             onFocus={(e) => e.currentTarget.select()}
             onKeyDown={(e) => {
@@ -56,8 +58,8 @@ export default function PdfPageNav({ store, onGo, testId = 'pdf-page' }: { store
             aria-label={`Go to page, 1 to ${total}`}
             data-testid={`${testId}-input`}
           />
-          <span className="pdf-pages__total" aria-hidden="true">/ {total}</span>
-        </>
+          <span aria-hidden="true"> / {total}</span>
+        </span>
       ) : (
         <button
           ref={buttonRef}
@@ -67,7 +69,7 @@ export default function PdfPageNav({ store, onGo, testId = 'pdf-page' }: { store
           aria-label={`Page ${current} of ${total}. Go to a page`}
           data-testid={`${testId}-indicator`}
         >
-          {current} / {total}
+          <span className="pdf-pages__num">{current}</span> / {total}
         </button>
       )}
     </div>
