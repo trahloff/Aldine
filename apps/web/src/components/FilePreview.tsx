@@ -1,17 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import { api, type TreeEntry } from '../api';
 import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind } from '../util/filePreview';
 import { createPdfPagesStore, pagesOnScreen, scrollTopForPage } from '../util/pdfPages';
+import { cMapUrl, pdfjs } from '../util/pdfjs';
 import { IconFile } from './Icons';
 import PdfPageNav from './PdfPageNav';
-
-if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-}
-// From the worker's URL, never the page's: see PdfPane.
-const cMapUrl = new URL('../cmaps/', pdfjs.GlobalWorkerOptions.workerSrc).toString();
 
 interface Props {
   projectId: string;

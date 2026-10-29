@@ -20,13 +20,13 @@ function gitRev(): string {
   }
 }
 
-// pdf.js loads CMaps at runtime to map CJK CID-font glyphs (PdfPane passes
+// pdf.js loads CMaps at runtime to map CJK CID-font glyphs (the viewers pass
 // cMapUrl/cMapPacked). Without these files reachable, every CJK character in
 // the preview renders as blank space while Latin and math still work. The
 // build ships them at <base>/cmaps/ — one level above the worker's assets/,
-// which is where PdfPane derives cMapUrl from. Dev needs nothing: Vite's
-// workerSrc is the package's own build/ dir under /@fs, so ../cmaps/ lands
-// on the shipped pdfjs-dist cmaps directly.
+// which is where src/util/pdfjs.ts derives cMapUrl from. Dev needs nothing:
+// Vite's workerSrc is the package's own build/ dir under /@fs, so ../cmaps/
+// lands on the shipped pdfjs-dist cmaps directly.
 function pdfjsCmaps(): Plugin {
   const cmapsDir = join(
     dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),

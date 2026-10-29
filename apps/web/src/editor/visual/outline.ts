@@ -6,9 +6,12 @@ export interface OutlineEntry { level: number; title: string; line: number }
 
 /** Headings of the document, in order, for the Contents dropdown. */
 export function documentOutline(state: EditorState): OutlineEntry[] {
-  ensureSyntaxTree(state, state.doc.length, 300);
+  // The tree ensureSyntaxTree returns: syntaxTree(state) is the one the
+  // state was made with, and the background parse stops 100,000 characters
+  // past the viewport, so on a long paper it lacks the last chapters.
+  const tree = ensureSyntaxTree(state, state.doc.length, 300) ?? syntaxTree(state);
   const out: OutlineEntry[] = [];
-  syntaxTree(state).iterate({
+  tree.iterate({
     enter(n) {
       const rank = SECTION_RANK[n.name];
       if (!rank) return;
