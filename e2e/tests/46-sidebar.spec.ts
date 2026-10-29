@@ -6,7 +6,8 @@ const put = (request: import('@playwright/test').APIRequestContext, id: string, 
 
 /**
  * The sidebar keeps three tabs of its own (Files, Cite, Review) and one More
- * menu for the rest, History included; it folds to a rail and remembers that.
+ * menu for the rest, History included; it folds to a rail and remembers that,
+ * and its divider sets its width (#193).
  */
 test.describe('sidebar', () => {
   test('Files, Cite and Review are tabs; History is in More', async ({ page, request }) => {
@@ -53,6 +54,101 @@ test.describe('sidebar', () => {
       await expect(page.getByTestId('sidebar')).toBeHidden();
     } finally {
       await page.evaluate(() => localStorage.removeItem('aldine.sidebarHidden')).catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('the sidebar divider follows a drag and the keys, is remembered, and resets on double-click', async ({ page, request }) => {
+    const id = await createProject(request, 'Sidebar Width');
+    try {
+      await openProject(page, id);
+      const sidebar = page.getByTestId('sidebar');
+      const editor = page.locator('.pane--editor');
+      const width = async () => Math.round((await sidebar.boundingBox())!.width);
+      const divider = page.getByTestId('sidebar-resizer');
+      expect(await width()).toBe(230);
+      await expect(divider).toHaveAttribute('role', 'separator');
+      await expect(divider).toHaveAttribute('aria-valuenow', '230');
+
+      // Drag 100px to the right, leaving the divider's strip on the way.
+      const box = (await divider.boundingBox())!;
+      const y = box.y + box.height / 2;
+      await page.mouse.move(box.x + box.width / 2, y);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 50, y + 40, { steps: 4 });
+      await expect(divider).toHaveClass(/resizer--drag/);
+      await page.mouse.move(box.x + box.width / 2 + 100, y + 80, { steps: 4 });
+      await page.mouse.up();
+      await expect(divider).not.toHaveClass(/resizer--drag/);
+      expect(await width()).toBe(330);
+      await expect(divider).toHaveAttribute('aria-valuenow', '330');
+
+      // Keyboard: the arrows move the divider, Shift by more.
+      await divider.focus();
+      await page.keyboard.press('ArrowRight');
+      expect(await width()).toBe(346);
+      await page.keyboard.press('Shift+ArrowLeft');
+      expect(await width()).toBe(266);
+
+      // Remembered by this browser.
+      await page.reload();
+      await expect(page.getByTestId('tab-files')).toBeVisible({ timeout: 15_000 });
+      expect(await width()).toBe(266);
+
+      // Held to its bounds: never under 180, and never so wide the editor goes.
+      const drag = async (dx: number) => {
+        const b = (await divider.boundingBox())!;
+        await page.mouse.move(b.x + b.width / 2, b.y + 100);
+        await page.mouse.down();
+        await page.mouse.move(b.x + b.width / 2 + dx, b.y + 100, { steps: 6 });
+        await page.mouse.up();
+      };
+      await drag(-400);
+      expect(await width()).toBe(180);
+      await drag(1200);
+      expect(await width()).toBeLessThanOrEqual(520);
+      expect((await editor.boundingBox())!.width).toBeGreaterThanOrEqual(270);
+
+      // Double-click: the default width, and nothing remembered.
+      await divider.dblclick();
+      expect(await width()).toBe(230);
+      expect(await page.evaluate(() => localStorage.getItem('aldine.sidebarWidth'))).toBeNull();
+
+      // Folded to the rail there is nothing to drag.
+      await page.getByTestId('sidebar-collapse').click();
+      await expect(divider).toHaveCount(0);
+      await page.getByTestId('sidebar-expand').click();
+      await expect(divider).toBeVisible();
+    } finally {
+      await page.evaluate(() => { localStorage.removeItem('aldine.sidebarWidth'); localStorage.removeItem('aldine.sidebarHidden'); }).catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('a wide sidebar gives way in a narrow window and on a phone', async ({ page, request }) => {
+    const id = await createProject(request, 'Sidebar Narrow');
+    try {
+      await page.addInitScript(() => localStorage.setItem('aldine.sidebarWidth', '520'));
+      await openProject(page, id);
+      expect(Math.round((await page.getByTestId('sidebar').boundingBox())!.width)).toBe(520);
+
+      // A narrower window keeps the editor's room; the chosen width comes back with the room.
+      await page.setViewportSize({ width: 1000, height: 800 });
+      await expect.poll(async () => Math.round((await page.getByTestId('sidebar').boundingBox())!.width)).toBeLessThan(520);
+      expect(Math.round((await page.locator('.pane--editor').boundingBox())!.width)).toBeGreaterThanOrEqual(260);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await expect.poll(async () => Math.round((await page.getByTestId('sidebar').boundingBox())!.width)).toBe(520);
+
+      // A phone shows the sidebar as an overlay of its own width, with no divider.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await expect(page.getByTestId('tab-files')).toBeVisible({ timeout: 15_000 });
+      expect(Math.round((await page.getByTestId('sidebar').boundingBox())!.width)).toBe(350);
+      await expect(page.getByTestId('sidebar-resizer')).toBeHidden();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    } finally {
+      await page.evaluate(() => localStorage.removeItem('aldine.sidebarWidth')).catch(() => {});
       await cleanup(request, id);
     }
   });
