@@ -1110,6 +1110,39 @@ test.describe('ORCID sign-in', () => {
     await ctx.close();
   });
 
+  test('the consent page brings back only a sign-in started there', async ({ page, request, baseURL }) => {
+    const reg = await request.post('/oauth/register', { data: { client_name: 'Come back e2e', redirect_uris: ['http://127.0.0.1:9/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'] } });
+    expect(reg.status()).toBe(201);
+    const { client_id } = await reg.json();
+    const consent = `/oauth/authorize?${new URLSearchParams({
+      response_type: 'code', client_id, redirect_uri: 'http://127.0.0.1:9/callback', state: 'come-back',
+      code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', code_challenge_method: 'S256', scope: 'projects', resource: `${baseURL}/mcp`,
+    })}`;
+    const pending = () => page.evaluate(() => sessionStorage.getItem('aldine.oauth.resume'));
+
+    // A sign-in started on the consent page and abandoned at the provider…
+    await page.goto(consent);
+    await page.getByTestId('oauth-orcid').click();
+    await expect(page.getByTestId('persona-private')).toBeVisible();
+    // …does not take over a later one in the same tab, started from the projects page.
+    await signInWithOrcid(page, 'private');
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/$/);
+    expect(await pending()).toBeNull();
+
+    // One started there comes back to it, with the same request.
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    await page.goto(consent);
+    await page.getByTestId('oauth-orcid').click();
+    await page.getByTestId('persona-private').click();
+    await expect(page.getByTestId('oauth-consent')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('oauth-client-name')).toContainText('Come back e2e');
+    expect(page.url()).toContain('state=come-back');
+    expect(await pending()).toBeNull();
+  });
+
   test('a public ORCID email never signs into a password account with that address', async ({ page, request }) => {
     // The address the public persona exposes; registered as a password account
     // first (a re-run finds it already there, which is the same situation).

@@ -58,6 +58,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The file API serves SVG files as `image/svg+xml` (it said `image/svg`,
   which browsers do not draw), and files that are neither text nor a
   previewable format as downloads instead of plain text.
+- A sign-in started on the page that connects an app (the OAuth consent
+  page) and abandoned at ORCID or single sign-on no longer sends a later
+  sign-in in the same tab back to that page. Only a sign-in started there
+  returns to it, within 30 minutes.
 
 ### Security
 - An SVG from a project opened as a page of its own can no longer load
