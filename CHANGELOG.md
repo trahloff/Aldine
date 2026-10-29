@@ -29,6 +29,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   another account on `ALDINE_ADMIN_EMAILS`. Every action is logged. The
   accounts table shows whether each address is confirmed and each account
   is disabled.
+- Clicking an image (PNG, JPEG, GIF, WebP or SVG) or a PDF in the file tree
+  opens a preview where the code editor was. An image fits the pane, zooms
+  with − and + (or the keys), shows transparency on a checkerboard and
+  gives its size in pixels; a PDF opens at the width of the pane, zooms and
+  shows the page you are on. Any other file that is not text shows its name
+  and size with a Download button. The typeset PDF beside it is unchanged
+  (#194).
 
 ### Fixed
 - A crash or a volume that goes read-only no longer leaves the JSON datastore
@@ -40,6 +47,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   restore from a backup, and `/api/health` answers 503 instead of ok. A
   damaged collaboration snapshot is ignored and the document loads from its
   file (#199).
+- The file API serves SVG files as `image/svg+xml` (it said `image/svg`,
+  which browsers do not draw), and files that are neither text nor a
+  previewable format as downloads instead of plain text.
+
+### Security
+- An SVG from a project opened as a page of its own can no longer load
+  anything from the server, and compile output, whose file names a document
+  can choose, is sent with `X-Content-Type-Options: nosniff`.
 
 ## [1.2.0] — 2026-10-28
 

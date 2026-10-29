@@ -106,7 +106,8 @@ export interface AdminDeleteResult { ok: true; transferred: number; trashed: num
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
-export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; binary?: boolean }
+/** `mtime` (ms) changes whenever the file's bytes are replaced. */
+export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; mtime?: number; binary?: boolean }
 export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string }
 export interface CompileResult {
   ok: boolean;
@@ -427,6 +428,11 @@ export const api = {
   // `409 { error: 'version_conflict', currentVersion, fileVersion }` only when
   // THIS file changed after that version, or when the version is newer than
   // the branch knows; writes to other files never conflict.
+  /** The file's bytes for an <img>, pdf.js or a download link. `v` (the
+   *  listing's mtime) makes a replaced file a new URL: an <img> otherwise
+   *  keeps showing the bytes it loaded first. */
+  fileUrl: (id: string, branch: string, path: string, v?: number) =>
+    withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}${v != null ? `&v=${v}` : ''}`),
   readFile: async (id: string, branch: string, path: string) => {
     const res = await fetch(withBase(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

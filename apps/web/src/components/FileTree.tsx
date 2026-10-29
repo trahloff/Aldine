@@ -27,7 +27,7 @@ interface Props {
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
 
-interface Node { name: string; path: string; type: 'file' | 'dir'; binary?: boolean; children: Node[] }
+interface Node { name: string; path: string; type: 'file' | 'dir'; children: Node[] }
 
 /** Build a nested tree from the flat path list (handles files in subdirectories). */
 function buildTree(files: TreeEntry[]): Node[] {
@@ -40,7 +40,7 @@ function buildTree(files: TreeEntry[]): Node[] {
       const p = parts.slice(0, i + 1).join('/');
       let child = cur.children.find((c) => c.name === seg);
       if (!child) {
-        child = { name: seg, path: p, type: isLeaf && f.type === 'file' ? 'file' : 'dir', binary: isLeaf ? f.binary : undefined, children: [] };
+        child = { name: seg, path: p, type: isLeaf && f.type === 'file' ? 'file' : 'dir', children: [] };
         cur.children.push(child);
       }
       cur = child;
@@ -176,7 +176,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         className={`tree__item ${active === node.path ? 'tree__item--active' : ''}`}
         style={{ paddingLeft: pad }}
         data-testid={`file-${node.path}`}
-        onClick={() => !node.binary && onOpen(node.path)}
+        onClick={() => onOpen(node.path)}
         {...fileMenu.bind(() => fileActions(node.path))}
         title={node.path}
       >
