@@ -1,4 +1,4 @@
-import { Prec, type Extension } from '@codemirror/state';
+import { Facet, Prec, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { yUndoManagerKeymap } from 'y-codemirror.next';
 
@@ -8,6 +8,9 @@ import { yUndoManagerKeymap } from 'y-codemirror.next';
  */
 let loading: Promise<Extension> | null = null;
 let loaded: Extension | null = null;
+
+/** What Vim's :w does in this editor: the page's Typeset. */
+export const vimWrite = Facet.define<() => void>();
 
 /** The extension once a load has finished, for a pane that mounts afterwards
  *  and should start in Vim without waiting a tick. */
@@ -21,7 +24,7 @@ const theme = EditorView.theme({
 });
 
 export function loadVim(): Promise<Extension> {
-  loading ??= import('@replit/codemirror-vim').then(({ vim, CodeMirror }) => {
+  loading ??= import('@replit/codemirror-vim').then(({ vim, Vim, CodeMirror }) => {
     // Undo is Yjs's here (y-codemirror's UndoManager, per user, never
     // undoing a collaborator's typing); the package's u and Ctrl-R would
     // call CodeMirror's history, which this editor does not have.
@@ -29,6 +32,12 @@ export function loadVim(): Promise<Extension> {
     const undo = command('Mod-z'), redo = command('Mod-Shift-z');
     CodeMirror.commands.undo = (cm) => { undo(cm.cm6); };
     CodeMirror.commands.redo = (cm) => { redo(cm.cm6); };
+    // :w and :write reach commands.save. :wq and :x would also close the
+    // window in Vim; there is none to close here, so they only typeset.
+    const write = (cm: { cm6: EditorView }) => { for (const run of cm.cm6.state.facet(vimWrite)) run(); };
+    CodeMirror.commands.save = write;
+    Vim.defineEx('wq', 'wq', write);
+    Vim.defineEx('xit', 'x', write);
     // Highest precedence: in normal mode every key is a command, and no other
     // keymap (the \begin{} brace closer, Visual's keys) may see it first.
     loaded = Prec.highest([theme, vim({ status: true })]);

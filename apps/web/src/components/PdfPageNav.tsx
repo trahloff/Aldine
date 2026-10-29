@@ -4,9 +4,11 @@ import { parsePageInput, type PdfPagesStore } from '../util/pdfPages';
 /**
  * "3 / 12" in the preview's header: the page on screen and the page count.
  * A click turns the number into a field; Enter goes to the page typed,
- * Escape (or leaving the field) keeps the view where it is.
+ * Escape (or leaving the field) keeps the view where it is. The typeset PDF
+ * and a PDF file's preview can be on screen together: each names its own
+ * test ids (`${testId}-nav`, `-indicator`, `-input`).
  */
-export default function PdfPageNav({ store, onGo }: { store: PdfPagesStore; onGo(page: number): void }) {
+export default function PdfPageNav({ store, onGo, testId = 'pdf-page' }: { store: PdfPagesStore; onGo(page: number): void; testId?: string }) {
   const pages = useSyncExternalStore(store.subscribe, store.get);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -32,7 +34,7 @@ export default function PdfPageNav({ store, onGo }: { store: PdfPagesStore; onGo
   };
 
   return (
-    <div className="pdf-pages" data-testid="pdf-page-nav">
+    <div className="pdf-pages" data-testid={`${testId}-nav`}>
       {editing ? (
         <>
           <input
@@ -52,7 +54,7 @@ export default function PdfPageNav({ store, onGo }: { store: PdfPagesStore; onGo
             }}
             onBlur={() => setEditing(false)}
             aria-label={`Go to page, 1 to ${total}`}
-            data-testid="pdf-page-input"
+            data-testid={`${testId}-input`}
           />
           <span className="pdf-pages__total" aria-hidden="true">/ {total}</span>
         </>
@@ -63,7 +65,7 @@ export default function PdfPageNav({ store, onGo }: { store: PdfPagesStore; onGo
           onClick={() => { setDraft(String(current)); setEditing(true); }}
           title="Go to a page"
           aria-label={`Page ${current} of ${total}. Go to a page`}
-          data-testid="pdf-page-indicator"
+          data-testid={`${testId}-indicator`}
         >
           {current} / {total}
         </button>

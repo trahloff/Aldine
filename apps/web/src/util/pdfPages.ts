@@ -32,6 +32,31 @@ export function pageInView(count: number, box: (i: number) => Box, viewTop: numb
   return best + 1;
 }
 
+/** A laid-out page: offsets against the scroller it stacks in. */
+type PageEl = Pick<HTMLElement, 'offsetTop' | 'offsetHeight'>;
+type Scroller = Pick<HTMLElement, 'scrollTop' | 'clientHeight' | 'scrollHeight'>;
+
+/** The page on screen and the page count of `count` stacked pages in a
+ *  scroller, null with none. */
+export function pagesOnScreen(scroller: Scroller, count: number, page: (i: number) => PageEl | null | undefined): PdfPages | null {
+  if (count <= 0) return null;
+  const { scrollTop, clientHeight, scrollHeight } = scroller;
+  const atEnd = scrollTop > 0 && scrollTop + clientHeight >= scrollHeight - 2;
+  const box = (i: number): Box => {
+    const el = page(i);
+    return { top: el?.offsetTop ?? 0, height: el?.offsetHeight ?? 0 };
+  };
+  return { current: pageInView(count, box, scrollTop, clientHeight, atEnd), total: count };
+}
+
+/** The scroll position that shows `page` from its top. Half the gap above it
+ *  stays in view, so the page reads as the start of the view rather than as
+ *  cut off; the first page (no `prev`) goes to the very top. */
+export function scrollTopForPage(page: PageEl, prev: PageEl | null | undefined): number {
+  const above = prev ? (page.offsetTop - (prev.offsetTop + prev.offsetHeight)) / 2 : page.offsetTop;
+  return Math.max(0, page.offsetTop - above);
+}
+
 /** What the page field holds as a page to go to, clamped to the document;
  *  null when it holds no number at all. */
 export function parsePageInput(text: string, total: number): number | null {

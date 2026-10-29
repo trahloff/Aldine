@@ -38,21 +38,3 @@ export function nextZoom(current: number, dir: 1 | -1, steps: number[]): number 
   for (let i = steps.length - 1; i >= 0; i--) if (steps[i] < current - eps) return steps[i];
   return steps[0];
 }
-
-/**
- * The 1-based page a reader is on: the last page whose top edge has passed
- * `line` (a point in the scroller's content, the upper third of the
- * viewport). `tops` ascend. Scrolled to the end counts as the last page — a
- * short final page never reaches the line.
- */
-export function pageAt(tops: number[], line: number, atEnd = false): number {
-  if (!tops.length) return 0;
-  if (atEnd) return tops.length;
-  let lo = 0;
-  let hi = tops.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (tops[mid] <= line) lo = mid; else hi = mid - 1;
-  }
-  return lo + 1;
-}

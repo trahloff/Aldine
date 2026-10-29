@@ -24,7 +24,7 @@ import type { PresenceUser } from './Presence';
 import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
 import { safeStorage } from '../util/safeStorage';
-import { loadVim, vimIfLoaded } from '../editor/vim';
+import { loadVim, vimIfLoaded, vimWrite } from '../editor/vim';
 
 export type EditorMode = 'source' | 'visual';
 
@@ -143,6 +143,8 @@ interface Props {
   spellcheck?: boolean;
   /** Vim keybindings (this browser's choice). */
   vim?: boolean;
+  /** Vim's :w, :wq and :x. */
+  onWrite?(): void;
   mode?: EditorMode;
   /** Who this client is to collaborators (awareness): the account when
    *  signed in; without one the browser's anonymous "Writer N". */
@@ -208,11 +210,11 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, mode = 'source', identity }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, mode = 'source', identity }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats });
-  cbRef.current = { onDocChanged, onStats };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite });
+  cbRef.current = { onDocChanged, onStats, onWrite };
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -374,6 +376,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         extensions: [
           // first, though its own precedence already puts it ahead of every keymap
           vimComp.of((vim && vimIfLoaded()) || []),
+          vimWrite.of(() => cbRef.current.onWrite?.()),
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightSpecialChars(),

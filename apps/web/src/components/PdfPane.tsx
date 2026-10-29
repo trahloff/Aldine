@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import { useShortcutLabel } from '../util/shortcuts';
-import { pageInView, type PdfPagesStore } from '../util/pdfPages';
+import { pagesOnScreen, scrollTopForPage, type PdfPagesStore } from '../util/pdfPages';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -82,12 +82,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const scroller = scrollRef.current;
       if (!info.length || !scroller) return;
       const i = Math.min(Math.max(1, Math.round(page)), info.length) - 1;
-      const el = info[i].el;
-      // Half the gap above the page stays in view, so the page reads as the
-      // start of the view rather than as cut off; page 1 goes to the very top.
-      const prev = info[i - 1]?.el;
-      const above = prev ? (el.offsetTop - (prev.offsetTop + prev.offsetHeight)) / 2 : el.offsetTop;
-      scroller.scrollTo({ top: Math.max(0, el.offsetTop - above) });
+      scroller.scrollTo({ top: scrollTopForPage(info[i].el, info[i - 1]?.el) });
     },
   }), []);
 
@@ -103,11 +98,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const store = pagesRef.current, scroller = scrollRef.current;
       if (!store || !scroller) return;
       const info = pageInfo.current;
-      if (!info.length) { store.set(null); return; }
-      const { scrollTop, clientHeight, scrollHeight } = scroller;
-      const atEnd = scrollTop > 0 && scrollTop + clientHeight >= scrollHeight - 2;
-      const current = pageInView(info.length, (i) => ({ top: info[i].el.offsetTop, height: info[i].el.offsetHeight }), scrollTop, clientHeight, atEnd);
-      store.set({ current, total: info.length });
+      store.set(pagesOnScreen(scroller, info.length, (i) => info[i].el));
     });
   }, []);
   useEffect(() => {

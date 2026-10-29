@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPdfPagesStore, pageInView, parsePageInput } from '../pdfPages';
+import { createPdfPagesStore, pageInView, pagesOnScreen, parsePageInput, scrollTopForPage } from '../pdfPages';
 
 // Ten 1000px pages, 14px apart, starting 18px down (the pane's padding).
 const pages = Array.from({ length: 10 }, (_, i) => ({ top: 18 + i * 1014, height: 1000 }));
@@ -32,6 +32,34 @@ describe('pageInView', () => {
   it('is 0 for an empty document and the last page past its end', () => {
     expect(pageInView(0, box, 0, 800)).toBe(0);
     expect(pageInView(10, box, 50_000, 800)).toBe(10);
+  });
+});
+
+describe('pagesOnScreen', () => {
+  const els = pages.map((p) => ({ offsetTop: p.top, offsetHeight: p.height }));
+  const scrollHeight = 18 + 10 * 1014 + 4;
+  it('names the page on screen and the page count', () => {
+    expect(pagesOnScreen({ scrollTop: 18 + 2 * 1014 + 700, clientHeight: 800, scrollHeight }, 10, (i) => els[i])).toEqual({ current: 4, total: 10 });
+  });
+  it('names the last page at the end of the scroll range', () => {
+    // two whole pages fit: the tie goes to the last one only at the end
+    expect(pagesOnScreen({ scrollTop: scrollHeight - 2100, clientHeight: 2100, scrollHeight }, 10, (i) => els[i])).toEqual({ current: 10, total: 10 });
+  });
+  it('is the first page of a document that fits without scrolling', () => {
+    expect(pagesOnScreen({ scrollTop: 0, clientHeight: 2100, scrollHeight: 2100 }, 2, (i) => els[i])).toEqual({ current: 1, total: 2 });
+  });
+  it('is null without pages', () => {
+    expect(pagesOnScreen({ scrollTop: 0, clientHeight: 800, scrollHeight: 800 }, 0, () => null)).toBeNull();
+  });
+});
+
+describe('scrollTopForPage', () => {
+  const el = (i: number) => ({ offsetTop: pages[i].top, offsetHeight: pages[i].height });
+  it('keeps half the gap above a page in view', () => {
+    expect(scrollTopForPage(el(3), el(2))).toBe(pages[3].top - 7);
+  });
+  it('goes to the very top for the first page', () => {
+    expect(scrollTopForPage(el(0), undefined)).toBe(0);
   });
 });
 

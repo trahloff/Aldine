@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures';
 import type { APIRequestContext, Page } from '@playwright/test';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, expectTypesetOk } from './helpers';
 
 const stored = async (request: APIRequestContext, id: string) =>
   (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
@@ -79,6 +79,33 @@ test.describe('Vim keybindings', () => {
     } finally {
       await peerContext.close();
       await page.evaluate(() => localStorage.removeItem('aldine.vim')).catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test(':w typesets like Typeset does; :wq and :x typeset and close nothing', async ({ page, request }) => {
+    const id = await createProject(request, 'Vim Write');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n' } });
+      // Auto-typeset off: no typeset runs unless a command asks for one.
+      await page.addInitScript(() => {
+        localStorage.setItem('aldine.vim', '1');
+        localStorage.setItem('aldine.autoTypeset', '0');
+      });
+      await openProject(page, id);
+      await expect(page.locator('.cm-vim-panel')).toContainText('--NORMAL--');
+      await page.locator('.cm-content').click();
+      for (const command of [':w', ':wq', ':x']) {
+        const compiled = page.waitForResponse((r) => r.url().includes('/compile') && r.request().method() === 'POST');
+        await page.keyboard.type(command);
+        await page.keyboard.press('Enter');
+        expect((await compiled).ok()).toBe(true);
+        await expectTypesetOk(page);
+      }
+      await expect(page.getByTestId('code-pane')).toBeVisible();
+      await expect(page.locator('.cm-vim-panel')).toContainText('--NORMAL--');
+    } finally {
+      await page.evaluate(() => { localStorage.removeItem('aldine.vim'); localStorage.removeItem('aldine.autoTypeset'); }).catch(() => {});
       await cleanup(request, id);
     }
   });
