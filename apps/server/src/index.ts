@@ -1,7 +1,7 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { buildApp, isCollabUpgrade } from './app.js';
-import { hocuspocus, shutdownFlushSet, closeProjectConnections, onAutoCommit } from './collab.js';
+import { hocuspocus, shutdownFlushSet, closeProjectConnections, closeUserConnections, onAutoCommit } from './collab.js';
 import { scheduleAutopush } from './autopush.js';
 import { checkProvisioning, deprovisionProject } from './provision.js';
 import { TRASH_DAYS } from './trash.js';
@@ -26,9 +26,10 @@ await initDb();
 await initRateLimit();
 // The PDF-link signer: a weak ALDINE_SIGNING_SECRET must not reach the first compile.
 ensureSigningSecret();
-// Cross-node revocation: when a peer node changes a project's access, close
-// our local collab sockets for it so clients re-authenticate. No-op without Redis.
-initProjectEvents({ onAccessChanged: closeProjectConnections });
+// Cross-node revocation: when a peer node changes a project's access, or
+// disables or deletes an account, close our local collab sockets for it so
+// clients re-authenticate. No-op without Redis.
+initProjectEvents({ onAccessChanged: closeProjectConnections, onAccountEnded: closeUserConnections });
 
 const app = await buildApp();
 

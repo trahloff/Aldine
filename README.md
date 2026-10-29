@@ -135,7 +135,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default
   (single-tenant); the collab socket is access-checked.
   `ALDINE_ADMIN_EMAILS=you@example.org` opens `/admin`: accounts, active
-  users (7 / 30 days, editing now), projects, compile time. Metadata only.
+  users (7 / 30 days, editing now), projects, compile time, and per account
+  disable, confirm address, password reset and delete. Never project content.
   No compose file passes this variable through; add it under `environment:`
   of the `app` service.
 - **Scales when you need it**: flat-file storage by default; set

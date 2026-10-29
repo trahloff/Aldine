@@ -199,6 +199,13 @@ async function requireMember(req: any, reply: any, action: string): Promise<stor
   return meta;
 }
 
+/** The Zotero link runs on the owner's own API key: an account an
+ *  administrator disabled lends it to nobody. */
+async function ownerDisabled(meta: store.ProjectMeta): Promise<boolean> {
+  return !!meta.ownerId && !!(await auth.getUser(meta.ownerId).catch(() => null))?.disabledAt;
+}
+const ZOTERO_OWNER_DISABLED = 'The owner\'s account is disabled, so the project\'s Zotero library cannot be used.';
+
 async function requireOwner(req: any, reply: any, action: string): Promise<store.ProjectMeta | null> {
   const meta = await store.readMeta(req.params.id);
   if (!isOwner(meta, reqUser(req))) {
@@ -382,12 +389,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (email.emailConfigured() && base && r.user.email) {
         // send in the background so the response time doesn't leak whether the
         // address exists, and a slow SMTP/SES call can't hang the request
-        email.sendMail({
-          to: r.user.email,
-          subject: 'Reset your Aldine password',
-          text: `Someone requested a password reset for your Aldine account.\n\nOpen this link to set a new password (expires in 1 hour):\n${link}\n\nOr enter this token manually: ${r.token}\n\nIf you didn't request this, you can ignore this email.`,
-          html: `<p>Someone requested a password reset for your Aldine account.</p><p><a href="${link}">Set a new password</a> (expires in 1 hour).</p><p>Or enter this token manually: <code>${r.token}</code></p><p>If you didn't request this, you can ignore this email.</p>`,
-        }).catch((err) => console.error('[aldine] reset email failed:', err?.message || err));
+        email.sendMail(email.resetMail(r.user.email, link, r.token))
+          .catch((err) => console.error('[aldine] reset email failed:', err?.message || err));
       } else {
         // no transport, or no ALDINE_PUBLIC_URL to build a trusted link → don't
         // email a host-derived (poisonable) link; log the token for manual relay
@@ -1773,7 +1776,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   app.post<{ Params: { id: string }; Body: { branch?: string; force?: boolean } }>(
     '/api/projects/:id/zotero/sync', async (req, reply) => {
-      if (!(await requireMember(req, reply, 'sync this Zotero library'))) return;
+      const meta = await requireMember(req, reply, 'sync this Zotero library');
+      if (!meta) return;
+      if (await ownerDisabled(meta)) return reply.code(403).send({ error: ZOTERO_OWNER_DISABLED });
       const branch = req.body?.branch || 'main';
       try {
         const sync = await zotero.syncProject(req.params.id, branch, !!req.body?.force);
@@ -1799,6 +1804,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const meta = await requireMember(req, reply, 'search this Zotero library');
     if (!meta) return;
     if (!meta.zotero) return reply.code(400).send({ error: 'no Zotero link' });
+    if (await ownerDisabled(meta)) return reply.code(403).send({ error: ZOTERO_OWNER_DISABLED });
     try {
       return await zotero.searchItems(meta.zotero.apiKey, meta.zotero.libraryPrefix, req.query.q || '');
     } catch (err: any) {

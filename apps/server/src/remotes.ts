@@ -60,11 +60,11 @@ function onLinkInstance(link: RemoteLink, conn: RemoteConnection): boolean {
  */
 export async function resolveConnection(link: RemoteLink, actingUserId: string | undefined, opts: { allowService: boolean }): Promise<RemoteConnection | null> {
   if (actingUserId) {
-    const own = await getConnection(actingUserId, link.provider);
+    const own = await activeConnection(actingUserId, link.provider);
     if (own && onLinkInstance(link, own)) return own;
   }
   if (link.connectedBy && link.connectedBy !== actingUserId) {
-    const linker = await getConnection(link.connectedBy, link.provider);
+    const linker = await activeConnection(link.connectedBy, link.provider);
     if (linker && onLinkInstance(link, linker)) return linker;
   }
   if (opts.allowService && link.provider === 'gitlab') {
@@ -72,6 +72,13 @@ export async function resolveConnection(link: RemoteLink, actingUserId: string |
     if (service && onLinkInstance(link, service)) return service;
   }
   return null;
+}
+
+/** The account's connection while the account may still act: an account an
+ *  administrator disabled lends its token to nobody, autopush included. */
+async function activeConnection(userId: string, provider: RemoteProviderId): Promise<RemoteConnection | null> {
+  if ((await db().getUser(userId))?.disabledAt) return null;
+  return getConnection(userId, provider);
 }
 
 export async function getConnection(userId: string, provider: RemoteProviderId): Promise<RemoteConnection | null> {

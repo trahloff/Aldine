@@ -70,7 +70,8 @@ two paths stay as they are within 1.x.
   (`DATA_DIR/meta`) is moved to `META_DIR` at start.
   An account without `emailPending` (the `email_pending` column in Postgres)
   counts as having a confirmed address, so accounts written before 1.0 need
-  no step.
+  no step. Likewise an account without `disabledAt` (`disabled_at`) is
+  enabled.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.

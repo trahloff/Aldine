@@ -1592,6 +1592,26 @@ a.btn { text-decoration: none; }
 .admin__muted { color: var(--text-3); }
 .admin__error { color: var(--error); }
 .admin__foot { color: var(--text-3); font-size: var(--text-s); margin-top: 14px; }
+.admin .home__inner { max-width: 1280px; }
+.admin__notice { padding: 8px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-s); background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
+.admin__status { font-size: var(--text-s); }
+.admin__status--off { padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--error); font-weight: 600; }
+.admin-account__facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 16px; font-size: var(--text-m); }
+.admin-account__facts dt { color: var(--text-2); }
+.admin-account__facts dd { margin: 0; overflow-wrap: anywhere; }
+.admin-account__actions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.admin-account__actions li { display: grid; grid-template-columns: 10.5rem 1fr; gap: 12px; align-items: center; }
+.admin-account__actions .btn { justify-content: center; }
+.admin-account__actions span { color: var(--text-2); font-size: var(--text-s); line-height: 1.4; }
+@media (max-width: 480px) { .admin-account__actions li { grid-template-columns: 1fr; gap: 4px; } }
+.admin-account__check, .admin-account__choice label { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 10px; font-size: var(--text-m); line-height: 1.4; }
+.admin-account__check input, .admin-account__choice input { margin-top: 3px; flex-shrink: 0; }
+.admin-account__choice { border: 0; margin: 0 0 6px; padding: 0; min-width: 0; }
+.admin-account__choice legend { padding: 0; margin: 0 0 8px; font-size: var(--text-m); }
+.modal .admin-account__heir { margin: -2px 0 10px 24px; width: calc(100% - 24px); }
+.admin-account__type { display: block; margin: 6px 0 4px; }
+.admin-account__link { display: flex; gap: 8px; }
+.admin-account__link .input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-s); }
 
 /* a lazily loaded page, for the moment before its code arrives */
 .page-loading { min-height: 100%; background: var(--bg-app); }

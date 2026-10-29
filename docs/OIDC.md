@@ -186,8 +186,11 @@ binds the new identity.
 - Group membership and the IdP account are checked at sign-in. Removing
   someone from the group, or disabling them at the IdP, takes effect at their
   next sign-in. Until then their Aldine session (up to 30 days) and any access
-  tokens they created keep working. To cut access at once, remove the
-  person's sessions and tokens:
+  tokens they created keep working. To cut access at once, disable the
+  account on `/admin` (Manage, then Disable account): that ends its sessions
+  and refuses its tokens, here and on every app node (deploy/README.md,
+  "Managing accounts"). Without an administrator account, remove the
+  person's sessions and tokens by hand:
   - **Postgres**:
     `DELETE FROM sessions WHERE user_id = '<id>'; UPDATE tokens SET revoked_at = now()::text WHERE user_id = '<id>' AND revoked_at IS NULL; UPDATE refresh_tokens SET revoked_at = now()::text WHERE user_id = '<id>' AND revoked_at IS NULL;`
   - **JSON files**: stop Aldine, remove that user's entries from

@@ -87,6 +87,31 @@ async function runSuite(store, label) {
   await store.setEmailPending(`missing-${t}`, pending); // no throw, no row
   check((await store.getUser(`missing-${t}`)) === null, `${label}: setEmailPending of a missing user creates nothing`);
 
+  // ---- disabledAt: an administrator disabled the account ----
+  const member = { id: `u8-${t}`, email: `m-${t}@example.com`, name: 'Mel', salt: 's', hash: 'h', createdAt: new Date().toISOString() };
+  await store.createUser(member);
+  check((await store.getUser(member.id)).disabledAt === undefined, `${label}: an account without the marker reads back enabled`);
+  const offAt = '2026-10-29T10:00:00.000Z';
+  await store.setDisabled(member.id, offAt);
+  eq((await store.getUser(member.id)).disabledAt, offAt, `${label}: setDisabled sets disabledAt`);
+  eq((await store.findUserByEmail(member.email)).disabledAt, offAt, `${label}: findUserByEmail carries disabledAt`);
+  eq((await store.listUsers()).find((u) => u.id === member.id).disabledAt, offAt, `${label}: listUsers carries disabledAt`);
+  // A copy read before the account was disabled, written back by a sign-in.
+  await store.updateUser({ ...member, name: 'Mel B.', hash: 'h2' });
+  const kept = await store.getUser(member.id);
+  eq(kept.disabledAt, offAt, `${label}: updateUser of a stale copy keeps the account disabled`);
+  eq([kept.name, kept.hash], ['Mel B.', 'h2'], `${label}: updateUser still writes the other fields`);
+  await store.setDisabled(member.id, null);
+  check((await store.getUser(member.id)).disabledAt === undefined, `${label}: setDisabled(null) enables`);
+  eq((await store.getUser(member.id)).hash, 'h2', `${label}: setDisabled leaves the rest of the row alone`);
+  await store.updateUser({ ...kept, disabledAt: offAt });
+  check((await store.getUser(member.id)).disabledAt === undefined, `${label}: updateUser cannot disable an account either`);
+  await store.setDisabled(`missing-${t}`, offAt); // no throw, no row
+  check((await store.getUser(`missing-${t}`)) === null, `${label}: setDisabled of a missing user creates nothing`);
+  const createdOff = { id: `u9-${t}`, email: `o-${t}@example.com`, name: 'Odo', salt: 's', hash: 'h', createdAt: new Date().toISOString(), disabledAt: offAt };
+  await store.createUser(createdOff);
+  eq(await store.getUser(createdOff.id), createdOff, `${label}: disabledAt roundtrips through createUser/getUser`);
+
   // ---- accounts keyed by provider subject, with no email (ORCID) ----
   const orcidUser = { id: `u3-${t}`, email: null, name: 'Josiah', salt: 's', hash: '', createdAt: new Date().toISOString(), provider: 'orcid', subject: `orcid:${t}` };
   await store.createUser(orcidUser);
@@ -451,6 +476,43 @@ async function runSuite(store, label) {
   eq((await store.getConnection(user.id, 'github')).token, 'secret', `${label}: getConnection result is a copy`);
   await store.deleteConnection(user.id, 'github');
   check((await store.getConnection(user.id, 'github')) === null, `${label}: deleteConnection`);
+
+  // ---- deleteUser: the account and every row that exists only for it ----
+  const gone = { id: `u10-${t}`, email: `g-${t}@example.com`, name: 'Gus', salt: 's', hash: 'h', createdAt: new Date().toISOString() };
+  await store.createUser(gone);
+  const gp = `pg${t}`;
+  const later = Date.now() + 60_000;
+  await store.createSession(`gs-${t}`, gone.id, later);
+  await store.createSession(`ks-${t}`, user.id, later);
+  await store.createReset(`gr-${t}`, gone.id, later);
+  const gTok = { ...tok, id: `gpat-${t}`, hash: `digest-gpat-${t}`, userId: gone.id };
+  await store.createToken(gTok);
+  const gRf = rf(30, { userId: gone.id, family: `gfam-${t}`, tokenId: gTok.id });
+  await store.createRefresh(gRf);
+  await store.setConnection(gone.id, 'github', { token: 'secret' });
+  await store.setProjectOpen({ userId: gone.id, projectId: gp, at: '2026-10-01T00:00:00.000Z', branch: 'main', hidden: false });
+  await store.setProjectOpen({ userId: user.id, projectId: gp, at: '2026-10-01T00:00:00.000Z', branch: 'main', hidden: false });
+  await store.setProjectVisit({ userId: gone.id, projectId: gp, branch: 'main', head: 'abc', at: '2026-10-01T00:00:00.000Z', promptedHead: null });
+  await store.addUsageSeconds(gone.id, month, 7);
+  await store.deleteUser(gone.id);
+  check((await store.getUser(gone.id)) === null, `${label}: deleteUser removes the account`);
+  check((await store.findUserByEmail(gone.email)) === null, `${label}: deleteUser frees the address`);
+  check((await store.getSession(`gs-${t}`)) === null, `${label}: deleteUser removes its sessions`);
+  check((await store.getSession(`ks-${t}`)) !== null, `${label}: deleteUser leaves another account's session`);
+  check((await store.getReset(`gr-${t}`)) === null, `${label}: deleteUser removes its reset links`);
+  check((await store.getToken(gTok.id)) === null, `${label}: deleteUser removes its access tokens`);
+  check((await store.getRefreshByHash(gRf.hash)) === null, `${label}: deleteUser removes its refresh tokens`);
+  check((await store.getConnection(gone.id, 'github')) === null, `${label}: deleteUser removes its connections`);
+  eq(await store.listProjectOpens(gone.id), [], `${label}: deleteUser removes its project list rows`);
+  check((await store.getProjectOpen(user.id, gp)) !== null, `${label}: deleteUser leaves another account's project list row`);
+  check((await store.getProjectVisit(gone.id, gp, 'main')) === null, `${label}: deleteUser removes its review marks`);
+  eq(await store.getUsageSeconds(gone.id, month), 7, `${label}: deleteUser keeps the usage seconds (instance totals)`);
+  await store.updateUser(gone); // a password reset that finished after the delete
+  check((await store.getUser(gone.id)) === null, `${label}: updateUser does not bring a deleted account back`);
+  await store.deleteUser(`missing-${t}`); // no throw
+  await store.createUser({ ...gone, id: `u11-${t}` });
+  eq((await store.findUserByEmail(gone.email)).id, `u11-${t}`, `${label}: a new account may take a deleted account's address`);
+  await store.deleteProjectOpens(gp);
 
   await store.close();
   console.log(`✓ ${label}: conformance suite passed`);

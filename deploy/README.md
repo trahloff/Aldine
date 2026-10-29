@@ -331,6 +331,61 @@ password: rotating the secret, or changing or resetting the password, makes
 every browser sign in once more before it is exempt again (the browser that
 changes the password keeps its exemption).
 
+## Managing accounts
+
+`/admin` lists every account: whether its address is confirmed, whether it
+is disabled, how it signs in and when it was last seen. **Manage** on a row
+offers the actions below. Each asks first, and each writes one line to the
+server log naming the administrator, the action and the account
+(`[aldine] admin <you> [<id>] disabled <them> [<id>]`).
+
+- **Disable account** signs the person out everywhere at once and refuses
+  every way back in: password, ORCID, OpenID Connect and the other single
+  sign-on providers, access tokens, the Claude connector (OAuth refresh and
+  MCP) and the collab socket, whose open connections close on every app
+  node. Their projects stay, and collaborators keep access; the GitHub,
+  GitLab or Gitea connection they linked a project with stops serving it
+  (autopush falls back to the GitLab service account, if any), and the
+  Zotero library of a project they own stops syncing. **Enable
+  account** lets them sign in again, and their access tokens and connector
+  work again, unless you ticked "Also revoke …" when disabling, which ends
+  those for good (do that when the account may be compromised, and send a
+  reset link before enabling it).
+- **Confirm address** marks a pending address confirmed, in place of the
+  link the server logs when it sends no email. Shares to that address apply
+  at once. An address on `ALDINE_ADMIN_EMAILS` cannot be confirmed here:
+  that would make whoever signed up with it an administrator.
+- **Email reset link** sends the person the mail the "Forgot password" form
+  sends. Without an email transport (or `ALDINE_PUBLIC_URL`) the button reads
+  **Create reset link** and shows you the one-time link to pass on, valid for
+  an hour; it is shown only to you, only then, and never logged. Only
+  password accounts have one, and the link is never shown for another
+  account whose address is on `ALDINE_ADMIN_EMAILS`, confirmed or not
+  (following it would confirm the address and make an administrator).
+- **Delete account** asks you to type the address (an account without one:
+  its name) and to choose what happens to the projects it owns, the ones in
+  its trash included. Give them to another enabled account, yours included,
+  which becomes their owner (their Zotero links are removed, since they hold
+  the deleted person's key). Or move them to the trash, where nobody can
+  restore them and the daily sweep purges them after `ALDINE_TRASH_DAYS`;
+  as when an owner trashes a project, a GitLab repository Aldine created for
+  it is deleted with it. The account comes off every share list that names
+  its ORCID iD or its confirmed address (an invite to an address it never
+  confirmed stays, for whoever owns the address), and its sessions, access
+  tokens, connector grants, linked GitHub/GitLab/Gitea connections and
+  project-list state are removed. Its compile seconds stay in the instance
+  totals, and comments and commits keep the name they were written under.
+  The address is free for a new sign-up afterwards, which inherits nothing.
+
+You cannot disable or delete your own account, nor another account on
+`ALDINE_ADMIN_EMAILS` (remove the address from the list and restart first).
+An account whose address is on the list but not confirmed is not an
+administrator, so you can disable or delete it: it may be someone who signed
+up with that address before its owner did. The actions need `AUTH_ENABLED=1`
+and a signed-in browser session (access tokens are refused), accept only a
+JSON body, so a form on another site cannot trigger them, and are limited
+to `RL_ADMIN_BURST` (default 30) in a row per administrator.
+
 ## Scaling notes
 
 - **Scale vertically first** — a bigger box absorbs a lot of users before you
@@ -442,7 +497,7 @@ override file.
 | `ALDINE_APP_BIND` | Host interface for the app port (set `127.0.0.1` behind a proxy) |
 | `ALDINE_PORT` | Host port for the app in `docker-compose.full.yml` (default `8080`). The bundled Caddy reaches the container directly and ignores it; if you run the nginx sample, change its two `proxy_pass` upstreams to match, and use the same port in a local `ALDINE_PUBLIC_URL` |
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
-| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time). Metadata only; needs `AUTH_ENABLED=1` to mean anything. A password account counts only once it has confirmed its address (see [Sign-up and invites](#sign-up-and-invites)) |
+| `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time) and disable, confirm, reset or delete accounts there (see [Managing accounts](#managing-accounts)). Never project content; needs `AUTH_ENABLED=1` to mean anything. A password account counts only once it has confirmed its address (see [Sign-up and invites](#sign-up-and-invites)) |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
@@ -474,6 +529,7 @@ override file.
 | `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
+| `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
 | `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email (default 20). Over it, sharing still saves and the owner is told who was not mailed |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |

@@ -95,7 +95,7 @@ export async function exchangeCode(issuer: string, p: Params): Promise<TokenResp
   // Every binding is checked AFTER the code is burned: one wrong parameter
   // costs the client its code (it restarts the flow), never a second try.
   const bound = g.clientId === clientId && g.redirectUri === redirectUri && pkceMatches(verifier, g.codeChallenge);
-  if (!bound) throw new OAuthError('invalid_grant', 'The authorization code is invalid or has expired');
+  if (!bound || !(await accountActive(g.userId))) throw new OAuthError('invalid_grant', 'The authorization code is invalid or has expired');
   const family = crypto.randomBytes(12).toString('base64url');
   const res = await mint({ userId: g.userId, clientId: g.clientId, clientName: g.clientName, projectIds: g.projectIds, family });
   if (hit.markUsed(family)) {
@@ -105,6 +105,12 @@ export async function exchangeCode(issuer: string, p: Params): Promise<TokenResp
     throw new OAuthError('invalid_grant', 'The authorization code is invalid or has expired');
   }
   return res;
+}
+
+/** The account exists and an administrator has not disabled it. */
+async function accountActive(userId: string): Promise<boolean> {
+  const user = await db().getUser(userId);
+  return !!user && !user.disabledAt;
 }
 
 async function lookupRefresh(secret: string): Promise<RefreshTokenRecord | null> {
@@ -131,6 +137,9 @@ export async function refreshTokens(issuer: string, p: Params): Promise<TokenRes
   // A public client names itself on every refresh; an absent client_id is a mismatch.
   if (param(p, 'client_id') !== rec.clientId) throw invalid();
   if (Date.parse(rec.expiresAt) <= Date.now()) throw invalid();
+  // Refused before the rotation, so the token works again once the account
+  // is enabled.
+  if (!(await accountActive(rec.userId))) throw invalid();
   const now = new Date().toISOString();
   // The mark is a compare-and-set: of two concurrent rotations of one token
   // exactly one wins, and the loser is treated exactly like a replay.

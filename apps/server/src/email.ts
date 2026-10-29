@@ -72,3 +72,14 @@ async function sendViaSmtp(mail: Mail): Promise<void> {
   }
   await smtpTransport.sendMail({ from: fromAddress(), to: mail.to, subject: mail.subject, text: mail.text, html: mail.html });
 }
+
+/** The password-reset mail. The forgot-password form and an administrator
+ *  send the same one; `link` is built from ALDINE_PUBLIC_URL only. */
+export function resetMail(to: string, link: string, token: string): Mail {
+  return {
+    to,
+    subject: 'Reset your Aldine password',
+    text: `Someone requested a password reset for your Aldine account.\n\nOpen this link to set a new password (expires in 1 hour):\n${link}\n\nOr enter this token manually: ${token}\n\nIf you didn't request this, you can ignore this email.`,
+    html: `<p>Someone requested a password reset for your Aldine account.</p><p><a href="${link}">Set a new password</a> (expires in 1 hour).</p><p>Or enter this token manually: <code>${token}</code></p><p>If you didn't request this, you can ignore this email.</p>`,
+  };
+}

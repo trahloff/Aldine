@@ -201,7 +201,40 @@ export class JsonStore implements DataStore {
     m[u.id] = this.clone(u);
     this.write(this.usersPath, m);
   }
-  async updateUser(u: User) { const m = this.users(); m[u.id] = this.clone(u); this.write(this.usersPath, m); }
+  async updateUser(u: User) {
+    const m = this.users();
+    // Like Postgres' UPDATE: a write that lands after the account was deleted
+    // (a password reset waiting on scrypt) must not bring it back.
+    if (!m[u.id]) return;
+    const next = this.clone(u);
+    const disabledAt = m[u.id].disabledAt;
+    if (disabledAt) next.disabledAt = disabledAt;
+    else delete next.disabledAt;
+    m[u.id] = next;
+    this.write(this.usersPath, m);
+  }
+  async setDisabled(id: string, disabledAt: string | null) {
+    const m = this.users();
+    if (!m[id]) return;
+    if (disabledAt) m[id].disabledAt = disabledAt;
+    else delete m[id].disabledAt;
+    this.write(this.usersPath, m);
+  }
+  async deleteUser(id: string) {
+    const drop = <T>(p: string, rows: Record<string, T>, mine: (k: string, v: T) => boolean) => {
+      let changed = false;
+      for (const [k, v] of Object.entries(rows)) if (mine(k, v)) { delete rows[k]; changed = true; }
+      if (changed) this.write(p, rows);
+    };
+    drop(this.sessionsPath, this.sessions(), (_k, v) => v.userId === id);
+    drop(this.resetsPath, this.resets(), (_k, v) => v.userId === id);
+    drop(this.tokensPath, this.tokens(), (_k, v) => v.userId === id);
+    drop(this.refreshPath, this.refreshTokens(), (_k, v) => v.userId === id);
+    drop(this.connectionsPath, this.connections(), (k) => k === id);
+    drop(this.opensPath, this.opens(), (k) => k === id);
+    drop(this.visitsPath, this.visits(), (k) => k === id);
+    drop(this.usersPath, this.users(), (k) => k === id);
+  }
   async listUsers() { return Object.values(this.users()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((u) => this.clone(u)); }
   async touchUser(id: string, lastSeenAt: string) {
     const m = this.users();

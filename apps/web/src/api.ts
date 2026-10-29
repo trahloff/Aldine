@@ -85,13 +85,24 @@ export interface AdminUserRow {
   email: string | null;
   name: string;
   provider?: string;
+  /** How the account signs in: "Password", or the provider's name. */
+  signIn: string;
+  /** A password account: the only kind a reset link serves. */
+  password: boolean;
   createdAt: string;
   lastSeenAt?: string;
   emailPending?: boolean;
+  /** Since when an administrator has had the account disabled. */
+  disabledAt?: string;
+  /** On ALDINE_ADMIN_EMAILS with a confirmed address: the page cannot disable or delete it. */
   admin: boolean;
   projects: number;
+  trashedProjects: number;
   compileSecondsThisMonth: number;
 }
+/** `link` is the reset link to pass on (relative when the server has no public URL); `to` the address mailed instead. */
+export interface AdminResetResult { sent: boolean; to?: string; link?: string }
+export interface AdminDeleteResult { ok: true; transferred: number; trashed: number; sharesRemoved: number }
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
@@ -554,6 +565,14 @@ export const api = {
     req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', { method: 'POST' }),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
+  // Every account action sends a JSON body: the server refuses any other.
+  adminDisable: (id: string, revokeAgentAccess: boolean) =>
+    req<AdminUserRow>(`/api/admin/users/${encodeURIComponent(id)}/disable`, { method: 'POST', body: JSON.stringify({ revokeAgentAccess }) }),
+  adminEnable: (id: string) => req<AdminUserRow>(`/api/admin/users/${encodeURIComponent(id)}/enable`, { method: 'POST', body: '{}' }),
+  adminConfirmEmail: (id: string) => req<AdminUserRow>(`/api/admin/users/${encodeURIComponent(id)}/confirm-email`, { method: 'POST', body: '{}' }),
+  adminResetLink: (id: string) => req<AdminResetResult>(`/api/admin/users/${encodeURIComponent(id)}/reset-link`, { method: 'POST', body: '{}' }),
+  adminDeleteUser: (id: string, body: { projects: 'transfer' | 'trash'; transferTo?: string; confirm: string }) =>
+    req<AdminDeleteResult>(`/api/admin/users/${encodeURIComponent(id)}/delete`, { method: 'POST', body: JSON.stringify(body) }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean; revokedTokens?: number }>('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   resetRequest: (email: string) =>
