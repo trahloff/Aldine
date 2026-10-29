@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-29
+
 ### Fixed
 - Clicking the page counter beside the PDF opens a field the size of the
   number, where the number was. It used to open a larger box that pushed
