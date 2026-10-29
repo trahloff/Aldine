@@ -41,6 +41,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Escape keeps your place (#198).
 
 ### Fixed
+- The PDF beside the editor fits its new width when you drag the divider or
+  resize the window, and clicking the zoom label at 100% fits it again
+  (#190, contributed by minatomugino864-lgtm in #191).
 - A crash or a volume that goes read-only no longer leaves the JSON datastore
   with an empty `users.json` and every request failing. Writes of datastore
   files, collaboration snapshots and the signing secret now wait until the
