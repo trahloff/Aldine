@@ -12,6 +12,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Settings → This browser, or with "Turn Vim keybindings on" in the command
   palette. u and Ctrl-R undo and redo your own edits, never a collaborator's.
   The keybindings download only when first turned on (#188).
+- The sidebar beside the editor is as wide as you drag it, from 180 to 520
+  pixels, so long file names and the tab labels fit. The arrow keys move the
+  divider too, a double-click restores the default width, and this browser
+  remembers the width you chose (#193).
 
 ### Fixed
 - A crash or a volume that goes read-only no longer leaves the JSON datastore

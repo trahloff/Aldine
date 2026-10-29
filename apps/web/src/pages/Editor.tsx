@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
@@ -35,6 +35,7 @@ import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import FormatToolbar from '../components/FormatToolbar';
+import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
 import { appearanceCommands } from '../components/Appearance';
 import { useDocumentTitle } from '../util/documentTitle';
@@ -56,6 +57,17 @@ const AGENT_REVIEW_MAX_COMMITS = 20;
  *  included, sits in the More menu. */
 const PINNED_PANELS = ['plugin:references'];
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
+/** The sidebar's width in px, once someone has dragged it. */
+const SIDEBAR_WIDTH = 'aldine.sidebarWidth';
+const SIDEBAR_DEFAULT = 230;
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 520;
+/** What the two dividers always leave the code editor between them. */
+const EDITOR_MIN = 270;
+/** The room the preview leaves for the sidebar: its width, and never less than
+ *  the default, so a narrow or hidden sidebar doesn't let the preview take
+ *  space that showing or widening it again would need. */
+const sidebarRoom = (w: number) => Math.max(SIDEBAR_DEFAULT, w);
 /** Source or Visual, the last one this browser chose; Source until then. */
 const EDITOR_MODE = 'aldine.editorMode';
 /** Vim keybindings in the code editor, '1' when on. */
@@ -92,15 +104,39 @@ export default function Editor() {
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
   const [pdfWidth, setPdfWidth] = useState(() => Math.max(360, Math.round(window.innerWidth * 0.4)));
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const w = Number(safeStorage.get(SIDEBAR_WIDTH));
+    return w >= SIDEBAR_MIN && w <= SIDEBAR_MAX ? w : SIDEBAR_DEFAULT;
+  });
+  /** The width last chosen with the divider: a window too narrow for it
+   *  narrows the sidebar for now, and the sidebar returns to it with the room. */
+  const sidebarChosen = useRef(sidebarWidth);
+  const resizeSidebar = (w: number, done: boolean) => {
+    setSidebarWidth(w);
+    if (!done) return;
+    sidebarChosen.current = w;
+    safeStorage.set(SIDEBAR_WIDTH, String(w));
+  };
   const [resizing, setResizing] = useState(false);
   // Floor the upper bound so a narrow window can't push it below the 280
   // minimum (which would invert the clamp and collapse the pane).
-  const clampPdfWidth = (w: number) => Math.min(Math.max(280, w), Math.max(360, window.innerWidth - 500));
-  // The pane keeps an absolute width, so shrinking the window would otherwise
-  // leave a preview wider than the room for it and squeeze the editor away.
-  // Same bound as the resizer's.
+  const pdfMax = Math.max(360, window.innerWidth - sidebarRoom(sidebarWidth) - EDITOR_MIN);
+  const clampPdfWidth = (w: number) => Math.min(Math.max(280, w), pdfMax);
+  const sidebarMax = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - pdfWidth - EDITOR_MIN));
+  // Both panes keep an absolute width, so shrinking the window would otherwise
+  // leave them wider than the room for them and squeeze the editor away. The
+  // preview gives way first, then the sidebar; a remembered sidebar width
+  // from a wider window is fitted the same way on open.
+  const pdfWidthRef = useRef(pdfWidth);
+  pdfWidthRef.current = pdfWidth;
   useEffect(() => {
-    const fit = () => setPdfWidth((w) => Math.min(w, Math.max(280, window.innerWidth - 500)));
+    const fit = () => {
+      const chosen = sidebarChosen.current;
+      const pdf = Math.min(pdfWidthRef.current, Math.max(280, window.innerWidth - sidebarRoom(chosen) - EDITOR_MIN));
+      setPdfWidth(pdf);
+      setSidebarWidth(Math.min(chosen, Math.max(SIDEBAR_MIN, window.innerWidth - pdf - EDITOR_MIN)));
+    };
+    fit();
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   }, []);
@@ -1187,7 +1223,12 @@ export default function Editor() {
             <button className="btn btn--ghost sidebar-rail__btn" onClick={() => setSidebar(false)} title="Show the sidebar" aria-label="Show the sidebar" data-testid="sidebar-expand"><IconSidebar /></button>
           </div>
         )}
-        <aside className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`} aria-label="Sidebar" data-testid="sidebar">
+        <aside
+          className={`pane sidebar${sidebarHidden ? ' sidebar--hidden' : ''}`}
+          aria-label="Sidebar"
+          data-testid="sidebar"
+          style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
+        >
           <div className="sidebar__tabs" role="tablist">
             <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" aria-selected={tab === 'files'} data-testid="tab-files">Files</button>
             <button
@@ -1323,6 +1364,20 @@ export default function Editor() {
             ))}
           </div>
         </aside>
+        {!sidebarHidden && (
+          <Splitter
+            className="resizer--sidebar"
+            value={sidebarWidth}
+            min={SIDEBAR_MIN}
+            max={sidebarMax}
+            side={1}
+            label="Resize sidebar"
+            testId="sidebar-resizer"
+            onResize={resizeSidebar}
+            onReset={() => { sidebarChosen.current = SIDEBAR_DEFAULT; setSidebarWidth(Math.min(SIDEBAR_DEFAULT, sidebarMax)); safeStorage.remove(SIDEBAR_WIDTH); }}
+            onDragging={setResizing}
+          />
+        )}
 
         <main className="pane pane--editor" aria-label="Editor" style={{ flex: 1 }}>
           {activeFile ? (
@@ -1438,43 +1493,16 @@ export default function Editor() {
           )}
         </main>
 
-        <div
-          className={`resizer${resizing ? ' resizer--drag' : ''}`}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize preview"
-          aria-valuenow={Math.round(pdfWidth)}
-          aria-valuemin={280}
-          aria-valuemax={Math.max(360, window.innerWidth - 500)}
-          tabIndex={0}
-          data-testid="pane-resizer"
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            const el = e.currentTarget;
-            // Capture keeps the drag alive over the PDF canvas, the editor and
-            // outside the window, and it works for a finger or a pen.
-            el.setPointerCapture(e.pointerId);
-            const startX = e.clientX;
-            const start = pdfWidth;
-            setResizing(true);
-            const move = (ev: PointerEvent) => setPdfWidth(clampPdfWidth(start + (startX - ev.clientX)));
-            const up = () => {
-              setResizing(false);
-              el.removeEventListener('pointermove', move);
-              el.removeEventListener('pointerup', up);
-              el.removeEventListener('pointercancel', up);
-            };
-            el.addEventListener('pointermove', move);
-            el.addEventListener('pointerup', up);
-            el.addEventListener('pointercancel', up);
-          }}
-          onDoubleClick={() => setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4)))}
-          onKeyDown={(e) => {
-            const step = e.shiftKey ? 80 : 16;
-            if (e.key === 'ArrowLeft') { e.preventDefault(); setPdfWidth((w) => clampPdfWidth(w + step)); }
-            else if (e.key === 'ArrowRight') { e.preventDefault(); setPdfWidth((w) => clampPdfWidth(w - step)); }
-          }}
+        <Splitter
+          value={pdfWidth}
+          min={280}
+          max={pdfMax}
+          side={-1}
+          label="Resize preview"
+          testId="pane-resizer"
+          onResize={(w) => setPdfWidth(w)}
+          onReset={() => setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4)))}
+          onDragging={setResizing}
         />
 
         {/* data-pdf: the run on screen, for tests that follow it across typesets */}

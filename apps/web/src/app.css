@@ -833,7 +833,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   min-width: 0;
 }
 
-.sidebar { width: 230px; flex: none; background: var(--bg-inset); }
+.sidebar { width: var(--sidebar-w, 230px); flex: none; background: var(--bg-inset); }
 .sidebar__tabs { display: flex; align-items: center; gap: 2px; padding: 6px 6px 0; }
 .sidebar__tab {
   flex: 1 1 auto;
@@ -1203,6 +1203,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .workspace--resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 .workspace--resizing .pane { pointer-events: none; }
 @media (pointer: coarse) { .resizer { width: 21px; margin: 0 -10px; } .resizer::after { inset: 0 9px; opacity: 0.25; } }
+/* the divider stands between the sidebar and the editor, so the editor's
+   hairline is no longer drawn by .pane + .pane */
+.resizer--sidebar + .pane { border-left: 1px solid var(--hairline); }
 
 /* command palette */
 /* A field that looks like search and opens the palette; the label tells
