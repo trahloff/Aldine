@@ -35,7 +35,7 @@ import * as oauth from './oauth.js';
 import * as email from './email.js';
 import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, inviteBurst, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
@@ -787,8 +787,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
       // The whole change or none of it: a list cut short at the limit would
       // drop people the owner typed without them noticing.
-      if (fresh.length && !(await inviteLimiter.take(`u:${user.id}`, Date.now(), fresh.length))) {
-        return reply.code(429).send({ error: `You can send at most ${inviteBurst} invitations an hour, so nothing was saved. Invite fewer people at once, or try again later.` });
+      if (fresh.length && !(await shareLimiter.take(`u:${user.id}`, Date.now(), fresh.length))) {
+        return reply.code(429).send({ error: `You can invite at most ${shareBurst} people an hour, so nothing was saved. Invite fewer people at once, or try again later.` });
       }
       meta.share = { mode, collaborators: kept };
       await store.writeMeta(meta);
@@ -832,19 +832,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return staged;
   };
 
-  /** One invitation from the owner's hourly budget, for Invite again and
-   *  Resend; false after replying. */
+  /** One invitation from the owner's hourly budget, for inviting one person
+   *  (again or for the first time); false after replying. */
   const takeInvite = async (owner: auth.PublicUser, reply: any): Promise<boolean> => {
-    if (await inviteLimiter.take(`u:${owner.id}`)) return true;
-    reply.code(429).send({ error: `You can send at most ${inviteBurst} invitations an hour. Try again later.` });
+    if (await shareLimiter.take(`u:${owner.id}`)) return true;
+    reply.code(429).send({ error: `You can invite at most ${shareBurst} people an hour. Try again later.` });
     return false;
   };
 
-  /** Mail each invitation to an address once; the owner's budget paid for
-   *  it when the invitation was made or resent. Never throws: the invitation
-   *  is saved before this runs, and one that cannot be mailed is reported for
-   *  the owner to send the link themselves. ORCID iDs have no address to
-   *  mail and are not reported. */
+  /** Mail each invitation to an address once, within the owner's mail
+   *  budget. Never throws: the invitation is saved before this runs, and one
+   *  that cannot be mailed is reported for the owner to send the link
+   *  themselves. ORCID iDs have no address to mail and are not reported. */
   const sendInvitations = async (invs: store.Invitation[], meta: store.ProjectMeta, owner: auth.PublicUser): Promise<InviteReport> => {
     const to = invs.filter((i) => !isOrcidId(i.to));
     if (to.length === 0) return { invited: 0, notEmailed: [] };
@@ -854,9 +853,15 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // throwaway account must not get this instance to mail strangers.
     if (owner.emailPending) return skip('unconfirmed');
     const ownerLabel = owner.name || owner.email || '';
+    const allowed: store.Invitation[] = [];
+    const limited: string[] = [];
+    for (const inv of to) {
+      if (limited.length === 0 && await inviteLimiter.take(`u:${owner.id}`)) allowed.push(inv);
+      else limited.push(inv.to);
+    }
     // SMTP/SES can hang; past the wait the mail still goes out, it is just
     // not reported as failed.
-    const results = await Promise.all(to.map((inv) => {
+    const results = await Promise.all(allowed.map((inv) => {
       const sent = email.sendMail(invitationMail(inv.to, ownerLabel, meta.name, `${config.publicUrl}/invite/${inv.id}`)).then(() => true, (err) => {
         console.error(`[aldine] invitation email to ${inv.to} failed:`, err?.message || err);
         return false;
@@ -864,9 +869,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return Promise.race([sent, new Promise<boolean>((r) => setTimeout(() => r(true), 10_000).unref?.())]);
     }));
     const at = new Date().toISOString();
-    for (const [i, inv] of to.entries()) if (results[i]) await store.updatePendingInvitation(inv.id, { emailedAt: at });
-    const failed = to.filter((_, i) => !results[i]).map((i) => i.to);
-    const invited = to.length - failed.length;
+    for (const [i, inv] of allowed.entries()) if (results[i]) await store.updatePendingInvitation(inv.id, { emailedAt: at });
+    const failed = allowed.filter((_, i) => !results[i]).map((i) => i.to);
+    const invited = allowed.length - failed.length;
+    if (limited.length) return { invited, notEmailed: [...failed, ...limited], reason: 'limit' };
     if (failed.length) return { invited, notEmailed: failed, reason: 'failed' };
     return { invited, notEmailed: [] };
   };
@@ -918,7 +924,6 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const open = (await store.listProjectInvitations(meta.id)).filter((i) => stateOf(i) === 'pending');
       if ((meta.share?.collaborators.length ?? 0) + open.length + 1 > MAX_SHARE_ENTRIES) return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together` });
     }
-    if (!(await takeInvite(reqUser(req)!, reply))) return;
     if (!(await store.updatePendingInvitation(inv.id, { expiresAt: inviteExpiry() }))) return reply.code(409).send({ error: 'This invitation was answered a moment ago' });
     const report = await sendInvitations([inv], meta, reqUser(req)!);
     return { ...report, invitations: await ownerInvitations(req, meta.id) };

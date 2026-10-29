@@ -41,6 +41,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The PDF preview shows the page on screen and the page count ("3 / 12")
   beside the zoom. Click it, type a page number and press Enter to go there;
   Escape keeps your place (#198).
+- `RL_SHARE_BURST` (default 200) caps the invitations a project owner makes
+  per hour: each address or ORCID iD invited from the share dialog, and each
+  Invite again. Past it the share dialog says so and saves nothing of the
+  change.
 
 ### Fixed
 - The PDF beside the editor fits its new width when you drag the divider or
@@ -73,9 +77,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   that sends no email: the dialog says so and offers Copy invite link. The
   owner sees each invitation as pending, declined or expired (after 14 days)
   and can resend, withdraw or invite again. `RL_INVITE_BURST` (default 20)
-  now caps the invitations an owner sends per hour, Resend and Invite again
-  included, where it capped only their mails: past it the share dialog says
-  so and saves nothing of the change. Signing in with ORCID or single
+  still caps the invitation mails an owner sends per hour, Resend included:
+  past it the invitation is made all the same, and the dialog names who was
+  not mailed and offers Copy invite link. Signing in with ORCID or single
   sign-on from an invitation's page brings you back to it, within 30
   minutes; a sign-in started anywhere else goes to your projects as usual.
   People already on a share list keep their access as before.
