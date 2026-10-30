@@ -910,6 +910,25 @@ test.describe('visual editor: widgets, formulas and keys', () => {
     }
   });
 
+  test('a } typed as text, as with Option on a German Mac layout, closes \\begin{itemize} once', async ({ page, request }) => {
+    const id = await seedDoc(request, 'Visual Begin Option', DOC);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'More prose here.' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      // insertText sends input events only, no keydown: no key binding runs, as for a brace typed with Option
+      await page.keyboard.type('\\begin', { delay: 30 });
+      await page.keyboard.insertText('{');
+      await page.keyboard.type('itemize', { delay: 30 });
+      await page.keyboard.insertText('}');
+      await page.keyboard.type('\\item x');
+      await expect.poll(() => stored(request, id), { timeout: 20_000 }).toMatch(/More prose here\.\n( *)\\begin\{itemize\}\n\1  \\item x\n\1\\end\{itemize\}\n$/);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('constructs far down a long file render without an edit (VIS-14)', async ({ page, request }) => {
     const filler = Array.from({ length: 6000 }, (_, i) => `Line ${i} of plain prose that fills the document.`).join('\n');
     const id = await seedDoc(request, 'Visual Long', `\\section{Top}\n${filler}\n\\section{Far away}\nTail $z^2$ and \\textbf{bold}.\nplain end\n`);

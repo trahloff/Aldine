@@ -19,7 +19,7 @@ import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from
 import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
-import { closeBeginBrace } from '../editor/beginEnv';
+import { closeBeginBrace, closeBeginBraceInput } from '../editor/beginEnv';
 import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
 import { useToast } from './Toast';
@@ -410,6 +410,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           latex({ autoCloseTags: true, enableLinting: false, enableAutocomplete: false, enableTooltips: false }),
           latexNewlineIndent,
           Prec.high(keymap.of([{ key: '}', run: closeBeginBrace }])),
+          closeBeginBraceInput,
           keyBraceGuard,
           citeHoverTooltip(projectId, branch),
           keymap.of([
