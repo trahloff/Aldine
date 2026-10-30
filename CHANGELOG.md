@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-30
+
+New accounts that wait for an administrator's approval (`ALDINE_SIGNUP=approval`), folders in the file tree, clickable links in the PDF preview, `\cite{}` and `\ref{}` with their braces from the completion list, and Enter keeping the line's indentation. Upgrading from 1.3 needs no manual step; sign-up stays open unless you set `ALDINE_SIGNUP`.
+
 ### Added
 - New accounts can wait for an administrator's approval (#192): with
   `ALDINE_SIGNUP=approval`, every account created from then on, by password
