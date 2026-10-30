@@ -1,4 +1,5 @@
-import type { EditorState, TransactionSpec } from '@codemirror/state';
+import { Prec, type EditorState, type TransactionSpec } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 
 /**
  * The `}` that finishes `\begin{name` while closeBrackets' own `}` already
@@ -24,3 +25,12 @@ export function closeBeginBrace(view: { state: EditorState; dispatch(spec: Trans
   });
   return true;
 }
+
+/**
+ * closeBeginBrace for a `}` that arrives as typed text instead of through the
+ * key binding: CodeMirror matches no `}` binding when the character needs
+ * Option (macOS German and similar layouts), and closeBrackets' own input
+ * handler would only step over its brace, leaving the environment unclosed.
+ */
+export const closeBeginBraceInput = Prec.high(EditorView.inputHandler.of((view, from, to, text) =>
+  text === '}' && from === to && view.state.selection.main.head === from && closeBeginBrace(view)));
