@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Links in the PDF preview work with a single click. A reference, a
+  citation or a table of contents entry scrolls the preview to its target
+  and flashes it; a web or email address opens in a new tab. Links to
+  anything else, such as local files or scripts, stay plain text. A
+  double-click still jumps to the source, except on a link (#221).
+
 ## [1.3.2] — 2026-10-30
 
 ### Added

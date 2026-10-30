@@ -1232,6 +1232,23 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   animation: pdf-flash 1.4s var(--ease);
 }
 @keyframes pdf-flash { 15% { opacity: 0.35; } 100% { opacity: 0; } }
+/* A page and its links share one grid cell, so the link layer is exactly the
+   page's size at every zoom. */
+.pdf-page-wrap { display: grid; }
+.pdf-page-wrap > * { grid-area: 1 / 1; }
+.pdf-links { position: relative; overflow: hidden; pointer-events: none; }
+.pdf-link {
+  position: absolute;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+@media (hover: hover) and (pointer: fine) { .pdf-link:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); } }
 
 /* errors panel */
 .errors {

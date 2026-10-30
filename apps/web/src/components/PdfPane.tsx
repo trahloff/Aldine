@@ -2,6 +2,8 @@ import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useSta
 import { useShortcutLabel } from '../util/shortcuts';
 import { pagesOnScreen, scrollTopForPage, type PdfPagesStore } from '../util/pdfPages';
 import { cMapUrl, pdfjs } from '../util/pdfjs';
+import { pageLinks, resolveDest, toPage, type DestTarget, type PageBox } from '../util/pdfLinks';
+import type { PageViewport } from 'pdfjs-dist';
 
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */
@@ -36,6 +38,51 @@ interface Props {
   pages?: PdfPagesStore;
 }
 
+/** A laid-out page: its canvas, CSS pixels per PDF point, and its viewport
+ *  at scale 1 (for coordinates in PDF user space). */
+type PageInfo = { el: HTMLCanvasElement; scale: number; view: PageViewport };
+
+/** Where a link goes: an address for a new tab, or a page of this PDF and
+ *  the point on it, in PDF points from the page's top (null: the page top). */
+type LinkTarget = { url: string } | { page: number; y: number | null };
+
+/** How far below the pane's top a link's destination lands, in pixels. */
+const LINK_MARGIN = 12;
+/** The band flashed at a link's destination, in PDF points: hyperref raises
+ *  its anchors a line above the target, so two lines cover the heading or
+ *  the bibliography entry. */
+const LINK_FLASH = 24;
+
+/** A link's element over its page: an anchor for an address, a button for a
+ *  place in this PDF. */
+function linkElement(box: PageBox, target: LinkTarget): HTMLElement {
+  let el: HTMLElement, label: string;
+  if ('url' in target) {
+    const a = document.createElement('a');
+    a.href = target.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    el = a;
+    label = target.url;
+  } else {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.destPage = String(target.page);
+    if (target.y != null) b.dataset.destY = String(target.y);
+    el = b;
+    label = `Go to page ${target.page}`;
+  }
+  el.className = 'pdf-link';
+  el.dataset.testid = 'pdf-link';
+  el.title = label;
+  el.setAttribute('aria-label', label);
+  el.style.left = `${box.left}%`;
+  el.style.top = `${box.top}%`;
+  el.style.width = `${box.width}%`;
+  el.style.height = `${box.height}%`;
+  return el;
+}
+
 const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
@@ -44,7 +91,35 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   const renderTask = useRef(0);
   const firstOpenFired = useRef(false);
   // per-page viewport info for coordinate mapping
-  const pageInfo = useRef<Array<{ el: HTMLCanvasElement; scale: number; height: number }>>([]);
+  const pageInfo = useRef<PageInfo[]>([]);
+  /** Whether the first click of the current click run landed on a link. */
+  const clickOnLink = useRef(false);
+
+  /** Flash a band across a page, `top` and `height` in PDF points. */
+  const flash = (info: PageInfo, top: number, height: number) => {
+    const el = document.createElement('div');
+    el.className = 'pdf-flash';
+    el.style.left = `${info.el.offsetLeft}px`;
+    el.style.top = `${info.el.offsetTop + top * info.scale}px`;
+    el.style.width = `${info.el.clientWidth}px`;
+    el.style.height = `${Math.max(16, height * info.scale)}px`;
+    innerRef.current?.appendChild(el);
+    setTimeout(() => el.remove(), 1400);
+  };
+
+  /** An internal link: its destination near the top of the pane, flashed. */
+  const followLink = (page: number, y: number | null) => {
+    const all = pageInfo.current;
+    const info = all[page - 1];
+    const scroller = scrollRef.current;
+    if (!info || !scroller) return;
+    if (y == null) {
+      scroller.scrollTo({ top: scrollTopForPage(info.el, all[page - 2]?.el), behavior: 'smooth' });
+      return;
+    }
+    scroller.scrollTo({ top: info.el.offsetTop + y * info.scale - LINK_MARGIN, behavior: 'smooth' });
+    flash(info, y, LINK_FLASH);
+  };
 
   useImperativeHandle(ref, () => ({
     showForward(page, y, h = 12) {
@@ -53,15 +128,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       if (!info || !scroller) return;
       const top = info.el.offsetTop + y * info.scale;
       scroller.scrollTo({ top: top - scroller.clientHeight / 3, behavior: 'smooth' });
-      // flash a highlight overlay
-      const flash = document.createElement('div');
-      flash.className = 'pdf-flash';
-      flash.style.left = `${info.el.offsetLeft}px`;
-      flash.style.top = `${info.el.offsetTop + (y - h) * info.scale}px`;
-      flash.style.width = `${info.el.clientWidth}px`;
-      flash.style.height = `${Math.max(16, h * 2 * info.scale)}px`;
-      innerRef.current?.appendChild(flash);
-      setTimeout(() => flash.remove(), 1400);
+      flash(info, y - h, h * 2);
     },
     refit() {
       setRefitTick((n) => n + 1);
@@ -179,6 +246,10 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const states = new Map<number, 'blank' | 'rendering' | 'done'>();
     let chain: Promise<void> = Promise.resolve(); // serialize worker renders
+    const linked = new Set<number>();
+    // Each destination resolves once a pass: one bibliography entry can be
+    // cited on every page.
+    const dests = new Map<string, Promise<DestTarget | null>>();
 
     const rasterize = (i: number) => {
       if (states.get(i) === 'rendering' || states.get(i) === 'done') return;
@@ -203,6 +274,41 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           if ((err as { name?: string })?.name !== 'RenderingCancelledException') console.error('[pdf] page render failed', err);
         }
       });
+    };
+
+    // A page's links, laid over it the first time it comes near the viewport;
+    // percent boxes keep them on their spots however the page is sized.
+    const linkify = (i: number) => {
+      if (linked.has(i) || !doc) return;
+      linked.add(i);
+      const d = doc;
+      (async () => {
+        try {
+          const page = await d.getPage(i);
+          const annotations = await page.getAnnotations({ intent: 'display' });
+          if (my !== renderTask.current) return;
+          const view = pageInfo.current[i - 1]?.view;
+          if (!view) return;
+          const found = await Promise.all(pageLinks(annotations, view).map(async (link): Promise<[PageBox, LinkTarget] | null> => {
+            if ('url' in link) return [link.box, { url: link.url }];
+            const key = typeof link.dest === 'string' ? `name:${link.dest}` : JSON.stringify(link.dest);
+            let target = dests.get(key);
+            if (!target) dests.set(key, (target = resolveDest(d, link.dest)));
+            const t = await target;
+            const on = t && pageInfo.current[t.page - 1]?.view;
+            if (!t || !on) return null;
+            return [link.box, { page: t.page, y: t.y == null ? null : Math.max(0, toPage(on, t.x ?? 0, t.y)[1]) }];
+          }));
+          const host = pageInfo.current[i - 1]?.el.parentElement;
+          if (my !== renderTask.current || !host) return;
+          const layer = document.createElement('div');
+          layer.className = 'pdf-links';
+          for (const f of found) if (f) layer.appendChild(linkElement(...f));
+          if (layer.childElementCount) host.appendChild(layer);
+        } catch (err) {
+          if (my === renderTask.current) console.error('[pdf] page links failed', err);
+        }
+      })();
     };
 
     const release = (i: number) => {
@@ -230,7 +336,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         if (my !== renderTask.current) { try { doc.destroy(); } catch { /* noop */ } return; }
         const width = Math.max(320, scroller.clientWidth - 36) * layoutZoom;
         const frag = document.createDocumentFragment();
-        const info: Array<{ el: HTMLCanvasElement; scale: number; height: number }> = [];
+        const info: PageInfo[] = [];
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
           if (my !== renderTask.current) return;
@@ -244,8 +350,13 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           canvas.style.width = `${canvas.dataset.w}px`;
           canvas.style.height = `${canvas.dataset.h}px`;
           canvas.style.background = '#fff';
-          frag.appendChild(canvas);
-          info.push({ el: canvas, scale, height: base.height });
+          // The wrapper stacks the page's link layer on it and stays
+          // unpositioned: the canvas's offsets still measure from the pane.
+          const wrap = document.createElement('div');
+          wrap.className = 'pdf-page-wrap';
+          wrap.appendChild(canvas);
+          frag.appendChild(wrap);
+          info.push({ el: canvas, scale, view: base });
           states.set(i, 'blank');
         }
         if (my !== renderTask.current) return;
@@ -265,7 +376,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           for (const entry of entries) {
             const i = Number((entry.target as HTMLElement).dataset.page);
             if (!i) continue;
-            if (entry.isIntersecting) rasterize(i);
+            if (entry.isIntersecting) { rasterize(i); linkify(i); }
             else release(i);
           }
         }, { root: scroller, rootMargin: '150% 0px' });
@@ -285,8 +396,22 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     };
   }, [pdfUrl, layoutZoom, widthTick, refitTick, measurePage]);
 
+  // A single click follows a link; the rest of a double-click on one does
+  // nothing. Its second click would open a second tab, and after an internal
+  // link has scrolled, the double-click lands on whatever moved under the
+  // pointer, so it is no jump to source either.
+  const handleClick = (e: React.MouseEvent) => {
+    const link = (e.target as HTMLElement).closest<HTMLElement>('.pdf-link');
+    if (e.detail <= 1) clickOnLink.current = !!link;
+    if (!link) return;
+    if (e.detail > 1) { e.preventDefault(); return; }
+    if (link instanceof HTMLAnchorElement) return; // the browser opens it in a new tab
+    const page = Number(link.dataset.destPage);
+    if (page) followLink(page, link.dataset.destY ? Number(link.dataset.destY) : null);
+  };
+
   const handleDblClick = (e: React.MouseEvent) => {
-    if (!onInverse) return;
+    if (!onInverse || clickOnLink.current) return;
     // closest() instead of an instanceof check: works whatever element ends up
     // on top (canvas, flash overlay remnants, future wrappers).
     const target = (e.target as HTMLElement).closest<HTMLElement>('[data-page]');
@@ -305,7 +430,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       {stale && rendered && (
         <div className="pdf-stale" data-testid="pdf-stale">Preview is from the last successful typeset</div>
       )}
-      <div className="pdf-pane__inner" ref={innerRef} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
+      <div className="pdf-pane__inner" ref={innerRef} onClick={handleClick} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
       {!rendered && (
         <div className="pdf-empty">
           {status === 'compiling' ? (
