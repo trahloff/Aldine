@@ -26,6 +26,9 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-}
       # ALDINE_SSO_ONLY=1 disables password sign-in entirely (SSO only; no SMTP needed).
       ALDINE_SSO_ONLY: ${ALDINE_SSO_ONLY:-}
+      # ALDINE_SIGNUP=approval: new accounts wait until an administrator
+      # (ALDINE_ADMIN_EMAILS, set in an override) approves them on /admin.
+      ALDINE_SIGNUP: ${ALDINE_SIGNUP:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       # GitHub login (SSO) — separate from GitHub sync below.

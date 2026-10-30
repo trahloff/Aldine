@@ -183,6 +183,10 @@ binds the new identity.
 - `OIDC_ALLOWED_GROUPS` gates OIDC sign-in only. Anyone can still register a
   password account unless `ALDINE_SSO_ONLY=1` is set. If the group is meant to
   decide who uses the instance, set `ALDINE_SSO_ONLY=1` as well.
+- Without a group to gate on, `ALDINE_SIGNUP=approval` lets you decide
+  instead: a first OIDC sign-in, like a password sign-up, creates an account
+  that waits until an administrator approves it on `/admin`
+  ([deploy/README.md](../deploy/README.md#approving-new-accounts)).
 - Group membership and the IdP account are checked at sign-in. Removing
   someone from the group, or disabling them at the IdP, takes effect at their
   next sign-in. Until then their Aldine session (up to 30 days) and any access

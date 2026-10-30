@@ -6,6 +6,7 @@ dist/
 .data-e2e-gitea/
 .data-e2e-prov/
 .data-auth/
+.data-auth-approval/
 .data-base-path/
 .data-base-path-auth/
 .data-remote/
@@ -15,6 +16,7 @@ dist/
 .secrets-e2e/
 .secrets-e2e-prov/
 .secrets-auth/
+.secrets-auth-approval/
 .secrets-base-path/
 .secrets-base-path-auth/
 .secrets-remote/

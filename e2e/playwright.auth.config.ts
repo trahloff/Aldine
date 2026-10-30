@@ -4,12 +4,16 @@ import { defineConfig } from '@playwright/test';
  *  stub of orcid.org on :4929 backs the ORCID sign-in tests and a mock
  *  OpenID Connect provider on :4930 (Authentik-shaped issuer with a path) the
  *  OIDC ones, restricted to the `aldine-users` group; Google and GitHub stay
- *  unconfigured on purpose. Ports: E2E_AUTH_PORT, E2E_AUTH_MOCK_PORT and
- *  E2E_AUTH_OIDC_PORT; a second checkout must override all three, or it
- *  reuses this one's mocks. */
+ *  unconfigured on purpose. A second server on :3210 runs with
+ *  ALDINE_SIGNUP=approval for approval.spec.ts; it serves the web build the
+ *  first one made, so it must stay after that one in the list. Ports:
+ *  E2E_AUTH_PORT, E2E_AUTH_MOCK_PORT, E2E_AUTH_OIDC_PORT and
+ *  E2E_AUTH_APPROVAL_PORT; a second checkout must override all four, or it
+ *  reuses this one's servers. */
 const PORT = Number(process.env.E2E_AUTH_PORT || 3200);
 const MOCK = Number(process.env.E2E_AUTH_MOCK_PORT || 4929);
 const OIDC = Number(process.env.E2E_AUTH_OIDC_PORT || 4930);
+const APPROVAL = Number(process.env.E2E_AUTH_APPROVAL_PORT || 3210);
 const BASE = process.env.ALDINE_AUTH_URL || `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -39,6 +43,13 @@ export default defineConfig({
       port: PORT,
       reuseExistingServer: true,
       timeout: 600_000,
+    },
+    {
+      command: `PORT=${APPROVAL} AUTH_ENABLED=1 ALDINE_SIGNUP=approval ALDINE_ADMIN_EMAILS=admin@test.com ALDINE_TEST_HOOKS=1 TRUST_PROXY=1 RL_REGISTER_BURST=200 DATA_DIR=$(pwd)/.data-auth-approval META_DIR=$(pwd)/.secrets-auth-approval CACHE_DIR=$(pwd)/.data-auth-approval/cache OIDC_ISSUER=http://localhost:${OIDC}/application/o/aldine/ OIDC_CLIENT_ID=aldine-e2e OIDC_CLIENT_SECRET=aldine-e2e-secret npx tsx apps/server/src/index.ts`,
+      cwd: '..',
+      port: APPROVAL,
+      reuseExistingServer: true,
+      timeout: 300_000,
     },
   ],
 });

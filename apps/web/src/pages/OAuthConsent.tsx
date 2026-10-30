@@ -91,11 +91,12 @@ export default function OAuthConsent() {
 }
 
 function SignInStep({ client, onAuthed, notice }: { client: OAuthClientInfo; onAuthed(u: AuthUser): void; notice?: string }) {
-  const { providers, passwordAuth } = useAuth();
+  const { providers, passwordAuth, signupApproval } = useAuth();
   return (
     <LoginScreen
       providers={providers}
       passwordAuth={passwordAuth}
+      signupApproval={signupApproval}
       onAuthed={onAuthed}
       // An SSO provider's callback lands on "/", and Home brings the person
       // back here with the same request: only for a sign-in started here,

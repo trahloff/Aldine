@@ -45,7 +45,8 @@ export function noteActivity(userId: string, now = Date.now()): void {
 export function resetActivityThrottle(): void { lastTouch.clear(); }
 
 export interface AdminStats {
-  users: { total: number; active7d: number; active30d: number; onlineNow: number };
+  /** `awaitingApproval`: accounts created under ALDINE_SIGNUP=approval that nobody approved yet. */
+  users: { total: number; active7d: number; active30d: number; onlineNow: number; awaitingApproval: number };
   projects: { total: number; trashed: number };
   collab: { documents: number; connections: number };
   compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
@@ -68,6 +69,9 @@ export interface AdminUserRow {
   emailPending: boolean;
   /** Since when an administrator has had the account disabled. */
   disabledAt?: string;
+  /** Created under ALDINE_SIGNUP=approval and not approved yet: disabled
+   *  since it was created, and Enable approves it. */
+  awaitingApproval: boolean;
   /** On ALDINE_ADMIN_EMAILS with a confirmed address. */
   admin: boolean;
   projects: number;
@@ -91,6 +95,7 @@ export async function adminStats(now = Date.now()): Promise<AdminStats> {
       active7d: activeSince(users, ACTIVE_WINDOWS_DAYS[0], now),
       active30d: activeSince(users, ACTIVE_WINDOWS_DAYS[1], now),
       onlineNow: onlineUserIds().size,
+      awaitingApproval: users.filter(auth.awaitingApproval).length,
     },
     projects: { total: metas.filter((m) => !m.deletedAt).length, trashed: metas.filter((m) => !!m.deletedAt).length },
     collab: { documents: hocuspocus.getDocumentsCount(), connections: hocuspocus.getConnectionsCount() },
@@ -121,6 +126,7 @@ async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
     lastSeenAt: u.lastSeenAt,
     emailPending: !!u.emailPending,
     ...(u.disabledAt ? { disabledAt: u.disabledAt } : {}),
+    awaitingApproval: auth.awaitingApproval(u),
     admin: isAdmin(auth.pub(u)),
     projects: owned.get(u.id)?.live || 0,
     trashedProjects: owned.get(u.id)?.trashed || 0,
@@ -267,12 +273,18 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
       return adminUser(t.user.id);
     });
 
+    // Enabling an account that waits for approval approves it.
     admin.post<Act>('/api/admin/users/:userId/enable', async (req, reply) => {
       const t = await target(req, reply);
       if (!t) return;
       if (t.user.disabledAt) {
+        const approving = auth.awaitingApproval(t.user);
         await auth.enableAccount(t.user.id);
-        audit(t.actor, 'enabled', t.user);
+        audit(t.actor, approving ? 'approved' : 'enabled', t.user);
+        if (approving && t.user.email && sendsEmail()) {
+          email.sendMail(email.approvedMail(t.user.email, config.publicUrl, `${config.publicUrl}/`))
+            .catch((err) => console.error('[aldine] approval email failed:', err?.message || err));
+        }
       }
       return adminUser(t.user.id);
     });

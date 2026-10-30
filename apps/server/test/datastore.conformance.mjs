@@ -112,6 +112,17 @@ async function runSuite(store, label) {
   await store.createUser(createdOff);
   eq(await store.getUser(createdOff.id), createdOff, `${label}: disabledAt roundtrips through createUser/getUser`);
 
+  // ---- waiting for approval: disabledAt is exactly createdAt (auth.awaitingApproval) ----
+  const at = new Date().toISOString();
+  const waiting = { id: `uw-${t}`, email: `w-${t}@example.com`, name: 'Wen', salt: 's', hash: 'h', createdAt: at, disabledAt: at };
+  await store.createUser(waiting);
+  const sameString = (u, how) => check(u.createdAt === at && u.disabledAt === at, `${label}: ${how} keeps createdAt and disabledAt the same string (got ${u.createdAt} / ${u.disabledAt})`);
+  sameString(await store.getUser(waiting.id), 'getUser');
+  sameString(await store.findUserByEmail(waiting.email), 'findUserByEmail');
+  sameString((await store.listUsers()).find((u) => u.id === waiting.id), 'listUsers');
+  await store.updateUser({ ...waiting, name: 'Wen L.' });
+  sameString(await store.getUser(waiting.id), 'updateUser');
+
   // ---- accounts keyed by provider subject, with no email (ORCID) ----
   const orcidUser = { id: `u3-${t}`, email: null, name: 'Josiah', salt: 's', hash: '', createdAt: new Date().toISOString(), provider: 'orcid', subject: `orcid:${t}` };
   await store.createUser(orcidUser);

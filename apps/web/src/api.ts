@@ -74,7 +74,8 @@ export interface RemoteLink { provider: RemoteProviderId; fullName: string; owne
 export interface GitlabNamespace { fullPath: string; name: string }
 /** Server-wide counts for the admin page. Metadata only: no project content. */
 export interface AdminStats {
-  users: { total: number; active7d: number; active30d: number; onlineNow: number };
+  /** `awaitingApproval`: accounts created under ALDINE_SIGNUP=approval that nobody approved yet (absent from older servers). */
+  users: { total: number; active7d: number; active30d: number; onlineNow: number; awaitingApproval?: number };
   projects: { total: number; trashed: number };
   collab: { documents: number; connections: number };
   compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
@@ -94,6 +95,9 @@ export interface AdminUserRow {
   emailPending?: boolean;
   /** Since when an administrator has had the account disabled. */
   disabledAt?: string;
+  /** Created under ALDINE_SIGNUP=approval and not approved yet; disabledAt is
+   *  set too, and Enable approves it. */
+  awaitingApproval?: boolean;
   /** On ALDINE_ADMIN_EMAILS with a confirmed address: the page cannot disable or delete it. */
   admin: boolean;
   projects: number;
@@ -240,8 +244,10 @@ export interface ReplaceResult {
 /** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
  *  framework, no JSON `error` text worth quoting) from a route's own message. */
 /** `retryAfter`: seconds from a 429's Retry-After header, when it sent one. */
+/** `code` names a refusal a client handles apart from the rest
+ *  (`awaiting-approval`: the account waits for an administrator). */
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly retryAfter?: number) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string) { super(message); }
 }
 
 /** OAuth routes answer in RFC 6749 shape (`error` is a code such as
@@ -282,9 +288,14 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { msg = ((await res.json()) as { error?: string }).error || msg; } catch { /* keep */ }
+    let code: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: string; code?: unknown };
+      msg = body.error || msg;
+      if (typeof body.code === 'string') code = body.code;
+    } catch { /* keep */ }
     const retryAfter = Number(res.headers.get('retry-after'));
-    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined);
+    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code);
   }
   return res.json() as Promise<T>;
 }
@@ -564,7 +575,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
   confirmEmail: (token: string) =>
     req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
   resendConfirmation: () =>
@@ -585,10 +596,14 @@ export const api = {
     req<{ ok: boolean; token?: string }>('/api/auth/reset-request', { method: 'POST', body: JSON.stringify({ email }) }),
   resetPassword: (token: string, newPassword: string) =>
     req<{ ok: boolean; revokedTokens?: number }>('/api/auth/reset', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
-  login: (email: string, password: string) =>
-    req<{ user: AuthUser }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  /** `confirmToken`: the confirmation link the page was opened with; an
+   *  account waiting for approval confirms its address with it here
+   *  (`emailConfirmed` when the server used it). */
+  login: (email: string, password: string, confirmToken?: string) =>
+    req<{ user: AuthUser; emailConfirmed?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(confirmToken ? { confirmToken } : {}) }) }),
+  /** `awaitingApproval`: no session; `message` says what happens next. */
   register: (email: string, password: string, name?: string) =>
-    req<{ user: AuthUser }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
+    req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   listTokens: () => req<AccessToken[]>('/api/tokens'),
   createToken: (name: string, projectIds?: string[], expiresAt?: string) =>

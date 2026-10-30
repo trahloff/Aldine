@@ -6,6 +6,9 @@
  *  - stats count accounts, active users by lastSeenAt, projects by owner
  *  - the heartbeat is throttled and never blocks the request
  *  - /api/auth/me reports `admin` so the client can show the page
+ *  - with ALDINE_SIGNUP unset (open sign-up) a new account gets its session
+ *    at once and nothing waits for approval (signup-approval.test.mjs has
+ *    the other mode)
  *
  * Env must be set before any src import — AUTH_ENABLED and the admin list
  * are read at module load.
@@ -41,6 +44,7 @@ const cookieOf = (res) => [].concat(res.headers['set-cookie']).map((c) => c.spli
 async function signUp(email, name) {
   const res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { email, password: 'password123', name } });
   eq(res.statusCode, 200, `register ${email}`);
+  check(cookieOf(res) && !('awaitingApproval' in res.json()), `open sign-up: ${email} is signed in at once`);
   await db().setEmailPending(res.json().user.id, null);
   return { cookie: cookieOf(res), id: res.json().user.id };
 }
@@ -54,6 +58,7 @@ eq(denied.statusCode, 403, 'non-admin → 403');
 eq(denied.json().error, 'Administrator access required', 'non-admin error names the requirement');
 eq((await get('/api/admin/users', bob.cookie)).statusCode, 403, 'users route shares the guard');
 eq((await get('/api/auth/me', bob.cookie)).json().admin, false, 'me: admin false for Bob');
+eq((await get('/api/auth/me')).json().signup, 'open', 'me: sign-up is open by default');
 
 const root = await signUp('root@example.org', 'Root'); // allow-list has "Root@Example.org"
 eq((await get('/api/auth/me', root.cookie)).json().admin, true, 'me: admin true, case-insensitive');
@@ -68,6 +73,7 @@ eq(stats.users.total, 2, 'stats: two accounts');
 eq(stats.users.active7d, 2, 'stats: both made a request since signing up');
 eq(stats.users.active30d, 2, 'stats: active30d');
 eq(stats.users.onlineNow, 0, 'stats: no collab sockets');
+eq(stats.users.awaitingApproval, 0, 'stats: nobody waits for approval with open sign-up');
 eq(stats.projects, { total: 1, trashed: 1 }, 'stats: live and trashed projects');
 eq(stats.admins, ['root@example.org', 'second@example.org'], 'stats: allow-list, normalised');
 check(/^\d{4}-\d{2}$/.test(stats.compile.month), 'stats: month key');
@@ -81,6 +87,7 @@ eq(rootRow.admin, true, 'users: admin flag');
 eq(rootRow.projects, 1, 'users: owned projects exclude trash');
 check(typeof rootRow.lastSeenAt === 'string', 'users: lastSeenAt present');
 check(!('hash' in rootRow) && !('salt' in rootRow), 'users: no credential material');
+check(users.every((u) => u.awaitingApproval === false && !u.disabledAt), 'users: open sign-up creates enabled accounts');
 
 // ---- heartbeat ----
 // A user who never signed in again keeps the old timestamp within the window...

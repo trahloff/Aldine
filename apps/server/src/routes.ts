@@ -259,12 +259,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // mcpEnabled/publicUrl let the Agent access card say whether the connector
   // URL it shows is served at all, and whether claude.ai could reach it.
   // sendsEmail: confirmation and reset links go out by mail; without it they
-  // are in the server log for the operator to pass on.
+  // are in the server log for the operator to pass on. signup: ALDINE_SIGNUP,
+  // so the sign-up form can say up front that new accounts wait for approval.
   app.get('/api/auth/me', async (req) => {
     const user = reqUser(req);
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
-      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(),
+      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
     };
   });
 
@@ -285,8 +286,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const sendsEmail = () => email.emailConfigured() && !!config.publicUrl;
   /** Last confirmation link logged per address; read by the test hook only. */
   const loggedConfirmations = new Map<string, string>();
-  /** Mail the confirmation link, or log it for the operator. True when mailed. */
-  const deliverConfirmation = (to: string, token: string, signUp: boolean): boolean => {
+  /** Mail the confirmation link, or log it for the operator. True when mailed.
+   *  `waiting`: the account waits for an administrator's approval. */
+  const deliverConfirmation = (to: string, token: string, signUp: boolean, waiting = false): boolean => {
     const link = `${config.publicUrl || config.basePath}/?confirm_email=${encodeURIComponent(token)}`;
     if (sendsEmail()) {
       // Nothing but the address comes from the request: the address is
@@ -295,7 +297,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const intro = signUp
         ? `Welcome to Aldine — write LaTeX together, fast, versioned, and yours. Someone, probably you, just created an account at ${config.publicUrl} with this address.`
         : `Here is a new link to confirm the address of your Aldine account at ${config.publicUrl}.`;
-      const why = 'Confirm the address to see the projects people share with you by email. If you are not signed in, Aldine asks you to sign in first.';
+      const why = waiting
+        ? 'Confirm the address, then an administrator of this server approves the account. Aldine asks you to sign in to confirm it, and emails you once the account is approved.'
+        : 'Confirm the address to see the projects people share with you by email. If you are not signed in, Aldine asks you to sign in first.';
       email.sendMail({
         to,
         subject: 'Confirm your email address for Aldine',
@@ -324,15 +328,22 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const bad = badCredentials(req.body);
     if (bad) return reply.code(400).send({ error: bad });
     try {
-      const { user, confirmToken } = await auth.signUp(req.body.email, req.body.password, req.body.name);
-      reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+      const { user, confirmToken, awaiting } = await auth.signUp(req.body.email, req.body.password, req.body.name);
+      // An account waiting for approval gets no session: it could not use one.
+      if (!awaiting) reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
       // In the background: a mail failure never fails the sign-up.
-      if (user.email) deliverConfirmation(user.email, confirmToken, true);
+      const mailed = !!user.email && deliverConfirmation(user.email, confirmToken, true, awaiting);
+      if (awaiting) {
+        const confirm = mailed ? `Confirm your email address with the link we sent to ${user.email}. ` : '';
+        return { user, awaitingApproval: true, message: `Your account is created. ${confirm}${auth.AWAITING_APPROVAL}` };
+      }
       return { user };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
-  app.post<{ Body: { email: string; password: string } }>('/api/auth/login', async (req, reply) => {
+  // `confirmToken`: the confirmation link the sign-in page was opened with
+  // (see auth.passwordSignIn).
+  app.post<{ Body: { email: string; password: string; confirmToken?: string } }>('/api/auth/login', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     if (!(await loginLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
@@ -343,13 +354,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const wait = await signInBackoff.attempt(key);
     if (wait > 0) return tooManyForAccount(reply, wait);
     try {
-      const user = await auth.login(req.body.email, req.body.password);
+      const confirmToken = typeof req.body.confirmToken === 'string' && req.body.confirmToken.length <= 256 ? req.body.confirmToken : undefined;
+      const { user, emailConfirmed } = await auth.passwordSignIn(req.body.email, req.body.password, confirmToken);
       await signInBackoff.clear(key);
       if (key !== account) await signInBackoff.clear(account);
       const trust = await auth.deviceCookie(req.headers.cookie, user.id);
       reply.header('set-cookie', [auth.sessionCookie(await auth.createSession(user.id)), ...(trust ? [trust] : [])]);
-      return { user };
-    } catch (err: any) { return reply.code(401).send({ error: err.message }); }
+      return emailConfirmed ? { user, emailConfirmed } : { user };
+    } catch (err: any) {
+      if (err instanceof auth.AwaitingApprovalError) {
+        // Thrown only after the password matched: a person who keeps asking
+        // whether they are approved yet is not guessing it.
+        await signInBackoff.clear(key);
+        if (key !== account) await signInBackoff.clear(account);
+        return reply.code(403).send({ error: err.message, code: err.code });
+      }
+      return reply.code(401).send({ error: err.message });
+    }
   });
 
   app.post('/api/auth/logout', async (req, reply) => {
@@ -461,20 +482,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // These routes are browser navigations: a person who lands here from the
   // IdP gets a page with a way back, API clients keep the JSON body. No free
   // text from the request URL reaches the page (only an RFC 6749 error code).
-  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string) => {
+  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string, title = 'Sign-in failed') => {
     if (!/\btext\/html\b/.test(String(req.headers.accept || ''))) return reply.code(code).send({ error });
     const back = `${config.basePath}/`;
     return reply.code(code)
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-store')
       .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-      .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in failed · Aldine</title><style>
+      .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · Aldine</title><style>
 :root{color-scheme:light dark;--bg:#f7f6f3;--fg:#1d1c1a;--muted:#6b6862;--card:#fff;--line:#e3e0da;--accent:#2f5d8a}
 @media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe8;--muted:#a3a09a;--card:#1f1f1c;--line:#34332f;--accent:#8fb5dc}}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:0 16px}
 main{max-width:30rem;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px 28px}
 h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);font-weight:600}
-</style></head><body><main><h1>Sign-in failed</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">Back to sign-in</a></main></body></html>`);
+</style></head><body><main><h1>${escapeHtml(title)}</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">Back to sign-in</a></main></body></html>`);
   };
 
   app.get<{ Params: { provider: string } }>('/api/auth/oauth/:provider', async (req, reply) => {
@@ -517,6 +538,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
+        if (err instanceof auth.AwaitingApprovalError) return signInFailed(req, reply, 403, err.message, 'Waiting for approval');
         return signInFailed(req, reply, 400, `${signInName(provider.label)} failed: ${err.message}`);
       }
     });

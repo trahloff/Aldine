@@ -9,7 +9,7 @@ import { api, ApiError, AdminUserRow, AdminResetResult } from '../api';
  * why an action is not offered.
  */
 
-type View = 'main' | 'disable' | 'enable' | 'confirm-email' | 'reset' | 'reset-done' | 'delete';
+type View = 'main' | 'disable' | 'enable' | 'approve' | 'confirm-email' | 'reset' | 'reset-done' | 'delete';
 
 interface Props {
   user: AdminUserRow;
@@ -102,6 +102,13 @@ export default function AdminAccountDialog({ user, accounts, meId, admins, sends
       `Enable ${user.name}?`,
       'They can sign in again. Access tokens and agent connections that were not revoked work again.',
       'Enable account',
+      async () => { onChanged(await api.adminEnable(user.id)); back(); },
+    );
+  } else if (view === 'approve') {
+    content = confirmStep(
+      `Approve ${user.name}?`,
+      `They can sign in from now on.${sendsEmail && user.email ? ` Aldine emails ${user.email} to tell them.` : ''}`,
+      'Approve account',
       async () => { onChanged(await api.adminEnable(user.id)); back(); },
     );
   } else if (view === 'confirm-email') {
@@ -224,7 +231,7 @@ export default function AdminAccountDialog({ user, accounts, meId, admins, sends
           <dt>Address</dt>
           <dd>{!user.email ? '—' : user.emailPending ? 'Not confirmed' : 'Confirmed'}</dd>
           <dt>Account</dt>
-          <dd data-testid="admin-account-status">{user.disabledAt ? `Disabled since ${since(user.disabledAt)}` : 'Active'}</dd>
+          <dd data-testid="admin-account-status">{user.awaitingApproval ? `Waiting for approval since ${since(user.createdAt)}` : user.disabledAt ? `Disabled since ${since(user.disabledAt)}` : 'Active'}</dd>
           <dt>Sign-in</dt>
           <dd>{user.signIn}</dd>
           <dt>Last seen</dt>
@@ -233,7 +240,12 @@ export default function AdminAccountDialog({ user, accounts, meId, admins, sends
           <dd>{user.projects}{user.trashedProjects ? `, ${user.trashedProjects} in the trash` : ''}</dd>
         </dl>
         <ul className="admin-account__actions">
-          {user.disabledAt ? (
+          {user.awaitingApproval ? (
+            <li>
+              <button className="btn btn--primary" onClick={() => setView('approve')} data-testid="admin-approve">Approve account</button>
+              <span>Lets them sign in. To turn them away, delete the account.</span>
+            </li>
+          ) : user.disabledAt ? (
             <li>
               <button className="btn" onClick={() => setView('enable')} data-testid="admin-enable">Enable account</button>
               <span>Lets them sign in again.</span>

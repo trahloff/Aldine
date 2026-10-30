@@ -73,6 +73,31 @@ async function sendViaSmtp(mail: Mail): Promise<void> {
   await smtpTransport.sendMail({ from: fromAddress(), to: mail.to, subject: mail.subject, text: mail.text, html: mail.html });
 }
 
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/** To an administrator: an account waits for approval (ALDINE_SIGNUP=approval).
+ *  `account` is its address or ORCID iD, never its display name: that is the
+ *  signer's own text. Links are built from ALDINE_PUBLIC_URL only. */
+export function approvalRequestMail(to: string, account: string, signIn: string, instance: string, adminLink: string): Mail {
+  const line = `${account} (signs in with ${signIn})`;
+  return {
+    to,
+    subject: 'A new Aldine account is waiting for approval',
+    text: `A new account on the Aldine server at ${instance} is waiting for approval:\n\n${line}\n\nApprove or delete it on the admin page:\n${adminLink}\n\nYou get this email because your address is on ALDINE_ADMIN_EMAILS.`,
+    html: `<p>A new account on the Aldine server at ${escapeHtml(instance)} is waiting for approval:</p><p><strong>${escapeHtml(line)}</strong></p><p><a href="${escapeHtml(adminLink)}">Approve or delete it on the admin page</a>.</p><p>You get this email because your address is on ALDINE_ADMIN_EMAILS.</p>`,
+  };
+}
+
+/** To the person whose waiting account an administrator approved. */
+export function approvedMail(to: string, instance: string, link: string): Mail {
+  return {
+    to,
+    subject: 'Your Aldine account is approved',
+    text: `Hi there,\n\nAn administrator approved your account on the Aldine server at ${instance}. You can sign in now:\n${link}`,
+    html: `<p>Hi there,</p><p>An administrator approved your account on the Aldine server at ${escapeHtml(instance)}. <a href="${escapeHtml(link)}">Sign in now</a>.</p>`,
+  };
+}
+
 /** The password-reset mail. The forgot-password form and an administrator
  *  send the same one; `link` is built from ALDINE_PUBLIC_URL only. */
 export function resetMail(to: string, link: string, token: string): Mail {

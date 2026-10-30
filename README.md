@@ -139,7 +139,10 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   users (7 / 30 days, editing now), projects, compile time, and per account
   disable, confirm address, password reset and delete. Never project content.
   No compose file passes this variable through; add it under `environment:`
-  of the `app` service.
+  of the `app` service. `ALDINE_SIGNUP=approval` keeps every new account,
+  password or single sign-on, waiting until an administrator approves it on
+  `/admin`; with email set up, the administrators get a mail when one starts
+  waiting.
 - **Scales when you need it**: flat-file storage by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
