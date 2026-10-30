@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-10-30
+
 ### Added
 - The Share dialog lists the people with access, each with a Remove button.
   Removing someone ends their access at once, and if they have the project
