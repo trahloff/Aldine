@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { db } from './db/index.js';
 import type { EmailPending, TokenRecord, User } from './db/types.js';
 import { config } from './config.js';
+import * as mail from './email.js';
 import { providers, type OAuthProfile } from './oauth.js';
 import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
 import { discardCodesForUser } from './oauth/codes.js';
@@ -35,6 +36,47 @@ export const SSO_ONLY = process.env.ALDINE_SSO_ONLY === '1' || process.env.ALDIN
 export const ADMIN_EMAILS = new Set(
   (process.env.ALDINE_ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 );
+
+/**
+ * Who may create an account (ALDINE_SIGNUP). `open`, the default: anyone who
+ * reaches the server. `approval`: every account created from then on waits
+ * until an administrator approves it on /admin; accounts that already exist
+ * are not touched. Any other value means `approval`, the stricter of the two,
+ * and is warned about at boot (as OIDC_EMAIL_VERIFIED falls back to `require`).
+ */
+export type SignupMode = 'open' | 'approval';
+export function signupMode(env: NodeJS.ProcessEnv = process.env): SignupMode {
+  const v = (env.ALDINE_SIGNUP || '').trim().toLowerCase();
+  return v === '' || v === 'open' ? 'open' : 'approval';
+}
+export const SIGNUP_MODE = signupMode();
+
+/** Boot warnings: an ALDINE_SIGNUP value it does not know, and approval
+ *  that cannot work (no accounts at all, or nobody to approve). */
+export function signupConfigWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = (env.ALDINE_SIGNUP || '').trim();
+  const out: string[] = [];
+  if (raw && raw.toLowerCase() !== 'open' && raw.toLowerCase() !== 'approval') {
+    out.push(`[aldine] ALDINE_SIGNUP=${JSON.stringify(raw.slice(0, 40))} is neither "open" nor "approval"; using "approval"`);
+  }
+  if (signupMode(env) !== 'approval') return out;
+  if (env.AUTH_ENABLED !== '1' && env.AUTH_ENABLED !== 'true') {
+    out.push('[aldine] ALDINE_SIGNUP=approval has no effect: AUTH_ENABLED is off, so there are no accounts and everyone who reaches this server can use it');
+  } else if (!(env.ALDINE_ADMIN_EMAILS || '').split(',').some((s) => s.trim())) {
+    out.push('[aldine] ALDINE_SIGNUP=approval, but ALDINE_ADMIN_EMAILS is empty: new accounts wait for an approval nobody can give. Add your address to ALDINE_ADMIN_EMAILS and restart');
+  }
+  return out;
+}
+
+/**
+ * The account waits for an administrator's approval: it was created disabled
+ * under ALDINE_SIGNUP=approval and nobody has enabled it since. No column of
+ * its own: such an account has disabledAt equal to createdAt, which Disable
+ * on /admin never writes (it stamps the moment it runs). Both datastores keep
+ * the two as the same ISO string.
+ */
+export const awaitingApproval = (u: { createdAt: string; disabledAt?: string }) => !!u.disabledAt && u.disabledAt === u.createdAt;
+
 export const COOKIE = 'aldine_session';
 // Scoped to the base path so a neighbouring app on the same host never sees it.
 export const COOKIE_PATH = config.basePath || '/';
@@ -97,10 +139,10 @@ export async function register(email: string | null, password: string, name?: st
 }
 
 /** Password sign-up. `confirmToken` goes into the confirmation link only,
- *  never into a response. */
-export async function signUp(email: string, password: string, name?: string): Promise<{ user: PublicUser; confirmToken: string }> {
+ *  never into a response. An account `awaiting` approval gets no session. */
+export async function signUp(email: string, password: string, name?: string): Promise<{ user: PublicUser; confirmToken: string; awaiting: boolean }> {
   const r = await createAccount(email, password, name);
-  return { user: pub(r.user), confirmToken: r.confirmToken! };
+  return { user: pub(r.user), confirmToken: r.confirmToken!, awaiting: awaitingApproval(r.user) };
 }
 
 async function createAccount(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<{ user: User; confirmToken: string | null }> {
@@ -112,17 +154,19 @@ async function createAccount(email: string | null, password: string, name?: stri
   const salt = crypto.randomBytes(16).toString('hex');
   // Anyone can type any address at sign-up; a provider vouches for its own.
   const confirm = provider ? null : newConfirmation();
+  const createdAt = new Date().toISOString();
   const user: User = {
     id: crypto.randomBytes(9).toString('base64url'),
     email,
     name: cleanName(name) || cleanName(email ? email.split('@')[0] : subject),
     salt,
     hash: password ? await hashPassword(password, salt) : '',
-    createdAt: new Date().toISOString(),
+    createdAt,
     provider,
     subject,
     ...(confirm ? { emailPending: confirm.pending } : {}),
   };
+  if (SIGNUP_MODE === 'approval' && !adminByAddress(user)) user.disabledAt = createdAt;
   await db().createUser(user);
   return { user, confirmToken: confirm?.token ?? null };
 }
@@ -176,15 +220,75 @@ function refuseSsoAccount(user: User): void {
 /** Said only to someone who just proved the identity (the password, or the
  *  provider's sign-in), so it never tells a stranger the account exists. */
 export const ACCOUNT_DISABLED = 'This account is disabled. Ask the administrator of this server to enable it.';
-function refuseDisabled(user: User): void {
+/** Said, like ACCOUNT_DISABLED, only to someone who just proved the identity. */
+export const AWAITING_APPROVAL = 'An administrator of this server approves new accounts. You can sign in once they have.';
+/** A sign-in refused because the account waits for approval; `code` tells a
+ *  client this refusal from a wrong password. */
+export class AwaitingApprovalError extends Error { readonly code = 'awaiting-approval'; }
+
+/** A confirmed address on ALDINE_ADMIN_EMAILS: the account is an
+ *  administrator (as isAdmin decides), so it never waits for an approval. */
+function adminByAddress(u: User): boolean {
+  return !u.emailPending && !!u.email && ADMIN_EMAILS.has(u.email.toLowerCase());
+}
+
+/** An administrator's account that waits (its address was confirmed, or put
+ *  on the list, after it was created) is approved here instead of refused:
+ *  nobody else might be there to approve it. */
+async function refuseDisabled(user: User): Promise<void> {
+  if (awaitingApproval(user)) {
+    if (!adminByAddress(user)) throw new AwaitingApprovalError(AWAITING_APPROVAL);
+    await enableAccount(user.id);
+    delete user.disabledAt;
+    return;
+  }
   if (user.disabledAt) throw new Error(ACCOUNT_DISABLED);
 }
 
+/**
+ * A waiting account starts to count for the administrators: a single sign-on
+ * account when it is created, a password account once its address is
+ * confirmed, so an address nobody confirmed never mails them. Logged always;
+ * mailed to every address on ALDINE_ADMIN_EMAILS when the server sends email.
+ */
+function announceWaiting(user: User): void {
+  const account = user.email ?? orcidOf(user) ?? user.subject ?? user.id;
+  console.log(`[aldine] new account waiting for approval: ${account} [${user.id}]`);
+  if (!mail.emailConfigured() || !config.publicUrl) return;
+  const signIn = user.provider ? providerLabel(user.provider) : 'a password';
+  for (const to of ADMIN_EMAILS) {
+    mail.sendMail(mail.approvalRequestMail(to, account, signIn, config.publicUrl, `${config.publicUrl}/admin`))
+      .catch((err) => console.error('[aldine] approval request email failed:', err?.message || err));
+  }
+}
+
 export async function login(email: string, password: string): Promise<PublicUser> {
+  return (await passwordSignIn(email, password)).user;
+}
+
+/** login, for the sign-in form. `confirmToken`: the link of a password
+ *  sign-up that waits for approval. Such an account has no session to
+ *  confirm its address with, and the password proves the account as a
+ *  session would. `emailConfirmed`: the link was used here. */
+export async function passwordSignIn(email: string, password: string, confirmToken?: string): Promise<{ user: PublicUser; emailConfirmed: boolean }> {
   const user = await db().findUserByEmail(email.trim().toLowerCase());
   if (!user || user.provider || !user.hash || !(await verifyPassword(password, user))) throw new Error('Incorrect email or password');
-  refuseDisabled(user);
-  return pub(user);
+  let emailConfirmed = false;
+  if (confirmToken && user.emailPending && awaitingApproval(user)) {
+    try {
+      await confirmEmail(user.id, confirmToken);
+    } catch (err: any) {
+      throw new AwaitingApprovalError(`${err.message} ${AWAITING_APPROVAL}`);
+    }
+    delete user.emailPending;
+    emailConfirmed = true;
+    if (!adminByAddress(user)) {
+      announceWaiting(user);
+      throw new AwaitingApprovalError(`Your email address is confirmed. ${AWAITING_APPROVAL}`);
+    }
+  }
+  await refuseDisabled(user);
+  return { user: pub(user), emailConfirmed };
 }
 
 export function getUser(id: string): Promise<User | null> {
@@ -204,7 +308,7 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   if (profile.subject) {
     const bySubject = await db().findUserBySubject(profile.subject);
     if (bySubject) {
-      refuseDisabled(bySubject);
+      await refuseDisabled(bySubject);
       // An account created while the IdP had no verified address for the
       // person takes the first one it reports. An address already on the
       // account is kept: project invites and shares are matched by it.
@@ -227,7 +331,7 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
     if (profile.subject && existing.subject && existing.subject !== profile.subject) {
       throw new Error(`An account with this email already belongs to a different ${providerLabel(provider)} identity — ask the administrator for help.`);
     }
-    refuseDisabled(existing);
+    await refuseDisabled(existing);
     if (profile.subject && existing.subject !== profile.subject) {
       // First sign-in since the provider started reporting subjects: bind it
       // so a later change of the public email cannot detach the account.
@@ -237,7 +341,12 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
     return pub(existing);
   }
   if (email === null && !profile.subject) throw new Error(`${provider} did not share an email address`);
-  return register(email, '', profile.name, provider, profile.subject);
+  const { user } = await createAccount(email, '', profile.name, provider, profile.subject);
+  if (awaitingApproval(user)) {
+    announceWaiting(user);
+    throw new AwaitingApprovalError(`Your account is created. ${AWAITING_APPROVAL}`);
+  }
+  return pub(user);
 }
 
 /** Returns how many access tokens were revoked with the old password. */
@@ -280,10 +389,13 @@ export async function resetPassword(token: string, next: string): Promise<number
   // The reset link reached the person through the address (or through the
   // operator, from the log), so following it proves the address. Not when
   // ALDINE_RESET_ECHO=1 handed the token to whoever asked.
-  if (process.env.ALDINE_RESET_ECHO !== '1') delete user.emailPending;
+  const confirms = !!user.emailPending && process.env.ALDINE_RESET_ECHO !== '1';
+  if (confirms) delete user.emailPending;
   await db().updateUser(user);
   await db().deleteReset(token);
   await revokeUser(user.id);
+  // An administrator's account approves itself at its next sign-in instead.
+  if (confirms && awaitingApproval(user) && !adminByAddress(user)) announceWaiting(user);
   return revokeAgentAccess(user.id);
 }
 

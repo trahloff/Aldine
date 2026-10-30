@@ -40,7 +40,7 @@ function Stat({ label, value, hint, testId }: { label: string; value: string | n
 }
 
 export default function Admin() {
-  const { authEnabled, admin, user: me, sendsEmail, passwordAuth } = useAuth();
+  const { authEnabled, admin, user: me, sendsEmail, passwordAuth, signupApproval } = useAuth();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +68,10 @@ export default function Admin() {
     const t = setInterval(load, 30_000);
     return () => clearInterval(t);
   }, [authEnabled, admin]);
+
+  // Accounts waiting for approval first, the rest oldest first as the server lists them.
+  const listed = (users || []).filter((u) => u.awaitingApproval).concat((users || []).filter((u) => !u.awaitingApproval));
+  const waitingCount = stats?.users.awaitingApproval ?? 0;
 
   if (authEnabled && !admin) {
     return (
@@ -104,6 +108,9 @@ export default function Admin() {
               <Stat label="Active, last 7 days" value={stats.users.active7d} testId="stat-users-active7d" />
               <Stat label="Active, last 30 days" value={stats.users.active30d} testId="stat-users-active30d" />
               <Stat label="Editing right now" value={stats.users.onlineNow} hint={`${stats.collab.connections} open sockets`} testId="stat-users-online" />
+              {(signupApproval || waitingCount > 0) && (
+                <Stat label="Waiting for approval" value={waitingCount} hint={waitingCount ? 'Listed first below' : undefined} testId="stat-users-waiting" />
+              )}
             </div>
 
             <h2 className="home__section">Work</h2>
@@ -128,7 +135,7 @@ export default function Admin() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(users || []).map((u) => (
+                  {listed.map((u) => (
                     <tr key={u.id} data-testid="admin-user-row">
                       <td>{u.name}{u.admin && <span className="admin__badge" title="On the admin list">admin</span>}</td>
                       <td>{u.email || <span className="admin__muted">no email</span>}</td>
@@ -138,9 +145,11 @@ export default function Admin() {
                             : 'Confirmed'}
                       </td>
                       <td>
-                        {u.disabledAt
-                          ? <span className="admin__status admin__status--off" data-testid="admin-status-disabled" title={`Disabled ${new Date(u.disabledAt).toLocaleString()}`}>Disabled</span>
-                          : <span className="admin__status" data-testid="admin-status-active">Active</span>}
+                        {u.awaitingApproval
+                          ? <span className="admin__status admin__status--waiting" data-testid="admin-status-waiting" title="Signed up and cannot sign in until you approve the account (Manage)">Waiting for approval</span>
+                          : u.disabledAt
+                            ? <span className="admin__status admin__status--off" data-testid="admin-status-disabled" title={`Disabled ${new Date(u.disabledAt).toLocaleString()}`}>Disabled</span>
+                            : <span className="admin__status" data-testid="admin-status-active">Active</span>}
                       </td>
                       <td>{u.signIn}</td>
                       <td title={u.createdAt}>{new Date(u.createdAt).toLocaleDateString()}</td>

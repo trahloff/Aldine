@@ -8,6 +8,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ## [Unreleased]
 
 ### Added
+- New accounts can wait for an administrator's approval (#192): with
+  `ALDINE_SIGNUP=approval`, every account created from then on, by password
+  sign-up or by a first sign-in with Google, GitHub, ORCID or OpenID Connect,
+  cannot sign in until an administrator approves it on `/admin`, where
+  waiting accounts are counted, listed first and marked "Waiting for
+  approval", with Approve account under Manage. The sign-up form says so up
+  front, and a waiting account is told so after its password or the
+  provider's sign-in. A password sign-up still confirms its address with the
+  link from the welcome email. The administrators get an email when an
+  account starts waiting (a password account once its address is
+  confirmed), and the person gets one when it is approved. A confirmed
+  address on `ALDINE_ADMIN_EMAILS` never waits. Existing accounts are not
+  affected; the default, `open`, works as before.
 - Links in the PDF preview work with a single click. A reference, a
   citation or a table of contents entry scrolls the preview to its target
   and flashes it; a web or email address opens in a new tab. Links to

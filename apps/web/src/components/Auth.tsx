@@ -23,15 +23,18 @@ interface AuthState {
   publicUrl: string | null;
   /** Confirmation links go out by mail (otherwise the operator relays them from the log). */
   sendsEmail: boolean;
+  /** ALDINE_SIGNUP=approval: new accounts wait until an administrator approves them. */
+  signupApproval: boolean;
   emailNotice: EmailNotice | null;
   clearEmailNotice(): void;
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, sendsEmail: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {} });
 
 const CONFIRM_PARAM = 'confirm_email';
+const CONFIRMED = 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.';
 /** Drop the confirmation token from the address bar, keeping everything else. */
 function stripConfirmParam() {
   const url = new URL(window.location.href);
@@ -59,6 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [sendsEmail, setSendsEmail] = useState(false);
+  const [signupApproval, setSignupApproval] = useState(false);
   const [emailNotice, setEmailNotice] = useState<EmailNotice | null>(null);
   // Arriving from a confirmation link (…/?confirm_email=…). The token stays in
   // the address bar until it is used, so a reload on the sign-in form keeps it.
@@ -75,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setMcpEnabled(me.mcpEnabled === true);
       setPublicUrl(me.publicUrl || null);
       setSendsEmail(me.sendsEmail === true);
+      setSignupApproval(me.signup === 'approval');
     } catch {
       setAuthEnabled(false);
       setUser(null);
@@ -100,7 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     api.confirmEmail(token).then(
-      (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.' }); },
+      (r) => { setUser(r.user); setEmailNotice({ tone: 'ok', text: CONFIRMED }); },
       (err: any) => setEmailNotice({ tone: 'error', text: err.message }),
     );
   }, [confirmToken, user]);
@@ -117,14 +122,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       <LoginScreen
         providers={providers}
         passwordAuth={passwordAuth}
+        signupApproval={signupApproval}
         onAuthed={(u) => setUser(u)}
         onStart={() => appSignInStarts()}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
+        confirmToken={confirmToken && !user ? confirmToken : undefined}
+        onConfirmLinkUsed={(signedIn) => {
+          setConfirmToken(null);
+          stripConfirmParam();
+          if (signedIn) setEmailNotice({ tone: 'ok', text: CONFIRMED });
+        }}
       />
     );
   }
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, sendsEmail, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh }}>{children}</Ctx.Provider>;
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';
@@ -148,10 +160,16 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  on both the sign-in and the sign-up step; `notice` is an info line shown
  *  on arrival (why the person is back at the form) — `noticeTone` 'warn' for
  *  a setback (an ended session), the default green for a completed step.
- *  `initialEmail` fills the address in (the one an invitation is for). */
-export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail }: {
+ *  `initialEmail` fills the address in (the one an invitation is for).
+ *  `signupApproval`: new accounts wait for an administrator, and the form
+ *  says so before anyone signs up. `confirmToken` goes along with the
+ *  sign-in: an account that waits for approval has no session to confirm
+ *  its address with afterwards; `onConfirmLinkUsed` runs once the server
+ *  used it (`signedIn` false when the account still waits). */
+export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed }: {
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
+  signupApproval?: boolean;
   onAuthed(u: AuthUser): void;
   /** A sign-in starts here: a provider link followed, or the form sent to sign in or register. */
   onStart?(): void;
@@ -160,6 +178,8 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
   notice?: string;
   noticeTone?: 'ok' | 'warn';
   initialEmail?: string;
+  confirmToken?: string;
+  onConfirmLinkUsed?(signedIn: boolean): void;
 }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState(initialEmail ?? '');
@@ -168,6 +188,8 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState(notice ?? '');
+  /** The account waits for an administrator's approval: what happens next. */
+  const [waiting, setWaiting] = useState('');
   const [busy, setBusy] = useState(false);
   // A throttled sign-in: the button waits out the server's Retry-After.
   const [waitUntil, setWaitUntil] = useState(0);
@@ -182,7 +204,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
     return () => window.clearInterval(t);
   }, [waitUntil]);
 
-  const reset = () => { setError(''); setInfo(''); setWaitUntil(0); };
+  const reset = () => { setError(''); setInfo(''); setWaiting(''); setWaitUntil(0); };
 
   // Arriving from a password-reset email link (…/?reset_token=…): pre-fill the
   // token and jump straight to the "set a new password" step.
@@ -206,9 +228,17 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
     setBusy(true);
     if (mode === 'login' || mode === 'register') onStart?.();
     try {
-      if (mode === 'login') onAuthed((await api.login(email.trim(), password)).user);
-      else if (mode === 'register') onAuthed((await api.register(email.trim(), password, name.trim() || undefined)).user);
-      else if (mode === 'forgot') {
+      if (mode === 'login') {
+        const r = await api.login(email.trim(), password, confirmToken);
+        if (r.emailConfirmed) onConfirmLinkUsed?.(true);
+        onAuthed(r.user);
+      } else if (mode === 'register') {
+        const r = await api.register(email.trim(), password, name.trim() || undefined);
+        if (!r.awaitingApproval) { onAuthed(r.user); return; }
+        setMode('login'); setPassword(''); setBusy(false);
+        setWaiting(r.message ?? '');
+        return;
+      } else if (mode === 'forgot') {
         const r = await api.resetRequest(email.trim());
         if (r.token) { setToken(r.token); setMode('reset'); setInfo('Reset token issued (self-host mode). Set a new password below.'); }
         else { setInfo('If an account exists for that email, a reset link has been sent.'); }
@@ -221,11 +251,18 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
         return;
       }
     } catch (err: any) {
+      if (err instanceof ApiError && err.code === 'awaiting-approval') {
+        setWaiting(err.message);
+        if (confirmToken) onConfirmLinkUsed?.(false);
+        setBusy(false);
+        return;
+      }
       setError(err.message);
       if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setNow(Date.now()); setWaitUntil(Date.now() + err.retryAfter * 1000); }
       setBusy(false);
     }
   };
+  const approvalNote = signupApproval && <p className="login__hint login__approval" data-testid="auth-approval-note">An administrator of this server approves new accounts before they can sign in.</p>;
 
   const title = mode === 'login' ? (heading ?? 'Sign in to your projects.')
     : mode === 'register' ? (registerHeading ?? 'Create an account to get started.')
@@ -255,6 +292,7 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
         {!passwordAuth && providers.length === 0 && (
           <p className="login__error" role="alert">No sign-in method is configured. Contact the administrator.</p>
         )}
+        {!passwordAuth && providers.length > 0 && approvalNote}
 
         {passwordAuth && (
           <>
@@ -295,8 +333,11 @@ export function LoginScreen({ providers, passwordAuth, onAuthed, onStart, headin
                 </div>
               )}
 
+              {mode === 'register' && approvalNote}
+
               {error && <p className="login__error" role="alert" data-testid="auth-error">{error}</p>}
               {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} role="status" data-testid="auth-info">{info}</p>}
+              {waiting && <p className="login__info login__info--warn" role="status" data-testid="auth-waiting">{waiting}</p>}
 
               <button type="submit" className="btn btn--primary login__submit" disabled={busy || waitLeft > 0} aria-busy={busy || undefined} data-testid="auth-submit">
                 {waitLeft > 0 && !busy ? `Try again in ${waitLeft} s` : submitLabel}

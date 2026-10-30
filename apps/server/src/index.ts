@@ -12,7 +12,7 @@ import { captureError } from './observability.js';
 import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
 import { ensureSigningSecret } from './output-signing.js';
-import { AUTH_ENABLED } from './auth.js';
+import { AUTH_ENABLED, signupConfigWarnings } from './auth.js';
 import { backfillMissingLastEdits, flushActivity } from './activity.js';
 import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings } from './oidc.js';
 import { startTemplatePreviews } from './templatepreviews.js';
@@ -50,6 +50,7 @@ app.server.on('upgrade', (request, socket, head) => {
 });
 
 console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
+for (const warning of signupConfigWarnings()) console.warn(warning);
 if (AUTH_ENABLED) {
   for (const warning of oidcConfigWarnings()) console.warn(warning);
   const line = oidcBootLine();

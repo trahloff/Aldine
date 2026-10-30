@@ -288,8 +288,10 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -
 ## Sign-up and invites
 
 With `AUTH_ENABLED=1` and password sign-in on, anyone who can reach the
-instance can create an account, and nobody checks the address they type. So a
-new password account starts with its address **not confirmed**:
+instance can create an account (unless new accounts wait for your approval,
+see [Approving new accounts](#approving-new-accounts)), and nobody checks the
+address they type. So a new password account starts with its address **not
+confirmed**:
 
 - Sign-up sends a one-time confirmation link (valid 7 days) through the email
   transport. Without a transport, or without `ALDINE_PUBLIC_URL`, the server
@@ -355,12 +357,53 @@ password: rotating the secret, or changing or resetting the password, makes
 every browser sign in once more before it is exempt again (the browser that
 changes the password keeps its exemption).
 
+## Approving new accounts
+
+`ALDINE_SIGNUP=approval` (with `AUTH_ENABLED=1`) lets in only the people you
+approve. Every account created from then on starts out waiting: a password
+sign-up, and the first sign-in with Google, GitHub, ORCID or OpenID Connect.
+An invitation to a project does not skip it. Accounts that already exist keep
+working, and accounts still waiting when you switch back to `open` keep
+waiting until you approve them.
+
+- A waiting account cannot sign in. It is told "An administrator of this
+  server approves new accounts. You can sign in once they have." only after
+  the right password or the provider's sign-in, so the message never tells a
+  stranger that an account exists. The sign-up form says up front that an
+  administrator approves new accounts.
+- A password sign-up still gets its confirmation link. The person opens it,
+  signs in on the page it opens, and the address is confirmed; the page says
+  the account now waits for approval. A completed password reset confirms
+  the address too.
+- `/admin` counts the waiting accounts and lists them first, marked
+  **Waiting for approval**. **Approve account** under Manage lets the person
+  sign in; to turn someone away, delete the account. With an email transport
+  and `ALDINE_PUBLIC_URL`, approving emails the person. Enabling an account
+  you disabled emails nobody, as before.
+- When an account starts waiting, every address on `ALDINE_ADMIN_EMAILS` gets
+  an email with a link to `/admin`: for a single sign-on account when it is
+  created, for a password account once its address is confirmed, so a
+  sign-up nobody confirms emails nobody. The server also logs
+  `[aldine] new account waiting for approval: <address> [<id>]`, with or
+  without email.
+- An address on `ALDINE_ADMIN_EMAILS` does not wait once it is proven. A
+  single sign-on account with a listed address signs in at once. A password
+  sign-up with one waits like any other until its confirmation link (or a
+  password reset) confirms the address, and then signs in as an
+  administrator: anyone can type the address, not everyone can read its mail.
+- At boot the server warns when `ALDINE_SIGNUP=approval` is set but
+  `ALDINE_ADMIN_EMAILS` is empty (nobody could approve anyone), when
+  `AUTH_ENABLED` is off (there are no accounts to approve), and when the
+  value is neither `open` nor `approval` (it then counts as `approval`).
+
 ## Managing accounts
 
 `/admin` lists every account: whether its address is confirmed, whether it
-is disabled, how it signs in and when it was last seen. **Manage** on a row
-offers the actions below. Each asks first, and each writes one line to the
-server log naming the administrator, the action and the account
+is disabled or waiting for approval, how it signs in and when it was last
+seen. **Manage** on a row offers the actions below (an account waiting for
+approval has **Approve account** in place of Disable and Enable). Each asks
+first, and each writes one line to the server log naming the administrator,
+the action and the account
 (`[aldine] admin <you> [<id>] disabled <them> [<id>]`).
 
 - **Disable account** signs the person out everywhere at once and refuses
@@ -525,6 +568,7 @@ override file.
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
 | `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time) and disable, confirm, reset or delete accounts there (see [Managing accounts](#managing-accounts)). Never project content; needs `AUTH_ENABLED=1` to mean anything. A password account counts only once it has confirmed its address (see [Sign-up and invites](#sign-up-and-invites)) |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
+| `ALDINE_SIGNUP` | `open` (default) = anyone who reaches the instance can create an account; `approval` = every account created from then on, password or single sign-on, waits until an administrator approves it on `/admin` (see [Approving new accounts](#approving-new-accounts)). Accounts that already exist are not affected. Any other value counts as `approval` and is warned about at boot |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |

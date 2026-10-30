@@ -71,7 +71,10 @@ two paths stay as they are within 1.x.
   An account without `emailPending` (the `email_pending` column in Postgres)
   counts as having a confirmed address, so accounts written before 1.0 need
   no step. Likewise an account without `disabledAt` (`disabled_at`) is
-  enabled.
+  enabled. An account whose `disabledAt` is exactly its `createdAt` waits
+  for an administrator's approval (`ALDINE_SIGNUP=approval`); no column is
+  added for it, and an account disabled on `/admin` never has that value, so
+  turning approval on changes no existing account.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.
@@ -118,7 +121,8 @@ downgrade. Back up before you upgrade, and restore that backup to go back.
 [deploy/README.md, "All configuration"](../deploy/README.md#all-configuration).
 Within 1.x a stable variable keeps its name and its meaning. A minor release
 may add new ones, and a changed default is listed under "Changed" in the
-CHANGELOG.
+CHANGELOG. Added since 1.0, stable from the release that adds it:
+`ALDINE_SIGNUP` (`open` or `approval`).
 
 **Not covered:** the variables under "Tests and internals" in the same file.
 They exist for the test suites and for tuning, and may change in any release.

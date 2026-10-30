@@ -30,8 +30,11 @@ you in the fix's release notes unless you prefer otherwise.
   scrypt-hashed. They carry the Secure flag when `ALDINE_PUBLIC_URL` starts
   with `https`; behind HTTPS without it, set `COOKIE_SECURE=1` (the prod
   overlay does).
-- Password sign-up is open to anyone who can reach the instance, and the
-  typed address starts unconfirmed: projects shared with that address and
+- Password sign-up is open to anyone who can reach the instance (unless
+  `ALDINE_SIGNUP=approval` keeps every new account, password or single
+  sign-on, out until an administrator approves it: deploy/README.md,
+  "Approving new accounts"), and the typed address starts unconfirmed:
+  projects shared with that address and
   `ALDINE_ADMIN_EMAILS` ignore the account until it follows the one-time link
   sent to the address (logged for the operator when no email transport is
   set) or completes a password reset. Accounts from before this check and

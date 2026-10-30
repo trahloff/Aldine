@@ -564,6 +564,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .login__error { color: var(--error); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info { color: var(--ok-text); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info--warn { color: var(--warn-text); }
+.login__approval { margin: 2px 0 10px; }
 
 /* comment composer */
 .composer__quote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg-inset); border-radius: 0 var(--radius-s) var(--radius-s) 0; color: var(--text-2); font-size: var(--text-s); max-height: 84px; overflow-y: auto; white-space: pre-wrap; }
@@ -1740,6 +1741,7 @@ a.btn { text-decoration: none; }
 .admin__notice { padding: 8px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-s); background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
 .admin__status { font-size: var(--text-s); }
 .admin__status--off { padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--error); font-weight: 600; }
+.admin__status--waiting { padding: 1px 6px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); font-weight: 600; white-space: nowrap; }
 .admin-account__facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 16px; font-size: var(--text-m); }
 .admin-account__facts dt { color: var(--text-2); }
 .admin-account__facts dd { margin: 0; overflow-wrap: anywhere; }
