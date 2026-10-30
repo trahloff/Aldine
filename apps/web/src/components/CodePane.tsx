@@ -7,12 +7,13 @@ import { tags as t } from '@lezer/highlight';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
-import { latex } from 'codemirror-lang-latex';
+import { latex, latexCompletionSource } from 'codemirror-lang-latex';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
-import { citeCompletionSource, refCompletionSource, citeHoverTooltip, warmBib } from '../editor/latexExtras';
+import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, withoutKeyCommands, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
+import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
@@ -394,15 +395,22 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           rectangularSelection(),
           highlightActiveLine(),
           highlightSelectionMatches(),
-          autocompletion(),
-          // enableAutocomplete:false skips the package's autocompletion({override}) which
-          // would disable ALL languageData sources (incl. our cite/ref completions);
-          // its builtin command completions still register via languageData.
+          // Every source is listed here: an override ignores languageData, where the package
+          // registers its command list with a \cite and \ref that insert the bare name.
+          autocompletion({
+            override: [
+              withoutKeyCommands(latexCompletionSource(true)),
+              keyCommandCompletionSource,
+              citeCompletionSource(projectId, branch),
+              refCompletionSource(projectId, branch, () => filePath),
+            ],
+          }),
+          // enableAutocomplete:false keeps the package from adding an autocompletion with its own override;
           // enableTooltips:false so our richer \cite hover (reference preview) is the only hover
           latex({ autoCloseTags: true, enableLinting: false, enableAutocomplete: false, enableTooltips: false }),
+          latexNewlineIndent,
           Prec.high(keymap.of([{ key: '}', run: closeBeginBrace }])),
-          citeCompletionSource(projectId, branch),
-          refCompletionSource(projectId, branch, () => filePath),
+          keyBraceGuard,
           citeHoverTooltip(projectId, branch),
           keymap.of([
             ...closeBracketsKeymap,

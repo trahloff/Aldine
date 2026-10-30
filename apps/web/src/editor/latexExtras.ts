@@ -1,5 +1,5 @@
-import { CompletionContext, CompletionResult, Completion } from '@codemirror/autocomplete';
-import { Extension, EditorState } from '@codemirror/state';
+import { Completion, CompletionSource, pickedCompletion, startCompletion } from '@codemirror/autocomplete';
+import { Extension, Prec } from '@codemirror/state';
 import { hoverTooltip, EditorView } from '@codemirror/view';
 import { api, BibEntry } from '../api';
 
@@ -17,13 +17,59 @@ function applyKeyAndHopBrace(view: EditorView, completion: Completion, from: num
   });
 }
 
-/**
- * \cite{...} and \ref{...} autocomplete.
- * Registered via languageData so they compose with codemirror-lang-latex's
- * built-in command/environment completions instead of replacing them.
- */
-const CITE_RE = /\\(?:no)?[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)$/;
+/** \cite{…} and \ref{…} up to the caret; group 1 is the argument typed so far. */
+const CITE_RE = /\\[a-zA-Z]*[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)$/;
 const REF_RE = /\\(?:auto|c|C|eq|page|name|v|V)?ref\*?\{([^}]*)$/;
+
+/** Offered with their braces, so each must match CITE_RE or REF_RE once `{` follows. */
+const KEY_COMMANDS = new Set([
+  'cite', 'citep', 'citet', 'citealp', 'citeauthor', 'citeyear', 'nocite',
+  'parencite', 'textcite', 'autocite', 'footcite', 'fullcite',
+  'ref', 'eqref', 'cref', 'Cref', 'autoref', 'pageref', 'nameref', 'vref', 'Vref',
+].map((name) => `\\${name}`));
+
+/**
+ * Accepting a command that takes a citation key or a label inserts its
+ * braces too and lists the keys at once. Renaming the command of an
+ * existing citation (`\ci|{key}`, `\ci|[p.~3]{key}`) inserts the name alone.
+ */
+function applyKeyCommand(view: EditorView, completion: Completion, from: number, to: number): void {
+  const bare = /^[{[*]/.test(view.state.sliceDoc(to, to + 1));
+  view.dispatch({
+    changes: { from, to, insert: bare ? completion.label : `${completion.label}{}` },
+    selection: { anchor: from + completion.label.length + (bare ? 0 : 1) },
+    annotations: pickedCompletion.of(completion),
+    userEvent: 'input.complete',
+  });
+  if (!bare) startCompletion(view);
+}
+
+const keyCommandOptions: Completion[] = [...KEY_COMMANDS].map((label) => ({ label, type: 'function', boost: 1, apply: applyKeyCommand }));
+
+export const keyCommandCompletionSource: CompletionSource = (ctx) => {
+  const word = ctx.matchBefore(/\\[a-zA-Z]*$/);
+  return word ? { from: word.from, options: keyCommandOptions, validFor: /^\\[a-zA-Z]*$/ } : null;
+};
+
+/** codemirror-lang-latex's completions without its \cite and \ref entries, which insert the bare name. */
+export function withoutKeyCommands(source: CompletionSource): CompletionSource {
+  return async (ctx) => {
+    const result = await source(ctx);
+    return result && { ...result, options: result.options.filter((o) => !KEY_COMMANDS.has(o.label)) };
+  };
+}
+
+/**
+ * `{` typed between the empty braces of \cite{} or \ref{} is dropped: they
+ * are there already when the command came from the list, and closeBrackets
+ * would nest a second pair.
+ */
+export const keyBraceGuard: Extension = Prec.high(EditorView.inputHandler.of((view, from, to, text) => {
+  if (text !== '{' || from !== to || view.state.selection.ranges.length > 1) return false;
+  if (view.state.sliceDoc(to, to + 1) !== '}') return false;
+  const before = view.state.sliceDoc(view.state.doc.lineAt(from).from, from);
+  return (CITE_RE.exec(before) ?? REF_RE.exec(before))?.[1] === '';
+}));
 
 let bibCache: { key: string; entries: BibEntry[]; at: number } | null = null;
 
@@ -55,12 +101,8 @@ function firstAuthor(author?: string): string {
   return author.match(/\band\b/i) ? `${lastName} et al.` : lastName;
 }
 
-function asSource(source: (ctx: CompletionContext) => CompletionResult | null | Promise<CompletionResult | null>): Extension {
-  return EditorState.languageData.of(() => [{ autocomplete: source }]);
-}
-
-export function citeCompletionSource(projectId: string, branch: string): Extension {
-  return asSource(async (ctx) => {
+export function citeCompletionSource(projectId: string, branch: string): CompletionSource {
+  return async (ctx) => {
     const line = ctx.state.doc.lineAt(ctx.pos);
     const before = ctx.state.sliceDoc(line.from, ctx.pos);
     const m = before.match(CITE_RE);
@@ -88,7 +130,7 @@ export function citeCompletionSource(projectId: string, branch: string): Extensi
       }));
     if (!options.length) return null;
     return { from, options, validFor: /^[^,}]*$/ };
-  });
+  };
 }
 
 let labelCache: { key: string; labels: Array<{ label: string; file: string }>; at: number } | null = null;
@@ -116,7 +158,7 @@ export function citeHoverTooltip(projectId: string, branch: string): Extension {
     const text = line.text;
     const rel = pos - line.from;
     // find a \cite{...} (or variants) spanning the hovered position
-    const re = /\\(?:no)?[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)\}/g;
+    const re = /\\[a-zA-Z]*[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)\}/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
       const braceStart = m.index + m[0].indexOf('{') + 1;
@@ -164,8 +206,8 @@ export function citeHoverTooltip(projectId: string, branch: string): Extension {
   }, { hoverTime: 300 });
 }
 
-export function refCompletionSource(projectId: string, branch: string, currentFile: () => string): Extension {
-  return asSource(async (ctx) => {
+export function refCompletionSource(projectId: string, branch: string, currentFile: () => string): CompletionSource {
+  return async (ctx) => {
     const line = ctx.state.doc.lineAt(ctx.pos);
     const before = ctx.state.sliceDoc(line.from, ctx.pos);
     const m = before.match(REF_RE);
@@ -196,5 +238,5 @@ export function refCompletionSource(projectId: string, branch: string, currentFi
       }));
     if (!options.length) return null;
     return { from: ctx.pos - m[1].length, options, validFor: /^[^}]*$/ };
-  });
+  };
 }
