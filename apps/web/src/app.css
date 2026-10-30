@@ -697,6 +697,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .share__invite-state--declined, .share__invite-state--expired { color: var(--warn-text); }
 .share__invite-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .share__invite-link { font-size: var(--text-s); }
+.share__person { display: flex; align-items: center; gap: 8px; font-size: var(--text-s); }
+.share__person .share__invite-to { flex: 1; }
 
 /* the word count follows the typeset status, a dot between when both show */
 .pdf-status:not(:empty) + .pdf-words::before { content: '·'; color: var(--text-3); }

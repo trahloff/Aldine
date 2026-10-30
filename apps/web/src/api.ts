@@ -605,6 +605,9 @@ export const api = {
    *  owner took off it is removed (someone may have accepted meanwhile). */
   share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[]) =>
     req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous }) }),
+  /** Takes one address or ORCID iD off the people with access. */
+  removeCollaborator: (id: string, entry: string) =>
+    req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'DELETE' }),
   /** The owner's view: open, declined and expired invitations of a project. */
   projectInvitations: (id: string) => req<OwnerInvitation[]>(`/api/projects/${id}/invitations`),
   /** Invite one address or ORCID iD: someone new, or again after a decline or expiry. */

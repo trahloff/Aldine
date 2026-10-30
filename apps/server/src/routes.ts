@@ -804,6 +804,26 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return { ...(await publicMeta(meta, user)), ...report, invitations: await ownerInvitations(req, meta.id) };
     });
 
+  // Take one person off the share list, and nothing else: unlike a save of
+  // the whole list, a dialog holding an older list cannot re-invite someone
+  // removed elsewhere. With a link share they can still open the project
+  // through the link.
+  app.delete<{ Params: { id: string; entry: string } }>('/api/projects/:id/collaborators/:entry', async (req, reply) => {
+    const meta = await store.readMeta(req.params.id);
+    const user = reqUser(req);
+    if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
+    const entry = normalizeEntry(req.params.entry.trim());
+    const list = meta.share?.collaborators || [];
+    if (!list.some((c) => normalizeEntry(c) === entry)) return reply.code(404).send({ error: `${entry} has no access to remove` });
+    meta.share = { mode: meta.share?.mode || 'private', collaborators: list.filter((c) => normalizeEntry(c) !== entry) };
+    await store.writeMeta(meta);
+    // As in the share route: drop the sockets so the removed person's
+    // session re-authenticates and is refused.
+    closeProjectConnections(meta.id);
+    publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+    return publicMeta(meta, user);
+  });
+
   /** The address an invitation link is copied with: the configured public
    *  URL, else this request's origin, base path included either way. */
   const inviteLink = (req: FastifyRequest, id: string) => `${publicBase(req)}/invite/${id}`;
