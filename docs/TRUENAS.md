@@ -24,7 +24,7 @@ the app `aldine` and paste:
 ```yaml
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:1.3.1
+    image: ghcr.io/trahloff/aldine-app:1.3.2
     ports:
       - "8480:3000"
     volumes:
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:1.3.1
+    image: ghcr.io/trahloff/aldine-compiler:1.3.2
     volumes:
       - /mnt/tank/aldine/data:/data
     # Hardening: no external egress (internal network), drop all Linux caps, no

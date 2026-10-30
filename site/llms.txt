@@ -7,7 +7,7 @@
 > compiles, a built-in MCP server for Claude, and a byte-stable visual editing
 > mode. AGPL-3.0.
 
-Status: 1.3.1 (October 2026), AGPL-3.0. There is no paid plan and no
+Status: 1.3.2 (October 2026), AGPL-3.0. There is no paid plan and no
 hosted service today; you run it yourself.
 
 Key facts:
