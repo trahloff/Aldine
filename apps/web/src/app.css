@@ -920,7 +920,16 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .tree__item--active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tree__item--dir { color: var(--text-2); font-weight: 600; cursor: default; }
 .tree__icon { flex: none; opacity: 0.75; width: 14px; text-align: center; }
-.tree__actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 8px; border-top: 1px solid var(--hairline); }
+.tree__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 2px; border-top: 1px solid var(--hairline); }
+.tree__actions .btn--icon { color: var(--text-2); }
+@media (hover: hover) and (pointer: fine) { .tree__actions .btn--icon:hover { color: var(--text); } }
+/* the view filter sits apart from the three that add to the project; lit while it filters */
+.tree__filter { margin-left: auto; }
+.tree__actions .tree__filter[aria-pressed="true"] { color: var(--accent); }
+.tree__new { margin: 4px 0; }
+.tree__new .input { width: 100%; }
+.tree__error { margin: 4px 2px 0; color: var(--error); font-size: var(--text-s); line-height: 1.35; overflow-wrap: anywhere; }
+.tree__empty { display: flex; align-items: center; height: 24px; color: var(--text-3); font-size: var(--text-xs); }
 
 /* editor pane */
 .code-pane { flex: 1; min-height: 0; overflow: hidden; position: relative; }

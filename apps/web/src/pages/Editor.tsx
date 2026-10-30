@@ -8,6 +8,7 @@ import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
+import { KEEP_FILE, within } from '../util/fileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import { setVisualFiles } from '../editor/visual/context';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
@@ -821,7 +822,7 @@ export default function Editor() {
   // silent for those.
   const localRemoval = useRef<string | null>(null);
   useEffect(() => {
-    if (!filesLoaded || !activeFile || localRemoval.current === activeFile) return;
+    if (!filesLoaded || !activeFile || (localRemoval.current && within(activeFile, localRemoval.current))) return;
     if (files.some((f) => f.path === activeFile)) return;
     const next = files.find((e) => e.path === project?.rootFile)
       || files.find((e) => e.type === 'file' && /\.tex$/i.test(e.path))
@@ -1323,6 +1324,14 @@ export default function Editor() {
                     else toast(`Could not create file: ${err.message}`, 'error');
                   }
                 }}
+                onCreateFolder={async (path) => {
+                  try {
+                    await api.createFile(id, branch, `${path}/${KEEP_FILE}`);
+                    await loadFiles();
+                  } catch (err: any) {
+                    toast(/already exists/i.test(err?.message) ? `"${path}" already exists` : `Could not create folder: ${err.message}`, 'error');
+                  }
+                }}
                 onUploaded={async (paths) => {
                   await loadFiles();
                   toast(paths.length === 1 ? `Uploaded ${paths[0]}` : `Uploaded ${paths.length} files`, 'ok');
@@ -1333,7 +1342,7 @@ export default function Editor() {
                     await api.deleteFile(id, branch, path);
                     await loadFiles();
                     loadProject(); // deleting the root re-derives (or unsets) it
-                    if (activeFile === path) setActiveFile(null);
+                    if (activeFile && within(activeFile, path)) setActiveFile(null);
                   } finally {
                     setTimeout(() => { if (localRemoval.current === path) localRemoval.current = null; }, 0);
                   }

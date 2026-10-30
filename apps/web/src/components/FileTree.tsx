@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
-import { fileIcon, IconChevronRight } from './Icons';
+import { fileIcon, IconChevronRight, IconFilePlus, IconFilter, IconFolderPlus, IconUpload } from './Icons';
 import { useDialogs } from './Dialogs';
 import { useContextMenu, type MenuEntry } from './Menu';
+import { useToast } from './Toast';
+import { buildTree, entryPathError, holdsOnlyKeep, normalizeEntryPath, sourceTree, within, type TreeNode } from '../util/fileTree';
 
 interface Props {
   files: TreeEntry[];
@@ -12,7 +14,10 @@ interface Props {
   branch: string;
   onOpen(path: string): void;
   onCreate(path: string): void;
+  /** `path` is the folder; the parent creates the .gitkeep that holds it in git. */
+  onCreateFolder(path: string): void;
   onUploaded(paths: string[]): void;
+  /** A file, or an empty folder with everything in it. */
   onDelete(path: string): void;
   onRename(from: string, to: string): void;
   onSetRoot(path: string): void;
@@ -27,32 +32,8 @@ interface Props {
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
 
-interface Node { name: string; path: string; type: 'file' | 'dir'; children: Node[] }
-
-/** Build a nested tree from the flat path list (handles files in subdirectories). */
-function buildTree(files: TreeEntry[]): Node[] {
-  const root: Node = { name: '', path: '', type: 'dir', children: [] };
-  for (const f of files) {
-    const parts = f.path.split('/');
-    let cur = root;
-    parts.forEach((seg, i) => {
-      const isLeaf = i === parts.length - 1;
-      const p = parts.slice(0, i + 1).join('/');
-      let child = cur.children.find((c) => c.name === seg);
-      if (!child) {
-        child = { name: seg, path: p, type: isLeaf && f.type === 'file' ? 'file' : 'dir', children: [] };
-        cur.children.push(child);
-      }
-      cur = child;
-    });
-  }
-  const sort = (n: Node) => {
-    n.children.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)));
-    n.children.forEach(sort);
-  };
-  sort(root);
-  return root.children;
-}
+/** The name input: a file or a folder, opened at the top level or inside `dir`. */
+interface Adding { kind: 'file' | 'folder'; dir: string }
 
 const FolderIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ opacity: 0.65 }}>
@@ -66,18 +47,110 @@ export function stemEnd(path: string): number {
   return dot > path.lastIndexOf('/') + 1 ? dot : path.length;
 }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
+const parentOf = (path: string) => path.split('/').slice(0, -1).join('/');
+
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
   const dialogs = useDialogs();
-  const [adding, setAdding] = useState(false);
+  const toast = useToast();
+  const errorId = useId();
+  const [adding, setAdding] = useState<Adding | null>(null);
   const [name, setName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [sourceOnly, setSourceOnly] = useState(true);
+  // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
+  // start collapsed; everything else expanded. This overlay avoids depending on
+  // `files` at mount (which is empty on first render).
+  const [override, setOverride] = useState<Map<string, boolean>>(new Map());
+  const fileInput = useRef<HTMLInputElement>(null);
+  /** The folder the file picker uploads into: set by the button that opened it. */
+  const uploadDir = useRef('');
+
+  const isDot = (p: string) => p.split('/').pop()!.startsWith('.');
+  const isOpen = (p: string) => (override.has(p) ? override.get(p)! : !isDot(p));
+  const toggle = (p: string) => setOverride((m) => new Map(m).set(p, !isOpen(p)));
+  /** Expand `dir` and every folder above it. */
+  const reveal = (dir: string) => {
+    if (!dir) return;
+    setOverride((m) => {
+      const next = new Map(m);
+      const parts = dir.split('/');
+      for (let i = 1; i <= parts.length; i++) next.set(parts.slice(0, i).join('/'), true);
+      return next;
+    });
+  };
+
   // A project with no files of the user's own (the .gitignore every project
   // carries does not count) gets main.tex suggested: that name also makes the
-  // file the typeset root without a further step.
-  const startAdding = () => {
-    setName(files.some((f) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.')) ? '' : 'main.tex');
-    setAdding(true);
+  // file the typeset root without a further step. Inside a folder the input
+  // starts with the folder's path.
+  const startAdding = (kind: Adding['kind'] = 'file', dir = '') => {
+    const firstFile = kind === 'file' && !dir && !files.some((f) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.'));
+    setName(dir ? `${dir}/` : firstFile ? 'main.tex' : '');
+    setNameError(null);
+    setAdding({ kind, dir });
+    reveal(dir);
   };
   useEffect(() => { if (newFileRequest) { startAdding(); onNewFileHandled?.(); } }, [newFileRequest]);
+  const stopAdding = () => { setAdding(null); setName(''); setNameError(null); };
+
+  // An invalid name keeps the input open with the reason under it, on Enter
+  // and on blur alike: closing would throw the typed name away.
+  const submit = () => {
+    if (!adding) return;
+    const path = normalizeEntryPath(name);
+    if (!path || path === adding.dir) { stopAdding(); return; }
+    // A directory with no file in it is not in git and not in the Source
+    // view: making it a folder again is fine.
+    const taken = adding.kind === 'folder' && files.some((f) => f.type === 'file' && within(f.path, path));
+    const error = entryPathError(name) ?? (taken ? `"${path}" already exists` : null);
+    if (error) { setNameError(error); return; }
+    stopAdding();
+    if (adding.kind === 'folder') {
+      reveal(path);
+      onCreateFolder(path);
+    } else {
+      reveal(parentOf(path));
+      onCreate(path);
+    }
+  };
+
+  const chooseUpload = (dir: string) => {
+    uploadDir.current = dir;
+    fileInput.current?.click();
+  };
+
+  const uploadFiles = async (list: FileList | File[], dir = '') => {
+    const done: string[] = [];
+    for (const f of Array.from(list)) {
+      const path = dir ? `${dir}/${f.name}` : f.name;
+      if (f.size > MAX_UPLOAD) { toast(`${f.name} is larger than 10 MB`, 'error'); continue; }
+      const buf = await f.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buf);
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      // Never replace a file that exists without asking: the one being
+      // replaced may be open in the editor with unsaved typing in it. The
+      // server answers 409 for createOnly, which also covers a file another
+      // client added since the tree was loaded.
+      try {
+        try {
+          await api.writeFile(projectId, branch, path, btoa(binary), 'base64', { createOnly: true });
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 409) throw err;
+          if (!(await dialogs.confirm({ title: `Replace ${path}?`, body: `${path} already exists in this project. The uploaded file takes its place.`, confirmLabel: 'Replace file' }))) continue;
+          await api.writeFile(projectId, branch, path, btoa(binary), 'base64');
+        }
+      } catch (err) {
+        toast(`Could not upload ${path}: ${(err as Error).message}`, 'error');
+        continue;
+      }
+      done.push(path);
+    }
+    if (done.length) { reveal(dir); onUploaded(done); }
+  };
+
   const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
   const fileActions = (path: string): MenuEntry[] => [
     { id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' },
@@ -96,64 +169,33 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       },
     },
   ];
-  const [dragOver, setDragOver] = useState(false);
-  const [sourceOnly, setSourceOnly] = useState(true);
-  // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
-  // start collapsed; everything else expanded. This overlay avoids depending on
-  // `files` at mount (which is empty on first render).
-  const [override, setOverride] = useState<Map<string, boolean>>(new Map());
-  const fileInput = useRef<HTMLInputElement>(null);
 
-  const isDot = (p: string) => p.split('/').pop()!.startsWith('.');
-  const isOpen = (p: string) => (override.has(p) ? override.get(p)! : !isDot(p));
-  const toggle = (p: string) => setOverride((m) => new Map(m).set(p, !isOpen(p)));
+  const deleteFolder = async (dir: string) => {
+    if (!(await dialogs.confirm({ title: `Delete ${dir}?`, confirmLabel: 'Delete folder', danger: true }))) return;
+    // The server removes a folder with everything in it: look again, so a file
+    // a collaborator added since the menu opened is never deleted with it.
+    let now: TreeEntry[];
+    try { now = await api.listFiles(projectId, branch); } catch { toast(`Could not delete ${dir}: the file list did not load`, 'error'); return; }
+    if (!holdsOnlyKeep(now, dir)) { toast(`${dir} is no longer empty, so it was not deleted`, 'error'); return; }
+    onDelete(dir);
+  };
+  const folderMenu = useContextMenu({ label: 'Folder actions', testId: 'folder-menu' });
+  const folderActions = (dir: string): MenuEntry[] => [
+    { id: 'new-file', label: 'New file in folder…', testId: 'folder-menu-new-file', onSelect: () => startAdding('file', dir) },
+    { id: 'new-folder', label: 'New folder in folder…', testId: 'folder-menu-new-folder', onSelect: () => startAdding('folder', dir) },
+    { id: 'upload', label: 'Upload to folder…', testId: 'folder-menu-upload', onSelect: () => chooseUpload(dir) },
+    ...(holdsOnlyKeep(files, dir) ? [
+      { kind: 'separator' } as const,
+      { id: 'delete', label: 'Delete folder…', danger: true, testId: 'folder-menu-delete', onSelect: () => { void deleteFolder(dir); } },
+    ] : []),
+  ];
 
   const tree = useMemo(() => {
     const full = buildTree(files);
-    if (!sourceOnly) return full;
-    // keep source files + any directory that (recursively) contains one
-    const SOURCE = /\.(tex|bib|cls|bbx|cbx|sty|bst|png|jpe?g|pdf|eps|svg|tikz)$/i;
-    const prune = (nodes: Node[]): Node[] => nodes.map((n) => {
-      if (n.type === 'file') return SOURCE.test(n.name) ? n : null;
-      const kids = prune(n.children);
-      return kids.length ? { ...n, children: kids } : null;
-    }).filter(Boolean) as Node[];
-    return prune(full);
+    return sourceOnly ? sourceTree(full) : full;
   }, [files, sourceOnly]);
 
-  const submit = () => {
-    const n = name.trim();
-    setAdding(false);
-    setName('');
-    if (n) onCreate(n);
-  };
-
-  const uploadFiles = async (list: FileList | File[]) => {
-    const done: string[] = [];
-    for (const f of Array.from(list)) {
-      if (f.size > MAX_UPLOAD) { alert(`${f.name} is larger than 10 MB`); continue; }
-      const buf = await f.arrayBuffer();
-      let binary = '';
-      const bytes = new Uint8Array(buf);
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      // Never replace a file that exists without asking: the one being
-      // replaced may be open in the editor with unsaved typing in it. The
-      // server answers 409 for createOnly, which also covers a file another
-      // client added since the tree was loaded.
-      try {
-        await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64', { createOnly: true });
-      } catch (err) {
-        if (!(err instanceof ApiError) || err.status !== 409) throw err;
-        if (!(await dialogs.confirm({ title: `Replace ${f.name}?`, body: `${f.name} already exists in this project. The uploaded file takes its place.`, confirmLabel: 'Replace file' }))) continue;
-        await api.writeFile(projectId, branch, f.name, btoa(binary), 'base64');
-      }
-      done.push(f.name);
-    }
-    if (done.length) onUploaded(done);
-  };
-
-  const renderNode = (node: Node, depth: number): JSX.Element => {
+  const renderNode = (node: TreeNode, depth: number): JSX.Element => {
     // one level is the chevron plus the gap, so a child's chevron sits under
     // its folder's icon
     const pad = 8 + depth * 18;
@@ -161,12 +203,22 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       const open = isOpen(node.path);
       return (
         <div key={node.path}>
-          <button className="tree__item tree__dir" style={{ paddingLeft: pad }} onClick={() => toggle(node.path)} data-testid={`dir-${node.path}`} title={node.path}>
+          <button
+            className="tree__item tree__dir" style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
+            data-testid={`dir-${node.path}`} title={node.path} aria-expanded={open}
+            {...folderMenu.bind(() => folderActions(node.path))}
+          >
             <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
             <span className="tree__icon"><FolderIcon /></span>
             {node.name}
           </button>
-          {open && node.children.map((c) => renderNode(c, depth + 1))}
+          {open && (node.children.length
+            ? node.children.map((c) => renderNode(c, depth + 1))
+            : (
+              <div className="tree__empty" style={{ paddingLeft: pad + 36 }} data-testid={`dir-empty-${node.path}`}>
+                {holdsOnlyKeep(files, node.path) ? 'Empty folder' : 'No source files'}
+              </div>
+            ))}
         </div>
       );
     }
@@ -199,23 +251,45 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       {tree.map((n) => renderNode(n, 0))}
 
       {adding ? (
-        <input
-          autoFocus className="input" style={{ margin: '4px 0' }} placeholder="chapter.tex" value={name} data-testid="new-file-name"
-          onChange={(e) => setName(e.target.value)} onBlur={submit}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { setAdding(false); setName(''); } }}
-        />
+        <div className="tree__new">
+          <input
+            autoFocus className="input" spellCheck={false} autoComplete="off"
+            placeholder={adding.kind === 'folder' ? 'figures' : 'chapter.tex'}
+            aria-label={adding.kind === 'folder' ? 'New folder name' : 'New file name'}
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError ? errorId : undefined}
+            value={name}
+            data-testid={adding.kind === 'folder' ? 'new-folder-name' : 'new-file-name'}
+            onFocus={(e) => { if (adding.dir) { const end = e.target.value.length; e.target.setSelectionRange(end, end); } }}
+            onChange={(e) => { setName(e.target.value); setNameError(null); }}
+            onBlur={submit}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') stopAdding(); }}
+          />
+          {nameError && <p id={errorId} className="tree__error" role="alert" data-testid="new-name-error">{nameError}</p>}
+        </div>
       ) : (
         <div className="tree__actions">
-          <button className="btn btn--ghost btn--small" onClick={startAdding} data-testid="new-file">+ New file</button>
-          <button className="btn btn--ghost btn--small" onClick={() => fileInput.current?.click()} data-testid="upload-file">↑ Upload</button>
-          <button className="btn btn--ghost btn--small" onClick={() => setSourceOnly((v) => !v)} data-testid="source-only" title="Show only LaTeX source & images">{sourceOnly ? '☰ All' : '⌇ Source'}</button>
-          <input ref={fileInput} type="file" multiple hidden data-testid="upload-input"
-            onChange={async (e) => { if (e.target.files?.length) await uploadFiles(e.target.files); e.target.value = ''; }} />
+          <button className="btn btn--ghost btn--icon" onClick={() => startAdding('file')} data-testid="new-file" title="New file" aria-label="New file"><IconFilePlus /></button>
+          <button className="btn btn--ghost btn--icon" onClick={() => startAdding('folder')} data-testid="new-folder" title="New folder" aria-label="New folder"><IconFolderPlus /></button>
+          <button className="btn btn--ghost btn--icon" onClick={() => chooseUpload('')} data-testid="upload-file" title="Upload files" aria-label="Upload files"><IconUpload /></button>
+          <button
+            className="btn btn--ghost btn--icon tree__filter" onClick={() => setSourceOnly((v) => !v)} aria-pressed={sourceOnly}
+            data-testid="source-only" title="Show only LaTeX source and images" aria-label="Show only LaTeX source and images"
+          ><IconFilter /></button>
         </div>
       )}
+      {/* Outside the toolbar: a folder's menu opens the picker while the name input replaces it. */}
+      <input ref={fileInput} type="file" multiple hidden data-testid="upload-input"
+        onChange={async (e) => {
+          const dir = uploadDir.current;
+          uploadDir.current = '';
+          if (e.target.files?.length) await uploadFiles(e.target.files, dir);
+          e.target.value = '';
+        }} />
       <p className="filetree__hint">Drop files here to upload</p>
 
       {fileMenu.element}
+      {folderMenu.element}
     </div>
   );
 }
