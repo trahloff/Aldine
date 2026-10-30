@@ -280,6 +280,19 @@ export default function Editor() {
     }
   }, [id]);
 
+  // The collab server refused the open document. The project route says
+  // why: access taken away, or the project gone. Anything else (a network
+  // blip) leaves the editor to reconnect.
+  const onAccessDenied = useCallback(async () => {
+    try {
+      await api.getProject(id);
+    } catch (err) {
+      if (!(err instanceof ApiError) || (err.status !== 403 && err.status !== 404)) return;
+      toast(err.status === 403 ? `You no longer have access to “${project?.name ?? 'this project'}”` : 'Project not found', 'error');
+      navigate('/');
+    }
+  }, [id, project?.name]);
+
   // The project list's "opened" and, for a share-link visitor, its listing.
   useEffect(() => { api.markOpened(id, branch).catch(() => { /* the list is a convenience */ }); }, [id, branch]);
 
@@ -1409,6 +1422,7 @@ export default function Editor() {
                 spellcheck={spellcheck}
                 vim={vim}
                 onWrite={doCompile}
+                onAccessDenied={onAccessDenied}
                 mode={paneMode}
                 identity={identity}
               />

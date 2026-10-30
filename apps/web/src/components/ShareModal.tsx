@@ -4,6 +4,7 @@ import { api, ProjectSummary } from '../api';
 import { useToast } from './Toast';
 import { useAuth } from './Auth';
 import Modal from './Modal';
+import { useDialogs } from './Dialogs';
 import { addedEntries, invitationStatus, inviteSummary, isOrcidEntry, type InviteReport, type OwnerInvitation } from '../util/invites';
 
 /** Mirrors the server's collaborator filter (the share route) so an address it
@@ -27,32 +28,36 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   onSaved(updated: ProjectSummary): void;
 }) {
   const { authEnabled } = useAuth();
+  const invitations = canManage && authEnabled;
   const [mode, setMode] = useState<'private' | 'link'>(project.share?.mode || 'private');
-  const [emails, setEmails] = useState((project.share?.collaborators || []).join(', '));
+  // With invitations the field only adds people, and who has access is the
+  // list below it. Without accounts the field is the whole list.
+  const [emails, setEmails] = useState(invitations ? '' : (project.share?.collaborators || []).join(', '));
   const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState<OwnerInvitation[]>([]);
   // After a save that invited someone the dialog stays open to say who got
   // mail and to offer the links; the caller hears of the save when it
-  // closes, however it closes.
+  // closes, however it closes. A removal applies at once and is heard of
+  // the same way.
   const [result, setResult] = useState<{ updated: ProjectSummary; sent: string | null; manual: string | null } | null>(null);
-  const close = () => (result ? onSaved(result.updated) : onClose());
+  const [removed, setRemoved] = useState<ProjectSummary | null>(null);
+  const close = () => (result ? onSaved(result.updated) : removed ? onSaved(removed) : onClose());
   const toast = useToast();
+  const dialogs = useDialogs();
   const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
   const fileStem = (project.name || 'document').replace(/[\\/:*?"<>|]/g, '-');
-  const invitations = canManage && authEnabled;
 
   // Accepting adds people to the list while the page that opened this
-  // dialog still holds the old one: start from the server's, unless the
-  // owner has begun typing.
-  const edited = useRef(false);
+  // dialog still holds the old one: start from the server's.
   const [base, setBase] = useState(project.share?.collaborators || []);
+  const [savedMode, setSavedMode] = useState(project.share?.mode || 'private');
   useEffect(() => {
     if (!invitations) return;
     api.projectInvitations(project.id).then(setInvites).catch(() => setInvites([]));
     api.getProject(project.id).then((p) => {
-      if (edited.current || !p.share) return;
+      if (!p.share) return;
       setBase(p.share.collaborators);
-      setEmails(p.share.collaborators.join(', '));
+      setSavedMode(p.share.mode);
     }).catch(() => {});
   }, [invitations, project.id]);
 
@@ -67,11 +72,12 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
 
   const save = async () => {
     // Separators people actually paste: commas, semicolons, newlines.
-    const list = emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
-    const bad = list.filter((e) => !EMAIL_RE.test(e) && !ORCID_RE.test(e));
+    const typed = emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
+    const bad = typed.filter((e) => !EMAIL_RE.test(e) && !ORCID_RE.test(e));
     if (bad.length) { toast(`Not an email address or ORCID iD: ${bad.join(', ')}`, 'error'); return; }
+    const list = invitations ? [...base, ...addedEntries(base, typed)] : typed;
     if (list.length > MAX_COLLABORATORS) {
-      toast(`Too many collaborators — ${MAX_COLLABORATORS} is the maximum, you listed ${list.length}`, 'error');
+      toast(`Too many collaborators — ${MAX_COLLABORATORS} is the maximum, this would make ${list.length}`, 'error');
       return;
     }
     setBusy(true);
@@ -90,6 +96,26 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
       toast(`Could not update sharing: ${err.message}`, 'error');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const remove = async (who: string) => {
+    const ok = await dialogs.confirm({
+      title: `Remove ${who}?`,
+      body: savedMode === 'link'
+        ? `${who} is no longer a collaborator, but anyone signed in with the link can still open “${project.name}”. To keep them out, choose Invite only and save.`
+        : `${who} loses access to “${project.name}” right away. If they have it open, their edits stop reaching the project. To let them back in, invite them again.`,
+      confirmLabel: 'Remove access',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const updated = await api.removeCollaborator(project.id, who);
+      setBase(updated.share?.collaborators || []);
+      setRemoved(updated);
+      toast(`Removed ${who}`, 'ok');
+    } catch (err: any) {
+      toast(`Could not remove ${who}: ${err.message}`, 'error');
     }
   };
 
@@ -125,7 +151,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
                 <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
               </div>
             )}
-            <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>Collaborator emails or ORCID iDs, comma-separated</label>
+            <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>{invitations ? 'Invite people by email or ORCID iD, comma-separated' : 'Collaborator emails or ORCID iDs, comma-separated'}</label>
             <input
               id="share-emails"
               className="input"
@@ -133,10 +159,11 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
               value={emails}
               data-testid="share-emails"
               aria-describedby={authEnabled ? 'share-emails-hint' : undefined}
-              onChange={(e) => { edited.current = true; setEmails(e.target.value); }}
+              onChange={(e) => setEmails(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
             />
-            {authEnabled && <p className="settings__hint" id="share-emails-hint">Someone new gets an invitation, and has access once they accept it.</p>}
+            {authEnabled && <p className="settings__hint" id="share-emails-hint">Each person gets an invitation, and has access once they accept it.</p>}
+            {invitations && base.length > 0 && <PeopleList people={base} onRemove={remove} />}
             {list}
           </>
         ) : (
@@ -163,7 +190,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
             <button className="btn btn--primary" onClick={close} data-testid="share-done">Done</button>
           ) : canManage ? (
             <>
-              <button className="btn" onClick={onClose}>Cancel</button>
+              <button className="btn" onClick={close}>Cancel</button>
               <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>
             </>
           ) : (
@@ -172,6 +199,29 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** Who has accepted an invitation, each with a way to take their access away. */
+function PeopleList({ people, onRemove }: { people: string[]; onRemove(who: string): Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const run = async (who: string) => {
+    setBusy(who);
+    try { await onRemove(who); } finally { setBusy(null); }
+  };
+  return (
+    <section className="share__invites" aria-labelledby="share-people-label" data-testid="share-people">
+      <div className="menu__label share__label" id="share-people-label">People with access</div>
+      <ul role="list" className="share__invite-list">
+        {people.map((who) => (
+          <li key={who} className="share__person" data-testid="person-row" data-to={who}>
+            <span className="share__invite-to" data-testid="person-name">{who}</span>
+            <button className="btn btn--small btn--ghost" disabled={busy === who} onClick={() => run(who)}
+              aria-label={`Remove ${who}`} data-testid="person-remove">Remove</button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

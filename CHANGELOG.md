@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- The Share dialog lists the people with access, each with a Remove button.
+  Removing someone ends their access at once, and if they have the project
+  open, their editor says so and returns to Home. The address field above
+  the list now only invites new people; before, you removed someone by
+  deleting their address from it.
+
 ## [1.3.1] — 2026-10-29
 
 ### Fixed

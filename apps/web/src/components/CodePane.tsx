@@ -145,6 +145,9 @@ interface Props {
   vim?: boolean;
   /** Vim's :w, :wq and :x. */
   onWrite?(): void;
+  /** The collab server refused this session the document: the owner took
+   *  this account's access away, or the session ended. */
+  onAccessDenied?(): void;
   mode?: EditorMode;
   /** Who this client is to collaborators (awareness): the account when
    *  signed in; without one the browser's anonymous "Writer N". */
@@ -210,11 +213,11 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, mode = 'source', identity }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onWrite });
-  cbRef.current = { onDocChanged, onStats, onWrite };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied });
+  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied };
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -463,6 +466,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       }
     };
     provider.on('synced', initialStats);
+    provider.on('authenticationFailed', () => cbRef.current.onAccessDenied?.());
 
     return () => {
       if (statsTimer) clearTimeout(statsTimer);

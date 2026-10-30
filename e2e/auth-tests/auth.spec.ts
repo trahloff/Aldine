@@ -405,7 +405,7 @@ test.describe('abuse controls', () => {
 });
 
 test.describe('invitations', () => {
-  test('an invitation works only for the address it names, waits on Home without email, and can be declined or withdrawn', async ({ browser }) => {
+  test('an invitation works only for the address it names, waits on Home without email, and can be declined or withdrawn; the owner can remove whoever accepted', async ({ browser }) => {
     // The owner, on a server that sends no email (this suite configures none).
     const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
     const ownerPage = await owner.newPage();
@@ -507,7 +507,8 @@ test.describe('invitations', () => {
     await expect(dRow.getByTestId('invite-state')).toHaveText('Declined');
     await expect(dRow.getByTestId('invite-again')).toBeVisible();
     await expect(ownerPage.locator(`[data-testid="invite-row"][data-to="${bEmail}"]`)).toHaveCount(0); // accepted: on the list of people instead
-    await expect(ownerPage.getByTestId('share-emails')).toHaveValue(`${bEmail}, ${cEmail}`);
+    await expect(ownerPage.getByTestId('person-name')).toHaveText([bEmail, cEmail]);
+    await expect(ownerPage.getByTestId('share-emails')).toHaveValue(''); // the field only invites
     const eRow = ownerPage.locator(`[data-testid="invite-row"][data-to="${eEmail}"]`);
     const eLink = (await (await ownerPage.request.get(`/api/projects/${proj.id}/invitations`)).json()).find((i: { to: string }) => i.to === eEmail).link;
     await eRow.getByTestId('invite-withdraw').click();
@@ -522,6 +523,27 @@ test.describe('invitations', () => {
     await ePage.goto(eLink);
     await expect(ePage.getByTestId('invite-withdrawn')).toContainText('Olive Owner withdrew this invitation.');
     expect((await e.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+
+    // The owner removes C, who has the project open; B keeps access
+    await ownerPage.getByTestId('share-project').click();
+    const cPerson = ownerPage.locator(`[data-testid="person-row"][data-to="${cEmail}"]`);
+    await cPerson.getByTestId('person-remove').click();
+    await expect(ownerPage.getByTestId('dialog-title')).toHaveText(`Remove ${cEmail}?`);
+    await ownerPage.getByTestId('dialog-cancel').click();
+    await expect(cPerson).toBeVisible();
+    await cPerson.getByTestId('person-remove').click();
+    await expect(ownerPage.getByTestId('dialog-message')).toContainText(`${cEmail} loses access to “${name}” right away.`);
+    await ownerPage.getByTestId('dialog-confirm').click();
+    await expect(ownerPage.locator('.toast', { hasText: `Removed ${cEmail}` })).toBeVisible();
+    await expect(ownerPage.getByTestId('person-name')).toHaveText([bEmail]);
+    expect((await c.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    expect((await b.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
+    // C's open editor learns it on reconnecting, and leaves
+    await expect(cPage.locator('.toast', { hasText: `You no longer have access to “${name}”` })).toBeVisible();
+    await expect(cPage.getByTestId('editor-shell')).toHaveCount(0);
+    await ownerPage.keyboard.press('Escape');
+    await expect(ownerPage.getByTestId('share-modal')).toHaveCount(0);
+    expect((await (await ownerPage.request.get(`/api/projects/${proj.id}`)).json()).share.collaborators).toEqual([bEmail]);
 
     for (const ctx of [owner, b, c, d, e]) await ctx.close();
   });

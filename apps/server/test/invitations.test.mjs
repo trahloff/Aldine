@@ -252,6 +252,23 @@ check(bobAgain && bobAgain.id !== bobInv.id, 'inviting him again opens a new inv
 await json('POST', `/api/invitations/${bobAgain.id}/accept`, bob);
 check(await listed(bob), 'accepting lists the project again');
 
+// ---- removing one person: only the owner, only that entry, at once ----
+const p4 = await json('POST', '/api/projects', owner, { name: 'Lab book' });
+r = await share(owner, ['carol@example.org', ORCID], 'private', p4.id);
+for (const inv of r.invitations) await json('POST', `/api/invitations/${inv.id}/accept`, inv.to === ORCID ? josiah : carol);
+check(await authenticate(carol, p4.id), 'Carol is in');
+const one = (who, entry) => call('DELETE', `/api/projects/${p4.id}/collaborators/${encodeURIComponent(entry)}`, who);
+eq((await one(carol, ORCID)).statusCode, 403, 'a collaborator cannot remove anyone');
+const ownerToken = (await json('POST', '/api/tokens', owner, { name: 'agent' })).token;
+eq((await one({ bearer: ownerToken, name: 'token' }, 'carol@example.org')).statusCode, 403, "nor can the owner's access token");
+r = await (await one(owner, 'Carol@Example.org')).json();
+eq([r.share.mode, r.share.collaborators], ['private', [ORCID]], 'her address goes, written in any case, and the rest stays');
+eq((await call('GET', `/api/projects/${p4.id}`, carol)).statusCode, 403, 'she loses access');
+check(!(await authenticate(carol, p4.id)), 'the collab socket refuses her');
+check(!(await listed(carol, p4.id)), 'and the project leaves her list');
+eq((await one(owner, 'carol@example.org')).statusCode, 404, 'removing her twice finds nobody');
+check(await authenticate(josiah, p4.id), 'the iD still has access');
+
 // ---- share entries from before invitations keep working ----
 const legacyMeta = await store.readMeta(P);
 legacyMeta.share.collaborators.push('lee@example.org');
