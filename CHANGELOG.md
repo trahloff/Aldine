@@ -37,6 +37,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   also complete in `\parencite{…}`, `\textcite{…}`, `\autocite{…}`,
   `\footcite{…}` and the other biblatex cite commands, and hovering one
   shows the reference (#223).
+- Folders in the file tree (#220). New folder, beside New file under the
+  tree, creates an empty folder; git cannot hold an empty folder, so a
+  `.gitkeep` file inside keeps it, and only the All view lists that file.
+  Right-click a folder (long-press on a touch screen) to create a file or a
+  folder in it, upload into it, or delete it while it is empty. The Source
+  view now lists every folder that holds a file, source or not, so a new
+  folder does not vanish from it. The panel's buttons are icons with their
+  names on hover, so all four fit in the narrowest sidebar.
 
 ### Fixed
 - Enter at the end of a line keeps that line's indentation. In a document
@@ -45,6 +53,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `\begin{…}` open still indents the next one, and the line after a `}` or
   `\end{…}` that closes one from further up lines up with the line where
   it opened (#222).
+- An upload the server refuses says why in a notification; it used to fail
+  without a word. A file over 10 MB is reported the same way instead of in
+  a browser alert.
 
 ## [1.3.2] — 2026-10-30
 

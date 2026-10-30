@@ -129,6 +129,38 @@ export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** A page with a plus: make a new file. */
+export const IconFilePlus = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 1.75h5.5L13 5.25v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10.5a1 1 0 0 1 1-1Z" />
+    <path d="M9.5 1.75v3.5H13" />
+    <path d="M8 7.25v4.5M5.75 9.5h4.5" />
+  </svg>
+);
+
+/** A folder with a plus: make a new folder. */
+export const IconFolderPlus = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h2.5l1.5 1.5h5.5c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5v-7.5Z" />
+    <path d="M8 6.75v4M6 8.75h4" />
+  </svg>
+);
+
+/** An arrow up out of a tray: upload. */
+export const IconUpload = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M8 10.25V2.5M4.75 5.75 8 2.5l3.25 3.25" />
+    <path d="M2.5 10v2.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25V10" />
+  </svg>
+);
+
+/** A funnel: show only some of the list. */
+export const IconFilter = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.25 3h11.5l-4.5 5.25v4.25l-2.5 1.25v-5.5L2.25 3Z" />
+  </svg>
+);
+
 /** "More actions": three dots, filled so they read at 14px. */
 export const IconEllipsis = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} fill="currentColor" strokeWidth={0}>

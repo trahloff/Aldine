@@ -192,8 +192,8 @@ test.describe('templates from a git repository', () => {
     // The tree shows images in source-only view already; "All" is the state
     // the assertion is meant to hold in, so make it explicit.
     const toggle = page.getByTestId('source-only');
-    if ((await toggle.textContent())?.includes('All')) await toggle.click();
-    await expect(toggle).toContainText('Source');
+    if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByTestId('file-logo.png')).toBeVisible();
     await expect(page.getByTestId('file-template.json')).toHaveCount(0);
 
