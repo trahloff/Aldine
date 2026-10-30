@@ -26,6 +26,25 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   and flashes it; a web or email address opens in a new tab. Links to
   anything else, such as local files or scripts, stay plain text. A
   double-click still jumps to the source, except on a link (#221).
+- Choosing `\cite` from the completion list inserts `\cite{}` with the
+  caret between the braces and lists the project's bibliography keys right
+  away. The same goes for `\citep`, `\citet`, `\parencite`, `\textcite`,
+  `\autocite`, `\footcite`, `\citeauthor`, `\citeyear`, `\nocite` and the
+  other cite commands in the list, and for `\ref`, `\eqref`, `\cref`,
+  `\Cref`, `\autoref` and `\pageref` with the labels. A `{` typed out of
+  habit right after is ignored, so the braces never double, and a citation
+  typed by hand, `\cite[p.~3]{key}` included, works as before. Keys now
+  also complete in `\parencite{…}`, `\textcite{…}`, `\autocite{…}`,
+  `\footcite{…}` and the other biblatex cite commands, and hovering one
+  shows the reference (#223).
+
+### Fixed
+- Enter at the end of a line keeps that line's indentation. In a document
+  body written flush left, the line after `\section{…}`, `\textbf{…}` or
+  any other line was indented by two spaces. A line that leaves a `{` or
+  `\begin{…}` open still indents the next one, and the line after a `}` or
+  `\end{…}` that closes one from further up lines up with the line where
+  it opened (#222).
 
 ## [1.3.2] — 2026-10-30
 
