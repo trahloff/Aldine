@@ -919,6 +919,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .tree__item--active:active { background: var(--accent-soft); }
 .tree__item--active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tree__item--dir { color: var(--text-2); font-weight: 600; cursor: default; }
+/* the folder a dragged row or file would land in */
+.tree__item.tree__item--drop { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .tree__icon { flex: none; opacity: 0.75; width: 14px; text-align: center; }
 .tree__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 2px; border-top: 1px solid var(--hairline); }
 .tree__actions .btn--icon { color: var(--text-2); }
@@ -1207,6 +1209,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   font-weight: 600;
   pointer-events: none;
 }
+.filetree--drag[data-drop="move"]::after { content: 'Drop to move to the top level'; }
 .filetree__hint { color: var(--text-3); font-size: var(--text-xs); text-align: center; margin: 10px 0 4px; }
 .pdf-empty {
   position: absolute;

@@ -63,11 +63,24 @@ export function within(path: string, entry: string): boolean {
   return path === entry || path.startsWith(`${entry}/`);
 }
 
+/** The files anywhere inside `dir`, without the .gitkeep placeholders. */
+export function filesIn(files: TreeEntry[], dir: string): string[] {
+  const prefix = `${dir}/`;
+  return files.filter((f) => f.type === 'file' && f.path.startsWith(prefix) && f.path.split('/').pop() !== KEEP_FILE).map((f) => f.path);
+}
+
 /** True when `dir` holds no file but .gitkeep placeholders, at any depth:
  *  deleting it loses nothing anyone wrote. */
 export function holdsOnlyKeep(files: TreeEntry[], dir: string): boolean {
-  const prefix = `${dir}/`;
-  return files.every((f) => f.type !== 'file' || !f.path.startsWith(prefix) || f.path.split('/').pop() === KEEP_FILE);
+  return filesIn(files, dir).length === 0;
+}
+
+/** Where dropping `path` on the folder `dir` ('' is the top level) moves it,
+ *  or null when it would stay where it is or land inside itself. */
+export function moveTarget(path: string, dir: string): string | null {
+  const name = path.split('/').pop()!;
+  const to = dir ? `${dir}/${name}` : name;
+  return to === path || within(dir, path) ? null : to;
 }
 
 /** The path as the server's importPath spells it: no empty or "." segments,

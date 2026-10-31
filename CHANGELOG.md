@@ -7,6 +7,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Folders that hold files can be renamed and deleted from their menu in the
+  file tree (#220). Delete names the files that go with the folder before
+  anything is removed, and refuses if a collaborator added one in the
+  meantime. A file open in the editor stays open under its new path, and a
+  typeset root inside the folder moves with it; deleting the folder that
+  holds the root picks a new one.
+- Files and folders can be dragged in the file tree (#220): onto a folder,
+  or onto any file in it, to move them there, and below the list to move
+  them to the top level. A name that is already taken there is refused, and
+  files dragged in from the desktop upload into the folder they land on.
+  Without a mouse, Rename… with a path such as `chapters/intro.tex` moves a
+  file the same way.
+
+### Fixed
+- Renaming or deleting a folder through the API left the files inside it
+  that were open in an editor live, so the next edit wrote them back under
+  the old path, and a typeset root inside a renamed folder lost its
+  designation.
+
 ## [1.4.1] — 2026-10-31
 
 ### Fixed

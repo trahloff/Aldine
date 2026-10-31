@@ -538,7 +538,28 @@ export function shutdownFlushSet(): { projectId: string; branch: string }[] {
  * Removes it from Hocuspocus's registry after tombstoning.
  */
 export function evictDoc(projectId: string, branch: string, filePath: string): void {
-  const name = docName(projectId, branch, filePath);
+  dropDoc(docName(projectId, branch, filePath));
+  bumpFilesSignal(projectId, branch);
+}
+
+/**
+ * evictDoc for a directory: every doc under `dir`, open or not. `files` is
+ * the branch listing from before the change, for the closed docs whose
+ * snapshots would otherwise seed a file re-created at the same path; a child
+ * doc left open would write its file back under the old path.
+ */
+export function evictTree(projectId: string, branch: string, dir: string, files: string[]): void {
+  const inside = (p: string) => p.startsWith(`${dir}/`);
+  const paths = new Set(files.filter(inside));
+  hocuspocus.documents.forEach((_doc: Y.Doc, name: string) => {
+    const parsed = parseDocName(name);
+    if (parsed && parsed.projectId === projectId && parsed.branch === branch && inside(parsed.filePath)) paths.add(parsed.filePath);
+  });
+  for (const p of paths) dropDoc(docName(projectId, branch, p));
+  bumpFilesSignal(projectId, branch);
+}
+
+function dropDoc(name: string): void {
   tombstone(name);
   lastWritten.delete(name);
   crlfDocs.delete(name);
@@ -553,7 +574,6 @@ export function evictDoc(projectId: string, branch: string, filePath: string): v
   }
   // allow a later re-create of the same path to persist again
   setTimeout(() => untombstone(name), 5000);
-  bumpFilesSignal(projectId, branch);
 }
 
 /**

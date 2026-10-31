@@ -93,7 +93,7 @@ test.describe('folders in the file tree', () => {
     } finally { await cleanup(request, id); }
   });
 
-  test('the folder menu makes a file and a folder in it and uploads into it; Delete only while it is empty', async ({ page, request }) => {
+  test('the folder menu makes a file and a folder in it, uploads into it and deletes an empty folder', async ({ page, request }) => {
     const id = await createProject(request, 'Tree Folder Menu');
     try {
       await openProject(page, id);
@@ -109,12 +109,6 @@ test.describe('folders in the file tree', () => {
       await expect(page.getByTestId('file-chapters/intro.tex')).toBeVisible();
       await expect(page.getByTestId('active-file')).toHaveText('chapters/intro.tex');
       await expect(page.getByTestId('dir-empty-chapters')).toHaveCount(0);
-
-      // no longer empty: no Delete in its menu
-      await page.getByTestId('dir-chapters').click({ button: 'right' });
-      await expect(page.getByTestId('folder-menu-new-file')).toBeVisible();
-      await expect(page.getByTestId('folder-menu-delete')).toHaveCount(0);
-      await page.keyboard.press('Escape');
 
       await folderMenu(page, 'chapters', 'new-folder');
       const folderName = page.getByTestId('new-folder-name');
