@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-31
+
+Folders in the file tree can be renamed and deleted with the files they hold, and files and folders move by drag and drop. Upgrading from 1.4 needs no manual step.
+
 ### Added
 - Folders that hold files can be renamed and deleted from their menu in the
   file tree (#220). Delete names the files that go with the folder before
