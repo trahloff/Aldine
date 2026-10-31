@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Aldine's Agent API (MCP server) is listed in the official MCP Registry as
+  `io.github.trahloff/aldine`, with the public demo and a template for your
+  own instance, and the entry follows each release.
+
 ### Changed
 - Every Agent API (MCP) tool now has a title and says whether it only reads,
   adds, or overwrites, so Claude and other clients can ask before a call
