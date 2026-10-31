@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-10-31
+
 ### Fixed
 - On a keyboard that types `}` with Option, such as a German Mac layout, the
   `}` that finishes `\begin{…}` closes the environment as it does on other
