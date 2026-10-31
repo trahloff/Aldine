@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.trahloff/aldine",
+  "title": "Aldine",
+  "description": "Self-hosted collaborative LaTeX editor: read and edit files, typeset, get the errors and the PDF.",
+  "version": "1.5.0",
+  "websiteUrl": "https://aldine.dev/latex-mcp/",
+  "repository": {
+    "url": "https://github.com/trahloff/Aldine",
+    "source": "github",
+    "id": "1292778431"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://demo.aldine.dev/mcp",
+      "headers": [
+        {
+          "name": "X-Aldine-Token",
+          "description": "Public demo token: aldine-demo. The demo is a shared sandbox, wiped nightly at 04:00 UTC.",
+          "isRequired": true,
+          "isSecret": false,
+          "default": "aldine-demo"
+        }
+      ]
+    },
+    {
+      "type": "streamable-http",
+      "url": "https://{aldine_host}/mcp",
+      "variables": {
+        "aldine_host": {
+          "description": "Host of your Aldine instance (ALDINE_PUBLIC_URL without https://), started with ALDINE_MCP=1",
+          "isRequired": true,
+          "placeholder": "aldine.example.com"
+        }
+      },
+      "headers": [
+        {
+          "name": "X-Aldine-Token",
+          "description": "ALDINE_MCP_TOKEN when auth is off, or a personal access token (aldn_...). Omit it to use the Connect (OAuth) flow when AUTH_ENABLED=1.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
