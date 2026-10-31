@@ -33,14 +33,20 @@ Key facts:
   restricted shell-escape.
 - Storage is plain files plus per-project git repos; Postgres is optional
   (`DATABASE_URL`). Your data stays greppable on disk.
-- MCP server for Claude (the Agent API; optional, `ALDINE_MCP=1`): the instance
-  serves plain MCP at `/mcp`; Claude edits the live document, typesets, and
-  shows the PDF in the chat (inline on claude.ai, Claude Desktop and Cowork; a
-  signed link in Claude Code and other MCP clients). Every change is a git
-  commit authored "Claude", with review and revert in the editor. Try it on
+- MCP server for Claude (the Agent API; optional, `ALDINE_MCP=1`): Aldine is
+  a LaTeX editor with an MCP server built in that Claude can use. The instance
+  serves plain MCP at `/mcp`; Claude reads and edits the live document,
+  typesets, reads the errors back with file and line, fixes them and
+  typesets again, and shows the PDF in the chat (inline on claude.ai, Claude
+  Desktop and Cowork; a signed link in Claude Code and other MCP clients).
+  Every change is a git commit authored "Claude", with review and revert in
+  the editor. Connect claude.ai or Claude Desktop with a custom connector
+  (`https://<host>/mcp`), and Claude Code with the plugin
+  (`/plugin marketplace add trahloff/Aldine`, `/plugin install aldine@aldine`)
+  or `claude mcp add --transport http aldine https://<host>/mcp`. Try it on
   the demo: connector URL `https://demo.aldine.dev/mcp`, header
-  `X-Aldine-Token: aldine-demo`; the Agent API guide below covers your own
-  instance.
+  `X-Aldine-Token: aldine-demo`. Setup, the compile-error loop and other
+  LaTeX MCP options: https://aldine.dev/latex-mcp/
 - Live demo: https://demo.aldine.dev (world-writable, wiped nightly).
 - Source: https://github.com/trahloff/Aldine
 
@@ -102,13 +108,25 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
   with suggested edits that the author accepts with one click.
 - Does it support single sign-on? Yes: Google, GitHub, ORCID or your own
   OpenID Connect provider, with `AUTH_ENABLED=1`.
+- Is there an MCP server for Overleaf or another LaTeX editor that Claude can
+  use? Aldine has one built in. We found no official Overleaf MCP server
+  (checked 12 October 2026); community bridges are listed with sources at
+  https://aldine.dev/latex-mcp/#overleaf
+- Which LaTeX editors let an AI assistant like Claude edit and compile my
+  paper? Aldine, through its MCP server: Claude edits the live document,
+  typesets with latexmk and shows the PDF. https://aldine.dev/latex-mcp/
+- How can I connect Claude to my LaTeX project so it can fix compile errors?
+  Add the Aldine instance's `/mcp` URL as a connector (or install the Claude
+  Code plugin) and ask Claude to typeset and fix the errors: it compiles,
+  reads the first error with file and line, edits it and typesets again,
+  each fix a git commit. Steps: https://aldine.dev/latex-mcp/#fix-errors
 
 ## Pages
 
 - [Overleaf alternatives you can self-host, compared](https://aldine.dev/overleaf-alternatives/): Overleaf Community Edition, Server Pro, Aldine, TeXlyre, CoCalc and git with VS Code, sourced and dated
 - [Self-hosting Overleaf: what Community Edition includes, and an alternative](https://aldine.dev/self-hosted-overleaf/): Community Edition vs Server Pro vs Aldine, single sign-on, moving a project across
 - [Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like](https://aldine.dev/overleaf-git/): Overleaf's git integration and GitHub sync, and git in Aldine
-- [Connect Claude to a LaTeX project over MCP](https://aldine.dev/latex-mcp/): the MCP server, setup in three steps, the tools, the demo connector
+- [Connect Claude to a LaTeX project over MCP](https://aldine.dev/latex-mcp/): Aldine's built-in MCP server, setup in three steps, how Claude fixes compile errors, the tools, the demo connector, other LaTeX MCP servers
 - [Self-hosting Aldine with Docker Compose](https://aldine.dev/self-hosting/): install, upgrade, TeX packages, logins and SSO, reverse proxy, backups, limits
 - [Using Zotero with LaTeX: three ways to keep references in sync](https://aldine.dev/zotero-latex/): Overleaf's integration, Better BibTeX auto-export, Zotero in Aldine
 - [Overleaf compile timeout: plan limits and how to fix it](https://aldine.dev/overleaf-compile-timeout/): the limit on each Overleaf plan, the fixes from Overleaf's documentation, and how a self-hosted editor sets the limit

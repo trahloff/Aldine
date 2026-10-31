@@ -151,6 +151,14 @@
                                     "@type": "Answer",
                                     "text": "Yes. With AUTH_ENABLED=1, people sign in with Google, GitHub, ORCID or your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID), or with email and password. ALDINE_SSO_ONLY=1 disables passwords. Setup is in the OIDC guide."
                                 }
+                            },
+                            {
+                                "@type": "Question",
+                                "name": "Can Claude edit and compile my LaTeX project?",
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": "Yes, through Aldine's built-in MCP server: Claude reads and edits the files, typesets, reads the errors back, shows the PDF and commits each change to git for you to review or revert. The LaTeX MCP server guide shows how to connect claude.ai, Claude Desktop or Claude Code."
+                                }
                             }
                         ]
                     }
@@ -986,6 +994,10 @@
                 <h3>Does it support single sign-on?</h3>
                 <p>
                     Yes. With <code>AUTH_ENABLED=1</code>, people sign in with Google, GitHub, ORCID or your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID), or with email and password. <code>ALDINE_SSO_ONLY=1</code> disables passwords. Setup is in the <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md">OIDC guide</a>.
+                </p>
+                <h3>Can Claude edit and compile my LaTeX project?</h3>
+                <p>
+                    Yes, through Aldine's built-in MCP server: Claude reads and edits the files, typesets, reads the errors back, shows the PDF and commits each change to git for you to review or revert. The <a href="/latex-mcp/">LaTeX MCP server guide</a> shows how to connect claude.ai, Claude Desktop or Claude Code.
                 </p>
             </section>
         </main>

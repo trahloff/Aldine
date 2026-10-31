@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>A LaTeX MCP server: let Claude edit and compile your paper</title>
 <link rel="canonical" href="https://aldine.dev/latex-mcp/" />
-<meta name="description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<meta name="description" content="Aldine is an open-source LaTeX editor with a built-in MCP server: Claude edits your files, typesets, fixes compile errors and shows the PDF. Setup, tools, a demo." />
 <link rel="icon" href="/favicon.ico" sizes="48x48" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <meta property="og:title" content="A LaTeX MCP server: let Claude edit and compile your paper" />
 <meta property="og:type" content="article" />
 <meta property="og:site_name" content="Aldine" />
-<meta property="og:description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<meta property="og:description" content="Aldine is an open-source LaTeX editor with a built-in MCP server: Claude edits your files, typesets, fixes compile errors and shows the PDF. Setup, tools, a demo." />
 <meta property="og:image" content="https://aldine.dev/assets/social.png" />
 <meta property="og:image:width" content="1280" />
 <meta property="og:image:height" content="640" />
@@ -20,7 +20,7 @@
 <meta property="og:url" content="https://aldine.dev/latex-mcp/" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="A LaTeX MCP server: let Claude edit and compile your paper" />
-<meta name="twitter:description" content="We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git." />
+<meta name="twitter:description" content="Aldine is an open-source LaTeX editor with a built-in MCP server: Claude edits your files, typesets, fixes compile errors and shows the PDF. Setup, tools, a demo." />
 <meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
 <link rel="stylesheet" href="/assets/site.css" />
 <script type="application/ld+json">
@@ -31,12 +31,12 @@
       "@type": "TechArticle",
       "@id": "https://aldine.dev/latex-mcp/#article",
       "headline": "Connect Claude to a LaTeX project over MCP",
-      "description": "We found no official Overleaf MCP server. What a LaTeX MCP server does and how to connect Claude to one: setup, tools, a public demo, review in git.",
+      "description": "Aldine is an open-source LaTeX editor with a built-in MCP server: Claude edits your files, typesets, fixes compile errors and shows the PDF. Setup, tools, a demo.",
       "url": "https://aldine.dev/latex-mcp/",
       "mainEntityOfPage": "https://aldine.dev/latex-mcp/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-26",
+      "dateModified": "2026-10-31",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -71,6 +71,52 @@
           "item": "https://aldine.dev/latex-mcp/"
         }
       ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/latex-mcp/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there an MCP server for Overleaf or another LaTeX editor that Claude can use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Aldine, an open-source self-hosted LaTeX editor, has an MCP server built in: Claude reads and edits the files in a project, typesets it, reads the errors back with file and line, shows the PDF and commits each change to git. We found no official Overleaf MCP server (checked 12 October 2026); community projects reach Overleaf through its git integration or its web interface, and letX runs a hosted MCP server for its own editor. See Overleaf MCP servers and other options."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which LaTeX editors let an AI assistant like Claude edit and compile my paper?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Aldine does, through its built-in MCP server: add your instance as a connector in claude.ai, Claude Desktop or Claude Code, and Claude edits the live document, typesets with latexmk and shows the PDF. As of October 2026, letX offers a hosted MCP server that writes files and compiles them, and community MCP servers for Overleaf edit through Overleaf's git integration or its web interface, some with a compile step. We have not tested those; the list above links each one's own page."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How can I connect Claude to my LaTeX project so it can fix compile errors?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Put the project in Aldine and add the instance's connector URL (https://<host>/mcp) to Claude: as a custom connector in claude.ai or Claude Desktop, or with the Aldine plugin or claude mcp add in Claude Code. Then ask Claude to typeset the paper and fix the errors: it compiles, reads the first error with its file and line, edits the failing text and typesets again, and each fix is a git commit you can review or revert. The steps are above."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I try it without installing anything?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. On the public demo, use the connector URL https://demo.aldine.dev/mcp with the header X-Aldine-Token: aldine-demo. It is a shared sandbox that is wiped nightly, so put nothing private there."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work with an Aldine on localhost or a private network?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "With Claude Code, yes: it runs on your machine and reaches http://localhost:8080/mcp over plain HTTP. claude.ai, Claude Desktop and Cowork connect from Anthropic's cloud, so they need the instance on a public HTTPS address."
+          }
+        }
+      ]
     }
   ]
 }
@@ -92,8 +138,9 @@
 <main class="wrap doc">
 <p class="crumbs"><a href="/">Aldine</a> / LaTeX MCP server</p>
 <h1>Connect Claude to a LaTeX project over MCP</h1>
-<p class="lede">We found no official Overleaf MCP server (checked 12 October 2026; <a href="#overleaf">details below</a>), so this page shows what a LaTeX MCP server does and how to connect Claude to one. An MCP server for LaTeX gives an assistant such as Claude a set of tools on your project: read the files, edit them, typeset, read the errors back and show the PDF. Aldine, an open-source self-hosted LaTeX editor, has one built in. This page explains what it does, how to connect it, and how you review what Claude changed.</p>
-<p class="checked">Written by the Aldine project, so read it with that in mind. Every statement about another product links to that product's own documentation. Checked on 12 October 2026.</p>
+<p class="lede">Aldine is an open-source, self-hosted LaTeX editor with a built-in MCP server that Claude can use. Through it, Claude reads and edits the files in your project, typesets it, reads the errors back with file and line, shows the PDF in the chat, and commits every change to git for you to review.</p>
+<p>We found no official Overleaf MCP server (checked 12 October 2026); <a href="#overleaf">community bridges and other options</a> are listed below. This page explains how to connect Claude to Aldine, how Claude fixes compile errors, what the tools do, and how you review what Claude changed.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Every statement about another product links to that product's own page. Checked on 12 October 2026, updated 31 October 2026.</p>
 
 <div class="demo-frame">
 <video src="/assets/agent-demo.mp4" poster="/assets/editor-dark.png" width="1440" height="900" controls muted loop playsinline preload="none" aria-label="Screen recording: Claude, connected over MCP, edits a paragraph in the open document, adds a section file, typesets the paper, shows the PDF in its viewer, and the History panel and review dialog list its commits"></video>
@@ -111,10 +158,28 @@
 </ul>
 <p>In Aldine the server is the editor's own backend, so Claude works on the same documents your co-authors have open. Its edits arrive in the live document as those of an attributed collaborator, and your cursor stays where it was.</p>
 
+<h2 id="fix-errors">Let Claude fix your compile errors</h2>
+<ol>
+<li><strong>Put the paper in Aldine.</strong> Create a project, or download an Overleaf project as a ZIP and drop it on the Aldine home screen.</li>
+<li><strong>Connect Claude.</strong> In claude.ai or Claude Desktop, add a custom connector with your instance's connector URL, <code>https://&lt;host&gt;/mcp</code>. In Claude Code, install the Aldine plugin (<code>/plugin marketplace add trahloff/Aldine</code>, then <code>/plugin install aldine@aldine</code>) or run <code>claude mcp add --transport http aldine https://&lt;host&gt;/mcp</code>. <a href="#connect">Setup in detail</a>.</li>
+<li><strong>Ask for it.</strong> For example: "Typeset my paper and fix the errors."</li>
+<li><strong>Claude typesets and reads the log.</strong> The <code>compile</code> tool runs latexmk and returns the errors first, each with file, line, message and the source line, and names a missing package as a hint.</li>
+<li><strong>Claude fixes the first error.</strong> It reads the lines around it and replaces the exact text that fails. The edit is a git commit authored "Claude".</li>
+<li><strong>Claude typesets again</strong> and shows the PDF once it builds. The plugin's <code>latex-fix-build</code> skill stops after three attempts and reports what is left, and it reports a package missing from the compiler instead of editing it out.</li>
+</ol>
+<p>You review the result in the editor: "Claude edited N files" opens the diff, and "Revert these changes" undoes it in one new commit.</p>
+
 <h2 id="overleaf">Is there an Overleaf MCP server?</h2>
 <p>Not an official one that we could find. On 12 October 2026, a search of Overleaf's GitHub organization for "mcp" returned no repositories, and the index of Overleaf's documentation lists AI features (an AI assistant, Error Assist, an AI table generator) but no MCP page. <span class="src">(<a href="https://github.com/orgs/overleaf/repositories?q=mcp">Overleaf on GitHub, search for mcp</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/llms.txt">Overleaf documentation index</a>, as of October 2026)</span></p>
-<p>Third-party projects exist. One example is a community Overleaf MCP server by M-H-Amini, listed on mcp.so, whose README asks for a project id and an Overleaf token. <span class="src">(<a href="https://mcp.so/server/overleaf-mcp-server/M-H-Amini">mcp.so listing</a>, <a href="https://github.com/M-H-Amini/Overleaf-MCP-Server">repository</a>, as of October 2026)</span> It does not claim an affiliation with Overleaf. We have not tested it or any other, so check who maintains a server and how it reaches your projects before you give it credentials.</p>
-<p>Aldine takes the other route: the MCP server is part of the editor you host, so there is no separate bridge to trust.</p>
+<p>Community projects bridge Claude to Overleaf. Each describes itself on its own page as follows; none claims an affiliation with Overleaf:</p>
+<ul>
+<li><strong>Overleaf MCP Server by M-H-Amini</strong>, listed on mcp.so: the README asks for a project id and an Overleaf token. <span class="src">(<a href="https://mcp.so/server/overleaf-mcp-server/M-H-Amini">mcp.so listing</a>, <a href="https://github.com/M-H-Amini/Overleaf-MCP-Server">repository</a>, as of October 2026)</span></li>
+<li><strong>OverleafMCP by mjyoo2</strong>: reads and writes project files through Overleaf's git integration with a git token; the README lists no compile tool. <span class="src">(<a href="https://github.com/mjyoo2/OverleafMCP">repository</a>, as of October 2026)</span></li>
+<li><strong>mcp-server-overleaf by yangzichao</strong>: works on a local clone over Overleaf's git integration, compiles with a local latexmk, and pushes edits when you publish them. <span class="src">(<a href="https://github.com/yangzichao/mcp-server-overleaf">repository</a>, as of October 2026)</span></li>
+<li><strong>overleaf-latex by MarcoDotIO</strong>: edits and compiles in your Overleaf account through Overleaf's internal web interfaces with a saved browser session, not an official API. <span class="src">(<a href="https://github.com/MarcoDotIO/overleaf-latex">repository</a>, as of October 2026)</span></li>
+</ul>
+<p>We have not tested any of them, so check who maintains a server and how it reaches your projects before you give it credentials. Aldine takes the other route: the MCP server is part of the editor you host, so there is no separate bridge to trust.</p>
+<p>Other LaTeX editors have their own. letX, a hosted collaborative LaTeX editor, runs a hosted MCP server at <code>https://api.letx.app/mcp</code> that creates projects, writes files and compiles them to PDF. <span class="src">(<a href="https://letx.app/mcp/">letX: MCP server</a>, as of October 2026)</span> We have not tested it either.</p>
 <p>If your papers live on Overleaf and you want its built-in AI features, that is the simpler path. The rest of this page is about Aldine.</p>
 
 <h2 id="connect">Connect in three steps</h2>
@@ -137,6 +202,13 @@ ALDINE_PUBLIC_URL=http://localhost:8080</code></pre>
 <p><strong>Claude Code:</strong></p>
 <pre><code>claude mcp add --transport http aldine https://&lt;host&gt;/mcp
 claude mcp login aldine        # or type /mcp in a session and pick Aldine</code></pre>
+<p>Or install the Aldine plugin for Claude Code. It configures the same connector from <code>ALDINE_URL</code> and adds three skills: <code>latex-fix-build</code> (typeset, read the error, edit, typeset again, at most three attempts), <code>latex-draft-section</code> and <code>latex-bibliography</code>.</p>
+<p>In your shell, before you start Claude Code:</p>
+<pre><code>export ALDINE_URL=https://&lt;host&gt;    # no trailing slash</code></pre>
+<p>Then, inside Claude Code:</p>
+<pre><code>/plugin marketplace add trahloff/Aldine
+/plugin install aldine@aldine</code></pre>
+<p>With auth off, also export <code>ALDINE_TOKEN</code> set to the instance's <code>ALDINE_MCP_TOKEN</code>. With auth on, leave it unset and connect through <code>/mcp</code>.</p>
 <p>Anthropic states that with a custom connector "Claude connects to your remote MCP server from Anthropic's cloud infrastructure, rather than from your local device", in every client including claude.ai, Claude Desktop and Cowork, so the server "must be reachable over the public internet". <span class="src">(<a href="https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp">Anthropic: custom connectors using remote MCP</a>, as of October 2026)</span> For Aldine that means HTTPS on a public address. Claude Code runs on your machine and, as tested in October 2026, reaches an instance on <code>localhost</code> or your LAN over plain HTTP.</p>
 
 <h2 id="tools">What the tools do</h2>
@@ -203,6 +275,18 @@ claude mcp login aldine        # or type /mcp in a session and pick Aldine</code
 <a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
 </div>
 <p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="faq">Common questions</h2>
+<h3>Is there an MCP server for Overleaf or another LaTeX editor that Claude can use?</h3>
+<p>Yes. Aldine, an open-source self-hosted LaTeX editor, has an MCP server built in: Claude reads and edits the files in a project, typesets it, reads the errors back with file and line, shows the PDF and commits each change to git. We found no official Overleaf MCP server (checked 12 October 2026); community projects reach Overleaf through its git integration or its web interface, and letX runs a hosted MCP server for its own editor. See <a href="#overleaf">Overleaf MCP servers and other options</a>.</p>
+<h3>Which LaTeX editors let an AI assistant like Claude edit and compile my paper?</h3>
+<p>Aldine does, through its built-in MCP server: add your instance as a connector in claude.ai, Claude Desktop or Claude Code, and Claude edits the live document, typesets with latexmk and shows the PDF. As of October 2026, letX offers a hosted MCP server that writes files and compiles them, and community MCP servers for Overleaf edit through Overleaf's git integration or its web interface, some with a compile step. We have not tested those; the <a href="#overleaf">list above</a> links each one's own page.</p>
+<h3>How can I connect Claude to my LaTeX project so it can fix compile errors?</h3>
+<p>Put the project in Aldine and add the instance's connector URL (<code>https://&lt;host&gt;/mcp</code>) to Claude: as a custom connector in claude.ai or Claude Desktop, or with the Aldine plugin or <code>claude mcp add</code> in Claude Code. Then ask Claude to typeset the paper and fix the errors: it compiles, reads the first error with its file and line, edits the failing text and typesets again, and each fix is a git commit you can review or revert. The <a href="#fix-errors">steps</a> are above.</p>
+<h3>Can I try it without installing anything?</h3>
+<p>Yes. On the public demo, use the connector URL <code>https://demo.aldine.dev/mcp</code> with the header <code>X-Aldine-Token: aldine-demo</code>. It is a shared sandbox that is wiped nightly, so put nothing private there.</p>
+<h3>Does it work with an Aldine on localhost or a private network?</h3>
+<p>With Claude Code, yes: it runs on your machine and reaches <code>http://localhost:8080/mcp</code> over plain HTTP. claude.ai, Claude Desktop and Cowork connect from Anthropic's cloud, so they need the instance on a public HTTPS address.</p>
 
 <h2 id="related">Related pages</h2>
 <ul class="related">
