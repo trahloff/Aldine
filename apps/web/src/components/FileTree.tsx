@@ -1,10 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
 import { fileIcon, IconChevronRight, IconFilePlus, IconFilter, IconFolderPlus, IconUpload } from './Icons';
 import { useDialogs } from './Dialogs';
 import { useContextMenu, type MenuEntry } from './Menu';
 import { useToast } from './Toast';
-import { buildTree, entryPathError, holdsOnlyKeep, normalizeEntryPath, sourceTree, within, type TreeNode } from '../util/fileTree';
+import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, within, type TreeNode } from '../util/fileTree';
 
 interface Props {
   files: TreeEntry[];
@@ -17,8 +17,9 @@ interface Props {
   /** `path` is the folder; the parent creates the .gitkeep that holds it in git. */
   onCreateFolder(path: string): void;
   onUploaded(paths: string[]): void;
-  /** A file, or an empty folder with everything in it. */
+  /** A file, or a folder with everything in it. */
   onDelete(path: string): void;
+  /** A file or a folder; a drop onto a folder moves it there the same way. */
   onRename(from: string, to: string): void;
   onSetRoot(path: string): void;
   /** Bumped by the parent to open the new-file input from outside the tree
@@ -34,6 +35,17 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 
 /** The name input: a file or a folder, opened at the top level or inside `dir`. */
 interface Adding { kind: 'file' | 'folder'; dir: string }
+
+/** What a row being dragged carries, so a drop can tell it from files off the desktop. */
+const DRAG_TYPE = 'application/x-aldine-path';
+
+/** "a.tex", "a.tex and b.tex", "a.tex, b.tex, c.tex, d.tex and 3 more". */
+function nameList(names: string[]): string {
+  const shown = names.length > 5 ? names.slice(0, 4) : names;
+  const rest = names.length - shown.length;
+  if (rest) return `${shown.join(', ')} and ${rest} more`;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
+}
 
 const FolderIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ opacity: 0.65 }}>
@@ -56,7 +68,10 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   const [adding, setAdding] = useState<Adding | null>(null);
   const [name, setName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  /** The folder a drag is over: '' for the top level, null for no drag. */
+  const [dropDir, setDropDir] = useState<string | null>(null);
+  /** The row being dragged, if the drag started in this tree. */
+  const dragged = useRef<string | null>(null);
   const [sourceOnly, setSourceOnly] = useState(true);
   // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
   // start collapsed; everything else expanded. This overlay avoids depending on
@@ -171,24 +186,82 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   ];
 
   const deleteFolder = async (dir: string) => {
-    if (!(await dialogs.confirm({ title: `Delete ${dir}?`, confirmLabel: 'Delete folder', danger: true }))) return;
+    const inside = filesIn(files, dir);
+    const names = inside.map((p) => p.slice(dir.length + 1));
+    const ok = await dialogs.confirm(inside.length
+      ? {
+        title: `Delete ${dir}?`,
+        body: inside.length === 1 ? `The file in it is deleted too: ${names[0]}.` : `The ${inside.length} files in it are deleted too: ${nameList(names)}.`,
+        confirmLabel: inside.length === 1 ? 'Delete folder and file' : `Delete folder and ${inside.length} files`,
+        danger: true,
+      }
+      : { title: `Delete ${dir}?`, confirmLabel: 'Delete folder', danger: true });
+    if (!ok) return;
     // The server removes a folder with everything in it: look again, so a file
-    // a collaborator added since the menu opened is never deleted with it.
+    // a collaborator added since the dialog opened is never deleted unseen.
     let now: TreeEntry[];
     try { now = await api.listFiles(projectId, branch); } catch { toast(`Could not delete ${dir}: the file list did not load`, 'error'); return; }
-    if (!holdsOnlyKeep(now, dir)) { toast(`${dir} is no longer empty, so it was not deleted`, 'error'); return; }
+    if (filesIn(now, dir).some((p) => !inside.includes(p))) {
+      toast(inside.length ? `Files were added to ${dir} since, so it was not deleted` : `${dir} is no longer empty, so it was not deleted`, 'error');
+      return;
+    }
     onDelete(dir);
+  };
+  const renameFolder = async (dir: string) => {
+    const raw = await dialogs.prompt({ title: `Rename ${dir}`, value: dir, confirmLabel: 'Rename' });
+    if (raw === null) return;
+    const to = normalizeEntryPath(raw);
+    if (!to || to === dir) return;
+    const error = entryPathError(raw) ?? (within(to, dir) ? `${dir} cannot move into a folder inside itself` : null);
+    if (error) { toast(error, 'error'); return; }
+    reveal(to);
+    onRename(dir, to);
   };
   const folderMenu = useContextMenu({ label: 'Folder actions', testId: 'folder-menu' });
   const folderActions = (dir: string): MenuEntry[] => [
     { id: 'new-file', label: 'New file in folder…', testId: 'folder-menu-new-file', onSelect: () => startAdding('file', dir) },
     { id: 'new-folder', label: 'New folder in folder…', testId: 'folder-menu-new-folder', onSelect: () => startAdding('folder', dir) },
     { id: 'upload', label: 'Upload to folder…', testId: 'folder-menu-upload', onSelect: () => chooseUpload(dir) },
-    ...(holdsOnlyKeep(files, dir) ? [
-      { kind: 'separator' } as const,
-      { id: 'delete', label: 'Delete folder…', danger: true, testId: 'folder-menu-delete', onSelect: () => { void deleteFolder(dir); } },
-    ] : []),
+    { id: 'rename', label: 'Rename folder…', testId: 'folder-menu-rename', onSelect: () => { void renameFolder(dir); } },
+    { kind: 'separator' },
+    { id: 'delete', label: 'Delete folder…', danger: true, testId: 'folder-menu-delete', onSelect: () => { void deleteFolder(dir); } },
   ];
+
+  // A row dragged onto a folder moves into it; files from the desktop upload
+  // into it. A file's row stands in for the folder it is in, and the space
+  // around the rows for the top level.
+  const canDrop = (e: DragEvent, dir: string) =>
+    dragged.current !== null ? moveTarget(dragged.current, dir) !== null : e.dataTransfer.types.includes('Files');
+  const dropTarget = (dir: string) => ({
+    onDragOver: (e: DragEvent) => {
+      e.stopPropagation();
+      if (!canDrop(e, dir)) { setDropDir(null); return; }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = dragged.current !== null ? 'move' : 'copy';
+      setDropDir(dir);
+    },
+    onDrop: async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDropDir(null);
+      const from = e.dataTransfer.getData(DRAG_TYPE);
+      if (from) {
+        const to = moveTarget(from, dir);
+        if (to) { reveal(dir); onRename(from, to); }
+      } else if (e.dataTransfer.files.length) {
+        await uploadFiles(e.dataTransfer.files, dir);
+      }
+    },
+  });
+  const dragSource = (path: string) => ({
+    draggable: true,
+    onDragStart: (e: DragEvent) => {
+      dragged.current = path;
+      e.dataTransfer.setData(DRAG_TYPE, path);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragEnd: () => { dragged.current = null; setDropDir(null); },
+  });
 
   const tree = useMemo(() => {
     const full = buildTree(files);
@@ -204,9 +277,10 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       return (
         <div key={node.path}>
           <button
-            className="tree__item tree__dir" style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
+            className={`tree__item tree__dir ${dropDir === node.path ? 'tree__item--drop' : ''}`} style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
             data-testid={`dir-${node.path}`} title={node.path} aria-expanded={open}
             {...folderMenu.bind(() => folderActions(node.path))}
+            {...dragSource(node.path)} {...dropTarget(node.path)}
           >
             <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
             <span className="tree__icon"><FolderIcon /></span>
@@ -215,7 +289,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           {open && (node.children.length
             ? node.children.map((c) => renderNode(c, depth + 1))
             : (
-              <div className="tree__empty" style={{ paddingLeft: pad + 36 }} data-testid={`dir-empty-${node.path}`}>
+              <div className="tree__empty" style={{ paddingLeft: pad + 36 }} data-testid={`dir-empty-${node.path}`} {...dropTarget(node.path)}>
                 {holdsOnlyKeep(files, node.path) ? 'Empty folder' : 'No source files'}
               </div>
             ))}
@@ -230,6 +304,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         data-testid={`file-${node.path}`}
         onClick={() => onOpen(node.path)}
         {...fileMenu.bind(() => fileActions(node.path))}
+        {...dragSource(node.path)} {...dropTarget(parentOf(node.path))}
         title={node.path}
       >
         <span className="tree__chevron" />
@@ -242,11 +317,10 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
   return (
     <div
-      className={`panel-list filetree ${dragOver ? 'filetree--drag' : ''}`}
-      data-testid="file-tree"
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={async (e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) await uploadFiles(e.dataTransfer.files); }}
+      className={`panel-list filetree ${dropDir === '' ? 'filetree--drag' : ''}`}
+      data-testid="file-tree" data-drop={dropDir === '' && dragged.current !== null ? 'move' : undefined}
+      {...dropTarget('')}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropDir(null); }}
     >
       {tree.map((n) => renderNode(n, 0))}
 
@@ -286,7 +360,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           if (e.target.files?.length) await uploadFiles(e.target.files, dir);
           e.target.value = '';
         }} />
-      <p className="filetree__hint">Drop files here to upload</p>
+      <p className="filetree__hint">Drop files here to upload, or onto a folder</p>
 
       {fileMenu.element}
       {folderMenu.element}

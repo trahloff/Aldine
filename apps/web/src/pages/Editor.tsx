@@ -1353,7 +1353,8 @@ export default function Editor() {
                     await api.renameFile(id, branch, from, to);
                     await loadFiles();
                     loadProject(); // the root designation may have moved with the rename
-                    if (activeFile === from) setActiveFile(to);
+                    // a file inside a renamed folder stays open under its new path
+                    if (activeFile && within(activeFile, from)) setActiveFile(to + activeFile.slice(from.length));
                   } catch (err: any) {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
                   } finally {

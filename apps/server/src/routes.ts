@@ -11,7 +11,7 @@ import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
 import { noteEdit, editorOf, forgetBranch, activitySnapshot, backfillLastEdits } from './activity.js';
@@ -1571,13 +1571,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (!store.fileExists(req.params.id, branch, from)) {
         return reply.code(404).send({ error: `No file named "${from}"` });
       }
+      const wasDir = store.isDirectory(req.params.id, branch, from);
+      const normFrom = importPath(from);
+      const normTo = importPath(to);
+      if (wasDir && normFrom && normTo?.startsWith(`${normFrom}/`)) {
+        return reply.code(400).send({ error: `"${from}" cannot move into a folder inside itself` });
+      }
       // Flush pending edits BEFORE evicting: eviction tombstones the doc and a
       // tombstoned doc is never written, so anything typed inside the autosave
       // debounce window would be renamed away and lost.
       flushBranchDocs(req.params.id, branch);
-      const wasDir = store.isDirectory(req.params.id, branch, from);
       // evict the source doc so its final store can't recreate the old file
-      evictDoc(req.params.id, branch, from);
+      if (wasDir && normFrom) evictTree(req.params.id, branch, normFrom, store.listFiles(req.params.id, branch).map((f) => f.path));
+      else evictDoc(req.params.id, branch, from);
       store.renameFile(req.params.id, branch, from, to);
       // bib/label indexes carry file paths; a directory rename moves every child
       if (wasDir) markTreeChanged(req.params.id, branch);
@@ -1587,15 +1593,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // The typeset root keeps its designation through a rename (deletion
       // already re-derives it; a rename must not orphan it). A rename that
       // produces the project's first .tex adopts it, as creation would. The
-      // stored path is the normalised one: "./a.tex" must match the tree.
+      // stored path is the normalised one: "./a.tex" must match the tree. A
+      // root inside a renamed folder moves with it.
       let newRoot: string | undefined;
       try {
         const meta = await store.readMeta(req.params.id);
-        const normTo = importPath(to);
-        if (meta.rootFile && meta.rootFile === importPath(from) && normTo) {
-          meta.rootFile = normTo;
+        const moved = meta.rootFile && normFrom && normTo
+          ? meta.rootFile === normFrom ? normTo
+            : wasDir && meta.rootFile.startsWith(`${normFrom}/`) ? normTo + meta.rootFile.slice(normFrom.length) : null
+          : null;
+        if (moved) {
+          meta.rootFile = moved;
           await store.writeMeta(meta);
-          newRoot = normTo;
+          newRoot = moved;
         } else if (!meta.rootFile) {
           newRoot = await adoptRootIfUnset(req.params.id, branch, to);
         }
@@ -1610,7 +1620,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (isHiddenPath(rel)) return reply.code(403).send({ error: 'forbidden path' });
     const wasDir = store.isDirectory(req.params.id, branch, rel);
     const existed = store.fileExists(req.params.id, branch, rel);
-    evictDoc(req.params.id, branch, rel); // prevent resurrection via pending store
+    const norm = importPath(rel);
+    // prevent resurrection via pending store
+    if (wasDir && norm) evictTree(req.params.id, branch, norm, store.listFiles(req.params.id, branch).map((f) => f.path));
+    else evictDoc(req.params.id, branch, rel);
     store.deleteFile(req.params.id, branch, rel);
     // a directory delete removes every child, which a single path mark would miss
     if (wasDir) markTreeChanged(req.params.id, branch);
@@ -1623,7 +1636,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     let newRoot: string | undefined;
     try {
       const meta = await store.readMeta(req.params.id);
-      if (meta.rootFile && meta.rootFile === importPath(rel)) {
+      if (meta.rootFile && norm && (meta.rootFile === norm || (wasDir && meta.rootFile.startsWith(`${norm}/`)))) {
         const root = detectRoot(req.params.id, branch);
         meta.rootFile = root;
         await store.writeMeta(meta);

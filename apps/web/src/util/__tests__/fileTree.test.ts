@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { TreeEntry } from '../../api';
-import { buildTree, entryPathError, holdsOnlyKeep, normalizeEntryPath, sourceTree, within, type TreeNode } from '../fileTree';
+import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, within, type TreeNode } from '../fileTree';
 
 const file = (path: string): TreeEntry => ({ path, type: 'file' });
 const dir = (path: string): TreeEntry => ({ path, type: 'dir' });
@@ -88,6 +88,37 @@ describe('holdsOnlyKeep', () => {
   it('does not count a sibling whose name starts the same', () => {
     expect(holdsOnlyKeep(listing, 'fig')).toBe(false);
     expect(holdsOnlyKeep([file('figures/.gitkeep'), file('figures-old/a.png')], 'figures')).toBe(true);
+  });
+});
+
+describe('filesIn', () => {
+  it('lists the files at any depth, without placeholders or a sibling that starts the same', () => {
+    const listing = [dir('ch'), file('ch/.gitkeep'), file('ch/a.tex'), dir('ch/fig'), file('ch/fig/p.png'), file('ch/fig/.gitkeep'), file('chx/b.tex')];
+    expect(filesIn(listing, 'ch')).toEqual(['ch/a.tex', 'ch/fig/p.png']);
+    expect(filesIn(listing, 'ch/fig')).toEqual(['ch/fig/p.png']);
+  });
+});
+
+describe('moveTarget', () => {
+  it('puts the file or folder inside the folder, under its own name', () => {
+    expect(moveTarget('intro.tex', 'chapters')).toBe('chapters/intro.tex');
+    expect(moveTarget('chapters/intro.tex', 'parts/one')).toBe('parts/one/intro.tex');
+    expect(moveTarget('figures', 'chapters')).toBe('chapters/figures');
+  });
+
+  it('moves to the top level for an empty folder path', () => {
+    expect(moveTarget('chapters/intro.tex', '')).toBe('intro.tex');
+  });
+
+  it('is null where the entry already is, or inside itself', () => {
+    expect(moveTarget('chapters/intro.tex', 'chapters')).toBeNull();
+    expect(moveTarget('main.tex', '')).toBeNull();
+    expect(moveTarget('chapters', 'chapters')).toBeNull();
+    expect(moveTarget('chapters', 'chapters/figures')).toBeNull();
+  });
+
+  it('lets a folder move into a sibling whose name starts the same', () => {
+    expect(moveTarget('ch', 'chx')).toBe('chx/ch');
   });
 });
 
