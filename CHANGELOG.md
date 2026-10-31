@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- Every Agent API (MCP) tool now has a title and says whether it only reads,
+  adds, or overwrites, so Claude and other clients can ask before a call
+  that changes your document and skip the prompt for reads.
+  `trash_project` now also tells Claude that it deletes a GitLab repository
+  Aldine provisioned for the project.
+
 ## [1.5.0] — 2026-10-31
 
 Folders in the file tree can be renamed and deleted with the files they hold, and files and folders move by drag and drop. Upgrading from 1.4 needs no manual step.

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { config } from '../config.js';
 import * as store from '../store.js';
 import * as gitops from '../gitops.js';
@@ -414,6 +415,21 @@ const editShape = {
 // Registry
 // ---------------------------------------------------------------------------
 
+/** Hints a client decides from whether to ask the user before a call. An
+ *  omitted one takes the spec default (not read-only, destructive, open
+ *  world), so every tool states each hint that applies to it; destructive and
+ *  idempotent apply only to a tool that is not read-only. */
+type ToolHints =
+  | { readOnlyHint: true; openWorldHint: boolean }
+  | { readOnlyHint: false; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
+
+/** The title goes top-level (what clients on spec 2025-06-18 and later show
+ *  first) and into annotations.title (what older clients and directory
+ *  checks read); the two must not differ. */
+const annotate = (title: string, hints: ToolHints): { title: string; annotations: ToolAnnotations } =>
+  ({ title, annotations: { title, ...hints } });
+const READ: ToolHints = { readOnlyHint: true, openWorldHint: false };
+
 export function registerTools(server: McpServer, identity: McpIdentity, ctx: ToolContext = { publicBase: config.publicUrl }): void {
   const base = ctx.publicBase.replace(/\/$/, '');
   const csp = viewerCsp(base);
@@ -485,13 +501,13 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   };
 
   server.registerTool('ping', {
+    ...annotate('Check the connection', READ),
     description: 'Check that the Aldine connector is reachable and authenticated. If it fails, tell the user their Aldine instance is not responding or the connector needs reconnecting — do not go on to other tools.',
-    annotations: { readOnlyHint: true },
   }, async () => ok({ ok: true, server: 'aldine', user: identity.user?.email ?? null }));
 
   server.registerTool('list_projects', {
+    ...annotate('List projects', READ),
     description: 'List the LaTeX projects this token can reach: id, name, branches, rootFile, engine, agentCreated (true for projects made with create_project — the only ones trash_project accepts). Call it when you do not know the project id. A token scoped to one project makes the project argument optional everywhere.',
-    annotations: { readOnlyHint: true },
   }, async () => {
     try {
       const scoped = identity.tokenScope?.projectIds;
@@ -508,8 +524,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('project_structure', {
+    ...annotate('Show a project\'s files', READ),
     description: 'File tree of a project branch plus rootFile, engine, and contentVersion (pass it as base_version to edit_file, write_file or a batch_write entry — a write is refused only when its own file changed after that version). Call it before working in a project you have not read yet.',
-    annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
@@ -522,8 +538,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('read_file', {
+    ...annotate('Read a file', READ),
     description: 'Read a text file as the editor shows it right now (open documents are flushed first). Reads cap at ~100 KB — window larger files with from_line/to_line (1-based, inclusive; the result echoes the window it served, to_line clamped to the last line). Read before you edit: edit_file quotes must match this content verbatim. The result carries contentVersion (the branch version — pass it as base_version when you write this file) and fileVersion (the version at which this file itself last changed). Text is decided by content, not extension: a file with binary bytes is refused.',
-    annotations: { readOnlyHint: true },
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -562,6 +578,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('edit_file', {
+    ...annotate('Edit a file', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
     description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
@@ -660,6 +677,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('write_file', {
+    ...annotate('Write a whole file', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }),
     description: 'Create a new file, or replace a whole file. For an existing file prefer edit_file — a whole-file write on an open document teleports collaborators\' viewports and can drop their in-flight typing. Pass base_version (contentVersion from a prior read of this file) to get {error:"version_conflict"} instead of overwriting newer content — only a change to this file conflicts, never one to another file; on conflict re-read and re-write once, then ask. Folders come into being with the first file written inside them. The first .tex written into a project with no main document becomes the main document (newRoot in the result). Committed as author Claude before the tool answers, under message (the intent, imperative); without one the commit is titled "Update <path>". The result\'s commit and head are that commit; content identical to the file makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
@@ -704,6 +722,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('batch_write', {
+    ...annotate('Change several files in one commit', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
     description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor or ambiguous_anchor writes nothing (the error names the entry as path); fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
@@ -812,6 +831,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('compile', {
+    ...annotate('Typeset the project', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
     description: `Typeset the project with latexmk: parsed errors [{type,file,line,message,context?,source?}] (type "error" rows before "warning" rows, first ${MAX_RESULT_ERRORS}; errorsTotal counts the errors and warningsTotal the warnings, whether or not the list was capped; box warnings are omitted; context is the source line the engine was reading, source the tool that raised a warning — latex, a package name, biber — and a biber row names the .bib and its line), on failure ≤4 KB of the log around the first error, pages, and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. pdfUrl is a signed link to this run's PDF that anyone can open for ${OUTPUT_URL_TTL_S / 60} minutes — hand it to the user as the way to see the result, and call get_pdf_url for a fresh link later instead of recompiling. pdfStale:true means this run wrote no PDF: pdfUrl shows the previous one, or is null when that no longer exists. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A project with no .tex file cannot be typeset: write the main document first. A compiler-not-responding, compiler-cannot-see-the-project, missing-package (hint), quota, or typeset-already-running error is for the user to act on — relay it, do not retry.`,
     inputSchema: { project: projectParam, branch: branchParam },
     ...uiMeta,
@@ -925,8 +945,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('get_pdf_url', {
+    ...annotate('Get a link to the PDF', READ),
     description: `A fresh signed link to the PDF on disk for the branch, without recompiling — use it when a compile result's pdfUrl has expired (${OUTPUT_URL_TTL_S / 60} minutes) or the user asks to see the PDF again. Returns {pdfUrl, pdfFile, pages, typesetAt, deepLink}; pdfStale is always false here because the link is to that file, whichever typeset wrote it (by you or by a person). It does not contain edits made since that typeset: if you have written on this branch since your last compile result, call compile instead. No output yet → compile first.`,
-    annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
     ...uiMeta,
   }, async ({ project, branch = 'main' }) => {
@@ -943,6 +963,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('commit', {
+    ...annotate('Commit pending changes', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
     description: 'Commit the files you have written on this branch that are not yet committed, as one commit under message (author Claude). Only your own paths land: a collaborator\'s unsaved typing stays out of it and reaches history as their own autosave. Call it when the user asks for a named checkpoint — every write already commits on its own as it lands, so {committed:false} is the normal answer, not a failure: it means they landed already, and the result names the current head and your latest commits on the branch. For a multi-file change you are making right now, use batch_write instead — it writes and commits it in one step under its own message. message titles the commit and replaces the per-file titles those writes would have had.',
     inputSchema: {
       project: projectParam,
@@ -986,6 +1007,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('references_add', {
+    ...annotate('Add a reference by DOI or arXiv id', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }),
     description: 'Resolve a DOI, doi.org URL, arXiv id, or OpenAlex id to a BibTeX entry and append it to a .bib file on the branch (default: references.bib next to the root file). A bibFile that does not exist is created, folders included (created:true in the result). Returns {key, bibFile, duplicate, created} — use \\cite{key} right away; a note says when no .tex on the branch loads that .bib (\\addbibresource or \\bibliography), in which case the citation stays undefined until one does. Titles are not lookups: for a paper you only know by name, ask the user for its DOI or arXiv id. If the lookup budget is reached or the upstream service fails, tell the user — do not retry in a loop.',
     inputSchema: {
       project: projectParam,
@@ -1035,8 +1057,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('list_citations', {
+    ...annotate('List citation keys', READ),
     description: 'Citation keys defined in the project\'s .bib files: [{key, title, author, year, file}]. Always call it before writing a \\cite — never invent a key. A key you need that is missing: add it with references_add, or ask the user.',
-    annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
@@ -1048,8 +1070,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('list_labels', {
+    ...annotate('List labels', READ),
     description: '\\label targets defined in the project\'s .tex files: [{label, file}]. Call it before writing \\ref, \\eqref, or \\cref — never invent a label.',
-    annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
@@ -1060,8 +1082,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('wordcount', {
+    ...annotate('Count words', READ),
     description: 'Word count of the document as it compiles — the root file plus its \\input/\\include graph, commands and comments excluded: {rootFile, total, files}. Use it for length questions instead of estimating from source. A project with no main document yet is an error, not a count of 0.',
-    annotations: { readOnlyHint: true },
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
@@ -1075,6 +1097,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('create_project', {
+    ...annotate('Create a project', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }),
     description: 'Create a new project, blank or from a template, and return its id for the write tools, with contentVersion (pass it as base_version to the first write) and the files the template seeded. Needs a token with access to all projects — a project-scoped token cannot create; if refused, relay that to the user (they can mint an unscoped token in Settings → Agent access).',
     inputSchema: {
       name: z.string().min(1).max(200).describe('Project name shown in the workspace.'),
@@ -1121,8 +1144,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   });
 
   server.registerTool('trash_project', {
-    description: `Move a project that was created with create_project to the trash, where its owner can restore it from the workspace for ${TRASH_DAYS} days; nothing is deleted for good by this tool. Refused for any project a person created (agentCreated:false in list_projects) — ask them to delete it in Aldine themselves — and for projects the token's owner does not own. Use it for scratch projects the user asked you to throw away; never on your own initiative.`,
-    annotations: { destructiveHint: true, idempotentHint: false },
+    ...annotate('Move a project to the trash', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }),
+    description: `Move a project that was created with create_project to the trash, where its owner can restore it from the workspace for ${TRASH_DAYS} days; nothing in Aldine is deleted for good by this tool, but a GitLab repository Aldine provisioned for the project is deleted (a restore provisions a new one). Refused for any project a person created (agentCreated:false in list_projects) — ask them to delete it in Aldine themselves — and for projects the token's owner does not own. Use it for scratch projects the user asked you to throw away; never on your own initiative.`,
     inputSchema: { project: z.string().min(1).describe('Project id (from list_projects or create_project). Required: this tool never falls back to a scoped token\'s project.') },
   }, async ({ project }) => {
     try {
