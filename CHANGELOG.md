@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-01
+
+An expired git host token no longer strands a linked project: the editor offers Reconnect, and a project can sync with a token of its own. The Agent API is listed in the official MCP Registry. Upgrading from 1.5 needs no manual step.
+
 ### Added
 - Aldine's Agent API (MCP server) is listed in the official MCP Registry as
   `io.github.trahloff/aldine`, with the public demo and a template for your
