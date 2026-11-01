@@ -220,6 +220,54 @@ delete process.env.REMOTE_PROVIDERS;
 eq(remotes.providers().length, 3, 'back to all three once the env var is gone');
 check(remotes.isProviderId('bitbucket') === false, 'isProviderId rejects unknown ids');
 
+// ---------- the connection ladder with a project's own token ----------
+{
+  const { initDb } = await import('../src/db/index.ts');
+  await initDb();
+  const link = { provider: 'github', fullName: 'o/r', owner: 'o', repo: 'r', remoteBranch: 'main', cloneUrl: 'https://github.com/o/r.git', connectedBy: 'linker1' };
+  const src = async (acting, projectId) => {
+    const r = await remotes.resolveConnectionSource(link, acting, { allowService: true, projectId });
+    return r && [r.source, r.conn.login];
+  };
+  eq(await src('alice', 'p1'), null, 'nobody connected: no connection');
+  await remotes.setConnection('linker1', 'github', { token: 't-linker', login: 'linker' });
+  eq(await src('alice', 'p1'), ['linker', 'linker'], "falls back to the linker's connection");
+  await remotes.setConnection('alice', 'github', { token: 't-alice', login: 'alice' });
+  eq(await src('alice', 'p1'), ['own', 'alice'], "the acting user's own connection comes before the linker's");
+  await remotes.setProjectConnection('p1', 'github', { token: 't-project', login: 'bot' });
+  eq(await src('alice', 'p1'), ['project', 'bot'], "the project's own token comes first");
+  eq(await src('alice', 'p2'), ['own', 'alice'], "another project does not see p1's token");
+  eq(await src('alice', undefined), ['own', 'alice'], 'without a project id the project token is not consulted');
+  eq((await remotes.getConnection('alice', 'github'))?.token, 't-alice', "the project's token does not replace the account connection");
+  await remotes.setProjectConnection('p1', 'gitea', { token: 't-gitea', login: 'bot', baseUrl: 'https://git.example.org' });
+  await remotes.clearProjectConnections('p1');
+  eq(await remotes.getProjectConnection('p1', 'github'), null, 'clearing removes the github token');
+  eq(await remotes.getProjectConnection('p1', 'gitea'), null, 'and every other provider\'s');
+  eq(await src('alice', 'p1'), ['own', 'alice'], 'cleared: back to the account connection');
+
+  // A project token made on another instance is skipped, like an account one.
+  const giteaLink = { provider: 'gitea', fullName: 'o/r', owner: 'o', repo: 'r', remoteBranch: 'main', cloneUrl: 'https://git.example.org/o/r.git', baseUrl: 'https://git.example.org', connectedBy: 'linker1' };
+  await remotes.setProjectConnection('p3', 'gitea', { token: 't-other', login: 'bot', baseUrl: 'https://elsewhere.example.org' });
+  eq(await remotes.resolveConnectionSource(giteaLink, 'alice', { allowService: true, projectId: 'p3' }), null, 'a project token on another instance is not used');
+
+  // a refused token, told apart from every other failure
+  const fake = (whoami) => ({ whoami });
+  const conn = { token: 't', login: 'x' };
+  const ok = async () => ({ login: 'x' });
+  const unauthorized = async () => { throw new remotes.RemoteApiError('401 Unauthorized', 401); };
+  const down = async () => { throw new Error('ECONNREFUSED'); };
+  eq(await remotes.tokenRefused(fake(ok), conn, new remotes.RemoteApiError('nope', 401)), true, 'an API 401 is a refused token');
+  eq(await remotes.tokenRefused(fake(unauthorized), conn, new remotes.RemoteApiError('gone', 404)), false, 'an API 404 is not, whatever whoami says');
+  eq(await remotes.tokenRefused(fake(unauthorized), conn, new Error('fatal: Authentication failed')), true, 'a git failure with whoami answering 401 is');
+  eq(await remotes.tokenRefused(fake(ok), conn, new Error('fatal: could not read from remote')), false, 'a git failure while the token still works is not');
+  eq(await remotes.tokenRefused(fake(down), conn, new Error('fatal: unable to access')), false, 'an unreachable host is not');
+
+  // permanent deletion takes the project's token with it
+  await remotes.setProjectConnection('p4', 'github', { token: 't-p4', login: 'bot' });
+  await store.deleteProject('p4').catch(() => {});
+  eq(await remotes.getProjectConnection('p4', 'github'), null, 'deleteProject clears the project token');
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('remotes: all assertions passed');
 

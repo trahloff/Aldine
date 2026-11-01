@@ -2384,11 +2384,29 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // Import a repository as a new project (the primary create-project flow).
+  // With `token` in the body the repository is cloned with that token instead
+  // of the account's connection, and the token stays with the new project
+  // only: a repository of another account, or a token scoped to one repository.
   providerRoute('post', 'import', async (p, req, reply) => {
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    const conn = await remotes.getConnection(remoteUserId(req), p.id);
-    if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
-    const fullName = String(req.body?.fullName || '').trim().replace(/^\/+|\/+$/g, '');
+    const ownToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    let conn: remotes.RemoteConnection | null;
+    if (ownToken) {
+      let baseUrl: string | undefined;
+      if (req.body?.baseUrl) {
+        if (!p.normalizeBaseUrl) return reply.code(400).send({ error: `${p.label} has no configurable URL` });
+        try { baseUrl = p.normalizeBaseUrl(String(req.body.baseUrl)); }
+        catch (err: any) { return reply.code(400).send({ error: err.message }); }
+      }
+      if (p.baseUrlRequired && !baseUrl) return reply.code(400).send({ error: `The ${p.label} instance URL is required${p.baseUrlExample ? `, ${p.baseUrlExample} for example` : ''}` });
+      conn = { token: ownToken, login: '', ...(baseUrl ? { baseUrl } : {}) };
+      try { const me = await p.whoami(conn); conn.login = me.login; conn.name = me.name; }
+      catch { return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${p.tokenScopeHint}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` }); }
+    } else {
+      conn = await remotes.getConnection(remoteUserId(req), p.id);
+      if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
+    }
+    const fullName = (ownToken ? repoQuery(req.body?.fullName) : String(req.body?.fullName || '').trim()).replace(/^\/+|\/+$/g, '');
     if (!fullName.includes('/') || fullName.includes('..')) return reply.code(400).send({ error: p.pathHint });
     let info: remotes.RemoteRepo;
     try { info = await p.getRepo(conn, fullName); }
@@ -2406,6 +2424,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const ownerId = reqUser(req)?.id;
       if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
       await store.writeMeta(meta);
+      if (ownToken) await remotes.setProjectConnection(id, p.id, conn);
       noteEdit(meta.id, 'main', editorOf(reqUser(req)));
       return publicMeta(meta, reqUser(req));
     } catch (err: any) {
@@ -2418,7 +2437,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // Syncing pushes the project into the OWNER's repo and can pull remote state
   // over everyone's work, so every remote operation is members-only: link mode
   // grants editing, not control of where the project is mirrored.
-  type Linked = { meta: store.ProjectMeta; link: store.RemoteLink; provider: Provider; conn: remotes.RemoteConnection; url: string; remoteBranch: string };
+  type Linked = { meta: store.ProjectMeta; link: store.RemoteLink; provider: Provider; conn: remotes.RemoteConnection; source: remotes.ConnectionSource; url: string; remoteBranch: string };
   const linkedRemote = async (req: any, reply: any, action = 'sync this project'): Promise<Linked | null> => {
     const meta = await requireMember(req, reply, action);
     if (!meta) return null;
@@ -2426,14 +2445,30 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!link) { reply.code(400).send({ error: 'This project is not linked to a remote repository' }); return null; }
     const provider = remotes.getProvider(link.provider);
     if (!provider) { reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` }); return null; }
-    const conn = await remotes.resolveConnection(link, remoteUserId(req), { allowService: true });
-    if (!conn) {
+    const resolved = await remotes.resolveConnectionSource(link, remoteUserId(req), { allowService: true, projectId: meta.id });
+    if (!resolved) {
       // A connection to another instance of the same host does not count, so the instance is named.
       const at = provider.selfHosted ? remotes.linkInstance(link) : null;
       reply.code(400).send({ error: `Connect ${provider.label}${at ? ` on ${at}` : ''} to sync` });
       return null;
     }
-    return { meta, link, provider, conn, url: provider.tokenUrl(link.cloneUrl, conn.token, conn.login), remoteBranch: link.remoteBranch };
+    const { conn, source } = resolved;
+    return { meta, link, provider, conn, source, url: provider.tokenUrl(link.cloneUrl, conn.token, conn.login), remoteBranch: link.remoteBranch };
+  };
+  /** Whose token a sync uses, in words the access dialog and its errors share. */
+  const tokenOwnerPhrase = (l: Pick<Linked, 'source' | 'conn'>) => ({
+    project: "this project's token",
+    own: `your token${l.conn.login ? ` (${l.conn.login})` : ''}`,
+    linker: `the token of ${l.conn.login || 'the account that linked this project'}`,
+    service: "the server's service token",
+  })[l.source];
+  const syncFailed = async (reply: any, l: Linked, err: any, fallback: () => unknown) => {
+    if (!(await remotes.tokenRefused(l.provider, l.conn, err))) return fallback();
+    const fix = l.source === 'service' ? 'Ask your administrator to replace it.'
+      : l.source === 'project' ? 'Replace it to keep syncing.'
+      : l.source === 'linker' ? `Connect your own ${l.provider.label} account to keep syncing.`
+      : 'Reconnect to keep syncing.';
+    return reply.code(401).send({ error: `${l.provider.label} rejected ${tokenOwnerPhrase(l)}. ${fix}`, reason: 'token-invalid', code: 'token-invalid', source: l.source });
   };
   const projectRoute = (method: 'get' | 'post', tail: string, handler: (req: any, reply: any) => Promise<unknown>, legacyTail = tail) => {
     app[method](`/api/projects/:id/remote/${tail}`, handler);
@@ -2487,7 +2522,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   projectRoute('get', 'status', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
     try { return { linked: true, ...l.link, ...(await gitops.remoteStatus(req.params.id, l.remoteBranch, l.url)) }; }
-    catch (err: any) { return reply.code(502).send({ error: err.message }); }
+    catch (err: any) { return syncFailed(reply, l, err, () => reply.code(502).send({ error: err.message })); }
   });
 
   projectRoute('post', 'push', async (req, reply) => {
@@ -2509,7 +2544,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       if (head) lastPushedHead.set(req.params.id, head);
       return { ok: true };
-    } catch (err: any) { return reply.code(400).send({ error: `Push failed: ${err.message}` }); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Push failed: ${err.message}` })); }
   });
 
   projectRoute('post', 'pull', async (req, reply) => {
@@ -2523,7 +2558,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       refreshBranchDocsFromDisk(req.params.id, 'main'); // push the merged content into open editors
       if ((await gitops.branchHead(req.params.id, 'main')) !== before) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
-    } catch (err: any) { return reply.code(400).send({ error: `Pull failed: ${err.message}` }); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Pull failed: ${err.message}` })); }
   });
 
   // Conflict escape hatch: discard local changes and take the remote version.
@@ -2536,7 +2571,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       refreshBranchDocsFromDisk(req.params.id, 'main');
       if (changed) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
-    } catch (err: any) { return reply.code(400).send({ error: `Reset failed: ${err.message}` }); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Reset failed: ${err.message}` })); }
   });
 
   // ---------- remote branches + change requests ----------
@@ -2548,7 +2583,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         l.provider.getRepo(l.conn, l.link.fullName),
       ]);
       return { branches, current: l.remoteBranch, default: repo.defaultBranch };
-    } catch (err: any) { return upstreamError(reply, err, l.provider.label); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => upstreamError(reply, err, l.provider.label)); }
   });
 
   // Switch which remote branch this project tracks. Saves current work (commit +
@@ -2569,7 +2604,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       refreshBranchDocsFromDisk(req.params.id, 'main');
       if (changed) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true, branch: target };
-    } catch (err: any) { return reply.code(400).send({ error: `Switch failed: ${err.message}` }); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Switch failed: ${err.message}` })); }
   });
 
   // Create a new remote branch from the current content and switch to it.
@@ -2587,7 +2622,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       await gitops.pushToRemote(req.params.id, name, l.url); // push creates the remote branch
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: name }); await store.writeMeta(l.meta);
       return { ok: true, branch: name };
-    } catch (err: any) { return reply.code(400).send({ error: `Create branch failed: ${err.message}` }); }
+    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Create branch failed: ${err.message}` })); }
   });
 
   // Open a pull/merge request from the current branch into the repo's default branch.
@@ -2606,8 +2641,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         base: repo.defaultBranch,
       });
     } catch (err: any) {
-      if (err instanceof remotes.RemoteApiError) return upstreamError(reply, err, l.provider.label);
-      return reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` });
+      return syncFailed(reply, l, err, () => err instanceof remotes.RemoteApiError
+        ? upstreamError(reply, err, l.provider.label)
+        : reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` }));
     }
   }, 'pr');
 
@@ -2621,6 +2657,60 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     await store.writeMeta(meta);
     if (meta.autopush) scheduleAutopush(req.params.id); else cancelAutopush(req.params.id);
     return { ok: true, autopush: meta.autopush };
+  });
+
+  // ---------- the token a linked project syncs with ----------
+  // The owner may store a token on the project itself: one scoped to this
+  // repository, or one of an account other than their own. The ladder tries it
+  // before anyone's account connection. Members learn whose token syncs, never
+  // the token.
+  app.get<{ Params: { id: string } }>('/api/projects/:id/remote/access', async (req, reply) => {
+    const meta = await requireMember(req, reply, 'see how this project syncs'); if (!meta) return;
+    const link = store.remoteLink(meta);
+    if (!link) return reply.code(400).send({ error: 'This project is not linked to a remote repository' });
+    const resolved = await remotes.resolveConnectionSource(link, remoteUserId(req), { allowService: true, projectId: meta.id });
+    const project = await remotes.getProjectConnection(meta.id, link.provider);
+    return {
+      provider: link.provider,
+      source: resolved?.source ?? null,
+      login: resolved?.conn.login ?? null,
+      projectToken: project ? { login: project.login } : null,
+    };
+  });
+
+  app.post<{ Params: { id: string }; Body: { token?: string } }>('/api/projects/:id/remote/access/token', async (req, reply) => {
+    const meta = await requireOwner(req, reply, "change the token this project syncs with"); if (!meta) return;
+    const link = store.remoteLink(meta);
+    if (!link) return reply.code(400).send({ error: 'This project is not linked to a remote repository' });
+    const p = remotes.getProvider(link.provider);
+    if (!p) return reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` });
+    const token = String(req.body?.token || '').trim();
+    if (!token) return reply.code(400).send({ error: `A ${p.label} token is required` });
+    // The link's instance, so the token is checked where the repository lives.
+    const conn: remotes.RemoteConnection = { token, login: '', ...(link.baseUrl ? { baseUrl: link.baseUrl } : {}) };
+    try { const me = await p.whoami(conn); conn.login = me.login; conn.name = me.name; }
+    catch { return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${p.tokenScopeHint}.` }); }
+    try { await p.getRepo(conn, link.fullName); }
+    catch { return reply.code(400).send({ error: `That token belongs to ${conn.login}, who cannot see ${link.fullName}. Give it access to that repository.` }); }
+    await remotes.setProjectConnection(meta.id, p.id, conn);
+    return { ok: true, login: conn.login };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/projects/:id/remote/access/token/remove', async (req, reply) => {
+    const meta = await requireOwner(req, reply, "change the token this project syncs with"); if (!meta) return;
+    await remotes.clearProjectConnections(meta.id);
+    return { ok: true };
+  });
+
+  // Account connections, for the account dialog's list of git hosts.
+  app.get('/api/remotes/connections', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const out = [];
+    for (const p of remotes.providers()) {
+      const conn = await remotes.getConnection(remoteUserId(req), p.id);
+      if (conn) out.push({ provider: p.id, login: conn.login, ...(conn.baseUrl ? { baseUrl: conn.baseUrl } : {}) });
+    }
+    return out;
   });
 
   // ---------- GitLab group provisioning (GITLAB_TOKEN + GITLAB_DEFAULT_GROUP) ----------

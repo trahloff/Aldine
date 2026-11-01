@@ -1,10 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, AccessToken, ApiError, AuthUser, ProjectSummary } from '../api';
+import { api, AccessToken, ApiError, AuthUser, ProjectSummary, RemoteConnectionRow } from '../api';
+import { remoteDescriptor } from '../remotes';
 import { useToast } from './Toast';
 import { useAuth } from './Auth';
 import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
 import { ClaudeConnectSteps, useConnectorUrl } from './ClaudeConnect';
+
+/** The git host accounts this user connected, each with Disconnect. A
+ *  replacement token is entered where it is used: Clone from a host, or a
+ *  project's Git access. */
+function GitHosts() {
+  const [rows, setRows] = useState<RemoteConnectionRow[] | null>(null);
+  const toast = useToast();
+  const load = () => api.remoteConnections().then(setRows).catch(() => setRows([]));
+  useEffect(() => { load(); }, []);
+  const disconnect = async (r: RemoteConnectionRow) => {
+    try { await api.remoteDisconnect(r.provider); toast(`Disconnected ${remoteDescriptor(r.provider).label}`, 'ok'); load(); }
+    catch (err: any) { toast(err.message, 'error'); }
+  };
+  return (
+    <div data-testid="account-git-hosts">
+      <div className="menu__label" style={{ margin: '18px 0 6px' }}>Git hosts</div>
+      {rows?.length === 0 && (
+        <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }}>No git host connected. Connect one from New → Clone, or from a project's Git access.</p>
+      )}
+      {rows?.map((r) => (
+        <div className="settings__row" key={r.provider} data-testid={`account-git-${r.provider}`}>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {remoteDescriptor(r.provider).label} · <strong>{r.login}</strong>
+            {r.baseUrl && <span style={{ color: 'var(--text-3)' }}> on {r.baseUrl.replace(/^https?:\/\//, '')}</span>}
+          </span>
+          <button className="btn btn--small" onClick={() => disconnect(r)} data-testid={`account-git-${r.provider}-disconnect`}>Disconnect</button>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const EXPIRY_CHOICES = [
   { value: '', label: 'Never expires' },
@@ -316,6 +348,8 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
             panel opened at scrollTop 0 must show the connector and the
             Create button, not clip them under the sticky footer. */}
         <AgentAccess />
+
+        <GitHosts />
 
         {isSso ? (
           <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', marginTop: 18 }}>

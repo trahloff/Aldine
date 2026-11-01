@@ -66,7 +66,7 @@ async function pushOnce(id: string): Promise<'pushed' | 'skipped' | 'off'> {
   if (!link || meta.autopush !== true || meta.deletedAt) return 'off';
   const provider = getProvider(link.provider);
   if (!provider) return 'off';
-  const conn = await resolveConnection(link, link.connectedBy, { allowService: true });
+  const conn = await resolveConnection(link, link.connectedBy, { allowService: true, projectId: id });
   if (!conn) throw new Error(`no ${provider.label} connection for autopush`);
   const head = await gitops.headCommit(id).catch(() => null);
   const s = stateOf(id);

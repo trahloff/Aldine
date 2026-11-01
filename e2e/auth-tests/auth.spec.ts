@@ -1175,3 +1175,43 @@ test.describe('ORCID sign-in', () => {
     await expect(page.getByTestId('auth-email')).toBeVisible();
   });
 });
+
+test.describe('git hosts in account settings', () => {
+  test('lists the connected hosts, and Disconnect unbinds one', async ({ page }) => {
+    // No git host mock runs in this suite: the list and the unbind are
+    // answered here, the dialog's own behavior is what is under test.
+    let rows = [
+      { provider: 'github', login: 'octo' },
+      { provider: 'gitea', login: 'robin', baseUrl: 'https://codeberg.org' },
+    ];
+    const unbound: string[] = [];
+    await page.route('**/api/remotes/connections', (route) => route.fulfill({ json: rows }));
+    await page.route('**/api/remotes/*/disconnect', (route) => {
+      const provider = new URL(route.request().url()).pathname.split('/').at(-2)!;
+      unbound.push(provider);
+      rows = rows.filter((r) => r.provider !== provider);
+      return route.fulfill({ json: { ok: true } });
+    });
+
+    await page.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Robin' } });
+    await page.goto('/');
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('user-name').click();
+    const hosts = page.getByTestId('account-settings').getByTestId('account-git-hosts');
+    await expect(hosts.getByTestId('account-git-github')).toHaveText(/GitHub · octo/);
+    await expect(hosts.getByTestId('account-git-gitea')).toContainText('robin on codeberg.org');
+
+    await hosts.getByTestId('account-git-github-disconnect').click();
+    await expect(page.locator('.toast', { hasText: 'Disconnected GitHub' })).toBeVisible();
+    await expect(hosts.getByTestId('account-git-github')).toHaveCount(0);
+    expect(unbound).toEqual(['github']);
+
+    await hosts.getByTestId('account-git-gitea-disconnect').click();
+    await expect(hosts).toContainText('No git host connected.');
+  });
+
+  test('the connections list needs a signed-in user', async ({ request }) => {
+    expect((await request.get('/api/remotes/connections')).status()).toBe(401);
+  });
+});

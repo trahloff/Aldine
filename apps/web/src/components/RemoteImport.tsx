@@ -21,6 +21,7 @@ export default function RemoteImport({ provider, onClose, onImported }: {
   const [searching, setSearching] = useState(false);
   const searchSeq = useRef(0);
   const [busy, setBusy] = useState('');
+  const [replacing, setReplacing] = useState(false);
   const toast = useToast();
 
   const loadStatus = () => api.remoteStatus(provider).then(setStatus)
@@ -65,7 +66,15 @@ export default function RemoteImport({ provider, onClose, onImported }: {
     } catch (err: any) { toast(err.message, 'error'); setBusy(''); }
   };
 
-  const disconnect = async () => { await api.remoteDisconnect(provider); setRepos(null); loadStatus(); };
+  const disconnect = async () => { await api.remoteDisconnect(provider); setRepos(null); setReplacing(false); loadStatus(); };
+  // Connecting again overwrites the stored token. `connected` stays true, so
+  // the effect above does not fire again: the new account's list is asked for here.
+  const replaced = async () => {
+    setReplacing(false);
+    setRepos(null);
+    await loadStatus();
+    api.remoteRepos(provider).then(setRepos).catch((err) => { setRepos([]); toast(err.message, 'error'); });
+  };
 
   const local = (repos || []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()));
   const shown = [...local, ...(found || []).filter((r) => !local.some((l) => l.fullName === r.fullName))];
@@ -93,8 +102,12 @@ export default function RemoteImport({ provider, onClose, onImported }: {
                 Connected as <strong>{status.login}</strong>
                 {status.baseUrl && <span style={{ color: 'var(--text-3)' }}> on {status.baseUrl.replace(/^https?:\/\//, '')}</span>}
               </span>
-              <button className="btn btn--ghost btn--small" onClick={disconnect} data-testid={`${provider}-disconnect`}>Disconnect</button>
+              <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn btn--ghost btn--small" onClick={() => setReplacing(!replacing)} data-testid={`${provider}-replace-token`}>Replace token</button>
+                <button className="btn btn--ghost btn--small" onClick={disconnect} data-testid={`${provider}-disconnect`}>Disconnect</button>
+              </span>
             </p>
+            {replacing && status && <RemoteConnectForm provider={provider} status={status} onConnected={replaced} />}
             <input className="input" style={{ width: '100%', margin: '8px 0' }} placeholder="Filter, or type owner/repo or paste its URL…" value={filter} data-testid={`${provider}-filter`} onChange={(e) => setFilter(e.target.value)} autoFocus />
             <div className="gh-repos" data-testid={`${provider}-repos`}>
               {!repos && <p style={{ color: 'var(--text-2)', padding: 8 }}>Loading your repositories…</p>}
@@ -114,8 +127,61 @@ export default function RemoteImport({ provider, onClose, onImported }: {
           </>
         )}
 
+        {status && <SingleRepoClone provider={provider} onImported={onImported} />}
+
         <div className="modal__row" style={{ marginTop: 14 }}><button className="btn" onClick={onClose}>Close</button></div>
       </div>
     </Modal>
+  );
+}
+
+/** Clone one repository with a token given just for it: a repository of
+ *  another account, or a token limited to that repository. The token stays
+ *  with the new project and never becomes the account's connection. */
+function SingleRepoClone({ provider, onImported }: { provider: RemoteProviderId; onImported(id: string): void }) {
+  const d = remoteDescriptor(provider);
+  const [open, setOpen] = useState(false);
+  const [repo, setRepo] = useState('');
+  const [token, setToken] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  const clone = async () => {
+    if (!repo.trim() || !token.trim()) return;
+    if (d.baseUrlRequired && !baseUrl.trim()) { toast(`Enter the ${d.label} instance URL, ${d.baseUrlPlaceholder} for example`, 'error'); return; }
+    setBusy(true);
+    try {
+      const p = await api.remoteImport(provider, repo.trim(), { token: token.trim(), ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) });
+      toast(`Imported ${repo.trim()}`, 'ok');
+      onImported(p.id);
+    } catch (err: any) { toast(err.message, 'error'); setBusy(false); }
+  };
+
+  if (!open) {
+    return (
+      <button className="btn btn--ghost btn--small" style={{ marginTop: 10 }} onClick={() => setOpen(true)} data-testid={`${provider}-single`}>
+        Clone one repository with its own token…
+      </button>
+    );
+  }
+  return (
+    <div style={{ marginTop: 14 }} data-testid={`${provider}-single-form`}>
+      <div className="menu__label" style={{ marginBottom: 6 }}>One repository, its own token</div>
+      {d.selfHosted && (
+        <input className="input login__input" type="url" placeholder={d.baseUrlRequired ? d.baseUrlPlaceholder : `${d.baseUrlPlaceholder} (leave empty for ${d.label}'s default)`} aria-label={`${d.label} instance URL`}
+          value={baseUrl} data-testid={`${provider}-single-baseurl`} onChange={(e) => setBaseUrl(e.target.value)} />
+      )}
+      <input className="input login__input" placeholder="owner/repo or its URL" aria-label="Repository"
+        value={repo} data-testid={`${provider}-single-repo`} onChange={(e) => setRepo(e.target.value)} />
+      <input className="input login__input" type="password" placeholder={d.tokenPlaceholder} aria-label={`${d.label} token for this repository`}
+        value={token} data-testid={`${provider}-single-token`} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && clone()} />
+      <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center' }} onClick={clone} disabled={busy || !repo.trim() || !token.trim()} data-testid={`${provider}-single-clone`}>
+        {busy ? 'Cloning…' : 'Clone'}
+      </button>
+      <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>
+        The token stays with the new project only: it syncs with it, and your account connection is left as it is.
+      </p>
+    </div>
   );
 }
