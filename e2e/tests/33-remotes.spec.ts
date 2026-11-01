@@ -294,6 +294,78 @@ test.describe('GitLab sync', () => {
     await expect(content).toContainText(marker);
   });
 
+  test('an expired token: the pill offers Reconnect, and a new token brings sync back', async ({ page, request }) => {
+    expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-expiring' } })).ok()).toBeTruthy();
+    await request.get(`${MOCK}/__revoke?token=e2e-expiring`);
+    try {
+      await page.goto(`/p/${projectId}`);
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      // the host's branch list is the first call that meets the refused token
+      const reconnect = page.getByTestId('gitlab-reconnect');
+      await expect(reconnect).toBeVisible();
+      await expect(reconnect).toHaveAttribute('title', 'GitLab rejected your token (e2e-user). Reconnect to keep syncing.');
+
+      await reconnect.click();
+      await expect(page.getByTestId('gitlab-access-dialog')).toBeVisible();
+      await expect(page.getByTestId('gitlab-access-rejected')).toContainText('GitLab rejected your token');
+      await expect(page.getByTestId('gitlab-access-source')).toHaveText("e2e-user, with your account's token");
+      await page.getByTestId('gitlab-access-connect').click();
+      await page.getByTestId('gitlab-token').fill('e2e-token');
+      await page.getByTestId('gitlab-connect').click();
+      await expect(page.locator('.toast').filter({ hasText: 'Connected your GitLab account' })).toBeVisible();
+      await expect(page.getByTestId('gitlab-access-rejected')).toHaveCount(0);
+      await page.getByTestId('gitlab-access-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(reconnect).toHaveCount(0);
+
+      // the branch list answers again with the new token
+      await page.getByTestId('branch-menu').click();
+      await expect(page.getByTestId('gitlab-branch-main')).toBeVisible();
+      await expect(page.getByTestId('gitlab-token-rejected')).toHaveCount(0);
+    } finally {
+      await request.get(`${MOCK}/__revoke?clear=1`);
+    }
+  });
+
+  test("the owner gives the project its own token, which syncs ahead of the account's", async ({ page, request }) => {
+    try {
+      await page.goto(`/p/${projectId}`);
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('gitlab-access').click();
+      await expect(page.getByTestId('gitlab-access-source')).toHaveText("e2e-user, with your account's token");
+
+      // a token the host refuses is not stored
+      await page.getByTestId('gitlab-project-token-add').click();
+      await page.getByTestId('gitlab-project-token').fill('bad');
+      await page.getByTestId('gitlab-project-token-save').click();
+      await expect(page.locator('.toast').filter({ hasText: 'That token was rejected by GitLab' })).toBeVisible();
+      await expect(page.getByTestId('gitlab-project-token-login')).toHaveCount(0);
+
+      await page.getByTestId('gitlab-project-token').fill('e2e-project');
+      await page.getByTestId('gitlab-project-token-save').click();
+      await expect(page.getByTestId('gitlab-project-token-login')).toHaveText('Token of e2e-user');
+      await expect(page.getByTestId('gitlab-access-source')).toHaveText("e2e-user, with this project's token");
+      expect(await (await request.get(`/api/projects/${projectId}/remote/access`)).json()).toEqual({
+        provider: 'gitlab', source: 'project', login: 'e2e-user', projectToken: { login: 'e2e-user' },
+      });
+
+      // the project's token expiring is told apart from the account's
+      await request.get(`${MOCK}/__revoke?token=e2e-project`);
+      await page.reload();
+      await expect(page.getByTestId('gitlab-reconnect')).toHaveAttribute('title', "GitLab rejected this project's token. Replace it to keep syncing.");
+      await page.getByTestId('gitlab-reconnect').click();
+      await page.getByTestId('gitlab-project-token-remove').click();
+      await expect(page.locator('.toast').filter({ hasText: "Removed this project's token" })).toBeVisible();
+      await expect(page.getByTestId('gitlab-access-source')).toHaveText("e2e-user, with your account's token");
+      await expect(page.getByTestId('gitlab-project-token-add')).toBeVisible();
+      await page.getByTestId('gitlab-access-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(page.getByTestId('gitlab-reconnect')).toHaveCount(0);
+      expect((await (await request.get(`/api/projects/${projectId}/remote/access`)).json()).projectToken).toBeNull();
+    } finally {
+      await request.get(`${MOCK}/__revoke?clear=1`);
+    }
+  });
+
   test('create a branch, then open a merge request from it', async ({ page }) => {
     // the app hands the new request to window.open; capture instead of opening a tab
     await page.addInitScript(() => {
@@ -359,6 +431,44 @@ test.describe('GitLab sync', () => {
     // The editor keeps polling the project; an answer still in flight when
     // the test ends must not reach the next one.
     await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
+  test('clone one repository with its own token, which stays with that project', async ({ page, request }) => {
+    expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } })).ok()).toBeTruthy();
+    await page.goto('/');
+    await startFrom(page, 'new-from-gitlab');
+    await expect(page.getByTestId('gitlab-import')).toBeVisible();
+    await page.getByTestId('gitlab-single').click();
+    // a pasted web URL is read as its path
+    await page.getByTestId('gitlab-single-repo').fill(`${MOCK}/grp/sub/paper`);
+    await page.getByTestId('gitlab-single-token').fill('e2e-single');
+    await page.getByTestId('gitlab-single-clone').click();
+    await expect(page.getByTestId('editor-shell')).toBeVisible({ timeout: 30_000 });
+    const id = new URL(page.url()).pathname.split('/').pop()!;
+    expect(await (await request.get(`/api/projects/${id}/remote/access`)).json()).toMatchObject({ source: 'project', projectToken: { login: 'e2e-user' } });
+    // the account connection is untouched: revoking the single token leaves it working
+    await request.get(`${MOCK}/__revoke?token=e2e-single`);
+    try {
+      expect((await request.get('/api/remotes/gitlab/repos')).ok()).toBeTruthy();
+      expect((await request.get(`/api/projects/${id}/remote/branches`)).status()).toBe(401);
+    } finally {
+      await request.get(`${MOCK}/__revoke?clear=1`);
+    }
+  });
+
+  test('Replace token in the clone dialog swaps the account connection in place', async ({ page }) => {
+    await page.goto('/');
+    await startFrom(page, 'new-from-gitlab');
+    await connectWithToken(page);
+    await expect(page.getByTestId('gitlab-repo-grp/sub/paper')).toBeVisible();
+    await page.getByTestId('gitlab-replace-token').click();
+    await page.getByTestId('gitlab-token').fill('bad');
+    await page.getByTestId('gitlab-connect').click();
+    await expect(page.locator('.toast').filter({ hasText: 'That token was rejected by GitLab' })).toBeVisible();
+    await page.getByTestId('gitlab-token').fill('e2e-token-2');
+    await page.getByTestId('gitlab-connect').click();
+    await expect(page.getByTestId('gitlab-token')).toHaveCount(0);
+    await expect(page.getByTestId('gitlab-repo-grp/sub/paper')).toBeVisible();
   });
 
   test('publish dialog offers both hosts and publishes to GitLab', async ({ page, request }) => {

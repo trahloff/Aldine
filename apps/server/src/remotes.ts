@@ -2,6 +2,7 @@ import { db } from './db/index.js';
 import { github } from './github.js';
 import { gitlab } from './gitlab.js';
 import { gitea } from './gitea.js';
+import { RemoteApiError } from './remote-types.js';
 import type { RemoteConnection, RemoteProvider, RemoteProviderId } from './remote-types.js';
 import type { RemoteLink } from './db/types.js';
 
@@ -51,27 +52,41 @@ function onLinkInstance(link: RemoteLink, conn: RemoteConnection): boolean {
   try { return provider.instanceOrigin(conn) === new URL(at).origin; } catch { return false; }
 }
 
+/** Where a linked project's connection came from, for the UI to say whose token a sync uses. */
+export type ConnectionSource = 'project' | 'own' | 'linker' | 'service';
+
 /**
- * The one connection ladder for operations on a linked project: the acting
- * user's own connection, then the connection of whoever linked it, then (only
- * where allowed) the service account; a connection to another instance of
- * the same provider is skipped, never used. Listing and importing
- * repositories never pass `allowService`: those decide what a user gets to see.
+ * The one connection ladder for operations on a linked project: the token
+ * the owner stored on the project itself, then the acting user's own
+ * connection, then the connection of whoever linked it, then (only where
+ * allowed) the service account; a connection to another instance of the
+ * same provider is skipped, never used. Listing and importing repositories
+ * never pass `allowService`: those decide what a user gets to see.
  */
-export async function resolveConnection(link: RemoteLink, actingUserId: string | undefined, opts: { allowService: boolean }): Promise<RemoteConnection | null> {
+export async function resolveConnectionSource(
+  link: RemoteLink, actingUserId: string | undefined, opts: { allowService: boolean; projectId?: string },
+): Promise<{ conn: RemoteConnection; source: ConnectionSource } | null> {
+  if (opts.projectId) {
+    const project = await getProjectConnection(opts.projectId, link.provider);
+    if (project && onLinkInstance(link, project)) return { conn: project, source: 'project' };
+  }
   if (actingUserId) {
     const own = await activeConnection(actingUserId, link.provider);
-    if (own && onLinkInstance(link, own)) return own;
+    if (own && onLinkInstance(link, own)) return { conn: own, source: 'own' };
   }
   if (link.connectedBy && link.connectedBy !== actingUserId) {
     const linker = await activeConnection(link.connectedBy, link.provider);
-    if (linker && onLinkInstance(link, linker)) return linker;
+    if (linker && onLinkInstance(link, linker)) return { conn: linker, source: 'linker' };
   }
   if (opts.allowService && link.provider === 'gitlab') {
     const service = serviceConnection();
-    if (service && onLinkInstance(link, service)) return service;
+    if (service && onLinkInstance(link, service)) return { conn: service, source: 'service' };
   }
   return null;
+}
+
+export async function resolveConnection(link: RemoteLink, actingUserId: string | undefined, opts: { allowService: boolean; projectId?: string }): Promise<RemoteConnection | null> {
+  return (await resolveConnectionSource(link, actingUserId, opts))?.conn ?? null;
 }
 
 /** The account's connection while the account may still act: an account an
@@ -92,3 +107,31 @@ export function disconnect(userId: string, provider: RemoteProviderId): Promise<
   return db().deleteConnection(userId, provider);
 }
 
+
+// A project's own token lives in the same secrets store as account
+// connections, under an owner key no account id can take (account ids
+// never contain a colon).
+const projectOwner = (projectId: string) => `project:${projectId}`;
+
+export async function getProjectConnection(projectId: string, provider: RemoteProviderId): Promise<RemoteConnection | null> {
+  return getConnection(projectOwner(projectId), provider);
+}
+export function setProjectConnection(projectId: string, provider: RemoteProviderId, conn: RemoteConnection): Promise<void> {
+  return setConnection(projectOwner(projectId), provider, conn);
+}
+/** Every provider: a project's token goes with the project, whichever host it was for. */
+export async function clearProjectConnections(projectId: string): Promise<void> {
+  for (const p of ALL) await db().deleteConnection(projectOwner(projectId), p.id);
+}
+
+/**
+ * Whether a failed call failed because the host refused `conn`'s token.
+ * Git's own failure text names no cause a user can act on, so after a failed
+ * git call the host is asked whose token it is: a 401 there means an expired
+ * or revoked token, which the editor answers with its Reconnect action.
+ */
+export async function tokenRefused(provider: RemoteProvider, conn: RemoteConnection, err: unknown): Promise<boolean> {
+  if (err instanceof RemoteApiError) return err.status === 401;
+  try { await provider.whoami(conn); return false; }
+  catch (e) { return e instanceof RemoteApiError && e.status === 401; }
+}

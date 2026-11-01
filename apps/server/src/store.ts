@@ -241,6 +241,10 @@ export async function removeTree(dir: string): Promise<void> {
 
 /** Permanently remove a project — repo, worktrees, and metadata. */
 export async function deleteProject(id: string): Promise<void> {
+  // remotes.ts sits above store.ts in the import graph. The token goes first:
+  // a later step that fails must not leave a secret behind for a gone project.
+  const { clearProjectConnections } = await import('./remotes.js');
+  await clearProjectConnections(id);
   await removeTree(repoDir(id));
   await removeTree(path.join(worktreesDir, id));
   await db().deleteMeta(id);

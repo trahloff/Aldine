@@ -65,6 +65,12 @@ export interface RemoteInfo { id: RemoteProviderId; label: string; oauth: boolea
 /** `fullName` is an opaque host path: `owner/repo` on GitHub, `group/sub/project` on GitLab. */
 export interface RemoteRepo { fullName: string; name: string; owner: string; private: boolean; defaultBranch: string; cloneUrl: string; updatedAt: string }
 /** `baseUrl` is set for a self-hosted instance connected with a token; `baseUrlRequired` when the host has no canonical instance. */
+/** Whose token a linked project syncs with: the project's own, the viewer's account, the account that linked it, or the server's service account. */
+export type RemoteSource = 'project' | 'own' | 'linker' | 'service';
+export interface RemoteAccess { provider: RemoteProviderId; source: RemoteSource | null; login: string | null; projectToken: { login: string } | null }
+export interface RemoteConnectionRow { provider: RemoteProviderId; login: string; baseUrl?: string }
+/** The code a sync route answers with when the host refused the token it used. */
+export const TOKEN_REJECTED = 'token-invalid';
 export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
 /** `createdByAldine` marks a repository Aldine provisioned (deleted with the
  *  project); an imported one is never deleted by the server. */
@@ -520,7 +526,14 @@ export const api = {
     if (res.status === 401 && body.reason === 'token-invalid') throw new RemoteTokenError(body.error || 'The stored token was rejected', p);
     throw new ApiError(body.error || `HTTP ${res.status}`, res.status);
   },
-  remoteImport: (p: RemoteProviderId, fullName: string) => req<ProjectSummary>(`/api/remotes/${p}/import`, { method: 'POST', body: JSON.stringify({ fullName }) }),
+  /** With `own`, the repository is cloned with that token, which then stays with the new project only. */
+  remoteImport: (p: RemoteProviderId, fullName: string, own?: { token: string; baseUrl?: string }) =>
+    req<ProjectSummary>(`/api/remotes/${p}/import`, { method: 'POST', body: JSON.stringify({ fullName, ...own }) }),
+  remoteConnections: () => req<RemoteConnectionRow[]>('/api/remotes/connections'),
+  projectRemoteAccess: (id: string) => req<RemoteAccess>(`/api/projects/${id}/remote/access`),
+  setProjectRemoteToken: (id: string, token: string) =>
+    req<{ ok: boolean; login: string }>(`/api/projects/${id}/remote/access/token`, { method: 'POST', body: JSON.stringify({ token }) }),
+  removeProjectRemoteToken: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/access/token/remove`, { method: 'POST' }),
   projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number }>(`/api/projects/${id}/remote/status`),
   remoteLink: (id: string, provider: RemoteProviderId, name?: string, priv?: boolean, namespace?: string) =>
     req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv, namespace }) }),
@@ -530,7 +543,7 @@ export const api = {
     const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined);
     return { ok: true };
   },
   remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),

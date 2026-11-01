@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, RemoteLink } from '../api';
+import { api, RemoteLink, TOKEN_REJECTED } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
 import { useExitGhost } from '../exitGhost';
 import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './BranchMenu';
 import { usePopover } from '../util/usePopover';
 import { safeStorage } from '../util/safeStorage';
+import RemoteAccess from './RemoteAccess';
 
 /** The branch pill of a project linked to a git host. The host's branches are
  *  the project's branches: local `main` tracks one of them, and push, pull
@@ -41,6 +42,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const [branchInfo, setBranchInfo] = useState<{ branches: string[]; current: string; default: string } | null>(null);
   const [crTitle, setCrTitle] = useState('');
   const [showCr, setShowCr] = useState(false);
+  /** The host's words when it refused the token in use. Reconnect sits beside
+   *  the pill until the token is changed in Git access: a status poll that
+   *  works says nothing about the token on a host that lets anyone fetch. */
+  const [rejected, setRejected] = useState<string | null>(null);
+  const [showAccess, setShowAccess] = useState(false);
   const pop = usePopover();
   const toast = useToast();
   const leave = useExitGhost();
@@ -51,13 +57,24 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const label = onMain ? tracked : current;
   const webUrl = /^https?:\/\//.test(link.cloneUrl) ? link.cloneUrl.replace(/\.git$/, '') : null;
 
+  /** True when the failure was the host refusing the token: the pill then offers Reconnect. */
+  const noteRejected = useCallback((err: any) => {
+    if (err?.code !== TOKEN_REJECTED) return false;
+    setRejected(err.message);
+    return true;
+  }, []);
   const refresh = useCallback(async () => {
     try { const s = await api.projectRemoteStatus(projectId); setStatus({ ahead: s.ahead, behind: s.behind }); }
-    catch { /* offline / no token */ }
-  }, [projectId]);
+    catch (err) { noteRejected(err); /* otherwise offline */ }
+  }, [projectId, noteRejected]);
   const loadBranches = useCallback(async () => {
-    try { setBranchInfo(await api.remoteBranches(projectId)); } catch { /* offline */ }
-  }, [projectId]);
+    try { setBranchInfo(await api.remoteBranches(projectId)); } catch (err) { noteRejected(err); }
+  }, [projectId, noteRejected]);
+  /** A failed action: the toast says what happened, and a refused token also raises Reconnect. */
+  const failed = (err: any) => {
+    if (noteRejected(err)) toast(err.message, 'error', { label: 'Reconnect', testId: `${p}-reconnect-toast`, key: `${p}-rejected`, onClick: () => setShowAccess(true) });
+    else toast(err.message, 'error');
+  };
   useEffect(() => { refresh(); loadBranches(); }, [refresh, loadBranches]);
   useEffect(() => { if (pop.open) { refresh(); loadBranches(); local.load(); } }, [pop.open]);
 
@@ -80,7 +97,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
     try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
-    catch (err: any) { toast(err.message, 'error'); }
+    catch (err: any) { failed(err); }
     setBusy('');
   };
   const toggleAutopush = async () => {
@@ -100,13 +117,13 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       const r = await api.remotePull(projectId);
       if (r.conflict) setConflicts(r.conflicts || []);
       else { toast(`Pulled from ${d.label}`, 'ok'); onPulled(); await refresh(); }
-    } catch (err: any) { toast(err.message, 'error'); }
+    } catch (err: any) { failed(err); }
     setBusy('');
   };
   const takeRemote = async () => {
     setBusy('reset');
     try { await api.remoteResetToRemote(projectId); toast(`Reset to the ${d.label} version`, 'ok'); setConflicts(null); onPulled(); await refresh(); }
-    catch (err: any) { toast(err.message, 'error'); }
+    catch (err: any) { failed(err); }
     setBusy('');
   };
   // A host branch is always opened through main, the branch that tracks it.
@@ -121,7 +138,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       onPulled();
       await loadBranches();
       await refresh();
-    } catch (err: any) { toast(err.message, 'error'); }
+    } catch (err: any) { failed(err); }
     setBusy('');
   };
   const createOnHost = async (name: string) => {
@@ -133,7 +150,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       await loadBranches();
       await refresh();
       return true;
-    } catch (err: any) { toast(err.message, 'error'); return false; }
+    } catch (err: any) { failed(err); return false; }
     finally { setBusy(''); }
   };
   const openChangeRequest = async () => {
@@ -142,7 +159,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       const cr = await api.remoteChangeRequest(projectId, crTitle.trim() || undefined);
       toast(`Opened ${d.changeRequest} #${cr.number}`, 'ok');
       window.open(cr.url, '_blank', 'noopener');
-    } catch (err: any) { toast(err.message, 'error'); }
+    } catch (err: any) { failed(err); }
   };
 
   // Say so once when commits arrive during the session; what was waiting at
@@ -187,6 +204,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           </span>
         )}
       </button>
+      {rejected && (
+        <button className="btn btn--small btn--danger" onClick={() => setShowAccess(true)} data-testid={`${p}-reconnect`} title={rejected}>
+          Reconnect
+        </button>
+      )}
       {onMain && behind > 0 && (
         <button className="btn btn--small btn--primary" onClick={pull} disabled={!!busy} data-testid={`${p}-sync-action`} title={`Pull ${behind} new ${behind === 1 ? 'commit' : 'commits'} from ${d.label}`}>
           {busy === 'pull' ? '…' : 'Pull'}
@@ -203,6 +225,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           {webUrl
             ? <a className="branch-menu__repo" href={webUrl} target="_blank" rel="noopener noreferrer" data-testid={`${p}-repo-link`}>{d.icon}<span>{link.fullName}</span><span aria-hidden="true">↗</span></a>
             : <span className="branch-menu__repo">{d.icon}<span>{link.fullName}</span></span>}
+          {rejected && <p className="branch-menu__note" style={{ color: 'var(--error)' }} data-testid={`${p}-token-rejected`}>{rejected}</p>}
           {onMain ? (
             <>
               <div className="branch-menu__sync">
@@ -270,6 +293,9 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
               <span className="branch-menu__check" />Open {d.changeRequest}…
             </button>
           )}
+          <button className="menu__item" onClick={() => { pop.setOpen(false); setShowAccess(true); }} data-testid={`${p}-access`}>
+            <span className="branch-menu__check" />Git access…
+          </button>
         </div>
       )}
 
@@ -300,6 +326,18 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
             </div>
           </div>
         </div>
+      )}
+
+      {showAccess && (
+        <RemoteAccess
+          projectId={projectId}
+          provider={p}
+          fullName={link.fullName}
+          isOwner={isOwner}
+          rejected={rejected}
+          onClose={() => setShowAccess(false)}
+          onChanged={() => { setRejected(null); refresh(); loadBranches(); }}
+        />
       )}
 
       {conflicts && (

@@ -3,8 +3,8 @@
  * .data-e2e-gitlab so the app's clone/push/fetch run against them; the HTTP
  * side answers just the calls apps/server/src/gitlab.ts makes. Seeded with
  * grp/sub/paper (a three-segment path) so nested groups get exercised.
- * Any bearer token works except `bad` (401) — that is how a spec provokes the
- * token-invalid path.
+ * Any bearer token works except `bad` and the ones revoked through
+ * /__revoke (401) — that is how a spec provokes the token-invalid path.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -38,6 +38,8 @@ const mergeRequests = [];
 let failCreates = false;
 let delayedDeletion = true;
 const deleted = [];
+/** Tokens /__revoke?token=… made expire; /__revoke?clear=1 brings them all back. */
+const revoked = new Set();
 
 function createProject(fullName, visibility = 'private', seed = null) {
   const bare = path.join(root, `${fullName}.git`);
@@ -100,8 +102,13 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/__delayed') { delayedDeletion = url.searchParams.get('on') !== '0'; return send(200, { delayedDeletion }); }
   if (url.pathname === '/__deleted') return send(200, deleted);
   if (url.pathname === '/__projects') return send(200, [...projects.values()].map(projectJson));
+  if (url.pathname === '/__revoke') {
+    if (url.searchParams.get('clear') === '1') revoked.clear();
+    else revoked.add(url.searchParams.get('token'));
+    return send(200, [...revoked]);
+  }
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (!token || token === 'bad') return send(401, { message: '401 Unauthorized' });
+  if (!token || token === 'bad' || revoked.has(token)) return send(401, { message: '401 Unauthorized' });
 
   let raw = '';
   req.on('data', (c) => { raw += c; });

@@ -11,6 +11,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Aldine's Agent API (MCP server) is listed in the official MCP Registry as
   `io.github.trahloff/aldine`, with the public demo and a template for your
   own instance, and the entry follows each release.
+- A project can sync with a token of its own: the owner adds it under
+  Git access in the branch menu, and it is used ahead of anyone's account
+  connection. That covers a token limited to one repository and a
+  repository of another account. Clone from a git host can also clone one
+  repository with a token given just for it, which stays with that project
+  ([#241](https://github.com/trahloff/Aldine/issues/241)).
+- Account settings list your connected git hosts, each with Disconnect, and
+  the Clone dialog has Replace token next to Disconnect.
+
+### Fixed
+- An expired or revoked git host token no longer leaves a linked project
+  stuck with "Push failed": the editor names whose token the host refused
+  and offers Reconnect beside the branch pill, where you paste a new token
+  ([#241](https://github.com/trahloff/Aldine/issues/241)).
 
 ### Changed
 - Every Agent API (MCP) tool now has a title and says whether it only reads,

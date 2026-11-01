@@ -200,6 +200,26 @@ Forgejo (Codeberg) share one API, so one provider covers both.*
 - **GT-7** — As an operator I hide the provider with `REMOTE_PROVIDERS`; a
   project linked to it says so instead of failing.
 
+## Git access (GA)
+
+*Automated in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`
+(whose `/__revoke` makes a token expire), the connection ladder and the
+refused-token check in `apps/server/test/remotes.test.mjs`, the account list
+in `auth-tests/auth.spec.ts`. Issue #241.*
+
+- **GA-1** — My token expires while a project is linked: the editor says the
+  host rejected it, names whose token it was, and offers Reconnect beside the
+  branch pill; a new token there brings sync back without leaving the editor.
+- **GA-2** — As the owner I give a project a token of its own (one limited to
+  that repository, or another account's); everyone who syncs the project uses
+  it ahead of their own connection, and nobody can read it back. Removing it
+  falls back to the account connections.
+- **GA-3** — I clone one repository with a token given just for it; the token
+  stays with that project and my account connection is left as it was.
+- **GA-4** — I replace my account's token in place, from the Clone dialog or
+  a project's Git access, and see and disconnect my git hosts in Account
+  settings.
+
 ## References & Zotero (REF)
 
 *Automated in `05-zotero.spec.ts` against `e2e/tests/mock-zotero.mjs`.*

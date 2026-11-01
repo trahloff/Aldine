@@ -19,6 +19,7 @@ export default function RemotePublish({ projectId, projectName, onClose, onLinke
   const [name, setName] = useState(slug(projectName));
   const [priv, setPriv] = useState(true);
   const [busy, setBusy] = useState('');
+  const [replacing, setReplacing] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -93,6 +94,11 @@ export default function RemotePublish({ projectId, projectName, onClose, onLinke
 
         {provider && status?.connected && (
           <>
+            <p className="modal__sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, margin: '4px 0 0' }}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Connected as <strong>{status.login}</strong></span>
+              <button className="btn btn--ghost btn--small" onClick={() => setReplacing(!replacing)} data-testid={`${provider}-replace-token`}>Replace token</button>
+            </p>
+            {replacing && <RemoteConnectForm key={provider} provider={provider} status={status} onConnected={async () => { setReplacing(false); await loadStatus(provider); }} />}
             <label style={{ display: 'block', margin: '10px 0 4px', color: 'var(--text-2)', fontSize: 'var(--text-s)' }}>Repository name</label>
             <input className="input" style={{ width: '100%' }} value={name} data-testid="publish-repo-name" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && publish()} autoFocus />
             <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '10px 0 0', fontSize: 'var(--text-m)', cursor: 'pointer' }}>
