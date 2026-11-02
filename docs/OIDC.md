@@ -165,9 +165,11 @@ node -e "const [i,s]=process.argv.slice(1);console.log('oidc:'+require('crypto')
 
 using the issuer exactly as the new discovery document reports it. Then:
 
+- **SQLite** (the default), while Aldine runs:
+  `docker compose exec app sqlite3 /secrets/aldine.db "UPDATE users SET subject = '<new subject>' WHERE subject = '<old subject>';"`
 - **Postgres** (`DATABASE_URL`):
   `UPDATE users SET subject = '<new subject>' WHERE subject = '<old subject>';`
-- **JSON files** (the default): stop Aldine, change the `subject` of the
+- **JSON files** (`ALDINE_DATASTORE=json`): stop Aldine, change the `subject` of the
   account in `users.json` in `META_DIR`, and start Aldine again. Aldine keeps
   that file in memory while running, so an edit made while it runs is lost.
 
@@ -195,6 +197,9 @@ binds the new identity.
   and refuses its tokens, here and on every app node (deploy/README.md,
   "Managing accounts"). Without an administrator account, remove the
   person's sessions and tokens by hand:
+  - **SQLite**, while Aldine runs, in
+    `docker compose exec app sqlite3 /secrets/aldine.db`:
+    `DELETE FROM sessions WHERE user_id = '<id>'; UPDATE tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ') WHERE user_id = '<id>' AND revoked_at IS NULL; UPDATE refresh_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ') WHERE user_id = '<id>' AND revoked_at IS NULL;`
   - **Postgres**:
     `DELETE FROM sessions WHERE user_id = '<id>'; UPDATE tokens SET revoked_at = now()::text WHERE user_id = '<id>' AND revoked_at IS NULL; UPDATE refresh_tokens SET revoked_at = now()::text WHERE user_id = '<id>' AND revoked_at IS NULL;`
   - **JSON files**: stop Aldine, remove that user's entries from

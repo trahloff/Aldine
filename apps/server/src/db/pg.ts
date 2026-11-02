@@ -8,7 +8,7 @@ const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
  * share one database, so this (unlike the JSON backend) is safe across
  * processes and machines. Enabled by setting DATABASE_URL.
  *
- * `pg` is an optionalDependency loaded dynamically: the slim JSON default never
+ * `pg` is an optionalDependency loaded dynamically: the SQLite default never
  * needs it installed. Users/sessions/resets are typed columns (indexed,
  * unique-constrained); project metadata and comments are JSONB (read/written
  * wholesale); usage is an upsert with an atomic increment.

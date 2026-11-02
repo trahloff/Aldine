@@ -23,6 +23,8 @@ locals {
       PORT               = "3000"
       DATA_DIR           = "/data"
       META_DIR           = "/secrets"
+      # /secrets is EFS, which is NFS: SQLite's locking is not reliable there.
+      ALDINE_DATASTORE   = "json"
       COMPILER_URL       = "http://localhost:4020"
       ALDINE_PUBLIC_URL  = "https://${var.domain_name}"
       COOKIE_SECURE      = "1"

@@ -4,6 +4,27 @@ import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, replaceFileDurable, writeFileSynced } from '../durable.js';
 import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
 
+/** The top-level files, beside meta/ and comments/. */
+const FLAT_FILES = ['users.json', 'sessions.json', 'resets.json', 'tokens.json', 'usage.json', 'connections.json', 'oauth_clients.json', 'refresh_tokens.json', 'visits.json', 'opens.json', 'activity.json', 'invitations.json'];
+
+/** Every record of a JSON datastore, in the DataStore's shapes. */
+export interface StoreDump {
+  users: User[];
+  sessions: Array<{ sid: string } & SessionRow>;
+  resets: Array<{ token: string } & SessionRow>;
+  tokens: TokenRecord[];
+  oauthClients: OAuthClient[];
+  refreshTokens: RefreshTokenRecord[];
+  meta: ProjectMeta[];
+  comments: Array<{ projectId: string; list: Comment[] }>;
+  usage: Array<{ userId: string; month: string; seconds: number }>;
+  connections: Array<{ userId: string; provider: string; data: Record<string, unknown> }>;
+  visits: ProjectVisit[];
+  opens: ProjectOpen[];
+  activity: ProjectActivity[];
+  invitations: Invitation[];
+}
+
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 const byCreated = (a: Invitation, b: Invitation) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 
@@ -30,9 +51,9 @@ function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
 }
 
 /**
- * Flat-JSON DataStore — the slim, zero-dependency default for single-node
- * self-hosting. Preserves the historical on-disk layout so existing
- * deployments keep working:
+ * Flat-JSON DataStore: the default before 1.7, kept for ALDINE_DATASTORE=json
+ * and as the source SqliteStore copies from on its first start. Preserves the
+ * historical on-disk layout so existing deployments keep working:
  *   <metaRoot>/users.json  sessions.json  resets.json  usage.json
  *   <metaRoot>/oauth_clients.json  refresh_tokens.json  visits.json
  *   <metaRoot>/opens.json  activity.json  invitations.json
@@ -76,6 +97,57 @@ export class JsonStore implements DataStore {
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
     this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath, this.invitationsPath]);
+  }
+
+  /** The newest modification time (ms) of a datastore file under
+   *  `metaRoot`, or null when there is none: a fresh install. */
+  static lastWrite(metaRoot: string): number | null {
+    let last: number | null = null;
+    const see = (file: string) => {
+      try { last = Math.max(last ?? 0, fs.statSync(file).mtimeMs); } catch { /* absent */ }
+    };
+    for (const f of FLAT_FILES) see(path.join(metaRoot, f));
+    for (const dir of ['meta', 'comments']) {
+      let names: string[] = [];
+      try { names = fs.readdirSync(path.join(metaRoot, dir)); } catch { /* absent */ }
+      for (const f of names) if (f.endsWith('.json')) see(path.join(metaRoot, dir, f));
+    }
+    return last;
+  }
+
+  /** Every record, for copying into another backend. A damaged file is
+   *  restored from its .bak or throws DamagedStoreFileError, as on any read:
+   *  nothing is skipped. Call after init(). */
+  dump(): StoreDump {
+    const perProject = <T>(dir: string): Array<[string, T]> => {
+      const out: Array<[string, T]> = [];
+      for (const f of fs.readdirSync(dir).sort()) {
+        if (!f.endsWith('.json')) continue;
+        const v = this.load<T>(path.join(dir, f));
+        if (v != null) out.push([f.slice(0, -'.json'.length), v]);
+      }
+      return out;
+    };
+    const d: StoreDump = {
+      users: Object.values(this.users()),
+      sessions: Object.entries(this.sessions()).map(([sid, r]) => ({ sid, ...r })),
+      resets: Object.entries(this.resets()).map(([token, r]) => ({ token, ...r })),
+      tokens: Object.values(this.tokens()).map((t) => ({ ...t, clientName: t.clientName ?? null, family: t.family ?? null })),
+      oauthClients: Object.values(this.oauthClients()),
+      refreshTokens: Object.values(this.refreshTokens()),
+      meta: perProject<ProjectMeta>(this.metaDir).map(([, m]) => m),
+      comments: perProject<Comment[]>(this.commentsDir).map(([projectId, list]) => ({ projectId, list })),
+      usage: Object.entries(this.usage()).flatMap(([userId, rec]) => Object.entries(this.userMonths(rec)).map(([month, seconds]) => ({ userId, month, seconds }))),
+      connections: Object.entries(this.connections()).flatMap(([userId, rows]) => Object.entries(rows).map(([provider, data]) => ({ userId, provider, data }))),
+      visits: Object.entries(this.visits()).flatMap(([userId, rows]) => Object.entries(rows).map(([key, r]) => {
+        const at = key.indexOf('::');
+        return { userId, projectId: key.slice(0, at), branch: key.slice(at + 2), head: r.head, at: r.at, promptedHead: r.promptedHead ?? null };
+      })),
+      opens: Object.entries(this.opens()).flatMap(([userId, rows]) => Object.entries(rows).map(([projectId, r]) => this.openRow(userId, projectId, r))),
+      activity: Object.entries(this.activity()).map(([projectId, r]) => ({ projectId, lastEdit: r.lastEdit ?? null, compile: r.compile ?? {} })),
+      invitations: Object.values(this.invitations()),
+    };
+    return this.clone(d);
   }
 
   async init(): Promise<void> {

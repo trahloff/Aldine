@@ -20,7 +20,7 @@ import { startTemplatePreviews } from './templatepreviews.js';
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
 
-// Select and connect the datastore (JSON default, or Postgres via DATABASE_URL) before anything uses it.
+// Select and connect the datastore (SQLite by default, JSON files or Postgres) before anything uses it.
 await initDb();
 // Connect Redis for cross-node rate limiting if REDIS_URL is set (else in-memory).
 await initRateLimit();

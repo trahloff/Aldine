@@ -2,7 +2,9 @@
 # Snapshot Aldine's data + secrets volumes to a single tarball, plus a dump of
 # the bundled Postgres database when the app runs on it (DATABASE_URL pointing
 # at the `db` service): there, accounts, sessions, project metadata and
-# comments live in Postgres, not in the secrets volume.
+# comments live in Postgres, not in the secrets volume. On SQLite (the
+# default) they are /secrets/aldine.db, which a running app copies for the
+# backup so that no write in progress is cut in half.
 # Usage: deploy/backup.sh [output.tar.gz]   (run from anywhere; needs docker)
 # With Postgres, run it while the stack is up: the dump comes from the running
 # db container. An external database (DATABASE_URL elsewhere) is not reachable
@@ -63,12 +65,51 @@ if [ -n "$DB_URL" ] && [ "${ALDINE_BACKUP_DB:-}" != skip ]; then
   PARTS+=(postgres)
 fi
 
-docker run --rm \
-  -v "${DATA_VOL}":/data:ro \
-  -v "${SECRETS_VOL}":/secrets:ro \
-  -v "${STAGE}":/postgres:ro \
-  -v "${OUT_DIR}":/backup \
-  "$ALPINE" tar czf "/backup/${OUT_FILE}" -C / "${PARTS[@]}"
+# A running app's aldine.db can hold its newest writes in aldine.db-wal, and
+# a copy of the two files read one after the other can miss or tear them. The
+# app writes a consistent copy instead (dist/db/snapshot.js), which goes into
+# the backup in place of the live files. A stopped app left them consistent.
+SNAPSHOT=""
+RUNNING="$(container app)"
+STORE=""
+if [ -z "$DB_URL" ] && [ -n "$RUNNING" ]; then
+  # A failed exec ends the script (set -e) instead of reading as "no aldine.db".
+  STORE="$(docker exec "$RUNNING" sh -c 'if [ -s "$META_DIR/aldine.db" ]; then echo sqlite; else echo files; fi')"
+fi
+if [ "$STORE" = sqlite ]; then
+  docker exec "$RUNNING" sh -c 'rm -f /tmp/aldine-backup.db && node dist/db/snapshot.js /tmp/aldine-backup.db' >/dev/null
+  mkdir "$STAGE/sqlite"
+  docker cp "$RUNNING:/tmp/aldine-backup.db" "$STAGE/sqlite/aldine.db" >/dev/null
+  docker exec "$RUNNING" rm -f /tmp/aldine-backup.db
+  SNAPSHOT=1
+fi
+
+if [ -n "$SNAPSHOT" ]; then
+  docker run --rm \
+    -v "${DATA_VOL}":/snap/data:ro \
+    -v "${SECRETS_VOL}":/secrets:ro \
+    -v "${STAGE}/sqlite":/sqlite:ro \
+    -v "${OUT_DIR}":/backup \
+    "$ALPINE" sh -c 'set -e
+      # A temp file the app renames away mid-copy fails cp: try again.
+      for try in 1 2 3; do
+        rm -rf /snap/secrets
+        if cp -a /secrets /snap/secrets; then break; fi
+        [ "$try" = 3 ] && exit 1
+        sleep 1
+      done
+      rm -f /snap/secrets/aldine.db /snap/secrets/aldine.db-wal /snap/secrets/aldine.db-shm
+      cp /sqlite/aldine.db /snap/secrets/aldine.db
+      chmod 600 /snap/secrets/aldine.db
+      tar czf "/backup/$0" -C /snap data secrets' "${OUT_FILE}"
+else
+  docker run --rm \
+    -v "${DATA_VOL}":/data:ro \
+    -v "${SECRETS_VOL}":/secrets:ro \
+    -v "${STAGE}":/postgres:ro \
+    -v "${OUT_DIR}":/backup \
+    "$ALPINE" tar czf "/backup/${OUT_FILE}" -C / "${PARTS[@]}"
+fi
 
 echo "Backup written: ${OUT_DIR}/${OUT_FILE}"
 if [ -s "$STAGE/aldine.sql" ]; then

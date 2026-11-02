@@ -60,7 +60,7 @@ process.env.ZOTERO_API_BASE = `${up}/zotero`;
 
 const { initDb, db, closeDb } = await import('../src/db/index.ts');
 await initDb();
-const { JsonStore } = await import('../src/db/json.ts');
+const { SqliteStore } = await import('../src/db/sqlite.ts');
 const auth = await import('../src/auth.ts');
 const store = await import('../src/store.ts');
 const gitops = await import('../src/gitops.ts');
@@ -278,9 +278,10 @@ try {
   await ok('POST', `/api/projects/${id}/compile`, 'ada', { branch: 'main' }, 'a typeset');
   const shown = await lastEdit(id);
   await activity.flushActivity();
-  const reread = new JsonStore(process.env.META_DIR);
+  const reread = new SqliteStore(path.join(process.env.META_DIR, 'aldine.db'));
   await reread.init();
   const persisted = (await reread.listProjectActivity()).find((a) => a.projectId === id);
+  await reread.close();
   eq(persisted.lastEdit, shown, 'the stored last edit is the one the list shows');
   eq([persisted.compile.main?.status, persisted.compile.main?.errors], ['ok', 0], 'and the typeset is stored too, not only in memory');
 

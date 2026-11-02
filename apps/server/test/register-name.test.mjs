@@ -19,6 +19,7 @@ process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 process.env.RL_REGISTER_BURST = '50';
 delete process.env.DATABASE_URL;
+process.env.ALDINE_DATASTORE = 'json';
 delete process.env.REDIS_URL;
 delete process.env.ALDINE_PROTECTED_PROJECTS;
 

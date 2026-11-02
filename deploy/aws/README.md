@@ -99,7 +99,9 @@ Set the corresponding client id/secret in `secret_env`.
     --interactive --command "/bin/sh"
   ```
   The JSON datastore lives under `META_DIR` (`/secrets` in the task), so
-  `users.json` there is the account list. Leave it off when nobody needs it:
+  `users.json` there is the account list. The task sets
+  `ALDINE_DATASTORE=json`: `/secrets` is EFS, an NFS volume, where SQLite's
+  file locking is not reliable. Leave it off when nobody needs it:
   it is a door into the container that IAM alone guards.
 
 The ECS deployment circuit breaker also rolls back on its own if the new tasks

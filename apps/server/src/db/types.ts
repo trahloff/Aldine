@@ -1,7 +1,8 @@
 /**
  * Shared persistence types + the DataStore interface. This is the seam that
- * lets Aldine run on flat JSON files (slim self-host default) or Postgres
- * (horizontally-scalable cloud) without the rest of the code knowing which.
+ * lets Aldine run on one SQLite file (the self-host default), flat JSON files
+ * (ALDINE_DATASTORE=json) or Postgres (horizontally-scalable cloud) without
+ * the rest of the code knowing which.
  *
  * Only relational/metadata state lives here. Project file contents stay in git
  * repos on disk (see store.ts) — that's a separate storage concern.
@@ -244,8 +245,9 @@ export interface ProjectActivity {
 
 /**
  * Every method is async so a network-backed implementation (Postgres) is a
- * drop-in for the file-backed one. Implementations must be safe for concurrent
- * callers (the JSON backend writes atomically; Postgres is transactional).
+ * drop-in for the file-backed ones. Implementations must be safe for concurrent
+ * callers (the JSON backend writes atomically; SQLite and Postgres are
+ * transactional).
  */
 export interface DataStore {
   /** create tables / ensure directories. Called once at startup. */

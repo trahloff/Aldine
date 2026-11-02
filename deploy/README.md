@@ -223,7 +223,14 @@ sudo systemctl enable --now aldine-backup.timer
 
 Daily snapshots of the `aldine-data` (projects/git) and `aldine-secrets` (users,
 sessions, keys, comments, usage) volumes land in `/var/backups/aldine`, 14 kept.
-On the Postgres datastore (`DATABASE_URL` pointing at the bundled `db`
+On the SQLite datastore (the default) users, sessions, project metadata,
+comments and usage are `aldine.db` in `aldine-secrets`. While the app runs,
+the newest writes can still be in `aldine.db-wal` beside it, so
+`deploy/backup.sh` has the app write a consistent copy
+(`node dist/db/snapshot.js <file>` in the app container) and puts that into
+the tarball instead of the live files. Backing up some other way, use that
+command too, or stop the app first: a plain copy of a running `aldine.db` can
+miss writes. On the Postgres datastore (`DATABASE_URL` pointing at the bundled `db`
 service) users, sessions, project metadata, comments and usage live in the
 database instead, and each tarball also holds a `pg_dump` of it, so the stack
 must be up when the backup runs. A database outside the stack, such as a
@@ -259,9 +266,14 @@ the app is running, and asks before it overwrites anything (`--yes` skips the
 question). Afterwards people are still signed in and access tokens still
 work.
 
-Each file of the JSON datastore (`users.json`, `sessions.json` and the
-others at the top of the secrets volume, and those in `meta/` and
-`comments/`) keeps a `.bak` beside it: the version before its last write. If
+SQLite writes `aldine.db` in transactions and syncs the disk at every
+commit, so a crash or the volume going read-only keeps every write that
+finished. A file that is damaged anyway stops the server at startup, naming
+it: restore from a backup.
+
+On the JSON datastore (`ALDINE_DATASTORE=json`), each file (`users.json`,
+`sessions.json` and the others at the top of the secrets volume, and those in
+`meta/` and `comments/`) keeps a `.bak` beside it: the version before its last write. If
 a crash or the volume going read-only leaves a file empty or cut short, the
 server restores it from the `.bak` the next time it reads it (the top-level
 files at startup) and logs both names; only the last change to that file is
@@ -269,12 +281,12 @@ lost. When neither can be read, the server refuses to start, or that project
 fails to open, with the file named: restore from a backup. The backups carry
 the `.bak` files along, and a restore puts them back with the rest.
 
-Every release runs exactly these steps on an empty Docker, for both
-datastores, before it can become `latest`: `scripts/lifecycle/drill.sh
+Every release runs exactly these steps on an empty Docker, for each
+datastore, before it can become `latest`: `scripts/lifecycle/drill.sh
 restore` seeds a stack, backs it up while it runs, deletes it with its
 volumes, restores it and checks every account, file, commit, branch, comment,
-share and token. You can run the drill yourself (`DATASTORE=postgres` for the
-database); it uses its own compose project, `aldine-lifecycle` on port 8191,
+share and token. You can run the drill yourself (`DATASTORE=json` or
+`DATASTORE=postgres` for the other two); it uses its own compose project, `aldine-lifecycle` on port 8191,
 and never touches the `aldine` volumes.
 
 ## 5. Upgrade
@@ -283,6 +295,29 @@ and never touches the `aldine` volumes.
 cd /opt/aldine && git pull
 docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml up -d --build
 # (append --profile tls if you use the bundled Caddy, plus any other profiles you run)
+```
+
+### From before 1.7: JSON files to SQLite
+
+Up to 1.6 the default datastore was JSON files in `aldine-secrets`. From 1.7
+it is SQLite, and the first start of 1.7 copies every JSON record into
+`aldine.db` in one go, then logs `datastore: copied N account(s) and M
+project(s)`. The JSON files stay where they are, untouched, and nothing
+writes to them after that. If a JSON file cannot be read, the copy stops
+before `aldine.db` exists, the server does not start, and the log names the
+file; fix or restore it, and the next start copies again.
+
+To stay on JSON files, set `ALDINE_DATASTORE=json` in `.env` before you
+upgrade. Postgres (`DATABASE_URL`) is not affected.
+
+Going back to 1.6 afterwards, or setting `ALDINE_DATASTORE=json` later, puts
+the server back on the JSON files as they were at the copy: what changed
+since is only in `aldine.db`. Restore the backup taken before the upgrade
+instead (docs/STABILITY.md: there is no downgrade). To look into the
+database, the image has the `sqlite3` shell:
+
+```bash
+docker compose exec app sqlite3 /secrets/aldine.db '.tables'
 ```
 
 ## Sign-up and invites
@@ -466,9 +501,9 @@ to `RL_ADMIN_BURST` (default 30) in a row per administrator.
   (NFS or similar) and set `COMPILER_URL` to point at it. The app knows exactly
   one compiler URL, so a *fleet* of them needs a load balancer in front, and
   that path isn't tested yet.
-- **Datastore**: the default is flat JSON files (fine for one node). Postgres is
-  the prerequisite for ever running more than one app node, and the switch is
-  config, not code:
+- **Datastore**: the default is one SQLite file, `aldine.db` in the secrets
+  volume (fine for one node). Postgres is the prerequisite for ever running
+  more than one app node, and the switch is config, not code:
   ```bash
   # in .env
   DATABASE_URL=postgres://aldine:aldine@db:5432/aldine
@@ -479,13 +514,13 @@ to `RL_ADMIN_BURST` (default 30) in a row per administrator.
   Users, sessions, tokens, project metadata, comments and usage are then
   stored in Postgres; git repos stay on disk, and the Yjs snapshots and the
   signing secret stay in the secrets volume. The same test suite passes on
-  both backends. Nothing copies an existing instance's JSON files into
-  Postgres: an instance switched over starts with no accounts and lists no
-  projects, so choose the backend before people use it. `deploy/backup.sh`
+  every backend. Nothing copies an existing instance's SQLite or JSON data
+  into Postgres: an instance switched over starts with no accounts and lists
+  no projects, so choose the backend before people use it. `deploy/backup.sh`
   puts a dump of the bundled database in its tarball (section 4).
-  On Kubernetes, or wherever the secrets volume is network storage, use
-  Postgres even for one node: the JSON files are only as safe as that
-  volume's handling of a crash or a forced read-only remount.
+  On Kubernetes, or wherever the secrets volume is network storage, give
+  SQLite a block-backed volume, not an NFS or SMB share: SQLite's file
+  locking is not reliable on those. Or use Postgres.
   Enabling Redis works the same way: `--profile redis` plus the `REDIS_URL`
   line in `.env`.
 
@@ -590,7 +625,8 @@ override file.
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
 | `ALDINE_AI_AUTOFIX` | `1` = a failed typeset opens the Fix tab and diagnoses without a click (default off) |
 | `ALDINE_COMPILE_QUOTA_MIN` | Per-user compile minutes per month (blank = uncapped) |
-| `DATABASE_URL` | Postgres datastore (blank = flat JSON files) |
+| `ALDINE_DATASTORE` | `sqlite` (default): accounts, sessions, project settings and comments in `META_DIR/aldine.db`, filled from the JSON files of an earlier release on its first start. `json`: the JSON files instead. Leave it unset with `DATABASE_URL`: the server refuses to start with both |
+| `DATABASE_URL` | Postgres datastore (blank = `ALDINE_DATASTORE`) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |
 | `REDIS_URL` | Shared rate limits + collab sync across app nodes |
 | `SENTRY_DSN` | Error tracking. Server errors only (5xx and unhandled rejections); URLs are sent without their query string, and request bodies, cookies and headers are dropped |
@@ -609,7 +645,7 @@ override file.
 | `ALDINE_PROTECTED_PROJECTS` | Comma-separated project ids that every visitor may read and typeset and nobody may change (a public demo's sample papers) |
 | `LOG_LEVEL` | Server log level (default `info`; `warn` keeps only warnings and errors) |
 | `DATA_DIR` | Project git repositories, their branch worktrees and each branch's `.aldine-out` compile output. The image sets `/data`. The compiler's `DATA_DIR` must be the same volume |
-| `META_DIR` | Secrets and metadata: the JSON datastore (each file with its last-good `.bak`), the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
+| `META_DIR` | Secrets and metadata: the SQLite datastore (`aldine.db`) or the JSON one (each file with its last-good `.bak`), the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
 | `CACHE_DIR` | Template-repository checkouts and downloaded venue kits (default `.cache/latex` in the install directory, which in the image is not on a volume: the cache starts empty when the container is recreated) |
 | `COMPILER_URL` | Where the app reaches the compiler (default `http://localhost:4020`; the image sets `http://compiler:4020`) |
 | `PORT` | Port inside the container: the app listens on `3000`, the compiler on `4020` |

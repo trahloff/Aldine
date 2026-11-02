@@ -42,7 +42,8 @@ releases, not a build of `main`.
 | Projects | `DATA_DIR/projects/<id>`: one git repository per project, with `main` checked out | git |
 | Other branches | `DATA_DIR/worktrees/<id>/<branch>`: a git worktree each | git |
 | Compile output, the page-1 thumbnail included (`.<root>.thumb.jpg` and `.json`) | `.aldine-out/` beside the root file, kept out of git | rebuilt on the next typeset |
-| Accounts, sessions, tokens, project settings, comments, usage, each person's project list (`opens.json`), each project's last edit and typesets (`activity.json`) and invitations (`invitations.json`) (JSON, the default) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files, `meta/<id>.json`, `comments/<id>.json` | JSON |
+| Accounts, sessions, tokens, project settings, comments, usage, each person's project list, each project's last edit and typesets, and invitations (SQLite, the default from 1.7) | `META_DIR/aldine.db`, with `aldine.db-wal` and `aldine.db-shm` beside it while it is open | SQLite, tables Aldine creates |
+| The same, with `ALDINE_DATASTORE=json` (the default before 1.7) | `META_DIR`: `users.json`, `sessions.json`, `tokens.json` and the other flat files (`opens.json`, `activity.json`, `invitations.json` among them), `meta/<id>.json`, `comments/<id>.json` | JSON |
 | The same, with `DATABASE_URL` set | the Postgres database | tables Aldine creates |
 | Collaboration state | `META_DIR/yjs/`, one `.ybin` file per document | Yjs binary update |
 | Signing secret for PDF links and sign-in device cookies | `META_DIR/output-signing-secret`, unless `ALDINE_SIGNING_SECRET` is set | text |
@@ -75,6 +76,13 @@ two paths stay as they are within 1.x.
   for an administrator's approval (`ALDINE_SIGNUP=approval`); no column is
   added for it, and an account disabled on `/admin` never has that value, so
   turning approval on changes no existing account.
+- **SQLite.** The schema version is the file's `user_version` (1 in 1.7). A
+  later release that changes the tables migrates the file at start; a file
+  with a higher version than the running release knows is refused, naming
+  it. The first start without `aldine.db` copies a JSON datastore in
+  `META_DIR` into it, every record in one transaction, and leaves the JSON
+  files as they were. A JSON file that cannot be read stops that start
+  before `aldine.db` exists.
 - **Postgres.** At every start Aldine runs `CREATE TABLE IF NOT EXISTS` and
   `ADD COLUMN IF NOT EXISTS` for its tables. There is no version table and no
   down-migration.
@@ -90,14 +98,17 @@ two paths stay as they are within 1.x.
   document's state. The `.tex` file on disk is the source of truth. A
   snapshot that does not match the file is brought in line with it, and one
   that cannot be read is dropped and the document starts from the file.
-- **Switching between JSON and Postgres** is not a migration. Nothing copies
+- **Switching to or from Postgres** is not a migration. Nothing copies
   one into the other, so choose the backend before people use the instance.
+  The one copy Aldine makes is JSON files into SQLite, described above.
+  Setting `ALDINE_DATASTORE=json` after that runs on the JSON files as they
+  were at the copy.
 
 ### The upgrade promise
 
 From 1.0: **any 1.x release starts on data written by an earlier 1.x, or by
 0.14 or later, with no manual step.** That covers every row of the table
-above, with either datastore.
+above, with any of the three datastores.
 
 The upgrade check in the release workflow backs this
 (`.github/workflows/lifecycle.yml`). It starts the previous release, and the
@@ -105,8 +116,9 @@ oldest release the promise covers (0.14.4, `OLDEST_SUPPORTED` in that file),
 on a fresh instance, fills it through the API (accounts, projects with
 several files, commits, a branch, review comments, a share, a personal
 access token), then starts the candidate on the same volumes and checks that
-all of it is still there and still works, typeset included, with the JSON
-and with the Postgres datastore. A failure stops the release before `latest`
+all of it is still there and still works, typeset included, on SQLite, on
+JSON files and on Postgres. The oldest supported release wrote JSON files, so
+on SQLite the copy into `aldine.db` is part of that check. A failure stops the release before `latest`
 moves. The same check runs on pull requests that change how data is stored.
 It covers what it seeds, not everything an instance can hold, so back up
 before an upgrade all the same.
@@ -122,7 +134,8 @@ downgrade. Back up before you upgrade, and restore that backup to go back.
 Within 1.x a stable variable keeps its name and its meaning. A minor release
 may add new ones, and a changed default is listed under "Changed" in the
 CHANGELOG. Added since 1.0, stable from the release that adds it:
-`ALDINE_SIGNUP` (`open` or `approval`).
+`ALDINE_SIGNUP` (`open` or `approval`), `ALDINE_DATASTORE` (`sqlite` or
+`json`).
 
 **Not covered:** the variables under "Tests and internals" in the same file.
 They exist for the test suites and for tuning, and may change in any release.

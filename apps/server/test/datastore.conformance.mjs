@@ -1,9 +1,9 @@
 /**
- * DataStore conformance suite: the SAME assertions run against JsonStore and
- * PgStore, so the two backends can't silently diverge (id validation,
- * duplicate-email message, aliasing, ordering, usage math).
+ * DataStore conformance suite: the SAME assertions run against SqliteStore,
+ * JsonStore and PgStore, so the backends can't silently diverge (id
+ * validation, duplicate-email message, aliasing, ordering, usage math).
  *
- * JsonStore runs always (mkdtemp). PgStore runs only when TEST_DATABASE_URL
+ * SqliteStore and JsonStore run always (mkdtemp). PgStore runs only when TEST_DATABASE_URL
  * is set (CI provides a postgres service); otherwise that leg is skipped with
  * a log line, not a failure — local `npm run test:db` stays dependency-free.
  *
@@ -601,6 +601,12 @@ async function runSuite(store, label) {
   await store.close();
   console.log(`✓ ${label}: conformance suite passed`);
 }
+
+// ---- SQLite leg (always) ----
+const tmpSqlite = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-db-'));
+const { SqliteStore } = await import('../src/db/sqlite.ts');
+await runSuite(new SqliteStore(path.join(tmpSqlite, 'aldine.db')), 'SqliteStore');
+fs.rmSync(tmpSqlite, { recursive: true, force: true });
 
 // ---- JSON leg (always) ----
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-db-'));

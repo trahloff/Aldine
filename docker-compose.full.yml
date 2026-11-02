@@ -105,8 +105,11 @@ services:
       TEMPLATE_REPO_MAX_BYTES: ${TEMPLATE_REPO_MAX_BYTES:-}
       # Optional: share rate limits across app nodes (see the `redis` profile).
       REDIS_URL: ${REDIS_URL:-}
-      # Datastore: blank = flat JSON files (slim single-node default). Set to a
-      # Postgres URL for the horizontally-scalable backend (see `postgres` profile).
+      # Datastore: blank = SQLite, /secrets/aldine.db, filled from the JSON
+      # files of an older release on its first start. ALDINE_DATASTORE=json keeps
+      # the JSON files instead. Set DATABASE_URL to a Postgres URL for the
+      # horizontally-scalable backend (see `postgres` profile).
+      ALDINE_DATASTORE: ${ALDINE_DATASTORE:-}
       DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - aldine-data:/data

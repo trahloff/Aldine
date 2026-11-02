@@ -10,8 +10,8 @@
 Aldine is a self-hosted, open-source collaborative LaTeX editor and an
 Overleaf alternative. It is slim and built for speed: real-time multi-cursor
 editing, every project a real git repo with branches, native Zotero, ~2s warm
-recompiles. Two containers and flat files by default: no database to migrate,
-nothing to babysit.
+recompiles. Two containers and one SQLite file by default: no database server
+to run, nothing to babysit.
 
 **[Homepage](https://aldine.dev)** ·
 **[Try the live demo](https://demo.aldine.dev)** (resets nightly) ·
@@ -143,7 +143,7 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   password or single sign-on, waiting until an administrator approves it on
   `/admin`; with email set up, the administrators get a mail when one starts
   waiting.
-- **Scales when you need it**: flat-file storage by default; set
+- **Scales when you need it**: one SQLite file by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
   [docs/SCALING.md](docs/SCALING.md) says exactly what is and isn't built.
@@ -508,11 +508,16 @@ Two separate concerns, behind two seams:
 - **Project files**: real git repos + worktrees on disk (`store.ts`). This is
   what gives you branches and history.
 - **Relational/metadata**: users, sessions, project metadata, review comments,
-  and usage go through the `DataStore` interface (`db/`). Two backends:
-  - **JSON files** (default, zero-dependency): the slim single-node self-host.
+  and usage go through the `DataStore` interface (`db/`). Three backends:
+  - **SQLite** (default): one file, `META_DIR/aldine.db`, through the
+    `node:sqlite` module built into Node, so no dependency. On its first
+    start it copies the JSON files of an earlier release and leaves them as
+    they were.
+  - **JSON files** (`ALDINE_DATASTORE=json`): the default before 1.7, kept
+    for anyone who wants plain files.
   - **Postgres** (set `DATABASE_URL`): the horizontally-scalable backend, and
     the prerequisite for ever running multiple app nodes. `pg` is an optional
-    dependency; the same conformance suite runs against both.
+    dependency; the same conformance suite runs against all three.
 
 For how this scales past one box (and what the remaining walls are), see
 [docs/SCALING.md](docs/SCALING.md).

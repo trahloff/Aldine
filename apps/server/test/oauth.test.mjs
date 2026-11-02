@@ -627,9 +627,11 @@ const slowStore = (method, ms = 5) => {
   const g = await grant();
   const t = (await tokenReq(exchangeBody(g), ip)).json();
   const rec = await db().getRefreshByHash(auth.secretDigest(t.refresh_token));
-  // Backdate through the store: the record shape is the seam, not a private API.
-  await db().createRefresh({ ...rec, expiresAt: new Date(Date.now() - 1000).toISOString() });
-  const r = await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: clientId }, ip);
+  // An expired record of the same grant, through the store: the record shape
+  // is the seam, not a private API. createRefresh inserts, it never replaces.
+  const expired = `aldr_${crypto.randomBytes(32).toString('base64url')}`;
+  await db().createRefresh({ ...rec, id: `${rec.id}x`, hash: auth.secretDigest(expired), expiresAt: new Date(Date.now() - 1000).toISOString() });
+  const r = await tokenReq({ grant_type: 'refresh_token', refresh_token: expired, client_id: clientId }, ip);
   check(r.statusCode === 400 && r.json().error === 'invalid_grant', 'an expired refresh token → invalid_grant');
 }
 

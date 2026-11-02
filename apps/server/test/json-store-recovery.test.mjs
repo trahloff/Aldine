@@ -19,6 +19,7 @@ process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 for (const k of ['AUTH_ENABLED', 'DATABASE_URL', 'REDIS_URL', 'ALDINE_PROTECTED_PROJECTS']) delete process.env[k];
+process.env.ALDINE_DATASTORE = 'json';
 
 const { JsonStore } = await import('../src/db/json.ts');
 
