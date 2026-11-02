@@ -17,17 +17,17 @@ and infrastructure, not a rewrite.
 | Concern | Storage | Seam |
 |---|---|---|
 | Project files, branches, history | git repos + worktrees on disk | `store.ts` |
-| Users, sessions, reset tokens | DataStore | `db/` (`JsonStore` \| `PgStore`) |
+| Users, sessions, reset tokens | DataStore | `db/` (`SqliteStore` \| `JsonStore` \| `PgStore`) |
 | Project metadata, sharing | DataStore | `db/` |
 | Review comments | DataStore | `db/` |
 | Rate-limit counters | in-memory per process, or Redis when `REDIS_URL` is set | `ratelimit.ts` |
 | Compile-quota counters | DataStore (monthly seconds per user) | `usage.ts` |
 | Live collaboration state (Yjs CRDT) | in-process (Hocuspocus) | `collab.ts` |
 
-Switch the datastore with one env var:
+Switch the datastore with an env var:
 
 ```bash
-DATABASE_URL=postgres://…    # unset = JSON files
+DATABASE_URL=postgres://…    # unset = SQLite (or JSON files with ALDINE_DATASTORE=json)
 ```
 
 ## The scaling walls (in the order they bite)

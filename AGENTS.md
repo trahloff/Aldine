@@ -13,7 +13,8 @@ git repos (worktree per branch), sandboxed TeX Live compiler service, React 19
 
 - `apps/server` — Fastify API, collab (Yjs snapshots + debounced git
   autocommit), auth (env-gated, off by default), datastore seam
-  (`src/db/`: JSON files default, Postgres via `DATABASE_URL`)
+  (`src/db/`: SQLite file default, JSON files via `ALDINE_DATASTORE=json`,
+  Postgres via `DATABASE_URL`)
 - `apps/web` — React SPA; `src/editor/visual/` is the visual editing mode
   (pure decoration layer, **byte-stable by contract** — rendering must never
   change source bytes; an e2e test enforces this)
@@ -81,8 +82,11 @@ traces as the `playwright-<suite>` artifact.
   open docs from plain text — that duplicates content on reconnect.
 - With `DATABASE_URL` set, users, sessions, tokens, project metadata and
   comments live in Postgres, not in `META_DIR`: anything that copies "the
-  data" (`deploy/backup.sh`, a migration) must cover both. The lifecycle
-  drill (`.github/workflows/lifecycle.yml`) checks it on both datastores.
+  data" (`deploy/backup.sh`, a migration) must cover both. On SQLite they are
+  `META_DIR/aldine.db`, whose newest writes may sit in `aldine.db-wal`: copy
+  a running one with `dist/db/snapshot.js`, never with `cp` or `tar`. The
+  lifecycle drill (`.github/workflows/lifecycle.yml`) checks all three
+  datastores.
 - `META_DIR` is deliberately outside `DATA_DIR` so the compiler container can
   never read API keys — don't "simplify" them onto one volume.
 - The file tree defaults to source-only view; e2e that asserts non-source

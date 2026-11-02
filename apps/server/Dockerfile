@@ -26,7 +26,8 @@ FROM node:22-alpine
 # the release version, so this stage reruns on every release and git carries
 # Alpine's current security fixes; the build stages above stay cached.
 ARG PACKAGES_REFRESH=
-RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" && apk add --no-cache git
+# sqlite: the sqlite3 shell, for an operator looking into /secrets/aldine.db.
+RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" && apk add --no-cache git sqlite
 WORKDIR /srv
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/

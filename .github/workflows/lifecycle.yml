@@ -1,15 +1,17 @@
 name: Lifecycle
 
 # What a self-hoster does with their data, on real images with accounts on,
-# for the JSON and the Postgres datastore (scripts/lifecycle/drill.sh, which
-# runs the same way locally):
+# for the SQLite, the JSON and the Postgres datastore
+# (scripts/lifecycle/drill.sh, which runs the same way locally):
 #
 #   upgrade  a release's images seed a stack; the candidate starts on the
 #            same volumes and must find every account, file, commit, branch,
 #            comment thread, share and token, and still typeset. It runs from
 #            the previous release and from OLDEST_SUPPORTED, the oldest
 #            release whose data a new one must still start on
-#            (docs/STABILITY.md); one job when the two are the same
+#            (docs/STABILITY.md); one job when the two are the same. On
+#            SQLite, an upgrade from a release that wrote JSON files checks
+#            that the candidate copied them into aldine.db
 #   restore  the candidate is seeded and backed up with deploy/backup.sh, the
 #            stack and its volumes are deleted, deploy/restore.sh restores onto
 #            an empty Docker as deploy/README.md says, and the same checks run
@@ -18,7 +20,7 @@ name: Lifecycle
 # it: a release that loses data on upgrade or restore never becomes latest.
 # Pull requests that touch storage run it too, on the PR's app image (built
 # here, amd64 only, never pushed) and the released compiler; there the upgrade
-# from OLDEST_SUPPORTED runs on JSON only.
+# from OLDEST_SUPPORTED runs on SQLite only.
 on:
   workflow_call:
     inputs:
@@ -79,13 +81,13 @@ jobs:
           elif [ -z "$PREVIOUS" ]; then
             PREVIOUS=$(sed -n 's/.*aldine-app:.{ALDINE_VERSION:-\([^}]*\)}.*/\1/p' docker-compose.yml)
           fi
-          oldest_stores='["json","postgres"]'
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then oldest_stores='["json"]'; fi
+          oldest_stores='["sqlite","json","postgres"]'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then oldest_stores='["sqlite"]'; fi
           matrix=$(jq -cn --arg previous "${PREVIOUS#v}" --arg oldest "${OLDEST_SUPPORTED#v}" --argjson oldestStores "$oldest_stores" '
             {include: [
-              (["json", "postgres"][] | {drill: "upgrade", from: $previous, datastore: .}),
+              (["sqlite", "json", "postgres"][] | {drill: "upgrade", from: $previous, datastore: .}),
               (if $oldest == $previous then empty else ($oldestStores[] | {drill: "upgrade", from: $oldest, datastore: .}) end),
-              (["json", "postgres"][] | {drill: "restore", from: "", datastore: .})
+              (["sqlite", "json", "postgres"][] | {drill: "restore", from: "", datastore: .})
             ]}')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           jq . <<<"$matrix"

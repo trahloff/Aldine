@@ -52,7 +52,7 @@ jobs:
         run: npm run test:gitlab:provision -w apps/server
       - name: GitLab deletion integration test
         run: npm run test:gitlab:delete -w apps/server
-      - name: Datastore conformance (JSON + Postgres)
+      - name: Datastore conformance (SQLite + JSON + Postgres)
         run: npm run test:db -w apps/server
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres

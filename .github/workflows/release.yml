@@ -9,7 +9,8 @@ name: Release
 #     smoke      boot those exact digests with the user-facing compose file and
 #                typeset a document with a bibliography inside the sandbox
 #     lifecycle  upgrade from the previous release onto those digests, and a
-#                backup/restore drill, on the JSON and the Postgres datastore
+#                backup/restore drill, on the SQLite, the JSON and the
+#                Postgres datastore
 #     promote    waits for approval in the `latest` environment, then moves
 #                `latest` to the same digests and publishes the GitHub Release
 #

@@ -7,6 +7,30 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- The default datastore is now SQLite. Accounts, sessions, tokens, project
+  settings, comments and usage live in one file, `aldine.db` in the secrets
+  volume, written in transactions that keep every finished write through a
+  crash or the volume going read-only
+  ([#199](https://github.com/trahloff/Aldine/issues/199)). On its first
+  start, this release copies the JSON files of an earlier one into it and
+  leaves them as they were. If a JSON file cannot be read, the start stops
+  before anything is written and the log names the file. To stay on the JSON
+  files, set `ALDINE_DATASTORE=json` before upgrading. Postgres
+  (`DATABASE_URL`) is unchanged. Going back to an earlier release afterwards
+  finds the JSON files as they were at the copy, without what changed since:
+  restore the backup taken before the upgrade instead.
+- `deploy/backup.sh` puts a consistent copy of a running `aldine.db` into the
+  backup, not the live file, whose newest writes may still be in the
+  write-ahead log beside it.
+
+### Added
+- `ALDINE_DATASTORE`: `sqlite` (default) or `json`.
+- `node dist/db/snapshot.js <file>` in the app image writes a consistent copy
+  of the SQLite datastore while the server runs, for backups made without
+  `deploy/backup.sh` (on Kubernetes, for example). The image also has the
+  `sqlite3` shell for looking into it.
+
 ## [1.6.0] — 2026-11-01
 
 An expired git host token no longer strands a linked project: the editor offers Reconnect, and a project can sync with a token of its own. The Agent API is listed in the official MCP Registry. Upgrading from 1.5 needs no manual step.

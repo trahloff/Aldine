@@ -26,6 +26,8 @@ process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 for (const k of ['DATABASE_URL', 'REDIS_URL', 'ALDINE_PROTECTED_PROJECTS', 'ALDINE_PUBLIC_URL']) delete process.env[k];
+// users.json holds the victim's record in plain text, so a read through a link would show it.
+process.env.ALDINE_DATASTORE = 'json';
 
 const { initDb } = await import('../src/db/index.ts');
 await initDb();

@@ -98,8 +98,9 @@ Set the corresponding client id/secret in `secret_env`.
   aws ecs execute-command --cluster papyr --task "$TASK" --container server \
     --interactive --command "/bin/sh"
   ```
-  The JSON datastore lives under `META_DIR` (`/secrets` in the task), so
-  `users.json` there is the account list. Leave it off when nobody needs it:
+  The datastore lives under `META_DIR` (`/secrets` in the task): the
+  accounts are in `aldine.db` there (`sqlite3 /secrets/aldine.db`), or in
+  `users.json` with `ALDINE_DATASTORE=json`. Leave it off when nobody needs it:
   it is a door into the container that IAM alone guards.
 
 The ECS deployment circuit breaker also rolls back on its own if the new tasks

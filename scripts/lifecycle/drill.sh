@@ -14,7 +14,9 @@
 #                     images under test (default: the release docker-compose.yml pins)
 #   PREVIOUS_VERSION  release the upgrade starts from (default: the pinned one;
 #                     CI also starts from OLDEST_SUPPORTED in lifecycle.yml)
-#   DATASTORE         json (default) or postgres (the bundled `db` service)
+#   DATASTORE         sqlite (default), json (ALDINE_DATASTORE=json) or
+#                     postgres (the bundled `db` service). An upgrade on sqlite
+#                     from a release before it copies that release's JSON files
 #   ALDINE_PROJECT    compose project name (default aldine-lifecycle; never aldine)
 #   ALDINE_PORT       host port of the app (default 8191, beside a stack on 8080)
 #   ALDINE_REGISTRY   where released images come from (default ghcr.io/trahloff)
@@ -28,7 +30,7 @@ case "$DRILL" in upgrade|restore) ;; *) echo "usage: $0 upgrade|restore" >&2; ex
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-DATASTORE="${DATASTORE:-json}"
+DATASTORE="${DATASTORE:-sqlite}"
 PROJECT="${ALDINE_PROJECT:-aldine-lifecycle}"
 PORT="${ALDINE_PORT:-8191}"
 REGISTRY="${ALDINE_REGISTRY:-ghcr.io/trahloff}"
@@ -36,7 +38,7 @@ PINNED="$(sed -n 's/.*aldine-app:.{ALDINE_VERSION:-\([^}]*\)}.*/\1/p' docker-com
 PREVIOUS="${PREVIOUS_VERSION:-$PINNED}"
 CANDIDATE_APP="${CANDIDATE_APP_IMAGE:-$REGISTRY/aldine-app:$PINNED}"
 CANDIDATE_COMPILER="${CANDIDATE_COMPILER_IMAGE:-$REGISTRY/aldine-compiler:$PINNED}"
-case "$DATASTORE" in json|postgres) ;; *) echo "DATASTORE must be json or postgres, got '$DATASTORE'" >&2; exit 2 ;; esac
+case "$DATASTORE" in sqlite|json|postgres) ;; *) echo "DATASTORE must be sqlite, json or postgres, got '$DATASTORE'" >&2; exit 2 ;; esac
 # down -v below deletes this project's volumes: never let that be a real install.
 if [ "$PROJECT" = aldine ]; then echo "refusing ALDINE_PROJECT=aldine: the drill deletes its project's volumes" >&2; exit 2; fi
 
@@ -51,6 +53,9 @@ BACKUP="$WORK/aldine-backup.tar.gz"
   echo "ALDINE_APP_BIND=127.0.0.1"
   if [ "$DATASTORE" = postgres ]; then
     echo "DATABASE_URL=postgres://aldine:aldine@db:5432/aldine"
+  fi
+  if [ "$DATASTORE" = json ]; then
+    echo "ALDINE_DATASTORE=json"
   fi
 } > "$WORK/drill.env"
 PROFILE=()
@@ -78,6 +83,23 @@ start() {
   export LIFECYCLE_APP_CONTAINER
 }
 volumes() { docker volume ls -q | grep "^${PROJECT}_" || true; }
+ALPINE=alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+in_secrets() { docker run --rm -v "${PROJECT}_aldine-secrets":/secrets:ro "$ALPINE" sh -c "$1"; }
+# The candidate's start line names the datastore it runs on; `copied` says it
+# filled aldine.db from the JSON files of the release before.
+expect_datastore() {
+  local logs
+  logs="$(dc logs --no-color app)"
+  if ! grep -q "\[aldine\] datastore: $DATASTORE" <<<"$logs"; then
+    echo "the candidate is not on the $DATASTORE datastore:" >&2
+    grep 'datastore' <<<"$logs" >&2 || true
+    exit 1
+  fi
+  if [ "${1:-}" = copied ] && ! grep -q '\[aldine\] datastore: copied [1-9]' <<<"$logs"; then
+    echo "the candidate did not copy the JSON datastore of $PREVIOUS into aldine.db" >&2
+    exit 1
+  fi
+}
 
 finish() {
   local code=$?
@@ -103,7 +125,12 @@ if [ "$DRILL" = upgrade ]; then
   node scripts/lifecycle/data.mjs seed --state "$STATE"
   step "stop the previous release; the volumes stay"
   dc down
+  COPY=""
+  if [ "$DATASTORE" = sqlite ] && [ "$(in_secrets 'test -f /secrets/users.json && test ! -e /secrets/aldine.db && echo json || true')" = json ]; then
+    COPY=copied
+  fi
   start "$CANDIDATE_APP" "$CANDIDATE_COMPILER"
+  expect_datastore ${COPY:+"$COPY"}
   node scripts/lifecycle/data.mjs verify --state "$STATE"
   passed "Upgrade from $PREVIOUS to $CANDIDATE_APP kept every seeded account, file, commit, branch, comment, share and token, and typesets ($DATASTORE datastore)."
   exit 0
@@ -115,6 +142,11 @@ step "back up the running stack"
 ALDINE_PROJECT="$PROJECT" deploy/backup.sh "$BACKUP"
 ls -l "$BACKUP"
 tar -tzf "$BACKUP" | awk -F/ '{print $1}' | sort | uniq -c
+if [ "$DATASTORE" = sqlite ]; then
+  # Not grep -q: an early exit would SIGPIPE tar under pipefail.
+  if ! tar -tzf "$BACKUP" | grep -x 'secrets/aldine.db' >/dev/null; then echo "the backup holds no secrets/aldine.db" >&2; exit 1; fi
+  if tar -tzf "$BACKUP" | grep -E '^secrets/aldine\.db-(wal|shm)$' >/dev/null; then echo "the backup holds the live write-ahead log instead of a copy" >&2; exit 1; fi
+fi
 step "delete the stack and every volume it had"
 dc down -v
 left="$(volumes)"
@@ -126,5 +158,6 @@ if [ "$DATASTORE" = postgres ]; then
 fi
 ALDINE_PROJECT="$PROJECT" deploy/restore.sh --yes "$BACKUP"
 dc up -d --wait --wait-timeout 600
+expect_datastore
 node scripts/lifecycle/data.mjs verify --state "$STATE"
 passed "Backup of $CANDIDATE_APP, restored onto empty volumes, kept every seeded account, file, commit, branch, comment, share and token, and typesets ($DATASTORE datastore)."
