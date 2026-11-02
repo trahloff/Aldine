@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- A project from the Wiley journals tile typesets without BibTeX errors. As
+  Wiley ships it, the kit's Chicago bibliography style reports 164 errors on
+  Wiley's own sample. Aldine now repairs it when it creates the project: it
+  declares the two fields the style uses, removes second copies of five
+  functions, and fixes the article and book code that left empty lines and
+  stray commas in the references. Citations get their year, and two works by
+  the same authors from one year are told apart as 2020a and 2020b. A
+  malformed author list in the sample bibliography is fixed too. Both repairs
+  apply only to the files Wiley ships today; once Wiley changes one, Aldine
+  uses it as shipped ([#172](https://github.com/trahloff/Aldine/issues/172)).
+
 ## [1.7.0] — 2026-11-02
 
 Accounts, sessions, tokens, project settings and comments now live in one SQLite file, which keeps every finished write through a crash or the volume going read-only. The first start of 1.7 copies the JSON files of an earlier release into it and leaves them as they were; `ALDINE_DATASTORE=json` stays on them instead. Upgrading from 1.6 needs no manual step. Back up first all the same: going back to 1.6 afterwards finds the JSON files as they were at the copy.

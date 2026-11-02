@@ -21,7 +21,11 @@
  *  - a cache written for a different kit URL or take list is a miss
  *  - a kit root reads one folder of an archive that carries files beside it
  *  - a manual kit is never fetched and its tile says so
+ *  - a kit patch edits the file it was written for, before `main` becomes
+ *    main.tex and again from the cache; a file with another hash, or an edit
+ *    that does not match exactly once, leaves the file as shipped
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -76,6 +80,11 @@ const ROOTED_ZIP = buildZip({
   'layout/images/logo.pdf': PDF,
   'other/venue.sty': '\\ProvidesPackage{venue}[other]\n',
 });
+// A style with a field it never declares and a function defined twice, the
+// two faults the Wiley repair is for.
+const BROKEN_BST = 'ENTRY\n  { author }\n  {}\n  { label }\n\nFUNCTION {one}\n{ "a" }\n\n'
+  + 'FUNCTION {dup}\n{ "first" }\n\nFUNCTION {dup}\n{ "second" }\n\nFUNCTION {two}\n{ "b" }\n';
+const PATCH_ZIP = buildZip({ 'kit/venue.sty': STY, 'kit/sample.tex': TEX, 'kit/broken.bst': BROKEN_BST });
 const NO_FILES_ZIP = buildZip({ 'kit-1.0/readme.txt': 'nothing useful here' });
 const BIG = Buffer.alloc(1024 * 1024);
 // A second archive for the same venue id, so a registry that changes its kit
@@ -118,6 +127,7 @@ function handler(req, res) {
     case '/collide.zip': return zip(COLLIDE_ZIP);
     case '/many.zip': return zip(MANY_ZIP);
     case '/rooted.zip': return zip(ROOTED_ZIP);
+    case '/patch.zip': return zip(PATCH_ZIP);
     case '/nested.zip': return zip(NESTED_ZIP, 'application/x-zip-compressed');
     case '/paramtype.zip': return zip(GOOD_ZIP, 'application/zip;charset=UTF-8');
     case '/missing.zip': return zip(NO_FILES_ZIP);
@@ -178,6 +188,7 @@ const base = {
   preamble: ['\\usepackage{venue}'],
   bibStyle: 'plain',
 };
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const archive = (id, file, take = ['venue.sty', 'sample.tex', 'sample.bib', '**/figs/*.pdf'], extra = {}) => ({
   ...base, id, name: id.toUpperCase(),
   kit: { url: `${origin}/${file}`, host: `127.0.0.1:${port}`, take },
@@ -239,6 +250,20 @@ const VENUES = [
     kit: { url: `${origin}/rooted.zip`, host: `127.0.0.1:${port}`, root: 'layout', take: ['venue.sty', 'sample.tex', 'images/*.pdf', '*.pdf'] },
     main: 'sample.tex',
   },
+  ...[['patched', BROKEN_BST, 'FUNCTION {dup}\n{ "second" }'], ['patchstale', `${BROKEN_BST}%`, 'FUNCTION {dup}\n{ "second" }'],
+    ['patchmiss', BROKEN_BST, 'FUNCTION {gone}']].map(([id, hashed, second]) => ({
+    ...base, id, name: id.toUpperCase(), main: 'sample.tex',
+    kit: {
+      url: `${origin}/patch.zip`, host: `127.0.0.1:${port}`, take: ['venue.sty', 'sample.tex', 'broken.bst'],
+      patch: [
+        { file: 'broken.bst', sha256: sha256(hashed), edits: [
+          { find: '  { label }', replace: '  { label short.list }' },
+          { find: second, until: 'FUNCTION {two}', replace: '' },
+        ] },
+        { file: 'sample.tex', sha256: sha256(TEX), edits: [{ find: 'Hello', replace: 'Hello, patched' }] },
+      ],
+    },
+  })),
   { ...base, id: 'byhand', name: 'BYHAND', kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['venue.sty'], manual: true } },
   {
     ...base, id: 'bare', name: 'BARE',
@@ -269,7 +294,7 @@ const loaded = kits.venueKits().map((e) => e.id);
 eq(loaded.sort(), [
   'bare', 'bigdeclared', 'bigstream', 'byhand', 'clsbib', 'clsopts', 'collide', 'corrupt', 'flaky', 'good',
   'hop', 'inject', 'loop', 'missing', 'nested', 'notfound', 'notype', 'offhost',
-  'paramtype', 'protomain', 'relhop', 'rooted', 'slow', 'styopts', 'toomany', 'venuecls', 'wrongtype',
+  'paramtype', 'patched', 'patchmiss', 'patchstale', 'protomain', 'relhop', 'rooted', 'slow', 'styopts', 'toomany', 'venuecls', 'wrongtype',
 ].sort(), 'only entries that pass validation are loaded');
 
 const problem = (over) => kits.entryProblem({ ...archive('x', 'ok.zip'), ...over });
@@ -282,6 +307,14 @@ check(/main file or a preamble/.test(problem({ main: undefined, preamble: [] }))
 check(/not in the take list/.test(problem({ main: 'elsewhere.tex' })), 'a main the take list cannot produce is refused');
 check(/rename target/.test(problem({ kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['sample.tex'], rename: { 'sample.tex': '../a.sty' } } })), 'a rename that escapes the project is refused');
 check(/kit.root/.test(problem({ kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['sample.tex'], root: '../up' } })), 'a root outside the archive is refused');
+const patchKit = (patch) => ({ kit: { url: `${origin}/ok.zip`, host: `127.0.0.1:${port}`, take: ['sample.tex'], patch } });
+const edit = { find: 'a', replace: 'b' };
+check(/kit.patch must/.test(problem(patchKit([]))), 'an empty patch list is refused');
+check(/project path/.test(problem(patchKit([{ file: '../x.bst', sha256: sha256('x'), edits: [edit] }]))), 'a patch outside the project is refused');
+check(/sha256/.test(problem(patchKit([{ file: 'x.bst', sha256: 'abc', edits: [edit] }]))), 'a patch without the shipped file\u2019s hash is refused');
+check(/no edits/.test(problem(patchKit([{ file: 'x.bst', sha256: sha256('x'), edits: [] }]))), 'a patch without edits is refused');
+check(/find and a replace/.test(problem(patchKit([{ file: 'x.bst', sha256: sha256('x'), edits: [{ find: '', replace: 'b' }] }]))), 'an edit that finds nothing is refused');
+check(/find and a replace/.test(problem(patchKit([{ file: 'x.bst', sha256: sha256('x'), edits: [{ find: 'a', until: '', replace: 'b' }] }]))), 'an empty until is refused');
 check(kits.entryProblem(archive('x', 'ok.zip')) === null, 'a well-formed entry has no problem');
 
 // ---- the good path ----
@@ -441,6 +474,23 @@ check(Buffer.isBuffer(proto.files['main.tex']), 'main.tex is bytes, not somethin
 eq(Object.keys(kits.selectKitFiles({ 'kit/constructor': Buffer.from('c'), 'kit/toString': Buffer.from('t') },
   { host: 'x', take: ['constructor', 'toString'] })).sort(), ['constructor', 'toString'],
   'a kit file named after an Object.prototype key is placed, not silently dropped');
+
+// ---- a kit patch repairs the file it was written for ----
+
+const REPAIRED_BST = 'ENTRY\n  { author }\n  {}\n  { label short.list }\n\nFUNCTION {one}\n{ "a" }\n\n'
+  + 'FUNCTION {dup}\n{ "first" }\n\nFUNCTION {two}\n{ "b" }\n';
+const patched = await seed('patched');
+check(patched.venueKit.ok, 'a patched kit is a good kit');
+eq(patched.files['broken.bst'].toString('utf8'), REPAIRED_BST, 'every edit lands, the until span up to the text it names');
+check(patched.files['main.tex'].toString('utf8').includes('Hello, patched'), 'a patch names the kit\u2019s own document, which then becomes main.tex');
+eq((await seed('patched')).files['broken.bst'].toString('utf8'), REPAIRED_BST, 'a kit served from the cache is patched too');
+eq(hits['/patch.zip'], 1, 'and was not fetched again for it');
+eq((await seed('patchstale')).files['broken.bst'].toString('utf8'), BROKEN_BST, 'a file the publisher has changed is seeded as shipped');
+const missed = await seed('patchmiss');
+eq(missed.files['broken.bst'].toString('utf8'), BROKEN_BST, 'an edit that does not match leaves the whole file as shipped, not half repaired');
+check(missed.files['main.tex'].toString('utf8').includes('Hello, patched'), 'and the kit\u2019s other patched files are still repaired');
+const twice = { ...kits.venueKit('patched'), kit: { ...kits.venueKit('patched').kit, patch: [{ file: 'broken.bst', sha256: sha256(BROKEN_BST), edits: [{ find: 'FUNCTION {dup}', replace: 'x' }] }] } };
+eq(kits.patchKit(twice, { 'broken.bst': Buffer.from(BROKEN_BST) })['broken.bst'].toString('utf8'), BROKEN_BST, 'a find that occurs twice edits nothing');
 
 // ---- the cache outlives the publisher ----
 

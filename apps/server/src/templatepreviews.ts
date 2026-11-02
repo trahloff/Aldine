@@ -213,6 +213,7 @@ export function kitVersionKey(e: VenueKitEntry): string {
     url: k.url ?? null, urls: k.urls ?? null, host: k.host, take: k.take ?? null, rename: k.rename ?? null, flatten: !!k.flatten,
     // Absent rather than null: every kit without one keeps the key its preview was stored under.
     ...(k.root ? { root: k.root } : {}),
+    ...(k.patch ? { patch: k.patch } : {}),
     documentClass: e.documentClass, classOptions: e.classOptions ?? null, preamble: e.preamble ?? null,
     bibStyle: e.bibStyle ?? null, classSetsBibStyle: !!e.classSetsBibStyle, main: e.main ?? null,
   };

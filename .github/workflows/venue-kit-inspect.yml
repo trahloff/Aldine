@@ -55,6 +55,9 @@ jobs:
           unzip -l "$work/kit.zip" | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           mkdir -p "$work/x" && unzip -q "$work/kit.zip" -d "$work/x" || exit 0
+          # The hashes a kit.patch entry pins its file to.
+          echo "=== sha256"
+          (cd "$work/x" && find . -type f -not -path '*__MACOSX*' -print0 | sort -z | xargs -0 sha256sum | sed 's|  \./|  |')
           find "$work/x" -type f \( -name '*.tex' -o -name '*.cls' -o -iname '*.sty' \) -not -path '*__MACOSX*' -print0 |
             while IFS= read -r -d '' f; do
               echo "=== ${f#$work/x/}"

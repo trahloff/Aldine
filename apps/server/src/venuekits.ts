@@ -18,6 +18,7 @@
  *  - No publisher file is stored in this repo. The cache under
  *    CACHE_DIR/venue-kits/ is a runtime cache, not a redistribution.
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
@@ -64,6 +65,23 @@ export interface VenueKitSpec {
    *  every network a server runs on: nothing is fetched, and the tile sends the
    *  user to the kit and the ZIP import instead. */
   manual?: boolean;
+  /** Repairs to files the publisher ships broken (Wiley's Chicago .bst). */
+  patch?: VenueKitPatch[];
+}
+
+/**
+ * Edits to one kit file, pinned to the bytes the publisher ships. A file with
+ * any other hash is seeded as shipped: the publisher has changed it, maybe
+ * fixed it, and edits aimed at the old file would land wherever their text
+ * happens to match.
+ */
+export interface VenueKitPatch {
+  /** The file's path in the kit as `take` places it, before `main` becomes main.tex. */
+  file: string;
+  sha256: string;
+  /** In order. Each `find` occurs exactly once in the text so far; with `until`,
+   *  the replaced span runs on to the next occurrence of `until`, which stays. */
+  edits: { find: string; until?: string; replace: string }[];
 }
 
 export interface VenueKitEntry {
@@ -178,6 +196,20 @@ export function entryProblem(item: unknown, seen: Set<string> = new Set()): stri
   for (const [from, to] of Object.entries(k.rename || {})) {
     if (!text(to) || importPath(to) !== to || isHiddenPath(to)) return `rename target ${JSON.stringify(to)} is not a project path`;
     if (!text(from)) return 'rename source must be a path';
+  }
+  if (k.patch !== undefined) {
+    if (!Array.isArray(k.patch) || !k.patch.length) return 'kit.patch must be a non-empty list';
+    for (const p of k.patch) {
+      if (!p || typeof p !== 'object' || !text(p.file) || importPath(p.file) !== p.file) return 'kit.patch file must be a project path';
+      if (typeof p.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(p.sha256)) return `kit.patch for ${p.file} needs the sha256 of the shipped file`;
+      if (!Array.isArray(p.edits) || !p.edits.length) return `kit.patch for ${p.file} has no edits`;
+      for (const e of p.edits) {
+        if (!e || typeof e !== 'object' || typeof e.find !== 'string' || !e.find || typeof e.replace !== 'string'
+          || (e.until !== undefined && (typeof e.until !== 'string' || !e.until))) {
+          return `kit.patch for ${p.file} has an edit without a find and a replace`;
+        }
+      }
+    }
   }
   return null;
 }
@@ -571,10 +603,45 @@ function safeReason(text: string): string {
  * module promises.
  */
 function kitProject(entry: VenueKitEntry, kit: Record<string, Buffer>): Record<string, Buffer> {
-  const files = projectFiles(entry, kit);
+  const files = projectFiles(entry, patchKit(entry, kit));
   const bad = kitSeedProblem(files);
   if (bad) throw new KitError(`the kit cannot seed a project (${bad})`);
   return files;
+}
+
+/**
+ * The kit with the entry's repairs applied. The cache keeps the publisher's
+ * bytes and every seed patches them again, so a cached kit gets a repair added
+ * after it was fetched. A file is patched whole or not at all: an edit that
+ * does not match exactly once leaves it as shipped, since half a repair can
+ * break a file that only half worked before.
+ */
+export function patchKit(entry: VenueKitEntry, kit: Record<string, Buffer>): Record<string, Buffer> {
+  if (!entry.kit.patch?.length) return kit;
+  const out = { ...kit };
+  for (const p of entry.kit.patch) {
+    if (!Object.prototype.hasOwnProperty.call(kit, p.file)) continue;
+    if (createHash('sha256').update(kit[p.file]).digest('hex') !== p.sha256) {
+      console.warn(`venue kits: ${entry.id}: ${p.file} is not the file its patch was written for; seeded as shipped`);
+      continue;
+    }
+    const patched = applyEdits(out[p.file], p.edits);
+    if (patched) out[p.file] = patched;
+    else console.warn(`venue kits: ${entry.id}: a patch edit does not match ${p.file} exactly once; seeded as shipped`);
+  }
+  return out;
+}
+
+function applyEdits(data: Buffer, edits: VenueKitPatch['edits']): Buffer | null {
+  for (const e of edits) {
+    const find = Buffer.from(e.find, 'utf8');
+    const at = data.indexOf(find);
+    if (at < 0 || data.indexOf(find, at + 1) >= 0) return null;
+    const end = e.until === undefined ? at + find.length : data.indexOf(Buffer.from(e.until, 'utf8'), at + find.length);
+    if (end < 0) return null;
+    data = Buffer.concat([data.subarray(0, at), Buffer.from(e.replace, 'utf8'), data.subarray(end)]);
+  }
+  return data;
 }
 
 /** Why an assembled kit cannot be written to a fresh project, or null. */
