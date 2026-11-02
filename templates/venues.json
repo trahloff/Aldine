@@ -502,6 +502,77 @@
           "empty-eps-converted-to.pdf",
           "images/*.eps",
           "images/*.pdf"
+        ],
+        "patch": [
+          {
+            "file": "wileyNJD-Chicago.bst",
+            "sha256": "f67a18cea10d2cea2638dad908bac342c7d718bf4dbfa9d08f1e702f61023e51",
+            "edits": [
+              {
+                "find": "\nENTRY\n",
+                "replace": "\n% Aldine repaired this file when it created the project: as Wiley ships it,\n% BibTeX reports 164 errors on Wiley's own sample. What changed and why:\n% https://github.com/trahloff/Aldine/issues/172\nENTRY\n"
+              },
+              {
+                "find": "  { label.year extra.label sort.year sort.label }",
+                "replace": "  { label.year extra.label sort.year sort.label label short.list }"
+              },
+              {
+                "find": "INTEGERS { len }\n",
+                "until": "FUNCTION {calc.short.authors}",
+                "replace": ""
+              },
+              {
+                "find": "FUNCTION {calc.label}\n{ calc.short.authors",
+                "replace": "FUNCTION {calc.sort.label}\n{ calc.short.authors"
+              },
+              {
+                "find": "{ calc.label\n  label sortify",
+                "replace": "{ calc.sort.label\n  label sortify"
+              },
+              {
+                "find": "  sort.year write$\n",
+                "replace": "  label.year extra.label * write$\n"
+              },
+              {
+                "find": "{ \", and \" * t * \".\"}",
+                "replace": "{ \", and \" * t * \".\" * }"
+              },
+              {
+                "find": "      {  *  Volume   * }\n",
+                "replace": "      { \"~\" * volume * }\n"
+              },
+              {
+                "find": "\t\tvolume * \", no. \" * number * \"\" * * }",
+                "replace": "\t\tvolume * \", no. \" * number * }"
+              },
+              {
+                "find": "  \"title\" output.check\n   new.block\n    crossref missing$",
+                "replace": "  \"title\" output.check\n  del.comma\n    crossref missing$"
+              },
+              {
+                "find": "    { title output\n\tformat.editors.byfml\n",
+                "replace": "    { format.editors.byfml output\n"
+              },
+              {
+                "find": "    { \n\tformat.editors.fml output.check\n    }",
+                "replace": "    { \n\tformat.editors.fml \"editor\" output.check\n    }"
+              },
+              {
+                "find": "output.nonnull\n\tformat.editors.fml output.check\n",
+                "replace": "output.nonnull\n\tformat.editors.fml \"editor\" output.check\n"
+              }
+            ]
+          },
+          {
+            "file": "wileyNJD-Chicago.bib",
+            "sha256": "718c4d82e6181aaa70350dcd27ffaf777d52e09893e1470c8b374a2163beef45",
+            "edits": [
+              {
+                "find": "B. B. Author,  and C. C. Author",
+                "replace": "B. B. Author and C. C. Author"
+              }
+            ]
+          }
         ]
       },
       "documentClass": "USG",

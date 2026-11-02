@@ -7,7 +7,10 @@
 > (bare files instead of an archive), `flatten`, `root` (read one folder of
 > an archive that carries files beside it), `manual` (the publisher only hands
 > the kit to a browser: nothing is fetched and the tile links the kit and the
-> ZIP import), `icon`, `classOptions` and `classSetsBibStyle`; `category` is one of Journals, Conferences, Theses,
+> ZIP import), `patch` (exact edits to a file the publisher ships broken,
+> pinned to that file's sha256 and applied at seed time; the only publisher
+> text in the repo is the few lines each edit anchors on), `icon`,
+> `classOptions` and `classSetsBibStyle`; `category` is one of Journals, Conferences, Theses,
 > Slides or General; an archive's `take` list needs at least one exact file
 > name and must include `main`. Elsevier CAS, SAGE and PLOS did not make the
 > registry.
