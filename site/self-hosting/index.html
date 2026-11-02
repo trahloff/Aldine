@@ -100,7 +100,7 @@
 <li>Docker Engine with the compose plugin.</li>
 <li>Disk for the compiler image: the first pull is about 2.4 GB to download and about 5 GB on disk, because TeX Live lives in that image.</li>
 <li>For a shared production instance, the runbook recommends a VPS with 2 or more dedicated vCPUs, at least 8 GB of RAM and at least 40 GB of disk. LaTeX compiles are CPU and RAM bursts of about 2 GB each, so size for the compiles you expect to run at once.</li>
-<li>No database and no external services. Projects are git repositories on disk and metadata is stored in flat files by default.</li>
+<li>No database server and no external services. Projects are git repositories on disk and metadata is stored in one SQLite file by default.</li>
 </ul>
 
 <h2 id="install">Install</h2>
@@ -241,8 +241,8 @@ sudo systemctl enable --now aldine-backup.timer</code></pre>
 </div>
 <p><code>docker-compose.full.yml</code> passes <code>COMPILE_TIMEOUT_MS</code> and <code>MAX_CONCURRENT_COMPILES</code> through from <code>.env</code>. <code>ALDINE_COMPILE_QUOTA_MIN</code> is passed through by the <code>deploy/docker-compose.prod.yml</code> overlay. <code>RL_COMPILE_CONCURRENCY</code> is in neither file: add it under <code>environment:</code> of the <code>app</code> service yourself. Every variable Aldine reads is listed in the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">configuration table</a>.</p>
 
-<h2 id="storage">Storage: flat files, Postgres optional</h2>
-<p>Project files are real git repositories with worktrees on disk; that is what gives you branches and history. Users, sessions, project metadata, review comments and usage go through a datastore with two backends: JSON files (the default) or Postgres. The switch is configuration:</p>
+<h2 id="storage">Storage: one SQLite file, Postgres optional</h2>
+<p>Project files are real git repositories with worktrees on disk; that is what gives you branches and history. Users, sessions, project metadata, review comments and usage go through a datastore with three backends: one SQLite file, <code>aldine.db</code> in the secrets volume (the default since 1.7, which copies the JSON files of an earlier release on its first start), JSON files (<code>ALDINE_DATASTORE=json</code>) or Postgres. The switch is configuration:</p>
 <pre><code># in .env
 DATABASE_URL=postgres://aldine:aldine@db:5432/aldine
 # bring up with the bundled Postgres (or point at a managed one)
@@ -272,7 +272,7 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
 
 <h2 id="faq">Common questions</h2>
 <h3>What does Aldine need to run?</h3>
-<p>Docker with the compose plugin and room for the compiler image (about 5 GB on disk). No database is required.</p>
+<p>Docker with the compose plugin and room for the compiler image (about 5 GB on disk). No database server is required.</p>
 <h3>How do I upgrade?</h3>
 <p>Back up, then run <code>docker compose pull</code> and <code>docker compose up -d</code> with <code>ALDINE_VERSION</code> set to the new release. Rolling back is the same command with the previous version.</p>
 <h3>How do I back up?</h3>

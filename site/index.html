@@ -569,7 +569,7 @@
                         cites from your own library. Compiles run in a sandboxed
                         TeX&nbsp;Live container (no network egress, restricted
                         shell-escape), and warm recompiles land in about two
-                        seconds. Deployment is two containers and flat files;
+                        seconds. Deployment is two containers and one SQLite file;
                         the license is AGPL, so whoever hosts it after you gets
                         the same source you did.
                     </p>
@@ -768,7 +768,7 @@
                             Projects are plain .tex files in plain git repos on
                             your disk, readable without Aldine running, and
                             yours to take anywhere. AGPL-3.0, self-hosted,
-                            nothing phones home. Flat files by default;
+                            nothing phones home. One SQLite file by default;
                             Postgres is the optional datastore.
                         </p>
                     </div>
@@ -960,8 +960,8 @@
                 </div>
                 <p class="start-note">
                     Auth off by default for single use; one env var turns on
-                    logins, SSO, and sharing. Storage is flat files by
-                    default, with Postgres as the optional datastore.
+                    logins, SSO, and sharing. Storage is one SQLite file
+                    by default, with Postgres as the optional datastore.
                     <a href="/self-hosting/"
                         >Full guide: self-hosting Aldine with Docker
                         Compose</a
