@@ -52,10 +52,6 @@
     "usenix-security": {
       "key": "05b39e5314f359c0d80cf807514bf4da",
       "reason": "the user downloads the kit by hand (www.usenix.org does not allow automated downloads)"
-    },
-    "wiley": {
-      "key": "3c9fe70e2487075c5b5e808f34464b27",
-      "reason": "the typeset of kit \"wiley\" reported errors: BibTeX: short.list is an unknown function"
     }
   }
 }
