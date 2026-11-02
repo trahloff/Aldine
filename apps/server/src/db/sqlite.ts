@@ -137,9 +137,14 @@ export class SqliteStore implements DataStore {
     const sqlite = await loadSqlite();
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const size = fs.statSync(this.file, { throwIfNoEntry: false })?.size;
+    if (!size) {
+      // SQLite applies a log it finds beside a new file to it: one left from
+      // an earlier aldine.db would be written into this one.
+      for (const f of [`${this.file}-wal`, `${this.file}-shm`]) fs.rmSync(f, { force: true });
+    }
     if (!size && this.jsonRoot && JsonStore.lastWrite(this.jsonRoot) !== null) {
       // An empty file is a new database to SQLite: copying must not be skipped for one.
-      if (size === 0) fs.rmSync(this.file);
+      if (size === 0) fs.rmSync(this.file, { force: true });
       await this.copyJson(sqlite, this.jsonRoot);
     } else if (size === undefined) {
       createPrivate(this.file);
@@ -177,9 +182,13 @@ export class SqliteStore implements DataStore {
       into.db = open(sqlite, tmp);
       try {
         await into.load(dump);
+        // Only the main file is linked into place: every page must be in it.
+        const cp = into.get('PRAGMA wal_checkpoint(TRUNCATE)');
+        if (!cp || Number(cp.busy) !== 0 || Number(cp.log) !== Number(cp.checkpointed)) throw new Error('the copy could not be written into the database file in full');
       } finally {
         await into.close();
       }
+      if (fs.statSync(`${tmp}-wal`, { throwIfNoEntry: false })?.size) throw new Error('the copy could not be written into the database file in full');
       const fd = fs.openSync(tmp, 'r+');
       try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       // link() refuses an existing name: a second process that copied at the
@@ -247,7 +256,7 @@ export class SqliteStore implements DataStore {
     const copied = this.get(`SELECT value FROM aldine_meta WHERE key='json_copied_at'`)?.value;
     const last = JsonStore.lastWrite(root);
     if (!copied || last === null || last <= Date.parse(copied) + 1000) return;
-    console.warn(`[aldine] datastore: the JSON files in ${root} changed after they were copied into ${this.file} on ${copied}, so those changes are not here. To copy them over instead, stop Aldine, move ${path.basename(this.file)} aside and start it again.`);
+    console.warn(`[aldine] datastore: the JSON files in ${root} changed after they were copied into ${this.file} on ${copied}, so those changes are not here. To copy them over instead, stop Aldine, move ${path.basename(this.file)} aside (with ${path.basename(this.file)}-wal and -shm, if they are there) and start it again.`);
   }
 
   // ---- statements ----
@@ -654,9 +663,12 @@ export class SqliteStore implements DataStore {
 function open(sqlite: Sqlite, file: string): DatabaseSync {
   let db: DatabaseSync | undefined;
   try {
-    db = new sqlite.DatabaseSync(file, { timeout: 5000 });
-    // WAL lets a reader (a backup, the MCP stdio server) run beside a write;
-    // FULL syncs the log at every commit, not only at checkpoints.
+    db = new sqlite.DatabaseSync(file);
+    // Wait for another process's write (the MCP stdio server, a backup)
+    // rather than failing at once. A pragma: the `timeout` option needs 22.16.
+    db.exec('PRAGMA busy_timeout=5000');
+    // WAL lets a reader run beside a write; FULL syncs the log at every
+    // commit, not only at checkpoints.
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA synchronous=FULL');
     const problems = (db.prepare('PRAGMA quick_check').all() as Row[]).map((r) => String(r.quick_check));

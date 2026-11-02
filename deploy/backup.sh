@@ -71,7 +71,12 @@ fi
 # the backup in place of the live files. A stopped app left them consistent.
 SNAPSHOT=""
 RUNNING="$(container app)"
-if [ -z "$DB_URL" ] && [ -n "$RUNNING" ] && docker exec "$RUNNING" sh -c 'test -s "$META_DIR/aldine.db"'; then
+STORE=""
+if [ -z "$DB_URL" ] && [ -n "$RUNNING" ]; then
+  # A failed exec ends the script (set -e) instead of reading as "no aldine.db".
+  STORE="$(docker exec "$RUNNING" sh -c 'if [ -s "$META_DIR/aldine.db" ]; then echo sqlite; else echo files; fi')"
+fi
+if [ "$STORE" = sqlite ]; then
   docker exec "$RUNNING" sh -c 'rm -f /tmp/aldine-backup.db && node dist/db/snapshot.js /tmp/aldine-backup.db' >/dev/null
   mkdir "$STAGE/sqlite"
   docker cp "$RUNNING:/tmp/aldine-backup.db" "$STAGE/sqlite/aldine.db" >/dev/null
@@ -86,7 +91,13 @@ if [ -n "$SNAPSHOT" ]; then
     -v "${STAGE}/sqlite":/sqlite:ro \
     -v "${OUT_DIR}":/backup \
     "$ALPINE" sh -c 'set -e
-      cp -a /secrets /snap/secrets
+      # A temp file the app renames away mid-copy fails cp: try again.
+      for try in 1 2 3; do
+        rm -rf /snap/secrets
+        if cp -a /secrets /snap/secrets; then break; fi
+        [ "$try" = 3 ] && exit 1
+        sleep 1
+      done
       rm -f /snap/secrets/aldine.db /snap/secrets/aldine.db-wal /snap/secrets/aldine.db-shm
       cp /sqlite/aldine.db /snap/secrets/aldine.db
       chmod 600 /snap/secrets/aldine.db

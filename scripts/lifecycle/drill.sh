@@ -128,6 +128,7 @@ if [ "$DRILL" = upgrade ]; then
   COPY=""
   if [ "$DATASTORE" = sqlite ] && [ "$(in_secrets 'test -f /secrets/users.json && test ! -e /secrets/aldine.db && echo json || true')" = json ]; then
     COPY=copied
+    step "the volume holds $PREVIOUS's JSON datastore: the candidate must copy it into aldine.db"
   fi
   start "$CANDIDATE_APP" "$CANDIDATE_COMPILER"
   expect_datastore ${COPY:+"$COPY"}

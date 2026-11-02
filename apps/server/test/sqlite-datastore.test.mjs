@@ -192,6 +192,26 @@ async function readAll(s) {
   await t.close();
 }
 
+// ---- a log left beside a missing aldine.db belongs to another database ----
+{
+  const dir = freshDir();
+  await seed(dir);
+  const file = at(dir, SQLITE_FILE);
+  const earlier = new SqliteStore(file);
+  await earlier.init();
+  await earlier.createUser({ ...ada, id: 'ghost', email: 'ghost@example.com' });
+  const wal = fs.readFileSync(`${file}-wal`);
+  await earlier.close();
+  // aldine.db moved aside, its log left behind (an unclean stop).
+  fs.rmSync(file);
+  fs.writeFileSync(`${file}-wal`, wal);
+  const s = new SqliteStore(file, dir);
+  await linesOf('log', () => s.init());
+  check((await s.getUser('ghost')) === null, 'a stale log is not applied to the new file');
+  eq((await s.listUsers()).map((u) => u.id), ['ada', 'orc', 'wen'], 'which holds the copied accounts');
+  await s.close();
+}
+
 // ---- a JSON file that cannot be read stops the copy ----
 {
   const dir = freshDir();

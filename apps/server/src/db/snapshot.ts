@@ -27,8 +27,9 @@ if (!fs.existsSync(file)) {
 fs.rmSync(out, { force: true });
 fs.closeSync(fs.openSync(out, 'wx', 0o600));
 const { DatabaseSync } = await loadSqlite();
-const db = new DatabaseSync(file, { timeout: 5000 });
+const db = new DatabaseSync(file);
 try {
+  db.exec('PRAGMA busy_timeout=5000');
   db.prepare('VACUUM INTO ?1').run(out);
 } finally {
   db.close();
