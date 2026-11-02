@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-02
+
+Accounts, sessions, tokens, project settings and comments now live in one SQLite file, which keeps every finished write through a crash or the volume going read-only. The first start of 1.7 copies the JSON files of an earlier release into it and leaves them as they were; `ALDINE_DATASTORE=json` stays on them instead. Upgrading from 1.6 needs no manual step. Back up first all the same: going back to 1.6 afterwards finds the JSON files as they were at the copy.
+
 ### Changed
 - The default datastore is now SQLite. Accounts, sessions, tokens, project
   settings, comments and usage live in one file, `aldine.db` in the secrets
