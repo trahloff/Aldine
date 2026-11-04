@@ -1734,6 +1734,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
+  /** Whether the branch's typeset wrote `path`, so Share links only the
+   *  outputs that are there: a 404 per missing file would read as an error. */
+  app.get<{ Params: { id: string }; Querystring: OutputQ }>('/api/projects/:id/output/exists', async (req, reply) => {
+    const { branch = 'main', path: rel } = req.query;
+    if (!rel || !isOutputPath(rel)) return reply.code(400).send({ error: 'bad output path' });
+    try {
+      fs.accessSync(safeJoin(store.branchDir(req.params.id, branch), rel));
+      return { exists: true };
+    } catch {
+      return { exists: false };
+    }
+  });
+
   /**
    * Page 1 of the branch's last successful typeset (thumbnail.ts). Authorized
    * like an unsigned /output link, by the global guard alone: no signed link

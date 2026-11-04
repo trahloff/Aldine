@@ -216,7 +216,10 @@ function useOutputFiles(pdfUrl: string | null): OutputFile[] {
     if (!pdfUrl) return;
     let live = true;
     const files = ['.bbl', '.log'].map((ext) => outputSibling(pdfUrl, ext)).filter((f): f is OutputFile => f != null);
-    void Promise.all(files.map((f) => fetch(f.url, { method: 'HEAD' }).then((r) => r.ok, () => false)))
+    const exists = (f: OutputFile) => fetch(f.url.replace('/output?', '/output/exists?'))
+      .then((r) => (r.ok ? r.json() : null), () => null)
+      .then((b: { exists?: boolean } | null) => !!b?.exists);
+    void Promise.all(files.map(exists))
       .then((ok) => { if (live) setFound(files.filter((_, i) => ok[i])); });
     return () => { live = false; };
   }, [pdfUrl]);
