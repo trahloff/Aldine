@@ -7,6 +7,7 @@ import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './Branc
 import { usePopover } from '../util/usePopover';
 import { safeStorage } from '../util/safeStorage';
 import RemoteAccess from './RemoteAccess';
+import Modal from './Modal';
 
 /** The branch pill of a project linked to a git host. The host's branches are
  *  the project's branches: local `main` tracks one of them, and push, pull
@@ -300,32 +301,28 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       )}
 
       {showPush && (
-        <div className="modal-backdrop" onClick={() => setShowPush(false)}>
-          <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()} data-testid="push-dialog">
-            <h2 style={{ marginBottom: 8 }}>Push to {d.label}</h2>
-            <p className="modal__sub" style={{ marginBottom: 10 }}>{link.fullName} · {tracked}</p>
-            <input className="input" style={{ width: '100%' }} value={message} data-testid="push-message" autoFocus
-              onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doPush(message.trim() || 'Update from Aldine')} placeholder="Commit message" />
-            <div className="modal__row" style={{ marginTop: 12 }}>
-              <button className="btn" onClick={() => setShowPush(false)}>Cancel</button>
-              <button className="btn btn--primary" onClick={() => doPush(message.trim() || 'Update from Aldine')} data-testid="push-confirm">Commit &amp; push</button>
-            </div>
+        <Modal onClose={() => setShowPush(false)} label={`Push to ${d.label}`} width={420} testId="push-dialog">
+          <h2 style={{ marginBottom: 8 }}>Push to {d.label}</h2>
+          <p className="modal__sub" style={{ marginBottom: 10 }}>{link.fullName} · {tracked}</p>
+          <input className="input" style={{ width: '100%' }} value={message} data-testid="push-message"
+            onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) doPush(message.trim() || 'Update from Aldine'); }} placeholder="Commit message" />
+          <div className="modal__row" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={() => setShowPush(false)}>Cancel</button>
+            <button className="btn btn--primary" onClick={() => doPush(message.trim() || 'Update from Aldine')} data-testid="push-confirm">Commit &amp; push</button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showCr && (
-        <div className="modal-backdrop" onClick={() => setShowCr(false)}>
-          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()} data-testid="pr-dialog">
-            <h2 style={{ marginBottom: 8 }}>Open {d.changeRequest}</h2>
-            <p className="modal__sub" style={{ marginBottom: 10 }}>{tracked} → {branchInfo?.default}</p>
-            <input className="input" style={{ width: '100%' }} value={crTitle} data-testid="pr-title" autoFocus onChange={(e) => setCrTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && openChangeRequest()} placeholder={`${sentence(d.changeRequest)} title`} />
-            <div className="modal__row" style={{ marginTop: 12 }}>
-              <button className="btn" onClick={() => setShowCr(false)}>Cancel</button>
-              <button className="btn btn--primary" onClick={openChangeRequest} data-testid="pr-confirm">Open on {d.label}</button>
-            </div>
+        <Modal onClose={() => setShowCr(false)} label={`Open ${d.changeRequest}`} testId="pr-dialog">
+          <h2 style={{ marginBottom: 8 }}>Open {d.changeRequest}</h2>
+          <p className="modal__sub" style={{ marginBottom: 10 }}>{tracked} → {branchInfo?.default}</p>
+          <input className="input" style={{ width: '100%' }} value={crTitle} data-testid="pr-title" onChange={(e) => setCrTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) openChangeRequest(); }} placeholder={`${sentence(d.changeRequest)} title`} />
+          <div className="modal__row" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={() => setShowCr(false)}>Cancel</button>
+            <button className="btn btn--primary" onClick={openChangeRequest} data-testid="pr-confirm">Open on {d.label}</button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showAccess && (
@@ -341,20 +338,18 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       )}
 
       {conflicts && (
-        <div className="modal-backdrop" onClick={() => setConflicts(null)}>
-          <div className="modal" style={{ width: 460 }} onClick={(e) => e.stopPropagation()} data-testid="conflict-dialog">
-            <h2 style={{ marginBottom: 8 }}>Merge conflict</h2>
-            <p className="modal__sub">Your changes and {d.label}'s have diverged{conflicts.length ? ' in:' : '.'}</p>
-            {conflicts.length > 0 && <ul className="conflict__list">{conflicts.map((f) => <li key={f}>{f}</li>)}</ul>}
-            <p style={{ fontSize: 'var(--text-s)', color: 'var(--text-2)', lineHeight: 1.5 }}>
-              Aldine kept your local version. You can discard your local changes and take {d.label}'s version, or cancel and reconcile manually.
-            </p>
-            <div className="modal__row" style={{ marginTop: 12 }}>
-              <button className="btn" onClick={() => setConflicts(null)}>Cancel</button>
-              <button className="btn btn--danger" onClick={takeRemote} disabled={busy === 'reset'} data-testid="conflict-take-remote">Discard local &amp; take {d.label}'s</button>
-            </div>
+        <Modal onClose={() => setConflicts(null)} label="Merge conflict" width={460} testId="conflict-dialog">
+          <h2 style={{ marginBottom: 8 }}>Merge conflict</h2>
+          <p className="modal__sub">Your changes and {d.label}'s have diverged{conflicts.length ? ' in:' : '.'}</p>
+          {conflicts.length > 0 && <ul className="conflict__list">{conflicts.map((f) => <li key={f}>{f}</li>)}</ul>}
+          <p style={{ fontSize: 'var(--text-s)', color: 'var(--text-2)', lineHeight: 1.5 }}>
+            Aldine kept your local version. You can discard your local changes and take {d.label}'s version, or cancel and reconcile manually.
+          </p>
+          <div className="modal__row" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={() => setConflicts(null)}>Cancel</button>
+            <button className="btn btn--danger" onClick={takeRemote} disabled={busy === 'reset'} data-testid="conflict-take-remote">Discard local &amp; take {d.label}'s</button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

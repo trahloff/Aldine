@@ -7,7 +7,8 @@ import { electTypesetter, type TypesetPeer } from './autoTypeset';
 /**
  * The branch's coordination channel: one ephemeral Yjs doc carrying stamped
  * keys the server sets — `v` (the file list changed), `a` (an agent wrote),
- * `ts`/`td` (an agent-caused typeset started / finished). The same doc's
+ * `ts`/`td` (an agent-caused typeset started / finished), `c` (a commit
+ * landed; it changes the history only, never the file list). The same doc's
  * awareness is the roster the auto-typeset election runs over, which is why
  * both live in one hook: a second provider on this doc name would make a tab
  * elect its own other socket and freeze the branch's auto-typeset.
@@ -17,6 +18,7 @@ export interface BranchSignalHandlers {
   onAgentWrite(): void;
   onAgentTypesetStarted(): void;
   onAgentTypesetFinished(): void;
+  onCommitted(): void;
 }
 
 export interface BranchSignalHandle {
@@ -26,7 +28,7 @@ export interface BranchSignalHandle {
   electedTypesetter(): boolean;
 }
 
-type SignalKey = 'v' | 'a' | 'ts' | 'td';
+type SignalKey = 'v' | 'a' | 'ts' | 'td' | 'c';
 
 export function useBranchSignal(
   projectId: string,
@@ -75,12 +77,12 @@ export function useBranchSignal(
     });
     providerRef.current = provider;
     const map = ydoc.getMap<number>('signal');
-    const last: Record<SignalKey, number> = { v: 0, a: 0, ts: 0, td: 0 };
+    const last: Record<SignalKey, number> = { v: 0, a: 0, ts: 0, td: 0, c: 0 };
     // A client joining a branch an agent touched an hour ago must not replay
     // that stamp as a fresh edit and typeset on open: until the initial sync
     // has landed, the observer only records what it finds.
     let ready = false;
-    const record = () => { for (const k of ['v', 'a', 'ts', 'td'] as SignalKey[]) last[k] = map.get(k) || 0; };
+    const record = () => { for (const k of ['v', 'a', 'ts', 'td', 'c'] as SignalKey[]) last[k] = map.get(k) || 0; };
 
     const observer = () => {
       if (!ready) { record(); return; }
@@ -89,6 +91,7 @@ export function useBranchSignal(
         ['a', () => cbRef.current.onAgentWrite()],
         ['ts', () => cbRef.current.onAgentTypesetStarted()],
         ['td', () => cbRef.current.onAgentTypesetFinished()],
+        ['c', () => cbRef.current.onCommitted()],
       ];
       for (const [key, run] of fire) {
         const v = map.get(key) || 0;

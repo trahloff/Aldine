@@ -39,6 +39,32 @@ export function useLocalBranches({ projectId, current, onSwitch, onChanged, clos
   };
 
   const mergeIntoMain = async (from: string) => {
+    // Main is everyone's branch, so the merge asks first and says what goes
+    // in. It checkpoints the edits waiting on `from` before it merges, so
+    // those count as something to merge.
+    let count: number | null = null;
+    let unsaved = false;
+    try {
+      const [u, waiting] = await Promise.all([
+        api.unmergedCommits(projectId, from),
+        api.changes(projectId, from).catch(() => ({ paths: [] as string[] })),
+      ]);
+      count = u.count;
+      unsaved = waiting.paths.length > 0;
+    } catch { /* the plain question still stands */ }
+    if (count === 0 && !unsaved) {
+      toast(`Nothing to merge: main already has everything on ${from}`, 'info');
+      return;
+    }
+    let what = '';
+    if (count) {
+      const checkpoints = `${count} checkpoint${count === 1 ? '' : 's'} from ${from}`;
+      what = unsaved ? `${checkpoints}, and its edits since the last one, go` : `${checkpoints} ${count === 1 ? 'goes' : 'go'}`;
+    } else if (unsaved) {
+      what = `The edits on ${from} since its last checkpoint go`;
+    }
+    const body = `${what ? `${what} into main. ` : ''}Everyone working on main sees them.`;
+    if (!(await dialogs.confirm({ title: `Merge ${from} into main?`, body, confirmLabel: 'Merge into main' }))) return;
     try {
       const res = await api.merge(projectId, from, 'main');
       if (res.ok) {

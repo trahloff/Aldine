@@ -31,6 +31,19 @@ describe('palette matching', () => {
     expect(viaKeyword).not.toBeNull();
     expect(viaKeyword!).toBeGreaterThan(matchScore('dark', 'Dark')!);
   });
+
+  it('ranks a whole keyword above a title word that only starts with the query', () => {
+    const typeset = matchScore('compile', 'Typeset document', 'compile recompile build pdf')!;
+    const settings = matchScore('compile', 'Project settings: compiler, main document, TeX Live')!;
+    expect(typeset).toBeLessThan(settings);
+    expect(matchScore('history', 'Show history')!).toBeLessThan(matchScore('history', 'Save a checkpoint…', 'history versions commit')!);
+    // A keyword typed halfway still ranks below any title match.
+    expect(matchScore('comp', 'Typeset document', 'compile recompile build pdf')!).toBeGreaterThan(settings);
+  });
+
+  it('scores the best occurrence in a title, not the first', () => {
+    expect(matchScore('set', 'Typeset settings')).toBeLessThan(matchScore('set', 'Typeset document')!);
+  });
 });
 
 describe('palette sections', () => {
@@ -46,6 +59,15 @@ describe('palette sections', () => {
     const s = rankCommands(commands, '', ['Projects', 'New', 'More']);
     expect(s.map((x) => x.group)).toEqual(['Projects', 'New', 'More']);
     expect(s[0].items.map((c) => c.title)).toEqual(['Neurips submission', 'Palette Destination']);
+  });
+
+  it('puts the command a keyword names first, ahead of a title that merely contains the word', () => {
+    const editor = [
+      cmd('Actions', 'Typeset document', 'compile recompile build pdf'),
+      cmd('View', 'Project settings: compiler, main document, TeX Live'),
+    ];
+    expect(rankCommands(editor, 'compile')[0].items[0].title).toBe('Typeset document');
+    expect(rankCommands(editor, 'recompile')[0].items[0].title).toBe('Typeset document');
   });
 
   it('puts the section with the best match first once something is typed', () => {

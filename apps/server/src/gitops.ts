@@ -664,12 +664,14 @@ export async function commitAuthors(id: string, hashes: string[]): Promise<strin
   return raw.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-/** Unified patch for a single commit (handles root commits, which have no parent). */
+/** Unified patch for a single commit (handles root commits, which have no parent).
+ *  A merge shows what it brought into its branch, against the first parent:
+ *  git's default combined diff is empty for a merge without conflicts. */
 export async function commitDiff(id: string, hash: string): Promise<{ patch: string; stat: string }> {
   if (!/^[0-9a-f]{4,40}$/.test(hash)) throw new Error('bad commit hash');
   const g = git(repoDir(id));
-  const patch = await g.raw(['show', hash, '--no-color', '--pretty=format:', '--']);
-  const stat = await g.raw(['show', hash, '--no-color', '--stat', '--pretty=format:', '--']);
+  const patch = await g.raw(['show', '-m', '--first-parent', hash, '--no-color', '--pretty=format:', '--']);
+  const stat = await g.raw(['show', '-m', '--first-parent', hash, '--no-color', '--stat', '--pretty=format:', '--']);
   return { patch: patch.replace(/^\n+/, ''), stat: stat.replace(/^\n+/, '') };
 }
 

@@ -27,6 +27,8 @@ interface Props {
   /** Bumped by the parent to open the new-file input from outside the tree
    *  (the editor's empty state). */
   newFileRequest?: number;
+  /** What the request opens: the name input for a file or a folder, or the upload picker. */
+  newFileKind?: 'file' | 'folder' | 'upload';
   /** Called once the request opened the input, so the parent resets it: the
    *  tree is unmounted on other sidebar tabs and would otherwise reopen the
    *  input on every remount. */
@@ -91,7 +93,7 @@ function foldersIn(files: TreeEntry[]): Set<string> {
   return dirs;
 }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const errorId = useId();
@@ -167,7 +169,12 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     setAdding({ kind, dir });
     reveal(dir);
   };
-  useEffect(() => { if (newFileRequest) { startAdding(); onNewFileHandled?.(); } }, [newFileRequest]);
+  useEffect(() => {
+    if (!newFileRequest) return;
+    if (newFileKind === 'upload') chooseUpload('');
+    else startAdding(newFileKind);
+    onNewFileHandled?.();
+  }, [newFileRequest]);
   const stopAdding = () => { setAdding(null); setName(''); setNameError(null); };
 
   // An invalid name keeps the input open with the reason under it, on Enter

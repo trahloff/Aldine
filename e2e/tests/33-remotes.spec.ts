@@ -146,6 +146,12 @@ test.describe('Gitea / Forgejo sync', () => {
     await page.getByTestId('branch-menu').click();
     await page.getByTestId('gitea-push-btn').click();
     await expect(page.getByTestId('push-dialog')).toContainText('Push to Gitea / Forgejo');
+    await expect(page.getByTestId('push-message')).toBeFocused();
+    // Escape closes it like every other dialog, and nothing is pushed.
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('push-dialog')).toHaveCount(0);
+    if (!(await page.getByTestId('branch-list').isVisible())) await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitea-push-btn').click();
     await page.getByTestId('push-message').fill('Add e2e marker');
     await page.getByTestId('push-confirm').click();
     await expect(page.locator('.toast').filter({ hasText: 'Pushed to Gitea / Forgejo' })).toBeVisible();

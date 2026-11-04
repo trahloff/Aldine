@@ -6,14 +6,16 @@ import { useAuth } from './Auth';
 import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
 import { ClaudeConnectSteps, useConnectorUrl } from './ClaudeConnect';
+import LoadError from './LoadError';
 
 /** The git host accounts this user connected, each with Disconnect. A
  *  replacement token is entered where it is used: Clone from a host, or a
  *  project's Git access. */
 function GitHosts() {
   const [rows, setRows] = useState<RemoteConnectionRow[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const toast = useToast();
-  const load = () => api.remoteConnections().then(setRows).catch(() => setRows([]));
+  const load = () => api.remoteConnections().then((r) => { setRows(r); setFailed(false); }, () => setFailed(true));
   useEffect(() => { load(); }, []);
   const disconnect = async (r: RemoteConnectionRow) => {
     try { await api.remoteDisconnect(r.provider); toast(`Disconnected ${remoteDescriptor(r.provider).label}`, 'ok'); load(); }
@@ -22,7 +24,8 @@ function GitHosts() {
   return (
     <div data-testid="account-git-hosts">
       <div className="menu__label" style={{ margin: '18px 0 6px' }}>Git hosts</div>
-      {rows?.length === 0 && (
+      {failed && <LoadError text="Couldn’t load your git hosts." onRetry={load} testId="account-git-hosts-error" />}
+      {!failed && rows?.length === 0 && (
         <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }}>No git host connected. Connect one from New → Clone, or from a project's Git access.</p>
       )}
       {rows?.map((r) => (

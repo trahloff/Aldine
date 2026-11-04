@@ -7,6 +7,35 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- Merging a branch into main from the branch menu asks first and says how
+  many checkpoints go in, because everyone working on main sees them. When
+  main already has everything on the branch, it says "Nothing to merge"
+  instead.
+
+### Fixed
+- A merge in History shows the changes it brought in. It used to say "No
+  changes in this commit."
+- The History diff and the Push, pull request and merge conflict dialogs
+  close with Escape and keep Tab inside them, like every other dialog. Enter
+  that confirms an input method's conversion no longer saves a checkpoint or
+  pushes with half a message.
+- Replace all across the project has Undo on its toast. It reverts the one
+  commit the replace made.
+- The command palette finds Typeset for "compile", "recompile" and "build",
+  and History for "history". It has Show history, Show review comments, New
+  file…, New folder… and Upload files…, and no longer lists `.gitignore` and
+  other dotfiles.
+- Long lines in a History diff wrap at every window width instead of
+  scrolling sideways.
+- History, Review and the git hosts in Account settings say when they are
+  still loading or could not load, with Try again, instead of showing their
+  empty state.
+- An open History panel lists autosaves and co-authors' checkpoints as they
+  land.
+- "Save a checkpoint…" and "New branch…" in the palette put the cursor in the
+  message or branch name field, not in the paper.
+
 ## [1.8.0] — 2026-11-04
 
 ### Changed

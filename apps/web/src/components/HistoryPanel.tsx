@@ -1,20 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, LogEntry, localUser } from '../api';
 import { useToast } from './Toast';
 import { friendlyDate } from '../util/dates';
 import DiffView from './DiffView';
+import Modal from './Modal';
+import LoadError from './LoadError';
 
 /** `version` bumps whenever the branch changed elsewhere (the files signal,
  *  a revert, an agent session ending); `live` polls while an agent is present,
  *  because its commits land on the autosave debounce, after the signal.
  *  `manual`: the project commits by hand, so the panel lists what is waiting
- *  and the commit asks for a message. */
-export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean }) {
-  const [log, setLog] = useState<LogEntry[]>([]);
+ *  and the commit asks for a message.
+ *  `focusRequest`: bumped by the parent to put the cursor in the message
+ *  field; `onFocusHandled` resets it, because the panel remounts on every
+ *  visit to the tab and would otherwise take the focus each time. */
+export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false, focusRequest = 0, onFocusHandled }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean; focusRequest?: number; onFocusHandled?: () => void }) {
+  /** null until this branch's log has arrived. */
+  const [log, setLog] = useState<LogEntry[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<string[] | null>(null);
   const [msg, setMsg] = useState('');
   const [diff, setDiff] = useState<{ entry: LogEntry; patch: string } | null>(null);
   const toast = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  /** Only the newest request may set the log: a poll can answer after a reload. */
+  const seq = useRef(0);
 
   const openDiff = async (c: LogEntry) => {
     try {
@@ -29,8 +39,21 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
     if (!manual) { setPending(null); return; }
     api.changes(projectId, branch).then((r) => setPending(r.paths)).catch(() => setPending(null));
   };
-  const load = () => { api.log(projectId, branch).then(setLog).catch(() => setLog([])); loadPending(); };
+  const load = () => {
+    const n = ++seq.current;
+    api.log(projectId, branch).then(
+      (l) => { if (n === seq.current) { setLog(l); setFailed(false); } },
+      () => { if (n === seq.current) setFailed(true); },
+    );
+    loadPending();
+  };
+  useEffect(() => { setLog(null); setFailed(false); }, [projectId, branch]);
   useEffect(() => { load(); }, [projectId, branch, version, manual]);
+  useEffect(() => {
+    if (!focusRequest) return;
+    inputRef.current?.focus();
+    onFocusHandled?.();
+  }, [focusRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   // Typing changes the working tree without any signal reaching this panel.
   useEffect(() => {
     if (!manual) return;
@@ -61,13 +84,14 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
     <div className="panel-list" data-testid="history-panel">
       <div style={{ display: 'flex', gap: 6, padding: '2px 0 8px' }}>
         <input
+          ref={inputRef}
           className="input"
           style={{ flex: 1, minWidth: 0 }}
           placeholder={manual ? 'Commit message' : 'Checkpoint message'}
           value={msg}
           data-testid="commit-message"
           onChange={(e) => setMsg(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && commit()}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit(); }}
         />
         <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>{manual ? 'Commit' : 'Save'}</button>
       </div>
@@ -76,7 +100,9 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
           {pending.length === 0 ? 'No uncommitted changes' : `${pending.length} ${pending.length === 1 ? 'file' : 'files'} not committed yet: ${pending.slice(0, 3).join(', ')}${pending.length > 3 ? ', …' : ''}`}
         </div>
       )}
-      {log.map((c) => (
+      {failed && <LoadError text="Couldn’t load the history." onRetry={load} testId="history-error" />}
+      {log === null && !failed && <p style={{ color: 'var(--text-2)', padding: 8 }} data-testid="history-loading">Loading the history…</p>}
+      {log?.map((c) => (
         <button key={c.hash} className={`history__item${c.author === 'Claude' ? ' history__item--agent' : ''}`} title={`${c.message}\n${c.hash.slice(0, 10)} — click to see changes`} data-testid={`commit-${c.hash.slice(0, 7)}`} onClick={() => openDiff(c)}>
           <div className="history__msg">{c.message}</div>
           <div className="history__meta">
@@ -85,17 +111,15 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
           </div>
         </button>
       ))}
-      {log.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8 }}>No history yet on this branch.</p>}
+      {log?.length === 0 && !failed && <p style={{ color: 'var(--text-2)', padding: 8 }}>No history yet on this branch.</p>}
 
       {diff && (
-        <div className="modal-backdrop" onClick={() => setDiff(null)}>
-          <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginBottom: 2 }}>{diff.entry.message}</h2>
-            <p className="modal__sub">{diff.entry.author} · {friendlyDate(diff.entry.date)} · {diff.entry.hash.slice(0, 10)}</p>
-            <DiffView patch={diff.patch} />
-            <div className="modal__row"><button className="btn" onClick={() => setDiff(null)}>Close</button></div>
-          </div>
-        </div>
+        <Modal onClose={() => setDiff(null)} label={`Changes in “${diff.entry.message}”`} wide testId="diff-dialog">
+          <h2 style={{ marginBottom: 2 }}>{diff.entry.message}</h2>
+          <p className="modal__sub">{diff.entry.author} · {friendlyDate(diff.entry.date)} · {diff.entry.hash.slice(0, 10)}</p>
+          <DiffView patch={diff.patch} />
+          <div className="modal__row"><button className="btn" onClick={() => setDiff(null)} data-testid="diff-close">Close</button></div>
+        </Modal>
       )}
     </div>
   );

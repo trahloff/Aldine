@@ -30,9 +30,11 @@ test.describe('git branches', () => {
       await page.getByTestId('branch-revision').click();
       await expect(page.locator('.cm-content')).toContainText('BRANCH-ONLY-TEXT', { timeout: 15_000 });
 
-      // merge revision into main
+      // merge revision into main: main is everyone's branch, so it asks first
       await page.getByTestId('branch-menu').click();
       await page.getByTestId('merge-revision').click();
+      await expect(page.getByTestId('dialog-title')).toHaveText('Merge revision into main?');
+      await page.getByTestId('dialog-confirm').click();
       await expect(page.getByTestId('branch-menu')).toContainText('main', { timeout: 15_000 });
       await expect(page.locator('.cm-content')).toContainText('BRANCH-ONLY-TEXT', { timeout: 15_000 });
     } finally {

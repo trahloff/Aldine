@@ -73,6 +73,10 @@ try {
   eq(store.readFile(id, 'main', 'chapter.tex').toString('utf8'), 'new chapter\n', "draft's file is on main");
   const subject = (await store.git(store.repoDir(id)).raw(['log', '-1', '--format=%s'])).trim();
   eq(subject, 'Merge draft into main', 'the merge commit names the branches');
+  // git's combined diff of a clean merge is empty; History shows the first-parent one
+  const { patch, stat } = await gitops.commitDiff(id, await head());
+  check(patch.includes('+new chapter'), `the merge's diff shows what it brought in: ${patch}`);
+  check(stat.includes('chapter.tex'), `the merge's stat names the file: ${stat}`);
 } finally {
   await app.close();
   fs.rmSync(tmp, { recursive: true, force: true });
