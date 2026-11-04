@@ -117,6 +117,29 @@ test.describe('in-file Find', () => {
     }
   });
 
+  test('Go to line opens above the text, like Find, and puts the cursor on the line', async ({ page, request }) => {
+    const id = await seed(request, 'Go To Line');
+    try {
+      await openSource(page, id);
+      await line(page, 'Row').click();
+      await page.keyboard.press(`${mod}+Alt+g`);
+      const dialog = page.locator('.cm-panels-top .cm-dialog');
+      await expect(dialog).toContainText('Go to line');
+      await expect(page.locator('.cm-panels-bottom .cm-dialog')).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: 'Go', exact: true })).toBeVisible();
+      const field = dialog.locator('input[name=line]');
+      await expect(field).toBeFocused();
+      await expect(field).toHaveValue('5');
+      await field.fill('3');
+      await page.keyboard.press('Enter');
+      await expect(dialog).toHaveCount(0);
+      await page.keyboard.type('X');
+      await expectStored(request, id, DOC.replace('\\noindent See', 'X\\noindent See'));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('reads in the dark theme, in sentence case, and keeps its query for the next file', async ({ page, request }) => {
     const id = await seed(request, 'Find Look', { 'chapter.tex': 'Chapter text with \\noindent too.\n' });
     try {

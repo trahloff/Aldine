@@ -1,6 +1,6 @@
 import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useParams } from 'react-router-dom';
 import Home from './pages/Home';
 import { BASE_PATH } from './basePath';
 import { ToastProvider } from './components/Toast';
@@ -20,6 +20,13 @@ const Editor = lazy(loadEditor);
 const OAuthConsent = lazy(() => import('./pages/OAuthConsent'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Invite = lazy(() => import('./pages/Invite'));
+
+/** One editor per project: from one project straight to another, nothing of the
+ *  first (its tree, its open file, its connections) carries over. */
+function ProjectEditor() {
+  const { id = '' } = useParams();
+  return <Editor key={id} />;
+}
 
 function NotFound() {
   useDocumentTitle('Page not found');
@@ -44,7 +51,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Suspense fallback={<div className="page-loading" />}>
               <Routes>
                 <Route path="/" element={<Home />} />
-                <Route path="/p/:id" element={<Editor />} />
+                <Route path="/p/:id" element={<ProjectEditor />} />
                 <Route path="/oauth/authorize" element={<OAuthConsent />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/invite/:id" element={<Invite />} />

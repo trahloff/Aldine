@@ -91,7 +91,7 @@ test.describe('history and branches', () => {
     }
   });
 
-  test('Replace all across the project can be undone from its toast', async ({ page, request }) => {
+  test('Replace all across the project can be undone from its toast, and the search shows the matches again', async ({ page, request }) => {
     const id = await createProject(request, 'Replace Undo');
     try {
       expect((await put(request, id, 'main', 'chapters/a.tex', 'colour and colour\n')).ok()).toBeTruthy();
@@ -103,11 +103,15 @@ test.describe('history and branches', () => {
       await page.getByTestId('search-replace-all').click();
       await page.getByTestId('dialog-confirm').click();
       await expect.poll(() => fileText(request, id, 'chapters/a.tex')).toBe('color and color\n');
+      await expect(page.getByTestId('search-empty')).toHaveText('No results for “colour”');
 
       await page.getByTestId('replace-undo').click();
       await expect(toast(page, 'Undid the replace of 2 matches')).toBeVisible();
       await expect.poll(() => fileText(request, id, 'chapters/a.tex')).toBe('colour and colour\n');
       expect((await log(request, id)).some((c) => c.message === 'Undo the project-wide replace')).toBe(true);
+      // the search runs again: the matches the Undo put back are listed, without Search again
+      await expect(page.locator('[data-testid="search-file"][data-path="chapters/a.tex"]').getByTestId('search-file-count')).toHaveText('2');
+      await expect(page.getByTestId('search-empty')).toHaveCount(0);
     } finally {
       await cleanup(request, id);
     }

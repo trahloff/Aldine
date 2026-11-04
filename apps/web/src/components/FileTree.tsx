@@ -34,6 +34,8 @@ interface Props {
   onNewFileHandled?(): void;
   /** On another sidebar tab: the tree stays mounted there, out of sight. */
   hidden?: boolean;
+  /** A read-only showcase: the tree opens files and changes its view, and nothing else. */
+  readOnly?: boolean;
 }
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
@@ -100,7 +102,7 @@ function foldersIn(files: TreeEntry[]): Set<string> {
   return dirs;
 }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false, readOnly = false }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const errorId = useId();
@@ -186,6 +188,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   };
   useEffect(() => {
     if (!newFileRequest) return;
+    if (readOnly) { onNewFileHandled?.(); return; }
     if (newFileKind === 'upload') chooseUpload('');
     else startAdding(newFileKind);
     onNewFileHandled?.();
@@ -252,8 +255,8 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     if (done.length) { reveal(dir); onUploaded(done); }
   };
   /** For what runs after this render's props are gone: an Undo, a window listener. */
-  const latest = useRef({ rename, uploadFiles });
-  latest.current = { rename, uploadFiles };
+  const latest = useRef({ rename, uploadFiles, readOnly });
+  latest.current = { rename, uploadFiles, readOnly };
 
   // A file dragged over the rest of the window must not open in place of the
   // app. Dropped on the editor it uploads to the top level, as onto the space
@@ -266,12 +269,12 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     const over = (e: globalThis.DragEvent) => {
       if (!fileDrag(e) || e.defaultPrevented) return;
       e.preventDefault();
-      e.dataTransfer!.dropEffect = onEditor(e) ? 'copy' : 'none';
+      e.dataTransfer!.dropEffect = onEditor(e) && !latest.current.readOnly ? 'copy' : 'none';
     };
     const drop = (e: globalThis.DragEvent) => {
       if (!fileDrag(e)) return;
       e.preventDefault();
-      if (onEditor(e) && e.dataTransfer!.files.length) void latest.current.uploadFiles(e.dataTransfer!.files);
+      if (onEditor(e) && !latest.current.readOnly && e.dataTransfer!.files.length) void latest.current.uploadFiles(e.dataTransfer!.files);
     };
     window.addEventListener('dragover', over);
     window.addEventListener('drop', drop, true);
@@ -346,8 +349,11 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   // around the rows for the top level.
   const canDrop = (e: DragEvent, dir: string) =>
     dragged.current !== null ? moveTarget(dragged.current, dir) !== null : e.dataTransfer.types.includes('Files');
+  // A showcase leaves every drop to the window's handlers, which keep a file
+  // from opening in place of the app and upload nothing.
   const dropTarget = (dir: string) => ({
     onDragOver: (e: DragEvent) => {
+      if (readOnly) return;
       e.stopPropagation();
       if (!canDrop(e, dir)) { setDropDir(null); return; }
       e.preventDefault();
@@ -355,6 +361,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       setDropDir(dir);
     },
     onDrop: async (e: DragEvent) => {
+      if (readOnly) return;
       e.preventDefault();
       e.stopPropagation();
       setDropDir(null);
@@ -375,7 +382,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     },
   });
   const dragSource = (path: string) => ({
-    draggable: true,
+    draggable: !readOnly,
     onDragStart: (e: DragEvent) => {
       dragged.current = path;
       e.dataTransfer.setData(DRAG_TYPE, path);
@@ -414,14 +421,14 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
             <button
               className={`tree__item tree__dir ${dropDir === node.path ? 'tree__item--drop' : ''}`} style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
               data-testid={`dir-${node.path}`} title={node.path} aria-expanded={open}
-              {...folderMenu.bind(() => folderActions(node.path))}
+              {...(readOnly ? {} : folderMenu.bind(() => folderActions(node.path)))}
               {...dragSource(node.path)}
             >
               <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
               <span className="tree__icon"><FolderIcon /></span>
               {node.name}
             </button>
-            {rowMenu(node)}
+            {!readOnly && rowMenu(node)}
           </div>
           {open && (node.children.length
             ? node.children.map((c) => renderNode(c, depth + 1))
@@ -440,7 +447,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           style={{ paddingLeft: pad }}
           data-testid={`file-${node.path}`}
           onClick={() => onOpen(node.path)}
-          {...fileMenu.bind(() => fileActions(node.path))}
+          {...(readOnly ? {} : fileMenu.bind(() => fileActions(node.path)))}
           {...dragSource(node.path)}
           title={node.path}
         >
@@ -449,7 +456,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           {node.name}
           {node.path === rootFile && <span className="tree__root-tag">root</span>}
         </button>
-        {rowMenu(node)}
+        {!readOnly && rowMenu(node)}
       </div>
     );
   };
@@ -482,9 +489,13 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         </div>
       ) : (
         <div className="tree__actions">
-          <button className="btn btn--ghost btn--icon" onClick={() => startAdding('file')} data-testid="new-file" title="New file" aria-label="New file"><IconFilePlus /></button>
-          <button className="btn btn--ghost btn--icon" onClick={() => startAdding('folder')} data-testid="new-folder" title="New folder" aria-label="New folder"><IconFolderPlus /></button>
-          <button className="btn btn--ghost btn--icon" onClick={() => chooseUpload('')} data-testid="upload-file" title="Upload files" aria-label="Upload files"><IconUpload /></button>
+          {!readOnly && (
+            <>
+              <button className="btn btn--ghost btn--icon" onClick={() => startAdding('file')} data-testid="new-file" title="New file" aria-label="New file"><IconFilePlus /></button>
+              <button className="btn btn--ghost btn--icon" onClick={() => startAdding('folder')} data-testid="new-folder" title="New folder" aria-label="New folder"><IconFolderPlus /></button>
+              <button className="btn btn--ghost btn--icon" onClick={() => chooseUpload('')} data-testid="upload-file" title="Upload files" aria-label="Upload files"><IconUpload /></button>
+            </>
+          )}
           <button
             className="btn btn--ghost btn--icon tree__filter" onClick={() => setSourceOnly((v) => !v)} aria-pressed={sourceOnly}
             data-testid="source-only" title="Show only LaTeX source and images" aria-label="Show only LaTeX source and images"
@@ -499,7 +510,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           if (e.target.files?.length) await uploadFiles(e.target.files, dir);
           e.target.value = '';
         }} />
-      <p className="filetree__hint">Drop files here to upload, or onto a folder</p>
+      {!readOnly && <p className="filetree__hint">Drop files here to upload, or onto a folder</p>}
 
       {fileMenu.element}
       {folderMenu.element}

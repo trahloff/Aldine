@@ -266,7 +266,7 @@ test.describe('auth', () => {
     await carol.close();
   });
 
-  test('a link visitor sees the project settings read-only, and can make a copy from the palette and the list', async ({ browser }) => {
+  test('a link visitor sees the project settings read-only, is not offered them in the palette, and can make a copy from the palette and the list', async ({ browser }) => {
     // its own client address keeps it off the sign-in limit the suite shares
     const alice = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.61' } });
     await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
@@ -297,6 +297,20 @@ test.describe('auth', () => {
     await expect(page.getByTestId('file-menu-rename')).toBeVisible();
     await expect(page.getByTestId('file-menu-root')).toHaveCount(0);
     await page.keyboard.press('Escape');
+    // nor does the palette: the engine, Stop on first error and Commit changes are the project's
+    const configCommands = async (shown: boolean) => {
+      await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+k`);
+      await page.getByTestId('palette-input').fill('Typeset');
+      await expect(page.getByTestId('palette-item-typeset')).toBeVisible();
+      await expect(page.getByTestId('palette-item-engine-lualatex')).toHaveCount(shown ? 1 : 0);
+      for (const [query, item] of [['Stop on first error', 'stop-on-error'], ['Commit changes', 'manual-commits']]) {
+        await page.getByTestId('palette-input').fill(query);
+        await expect(page.getByTestId(`palette-item-${item}`), item).toHaveCount(shown ? 1 : 0);
+      }
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('command-palette')).toHaveCount(0);
+    };
+    await configCommands(false);
 
     // a copy from the palette is hers
     await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+k`);
@@ -308,6 +322,7 @@ test.describe('auth', () => {
     await expect(page).not.toHaveURL(new RegExp(`/p/${proj.id}$`));
     await expect(page.getByTestId('project-name')).toHaveText(`${name} copy`);
     await expect(page.getByTestId('project-name')).toHaveAttribute('contenteditable', 'true');
+    await configCommands(true);
     const copyId = new URL(page.url()).pathname.split('/')[2];
     expect((await (await carol.request.get(`/api/projects/${copyId}`)).json()).isOwner).toBe(true);
 
