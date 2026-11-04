@@ -114,6 +114,27 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the edge of the editor when the formula scrolls out of view.
 - A figure replaced by an upload shows its new preview in Visual right away,
   not after a reload.
+- Switching a linked project to another branch on GitHub, GitLab or Gitea
+  asks first, since everyone's open files change. If the latest edits
+  cannot be committed, or the project has commits the host lacks and they
+  cannot be pushed, the switch stops instead of throwing them away. When the host has newer commits, the
+  message says to pull first and has a Pull button.
+- When publishing creates the repository but its first push fails, the
+  dialog closes onto the linked project and the message has a Push button
+  that opens the push dialog. Before, the project looked unpublished until a
+  reload, and publishing again said it was already linked.
+- "Connect with GitHub" (or GitLab) started from Publish or Git access in a
+  project returns to that project instead of the clone dialog on Home.
+- The token help in the connect, one-repository clone and project token
+  forms links to the host's new-token page: GitHub with the repo scope
+  ticked, GitLab with the api scope ticked on gitlab.com or the instance you
+  typed, and Gitea / Forgejo's Applications page once the instance URL is
+  filled in. For one repository on GitHub, it links to the fine-grained
+  token page and says to choose only that repository with Contents: read
+  and write.
+- The "publish it to a git host" hint on a new project has a Publish button,
+  and the command palette has "Publish to a git host…" for the owner. It
+  also answers to GitHub, GitLab, Gitea, Forgejo and Codeberg.
 
 ## [1.8.0] — 2026-11-04
 

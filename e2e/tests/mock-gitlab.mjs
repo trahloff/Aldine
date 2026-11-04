@@ -5,6 +5,8 @@
  * grp/sub/paper (a three-segment path) so nested groups get exercised.
  * Any bearer token works except `bad` and the ones revoked through
  * /__revoke (401) — that is how a spec provokes the token-invalid path.
+ * /__failpush?on=1 gives every project created from then on a pre-receive
+ * hook that refuses pushes; ?on=0 takes the hook off every project again.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -36,6 +38,8 @@ let nextGroupId = 100;
 const mergeRequests = [];
 /** Test switches: /__fail?on=1 makes POST /projects answer 503; delayed deletion marks first, purges on the second call. */
 let failCreates = false;
+let failPushes = false;
+const REFUSE_PUSH = '#!/bin/sh\necho "push refused (test switch)" >&2\nexit 1\n';
 let delayedDeletion = true;
 const deleted = [];
 /** Tokens /__revoke?token=… made expire; /__revoke?clear=1 brings them all back. */
@@ -56,6 +60,10 @@ function createProject(fullName, visibility = 'private', seed = null) {
     git('-c user.email=e2e@aldine.dev -c user.name=e2e commit -q -m "seed"', work);
     git('push -q origin main', work);
     fs.rmSync(work, { recursive: true, force: true });
+  }
+  if (failPushes) {
+    fs.mkdirSync(path.join(bare, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(bare, 'hooks', 'pre-receive'), REFUSE_PUSH, { mode: 0o755 });
   }
   const p = { id: nextId++, fullName, bare, visibility, createdAt: new Date().toISOString(), markedForDeletionOn: null };
   projects.set(fullName, p);
@@ -99,6 +107,11 @@ const server = http.createServer((req, res) => {
   };
   // test-only switches, no auth
   if (url.pathname === '/__fail') { failCreates = url.searchParams.get('on') === '1'; return send(200, { failCreates }); }
+  if (url.pathname === '/__failpush') {
+    failPushes = url.searchParams.get('on') === '1';
+    if (!failPushes) for (const p of projects.values()) fs.rmSync(path.join(p.bare, 'hooks', 'pre-receive'), { force: true });
+    return send(200, { failPushes });
+  }
   if (url.pathname === '/__delayed') { delayedDeletion = url.searchParams.get('on') !== '0'; return send(200, { delayedDeletion }); }
   if (url.pathname === '/__deleted') return send(200, deleted);
   if (url.pathname === '/__projects') return send(200, [...projects.values()].map(projectJson));

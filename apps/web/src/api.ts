@@ -71,7 +71,12 @@ export interface RemoteAccess { provider: RemoteProviderId; source: RemoteSource
 export interface RemoteConnectionRow { provider: RemoteProviderId; login: string; baseUrl?: string }
 /** The code a sync route answers with when the host refused the token it used. */
 export const TOKEN_REJECTED = 'token-invalid';
-export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
+/** Switching the tracked branch was refused: the host has commits main lacks, and main has commits the host lacks. */
+export const PULL_FIRST = 'pull-first';
+/** Publishing created and linked the repository, but its first push failed. */
+export const LINKED_PUSH_FAILED = 'linked-push-failed';
+/** `instanceUrl`: the instance a token connect without a URL reaches (GitLab's configured one). */
+export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; instanceUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
 /** `createdByAldine` marks a repository Aldine provisioned (deleted with the
  *  project); an imported one is never deleted by the server. */
 /** `baseUrl` is the instance the link was made on (self-hosted GitLab, every Gitea/Forgejo instance). */

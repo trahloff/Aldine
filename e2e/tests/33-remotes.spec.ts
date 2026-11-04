@@ -85,6 +85,48 @@ test.describe('remote providers on Home', () => {
     await expect(page.locator('.toast').filter({ hasText: 'instance URL' })).toBeVisible();
     await expect(tokenInput).toBeVisible();
   });
+
+  test("the token help links to the host's new-token page with the scope filled in", async ({ page }) => {
+    const connectForm = async (item: string, p: string) => {
+      await page.goto('/');
+      await startFrom(page, item);
+      const disconnect = page.getByTestId(`${p}-disconnect`);
+      const tokenInput = page.getByTestId(`${p}-token`);
+      await expect(disconnect.or(tokenInput)).toBeVisible();
+      if (await disconnect.isVisible()) await disconnect.click();
+      await expect(tokenInput).toBeVisible();
+      return page.getByTestId(`${p}-token-page`);
+    };
+    let link = await connectForm('new-from-github', 'github');
+    await expect(link).toHaveText('Create a token on github.com');
+    await expect(link).toHaveAttribute('href', 'https://github.com/settings/tokens/new?scopes=repo&description=Aldine');
+    await expect(link).toHaveAttribute('target', '_blank');
+    // one repository: a fine-grained token, limited to it
+    await page.getByTestId('github-single').click();
+    const githubSingle = page.getByTestId('github-single-token-page');
+    await expect(githubSingle).toHaveAttribute('href', 'https://github.com/settings/personal-access-tokens/new');
+    await expect(githubSingle.locator('..')).toContainText('Create a token on github.com, choose only this repository and give it Contents: read and write.');
+
+    link = await connectForm('new-from-gitlab', 'gitlab');
+    await expect(link).toHaveAttribute('href', 'https://gitlab.com/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
+    // a self-hosted instance gets its own page, built from the URL typed in
+    await page.getByTestId('gitlab-selfhosted-toggle').check();
+    await page.getByTestId('gitlab-baseurl').fill('https://gitlab.example.org/');
+    await expect(link).toHaveText('Create a token on gitlab.example.org');
+    await expect(link).toHaveAttribute('href', 'https://gitlab.example.org/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
+    // the one-repository form links the same way, from its own URL field
+    await page.getByTestId('gitlab-single').click();
+    const single = page.getByTestId('gitlab-single-token-page');
+    await expect(single).toHaveAttribute('href', 'https://gitlab.com/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
+    await page.getByTestId('gitlab-single-baseurl').fill('https://git.example.net');
+    await expect(single).toHaveAttribute('href', 'https://git.example.net/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
+
+    // Gitea / Forgejo has no canonical instance: no link until one is named
+    link = await connectForm('new-from-gitea', 'gitea');
+    await expect(link).toHaveCount(0);
+    await page.getByTestId('gitea-baseurl').fill('https://codeberg.org');
+    await expect(link).toHaveAttribute('href', 'https://codeberg.org/user/settings/applications');
+  });
 });
 
 test.describe('Gitea / Forgejo sync', () => {
@@ -342,6 +384,7 @@ test.describe('GitLab sync', () => {
 
       // a token the host refuses is not stored
       await page.getByTestId('gitlab-project-token-add').click();
+      await expect(page.getByTestId('gitlab-project-token-page')).toHaveAttribute('href', 'https://gitlab.com/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
       await page.getByTestId('gitlab-project-token').fill('bad');
       await page.getByTestId('gitlab-project-token-save').click();
       await expect(page.locator('.toast').filter({ hasText: 'That token was rejected by GitLab' })).toBeVisible();
@@ -439,6 +482,68 @@ test.describe('GitLab sync', () => {
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
+  test('switching the tracked branch asks first, and waits for a pull when the host has newer commits', async ({ page, request }) => {
+    const from: string = (await (await request.get(`/api/projects/${projectId}/remote/branches`)).json()).current;
+    const to = `switch-${Date.now()}`;
+    const external = `external-${Date.now()}.tex`;
+    // someone else pushes to the tracked branch, and a branch to switch to appears
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-e2e-gitlab-'));
+    try {
+      git(['clone', '-q', BARE, `${work}/clone`]);
+      const clone = `${work}/clone`;
+      git(['push', '-q', 'origin', `origin/main:refs/heads/${to}`], clone);
+      git(['checkout', '-q', '-B', from, `origin/${from}`], clone);
+      fs.writeFileSync(path.join(clone, external), 'from elsewhere\n');
+      git(['add', '-A'], clone);
+      git(['-c', 'user.email=e2e@aldine.dev', '-c', 'user.name=e2e', 'commit', '-q', '-m', 'external'], clone);
+      git(['push', '-q', 'origin', from], clone);
+    } finally { fs.rmSync(work, { recursive: true, force: true }); }
+
+    // an auto-typeset after the edit shifts the toolbar and closes the open branch menu
+    await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+    await page.goto(`/p/${projectId}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await openFile(page, 'main.tex');
+    const content = page.locator('.cm-content');
+    const marker = `UNPUSHED-${Date.now()}`;
+    await page.locator('.cm-line').first().click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(` % ${marker}`);
+    await expect(content).toContainText(marker);
+
+    const chip = page.getByTestId('branch-menu');
+    const pick = async () => {
+      await chip.click();
+      await expect(page.getByTestId('branch-list')).toBeVisible();
+      await page.getByTestId(`gitlab-branch-${to}`).click();
+      await expect(page.getByTestId('dialog-title')).toHaveText(`Switch the whole project to ${to}?`);
+      await expect(page.getByTestId('dialog-message')).toHaveText("Everyone's open files will change.");
+    };
+    // asked first: Cancel changes nothing
+    await pick();
+    await page.getByTestId('dialog-cancel').click();
+    await expect(page.getByTestId('app-dialog')).toHaveCount(0);
+    await expect(chip).toContainText(from);
+
+    // the host has a commit main lacks and main one the host lacks: refused, work kept
+    await pick();
+    await page.getByTestId('dialog-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: `GitLab has newer commits on ${from}. Pull first, then switch.` })).toBeVisible();
+    await expect(chip).toContainText(from);
+    await expect(content).toContainText(marker);
+    expect(git(['--git-dir', BARE, 'show', `${from}:main.tex`])).not.toContain(marker);
+
+    // Pull from the toast, then the switch goes through and the work is on the host
+    await page.getByTestId('gitlab-pull-first').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Pulled from GitLab' })).toBeVisible();
+    await pick();
+    await page.getByTestId('dialog-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: `Switched to ${to}` })).toBeVisible();
+    await expect(chip).toContainText(to);
+    expect(git(['--git-dir', BARE, 'show', `${from}:main.tex`])).toContain(marker);
+    expect(git(['--git-dir', BARE, 'show', `${from}:${external}`])).toContain('from elsewhere');
+  });
+
   test('clone one repository with its own token, which stays with that project', async ({ page, request }) => {
     expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } })).ok()).toBeTruthy();
     await page.goto('/');
@@ -517,6 +622,53 @@ test.describe('GitLab sync', () => {
     expect(created.status()).toBe(200);
     expect((await created.json()).path_with_namespace).toBe('e2e-user/my-new-paper');
     expect(git(['--git-dir', path.join(GITLAB_DATA, 'e2e-user/my-new-paper.git'), 'show', 'main:main.tex'])).toContain('\\documentclass');
+  });
+
+  test('Publish opens from the nudge and the palette, and a failed first push still links the project', async ({ page, request }) => {
+    await request.delete(`${MOCK}/projects/${encodeURIComponent('e2e-user/push-fails')}`, { headers: AUTH });
+    await page.goto('/');
+    await page.getByTestId('new-project').click();
+    await page.getByTestId('new-project-name').fill('Push Fails');
+    await page.getByTestId('create-project').click();
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+
+    // the one-time nudge carries the way to Publish
+    const modal = page.getByTestId('remote-publish');
+    await page.getByTestId('remote-nudge-publish').click();
+    await expect(modal).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(modal).toHaveCount(0);
+    // and the palette finds it by the host's name
+    await page.getByTestId('palette-open').click();
+    await page.getByTestId('palette-input').fill('gitlab');
+    await expect(page.getByTestId('palette-item-remote-publish')).toHaveText(/Publish to a git host…/);
+    await page.getByTestId('palette-item-remote-publish').click();
+    await expect(modal).toBeVisible();
+
+    await page.getByTestId('remote-publish-provider-gitlab').click();
+    const nameInput = page.getByTestId('publish-repo-name');
+    await expect(nameInput.or(page.getByTestId('gitlab-token'))).toBeVisible();
+    if (!(await nameInput.isVisible())) {
+      await page.getByTestId('gitlab-token').fill('e2e-token');
+      await page.getByTestId('gitlab-connect').click();
+    }
+    await nameInput.fill('push-fails');
+    await request.get(`${MOCK}/__failpush?on=1`);
+    try {
+      await page.getByTestId('publish-submit').click();
+      // linked although the push failed: the dialog closes onto the synced pill
+      await expect(page.locator('.toast').filter({ hasText: 'Repository created but the first push failed' })).toBeVisible();
+      await expect(modal).toHaveCount(0);
+      await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    } finally {
+      await request.get(`${MOCK}/__failpush?on=0`);
+    }
+    // the toast's Push opens the push dialog, and this time it lands
+    await page.getByTestId('publish-push-retry').click();
+    await expect(page.getByTestId('push-dialog')).toBeVisible();
+    await page.getByTestId('push-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Pushed to GitLab' })).toBeVisible();
+    expect(git(['--git-dir', path.join(GITLAB_DATA, 'e2e-user/push-fails.git'), 'show', 'main:main.tex'])).toContain('\\documentclass');
   });
 
   test('a malformed self-hosted URL is refused with a toast', async ({ page }) => {

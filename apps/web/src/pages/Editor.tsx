@@ -403,7 +403,7 @@ export default function Editor() {
       const owner = !authEnabled || !!p.isOwner;
       if (owner && !p.remote && !safeStorage.get(`aldine.remoteNudged.${id}`)) {
         safeStorage.set(`aldine.remoteNudged.${id}`, '1');
-        toast('This project lives only on this server — publish it to a git host to keep a synced copy.');
+        toast('This project lives only on this server — publish it to a git host to keep a synced copy.', 'info', { label: 'Publish…', testId: 'remote-nudge-publish', onClick: () => setPublishOpen(true) });
       }
     })();
   }, [id, branch]);
@@ -1187,6 +1187,8 @@ export default function Editor() {
         { id: 'remote-pull', group: 'Git', title: `Pull from ${d.label}`, run: () => viaMenu(`${d.id}-pull-btn`) },
         { id: 'remote-change-request', group: 'Git', title: `Open ${d.changeRequest}`, run: () => viaMenu(`${d.id}-open-pr`) },
       );
+    } else if (project && (!authEnabled || project.isOwner)) {
+      cmds.push({ id: 'remote-publish', group: 'Git', title: 'Publish to a git host…', keywords: 'github gitlab gitea forgejo codeberg repository remote backup sync', run: () => setPublishOpen(true) });
     }
     if (activeFile) {
       cmds.push({
@@ -1226,7 +1228,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.isOwner, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1741,7 +1743,11 @@ export default function Editor() {
       )}
 
       {publishOpen && project && (
-        <RemotePublish projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()} />
+        <RemotePublish
+          projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()}
+          // Push lives in the branch menu of the linked project's pill: open it, then let it render.
+          onPush={(p) => { document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); setTimeout(() => document.querySelector<HTMLElement>(`[data-testid="${p}-push-btn"]`)?.click(), 0); }}
+        />
       )}
 
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}

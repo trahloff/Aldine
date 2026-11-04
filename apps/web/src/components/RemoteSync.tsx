@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, RemoteLink, TOKEN_REJECTED } from '../api';
+import { api, PULL_FIRST, RemoteLink, TOKEN_REJECTED } from '../api';
 import { remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
+import { useDialogs } from './Dialogs';
 import { useExitGhost } from '../exitGhost';
 import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './BranchMenu';
 import { usePopover } from '../util/usePopover';
@@ -50,6 +51,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const [showAccess, setShowAccess] = useState(false);
   const pop = usePopover();
   const toast = useToast();
+  const dialogs = useDialogs();
   const leave = useExitGhost();
   const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: () => pop.setOpen(false) });
 
@@ -128,9 +130,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     setBusy('');
   };
   // A host branch is always opened through main, the branch that tracks it.
+  // Switching repoints main for everyone, so it is asked first.
   const switchTo = async (branch: string) => {
     pop.setOpen(false);
     if (branch === tracked) { if (!onMain) onSwitch('main'); return; }
+    if (!(await dialogs.confirm({ title: `Switch the whole project to ${branch}?`, body: "Everyone's open files will change.", confirmLabel: 'Switch branch' }))) return;
     setBusy('branch');
     try {
       await api.remoteSwitchBranch(projectId, branch);
@@ -139,7 +143,10 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       onPulled();
       await loadBranches();
       await refresh();
-    } catch (err: any) { failed(err); }
+    } catch (err: any) {
+      if (err?.code === PULL_FIRST) toast(err.message, 'error', { label: 'Pull', testId: `${p}-pull-first`, onClick: () => pull() });
+      else failed(err);
+    }
     setBusy('');
   };
   const createOnHost = async (name: string) => {
@@ -330,6 +337,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           projectId={projectId}
           provider={p}
           fullName={link.fullName}
+          instance={link.baseUrl}
           isOwner={isOwner}
           rejected={rejected}
           onClose={() => setShowAccess(false)}

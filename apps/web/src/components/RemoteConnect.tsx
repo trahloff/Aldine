@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { withBase } from '../basePath';
 import { api, RemoteStatus } from '../api';
-import { remoteDescriptor, RemoteProviderId } from '../remotes';
+import { instanceBase, remoteDescriptor, RemoteProviderId } from '../remotes';
 import { useToast } from './Toast';
 
 /** Connect a git host with OAuth (when the server has it configured) or a
  *  token. Shared by the import and publish dialogs so both carry the same
- *  `<p>-token` / `<p>-connect` / `<p>-connect-oauth` / `<p>-baseurl` controls. */
-export default function RemoteConnectForm({ provider, status, onConnected }: {
-  provider: RemoteProviderId; status: RemoteStatus; onConnected(): void | Promise<void>;
+ *  `<p>-token` / `<p>-connect` / `<p>-connect-oauth` / `<p>-baseurl` controls.
+ *  `returnTo` is the page OAuth comes back to (a project's `/p/<id>`); without
+ *  it the host's callback opens the import dialog on Home. */
+export default function RemoteConnectForm({ provider, status, onConnected, returnTo }: {
+  provider: RemoteProviderId; status: RemoteStatus; onConnected(): void | Promise<void>; returnTo?: string;
 }) {
   const d = remoteDescriptor(provider);
   const [token, setToken] = useState('');
@@ -34,7 +36,7 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
     <div>
       {status.oauth && (
         <>
-          <a className="btn login__oauth" href={withBase(`/api/remotes/${provider}/oauth`)} data-testid={`${provider}-connect-oauth`}>{d.icon} Connect with {d.label}</a>
+          <a className="btn login__oauth" href={withBase(`/api/remotes/${provider}/oauth${returnTo ? `?return=${encodeURIComponent(returnTo)}` : ''}`)} data-testid={`${provider}-connect-oauth`}>{d.icon} Connect with {d.label}</a>
           <div className="login__or">or use a token</div>
         </>
       )}
@@ -59,7 +61,26 @@ export default function RemoteConnectForm({ provider, status, onConnected }: {
       <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center' }} onClick={connect} disabled={busy} data-testid={`${provider}-connect`}>
         {busy ? 'Connecting…' : 'Connect'}
       </button>
-      <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>{d.tokenHelp}</p>
+      <TokenHelp provider={provider} base={selfHosted ? baseUrl : undefined} instanceUrl={status.instanceUrl} testId={`${provider}-token-page`} />
     </div>
+  );
+}
+
+/** "Create a token on <host>", linked to the host's new-token page on the
+ *  instance the token will be sent to: `base` when it is a URL, else the
+ *  server's default `instanceUrl`. The menu path when there is no page.
+ *  `oneRepo` prefers the host's page for a token limited to one repository. */
+export function TokenHelp({ provider, base, instanceUrl, testId, oneRepo }: {
+  provider: RemoteProviderId; base?: string; instanceUrl?: string; testId: string; oneRepo?: boolean;
+}) {
+  const d = remoteDescriptor(provider);
+  const repoPage = oneRepo ? d.repoTokenPage : undefined;
+  const page = repoPage?.url ?? d.tokenPage(instanceBase(base) ?? instanceBase(instanceUrl) ?? undefined);
+  return (
+    <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>
+      {page
+        ? <><a href={page} target="_blank" rel="noopener noreferrer" data-testid={testId}>Create a token on {new URL(page).host}</a>{repoPage?.note ?? d.tokenPageNote}</>
+        : d.tokenHelp}
+    </p>
   );
 }
