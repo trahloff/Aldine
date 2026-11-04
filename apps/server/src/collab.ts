@@ -596,7 +596,7 @@ function signalStamp(): number {
   return lastSignalStamp;
 }
 
-function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td'): void {
+function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td' | 'c'): void {
   const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as Y.Doc | undefined;
   if (!doc) return;
   try { doc.getMap<number>('signal').set(key, signalStamp()); } catch { /* best effort */ }
@@ -605,6 +605,14 @@ function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 't
 export function bumpFilesSignal(projectId: string, branch: string): void {
   setSignal(projectId, branch, 'v');
 }
+
+/** A commit landed on this branch: open History panels refetch the log. Its
+ *  own key, not `v`, so an autosave does not make every client refetch the
+ *  file list. Synchronous, like every signal: callers may hold the repo lock. */
+export function signalCommitted(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'c');
+}
+onAutoCommit(signalCommitted);
 
 /** An agent changed this branch's source. Clients with auto-typeset on arm the
  *  same debounce a keystroke arms; only the elected one compiles. Callers hold

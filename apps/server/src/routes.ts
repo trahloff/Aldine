@@ -11,7 +11,7 @@ import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, signalCommitted, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
 import { noteEdit, editorOf, forgetBranch, activitySnapshot, backfillLastEdits } from './activity.js';
@@ -1900,6 +1900,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // autoCommit, not commitAll: a person's checkpoint inside the agent's
       // debounce window must not sign Claude's pending delta with their name.
       const r = await gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
+      if (r.committed) signalCommitted(req.params.id, branch);
       if (r.committed && branch === 'main') scheduleAutopush(req.params.id);
       return r;
     });

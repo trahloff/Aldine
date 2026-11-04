@@ -1,7 +1,10 @@
 /**
  * How the command palette matches and orders what is typed. Only the title
  * (and a command's own keywords) is searched, never its section heading, so
- * "op" does not match every row under "Open". Lower scores rank higher.
+ * "op" does not match every row under "Open". Lower scores rank higher: a
+ * whole word of the title, then a whole keyword, then the start of a word in
+ * the title ("compile" is Typeset's keyword before it is the start of
+ * "compiler" in Project settings).
  */
 
 export interface Rankable { title: string; group?: string; keywords?: string }
@@ -9,6 +12,11 @@ export interface Section<T> { group: string; items: T[] }
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase();
 const isWordStart = (t: string, i: number) => i === 0 || !/[\p{L}\p{N}]/u.test(t[i - 1]);
+const isWordEnd = (t: string, i: number) => i >= t.length || !/[\p{L}\p{N}]/u.test(t[i]);
+/** A whole word of the title scores under 1 (its offset / 1000), a whole
+ *  keyword 1, the start of a title word from 2. */
+const WHOLE_KEYWORD = 1;
+const WORD_PREFIX = 2;
 
 /** The sum of the gaps of the tightest in-order match that starts at a word, or null. */
 function subsequence(q: string, t: string): number | null {
@@ -31,8 +39,12 @@ function subsequence(q: string, t: string): number | null {
 
 function textScore(q: string, text: string): number | null {
   const t = fold(text);
-  const at = t.indexOf(q);
-  if (at >= 0) return (isWordStart(t, at) ? 0 : 10) + at / 1000;
+  let best: number | null = null;
+  for (let at = t.indexOf(q); at >= 0; at = t.indexOf(q, at + 1)) {
+    const s = (isWordStart(t, at) ? (isWordEnd(t, at + q.length) ? 0 : WORD_PREFIX) : 10) + at / 1000;
+    if (best === null || s < best) best = s;
+  }
+  if (best !== null) return best;
   const words = q.split(/\s+/).filter(Boolean);
   if (words.length > 1 && words.every((w) => t.includes(w))) return 20 + words.reduce((n, w) => n + t.indexOf(w), 0) / 1000;
   const compact = q.replace(/\s+/g, '');
@@ -45,9 +57,10 @@ export function matchScore(query: string, title: string, keywords?: string): num
   const q = fold(query.trim());
   if (!q) return 0;
   const s = textScore(q, title);
-  if (s !== null) return s;
   const k = keywords ? textScore(q, keywords) : null;
-  return k === null ? null : 50 + k;
+  const viaKeyword = k === null ? null : k < 1 ? WHOLE_KEYWORD : 50 + k;
+  if (s === null) return viaKeyword;
+  return viaKeyword === null ? s : Math.min(s, viaKeyword);
 }
 
 /**

@@ -1,8 +1,13 @@
 import { Comment } from '../api';
 import { friendlyDate } from '../util/dates';
+import LoadError from './LoadError';
 
 interface Props {
   comments: Comment[];
+  /** Whether `comments` is this branch's list: before it arrives, or when it
+   *  failed, an empty list is not "no comments yet". */
+  load?: 'loading' | 'ok' | 'error';
+  onRetry?(): void;
   activeFile: string | null;
   onReveal(c: Comment): void;
   onResolve(c: Comment, resolved: boolean): void;
@@ -11,7 +16,7 @@ interface Props {
   onAccept(c: Comment): void;
 }
 
-export default function ReviewPanel({ comments, activeFile, onReveal, onResolve, onDelete, onReply, onAccept }: Props) {
+export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile, onReveal, onResolve, onDelete, onReply, onAccept }: Props) {
   const open = comments.filter((c) => !c.resolved);
   const resolved = comments.filter((c) => c.resolved);
 
@@ -59,7 +64,9 @@ export default function ReviewPanel({ comments, activeFile, onReveal, onResolve,
 
   return (
     <div className="panel-list" data-testid="review-panel">
-      {comments.length === 0 && (
+      {load === 'error' && <LoadError text="Couldn’t load the review comments." onRetry={() => onRetry?.()} testId="review-error" />}
+      {load === 'loading' && comments.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }} data-testid="review-loading">Loading the comments…</p>}
+      {load === 'ok' && comments.length === 0 && (
         <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }}>
           Select text in the editor and click <strong>Comment</strong> to start a review thread.
         </p>

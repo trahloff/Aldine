@@ -105,6 +105,8 @@ export default function Editor() {
   // project looks empty and a blank one must not compile at all.
   const [filesLoaded, setFilesLoaded] = useState(false);
   const [newFileRequest, setNewFileRequest] = useState(0);
+  const [newEntryKind, setNewEntryKind] = useState<'file' | 'folder' | 'upload'>('file');
+  const [commitFocusRequest, setCommitFocusRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
@@ -230,6 +232,7 @@ export default function Editor() {
   // Images, PDFs and other binary files open as a preview, never a collab doc.
   const previewing = !!activeFile && previewKind(activeFile, activeEntry) !== null;
   const [comments, setComments] = useState<Comment[]>([]);
+  const [commentsLoad, setCommentsLoad] = useState<'loading' | 'ok' | 'error'>('loading');
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
   const codeRef = useRef<CodePaneHandle>(null);
   const pdfRef = useRef<PdfPaneHandle>(null);
@@ -749,9 +752,9 @@ export default function Editor() {
 
   // ---- review comments ----
   const loadComments = useCallback(async () => {
-    try { setComments(await api.comments(id, branch)); } catch { setComments([]); }
+    try { setComments(await api.comments(id, branch)); setCommentsLoad('ok'); } catch { setComments([]); setCommentsLoad('error'); }
   }, [id, branch]);
-  useEffect(() => { loadComments(); }, [id, branch]);
+  useEffect(() => { setCommentsLoad('loading'); loadComments(); }, [id, branch]);
   // live-sync: re-fetch when any collaborator changes comments
   const bumpComments = useCommentSignal(id, branch, loadComments);
   // The file list is a REST snapshot. The server bumps this signal whenever
@@ -807,7 +810,7 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished },
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onCommitted: bumpHistory },
     auto && hasTex,
   );
   signal.current = signalHandle;
@@ -901,8 +904,26 @@ export default function Editor() {
     const where = changed.length === 1 ? changed[0].path : n(changed.length, 'file', 'files');
     const pending = res.pending ? ` — commit ${res.replaced === 1 ? 'it' : 'them'} from History` : '';
     const skipped = res.skipped ? `; ${res.skipped.toLocaleString('en-US')} changed while replacing and ${res.skipped === 1 ? 'was' : 'were'} left alone` : '';
-    toast(`${deleted ? 'Deleted' : 'Replaced'} ${n(res.replaced, 'match', 'matches')} in ${where}${pending}${skipped}`, 'ok');
-  }, [bumpHistory, onDocChanged, toast]);
+    // The replace is one commit; reverting it is the undo. Typing cannot undo
+    // it: the edits reached the editor from the server, not as keystrokes.
+    const commit = res.commit;
+    const undo = commit ? {
+      label: 'Undo',
+      testId: 'replace-undo',
+      onClick: async () => {
+        try {
+          const r = await api.revertCommits(id, branch, [commit], deleted ? 'Undo the project-wide delete' : 'Undo the project-wide replace', identity.name);
+          bumpHistory();
+          if (!r.ok) { toast('Nothing to undo — the text is already back', 'info'); return; }
+          onDocChanged(true);
+          toast(`Undid the ${deleted ? 'delete' : 'replace'} of ${n(res.replaced, 'match', 'matches')}`, 'ok');
+        } catch (err: any) {
+          toast(/^Could not revert/.test(err.message) ? err.message : `Could not undo: ${err.message}`, 'error');
+        }
+      },
+    } : undefined;
+    toast(`${deleted ? 'Deleted' : 'Replaced'} ${n(res.replaced, 'match', 'matches')} in ${where}${pending}${skipped}`, 'ok', undo);
+  }, [id, branch, identity, bumpHistory, onDocChanged, toast]);
 
   // Accept happens server-side against the LIVE collab doc — a client-side
   // read-replace-write of the disk copy silently reverted every collaborator's
@@ -1039,7 +1060,7 @@ export default function Editor() {
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
-      { id: 'typeset', group: 'Actions', title: 'Typeset document', hint: keys.typeset, run: doCompile },
+      { id: 'typeset', group: 'Actions', title: 'Typeset document', hint: keys.typeset, keywords: 'compile recompile build pdf', run: doCompile },
       { id: 'auto', group: 'Actions', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       {
         id: 'draft-typeset', group: 'Actions',
@@ -1080,8 +1101,26 @@ export default function Editor() {
       ...(agentPresenceEnabled
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
-      { id: 'commit', group: 'Git', title: 'Save a checkpoint…', run: () => { setTab('history'); setSidebar(false); } },
-      { id: 'newbranch', group: 'Git', title: 'New branch…', run: () => { setTab('files'); document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); } },
+      { id: 'show-history', group: 'Git', title: 'Show history', keywords: 'versions checkpoints commits', run: () => { setTab('history'); setSidebar(false); } },
+      { id: 'commit', group: 'Git', title: 'Save a checkpoint…', keywords: 'history versions commit', run: () => { setTab('history'); setSidebar(false); setCommitFocusRequest((n) => n + 1); } },
+      {
+        id: 'newbranch', group: 'Git', title: 'New branch…', run: () => {
+          setTab('files');
+          const click = (testid: string) => document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.click();
+          const pill = document.querySelector<HTMLElement>('[data-testid="branch-menu"]');
+          if (pill?.getAttribute('aria-expanded') !== 'true') pill?.click();
+          // The menu renders on the next tick; its name field takes the focus.
+          setTimeout(() => click('new-branch'), 0);
+        },
+      },
+      { id: 'show-review', group: 'View', title: 'Show review comments', keywords: 'review threads suggestions', run: () => { setTab('review'); setSidebar(false); } },
+      ...(['file', 'folder', 'upload'] as const).map((kind) => ({
+        id: kind === 'upload' ? 'upload-files' : `new-${kind}`,
+        group: 'Project',
+        title: kind === 'upload' ? 'Upload files…' : `New ${kind}…`,
+        keywords: kind === 'upload' ? 'add import images' : `create add${kind === 'folder' ? ' directory' : ''}`,
+        run: () => { setTab('files'); setSidebar(false); setNewEntryKind(kind); setNewFileRequest((n) => n + 1); },
+      })),
     ];
     if (ignored.length > 0) {
       cmds.push({ id: 'unignore-warnings', group: 'View', title: `Show ignored warnings again (${ignored.length} kind${ignored.length === 1 ? '' : 's'})`, run: () => setIgnored([]) });
@@ -1132,7 +1171,7 @@ export default function Editor() {
     ]) {
       cmds.push({ id: `snippet-${s.id}`, group: 'Insert', title: s.title, run: () => insertAtCursor(s.text) });
     }
-    for (const f of files.filter((f) => f.type === 'file')) {
+    for (const f of files.filter(isUserFile)) {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
@@ -1312,7 +1351,8 @@ export default function Editor() {
                 branch={branch}
                 onOpen={setActiveFile}
                 newFileRequest={newFileRequest}
-                onNewFileHandled={() => setNewFileRequest(0)}
+                newFileKind={newEntryKind}
+                onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -1366,10 +1406,12 @@ export default function Editor() {
                 onSetRoot={setRootFile}
               />
             )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} />}
+            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} />}
             {tab === 'review' && (
               <ReviewPanel
                 comments={comments}
+                load={commentsLoad}
+                onRetry={loadComments}
                 activeFile={activeFile}
                 onReveal={revealComment}
                 onResolve={async (c, resolved) => { await api.resolveComment(id, c.id, resolved); await loadComments(); bumpComments(); }}
