@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, BranchInfo } from '../api';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
@@ -139,6 +139,8 @@ export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete, readO
 export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(name: string): Promise<boolean>; blocked?: string }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  /** Escape in the field: focus goes back to the button that replaces it, not to the page. */
+  const cancelled = useRef(false);
   const submit = async () => {
     const n = name.trim();
     if (!n) return;
@@ -156,7 +158,7 @@ export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(
   }
   if (!creating) {
     return (
-      <button className="menu__item" onClick={() => setCreating(true)} data-testid="new-branch">
+      <button className="menu__item" autoFocus={cancelled.current} onClick={() => setCreating(true)} data-testid="new-branch">
         <span className="branch-menu__check">+</span>New branch from {from}
       </button>
     );
@@ -170,7 +172,7 @@ export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(
         value={name}
         data-testid="new-branch-name"
         onChange={(e) => setName(e.target.value.replace(/[^A-Za-z0-9._/-]/g, '-'))}
-        onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); setCreating(false); } }}
+        onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); cancelled.current = true; setCreating(false); } }}
       />
       <button className="btn btn--small" onClick={submit} data-testid="new-branch-create">Create</button>
     </div>
@@ -191,12 +193,12 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
 }) {
   const pop = usePopover();
   const leave = useExitGhost();
-  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: () => pop.setOpen(false) });
+  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close });
   useEffect(() => { if (pop.open) local.load(); }, [pop.open, projectId]);
 
   return (
     <div ref={pop.ref} className="branch">
-      <button className="branch-pill" onClick={() => pop.setOpen(!pop.open)} data-testid="branch-menu" title="Branches" aria-haspopup="menu" aria-expanded={pop.open}>
+      <button ref={pop.trigger} className="branch-pill" onClick={() => pop.setOpen(!pop.open)} data-testid="branch-menu" title="Branches" aria-expanded={pop.open}>
         <BranchIcon />
         <span className="branch-pill__name">{current}</span>
       </button>
@@ -208,7 +210,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
               key={b.name}
               name={b.name}
               current={b.name === current}
-              onOpen={() => { pop.setOpen(false); onSwitch(b.name); }}
+              onOpen={() => { pop.close(); onSwitch(b.name); }}
               onMerge={() => local.mergeIntoMain(b.name)}
               onDelete={() => local.remove(b.name)}
               readOnly={readOnly}
@@ -223,7 +225,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
           {onPublish && (
             <>
               <div className="menu__sep" />
-              <button className="menu__item" onClick={() => { pop.setOpen(false); onPublish(); }} data-testid="remote-publish-open" title="Publish this project to a git host — backup + sync">
+              <button className="menu__item" onClick={() => { pop.close(); onPublish(); }} data-testid="remote-publish-open" title="Publish this project to a git host — backup + sync">
                 <span className="branch-menu__check" />Publish to a git host…
               </button>
             </>

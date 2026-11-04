@@ -287,6 +287,7 @@ test.describe('project search', () => {
       try {
         await put(request, id, 'main.tex', '\\documentclass{article}\n\\begin{document}\nA gadget here.\n\\end{document}\n');
         await openProject(page, id);
+        await page.getByTestId('sidebar-toggle').tap();
         await page.getByTestId('tab-search').tap();
         await expect(page.getByTestId('search-panel')).toBeVisible();
         await page.getByTestId('search-input').fill('gadget');

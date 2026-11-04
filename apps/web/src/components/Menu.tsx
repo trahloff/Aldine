@@ -451,7 +451,7 @@ type Placement = 'bottom-start' | 'bottom-end';
  * it with nothing highlighted; the arrow keys then start at either end.
  */
 export function MenuButton({
-  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex, sheetTitle,
+  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex, sheetTitle, role, selected,
 }: {
   items: MenuEntry[] | (() => MenuEntry[]);
   /** The menu's name for assistive tech when the button's own text does not name it. */
@@ -469,6 +469,9 @@ export function MenuButton({
   tabIndex?: number;
   /** Given, a tap on a phone opens the menu as a sheet with this title. */
   sheetTitle?: string;
+  /** A tab whose menu holds further tabs: `selected` while it shows one of them. */
+  role?: 'tab';
+  selected?: boolean;
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   const btnId = useId();
@@ -487,6 +490,8 @@ export function MenuButton({
         id={btnId}
         type="button"
         className={className}
+        role={role}
+        aria-selected={role === 'tab' ? !!selected : undefined}
         aria-haspopup="menu"
         aria-expanded={!!open}
         aria-controls={open ? menuId : undefined}

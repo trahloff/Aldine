@@ -1695,7 +1695,6 @@ test.describe('visual editor on a phone (VIS-21)', () => {
     const id = await seedDoc(request, 'Visual Phone', `${filler}\nNear the bottom $x+y$ here.\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\nplain end\n`);
     try {
       await openProject(page, id);
-      await page.getByTestId('sidebar-toggle').click(); // the editor, not the file list, fills the phone
       await page.locator('.cm-line', { hasText: 'plain end' }).tap();
       const math = page.getByTestId('vis-math');
       await math.scrollIntoViewIfNeeded();
