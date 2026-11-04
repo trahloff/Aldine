@@ -55,4 +55,27 @@ test.describe('real-time collaboration', () => {
       await cleanup(request, id);
     }
   });
+
+  test('the presence chip empties when the open file gives way to a preview', async ({ browser, request }) => {
+    const id = await createProject(request, 'Presence Preview');
+    const ctxA = await browser.newContext();
+    const ctxB = await browser.newContext();
+    try {
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'figure.png', content: png, encoding: 'base64' } });
+      const a = await ctxA.newPage();
+      const b = await ctxB.newPage();
+      await openProject(a, id);
+      await openProject(b, id);
+      await expect(a.getByTestId('presence')).toBeVisible();
+
+      await a.getByTestId('file-figure.png').click();
+      await expect(a.getByTestId('file-preview')).toBeVisible();
+      await expect(a.getByTestId('presence'), 'nobody is in a preview').toHaveCount(0);
+    } finally {
+      await ctxA.close();
+      await ctxB.close();
+      await cleanup(request, id);
+    }
+  });
 });

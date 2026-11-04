@@ -493,6 +493,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
       awareness.off('change', reportUsers);
+      // The roster is this file's: a preview, or no open file, has nobody in it.
+      onUsers([]);
       view.destroy();
       provider.destroy();
       ydoc.destroy();

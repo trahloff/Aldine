@@ -134,4 +134,49 @@ test.describe('moving folders and files in the file tree', () => {
       expect((await listing(request, id)).filter((p) => p.startsWith('figures/'))).toEqual([]);
     } finally { await cleanup(request, id); }
   });
+
+  test('a commented file keeps its comments when it moves, and Accept still edits it', async ({ page, request }) => {
+    const id = await createProject(request, 'Tree Move Comments');
+    try {
+      const text = 'The results hold.\nA second claim.\n';
+      await put(request, id, 'chapter2.tex', text);
+      await put(request, id, 'sections/a.tex');
+      const comment = async (quote: string, suggestion?: string) => {
+        const from = text.indexOf(quote);
+        const res = await request.post(`/api/projects/${id}/comments`, {
+          data: { branch: 'main', file: 'chapter2.tex', anchor: { from, to: from + quote.length, quote }, body: `About ${quote}`, suggestion },
+        });
+        expect(res.ok()).toBeTruthy();
+        return ((await res.json()) as { id: string }).id;
+      };
+      const suggested = await comment('results', 'findings');
+      const plain = await comment('second');
+      const fileOf = async (cid: string) => ((await (await request.get(`/api/projects/${id}/comments?branch=main`)).json()) as { id: string; file: string }[]).find((c) => c.id === cid)?.file;
+      const onDisk = async (rel: string) => (await request.get(`/api/projects/${id}/file?branch=main&path=${encodeURIComponent(rel)}`)).text();
+
+      await openProject(page, id);
+      await page.getByTestId('file-chapter2.tex').click();
+      await expect(page.locator('.cm-comment-range').filter({ hasText: 'results' })).toHaveCount(1);
+
+      await page.getByTestId('file-chapter2.tex').dragTo(page.getByTestId('dir-sections'));
+      await expect(page.getByTestId('active-file')).toHaveText('sections/chapter2.tex');
+      await expect.poll(() => fileOf(suggested)).toBe('sections/chapter2.tex');
+      await expect(page.locator('.cm-comment-range').filter({ hasText: 'results' }), 'the highlight stays on the moved file').toHaveCount(1);
+
+      await page.getByTestId('tab-review').click();
+      await expect(page.getByTestId(`comment-${suggested}`).locator('.review__file'), 'the thread belongs to the open file').toHaveText('');
+      await page.getByTestId(`accept-${suggested}`).click();
+      await expect(page.locator('.cm-content')).toContainText('The findings hold.');
+      await expect.poll(() => onDisk('sections/chapter2.tex')).toContain('The findings hold.');
+
+      // a folder rename carries the comments of the files inside it
+      await page.getByTestId('tab-files').click();
+      await folderMenu(page, 'sections', 'rename');
+      await page.getByTestId('dialog-input').fill('parts');
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.getByTestId('active-file')).toHaveText('parts/chapter2.tex');
+      await expect.poll(() => fileOf(plain)).toBe('parts/chapter2.tex');
+      await expect(page.locator('.cm-comment-range').filter({ hasText: 'second' })).toHaveCount(1);
+    } finally { await cleanup(request, id); }
+  });
 });

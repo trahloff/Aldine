@@ -6,6 +6,8 @@ import { useToast } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
+import ProjectUnavailable, { type ProjectLoadError } from '../components/ProjectUnavailable';
+import { forgetProjectResume } from '../util/projectResume';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
@@ -288,14 +290,38 @@ export default function Editor() {
   const hasTexRef = useRef(hasTex);
   hasTexRef.current = hasTex;
 
+  // Before the project first opens, a refusal or a failed request is shown in
+  // place (ProjectUnavailable); once open, a reload that fails keeps the
+  // editor. An ended session is shown in place either way.
+  const [loadError, setLoadError] = useState<ProjectLoadError | null>(null);
+  const [loadTry, setLoadTry] = useState(0);
+  const openedRef = useRef<string | null>(null);
   const loadProject = useCallback(async () => {
+    // A sign-in that started here has come back: Home must not bring it here again.
+    forgetProjectResume();
     try {
       const p = await api.getProject(id);
       setProject(p);
+      setLoadError(null);
+      openedRef.current = id;
       return p;
-    } catch {
-      toast('Project not found', 'error');
-      navigate('/');
+    } catch (err: any) {
+      const status = err instanceof ApiError ? err.status : 0;
+      const open = openedRef.current === id;
+      // A project still on screen is one this page showed before, or this one
+      // after its session ended.
+      const showInPlace = (reason: ProjectLoadError['reason']) => { setProject(null); setLoadError({ reason, message: err.message, status }); };
+      if (status === 0 || status >= 500) {
+        if (open) toast(`Could not refresh the project: ${err.message}`, 'error');
+        else showInPlace('unreachable');
+      } else if (status === 403 && !open) {
+        showInPlace('denied');
+      } else if (status === 401) {
+        showInPlace('signed-out');
+      } else {
+        toast(status === 403 ? 'You no longer have access to this project' : 'Project not found', 'error');
+        navigate('/');
+      }
       return null;
     }
   }, [id]);
@@ -406,7 +432,7 @@ export default function Editor() {
         toast('This project lives only on this server — publish it to a git host to keep a synced copy.', 'info', { label: 'Publish…', testId: 'remote-nudge-publish', onClick: () => setPublishOpen(true) });
       }
     })();
-  }, [id, branch]);
+  }, [id, branch, loadTry]);
 
   const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean }) => {
     const draft = !!opts?.draft;
@@ -904,7 +930,9 @@ export default function Editor() {
 
   const revealComment = useCallback((c: Comment) => {
     if (c.file !== activeFile) setActiveFile(c.file);
-    requestAnimationFrame(() => setTimeout(() => codeRef.current?.revealPos(c.anchor.from), 80));
+    // The quote finds the text after edits moved it; selectRange waits for a
+    // freshly opened file's doc to sync. The delay lets codeRef reach the new pane.
+    requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
   }, [activeFile]);
 
   // ---- project search ----
@@ -1247,7 +1275,7 @@ export default function Editor() {
   // a PDF is already on screen when the last compile produced one (recompiles keep it visible)
   const hasPdf = compile.result?.pdfUrl != null;
 
-  if (!project) return <div className="editor-shell" />;
+  if (!project) return loadError ? <ProjectUnavailable projectId={id} error={loadError} onRetry={() => setLoadTry((n) => n + 1)} /> : <div className="editor-shell" />;
 
   // Without auth everyone is owner and member; with it, trust the server's word.
   const isProjectOwner = !authEnabled || !!project.isOwner;

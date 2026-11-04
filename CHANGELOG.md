@@ -23,6 +23,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   case, Whole word and Regular expression are the ones project search uses.
 - The PDF preview's zoom buttons step through 50, 75, 100, 125, 150, 200 and
   300%, like the preview of a PDF file, instead of 10% at a time.
+- In the Share dialog, choosing "Anyone signed in with the link" or "Invite
+  only" applies at once and says so, and "Copy link" appears once the link
+  works. Before, the choice waited for Save, so a link copied without saving
+  answered "Project not found", and switching back did not shut it. Save now
+  only sends the invitations you typed, Cancel is now Close, and closing with
+  addresses still typed asks first. Turning link sharing on, or inviting
+  someone, no longer reconnects the editors that have the project open; only
+  a change that lets fewer people in does.
+- A suggested change starts from the selected text, so you edit it instead of
+  typing it again. Emptying it suggests deleting the selection, and a
+  suggestion needs no comment to go with it.
+- An invitation opened while signed out offers Sign in and Create an account
+  side by side, and the line naming who invited you stays when you switch to
+  creating an account.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -135,6 +149,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The "publish it to a git host" hint on a new project has a Publish button,
   and the command palette has "Publish to a git host…" for the owner. It
   also answers to GitHub, GitLab, Gitea, Forgejo and Codeberg.
+- Renaming or moving a file, or a folder that holds it, keeps its review
+  comments with it: the highlights stay on its text, Review opens the file
+  where it is now, and Accept edits it. Before, the comments stayed on the old
+  path and Accept failed with "File not found".
+- Clicking a thread in Review opens its file and selects the commented text,
+  also after edits above it moved it. It used to land on line 1 of another
+  file, or a few characters early.
+- Accepting a suggestion works after text above it changed, when the
+  commented words also appear elsewhere in the file. It edits the occurrence
+  the highlight is on; it used to refuse with "The commented text has
+  changed".
+- Opening a project you have no access to says so in place, names the account
+  you are signed in with, and offers Switch account, or Accept when an
+  invitation waits for you. When the server does not answer, the editor
+  offers Try again instead of sending you home with "Project not found". When
+  your session has ended, it offers Sign in again and comes back to the
+  project afterwards, also after signing in through a single sign-on
+  provider.
+- The avatars of the people in a file no longer stay on screen after you
+  switch to an image or PDF preview.
 
 ## [1.8.0] — 2026-11-04
 

@@ -596,8 +596,12 @@ function signalStamp(): number {
   return lastSignalStamp;
 }
 
-function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td' | 'c'): void {
-  const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as Y.Doc | undefined;
+/** The review comments' counter (useCommentSignal in the web app); a wire
+ *  identifier like FILES_SIGNAL. */
+export const COMMENTS_SIGNAL = '.aldine/comments-signal';
+
+function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td' | 'c', signal = FILES_SIGNAL): void {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, signal)) as Y.Doc | undefined;
   if (!doc) return;
   try { doc.getMap<number>('signal').set(key, signalStamp()); } catch { /* best effort */ }
 }
@@ -613,6 +617,11 @@ export function signalCommitted(projectId: string, branch: string): void {
   setSignal(projectId, branch, 'c');
 }
 onAutoCommit(signalCommitted);
+
+/** Comments changed server-side: every open editor on the branch refetches them. */
+export function bumpCommentsSignal(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'v', COMMENTS_SIGNAL);
+}
 
 /** An agent changed this branch's source. Clients with auto-typeset on arm the
  *  same debounce a keystroke arms; only the elected one compiles. Callers hold
@@ -658,6 +667,25 @@ export function closeUserConnections(userId: string): void {
 }
 
 /**
+ * Where a comment's text is in `content` now: its stored offsets while they
+ * still hold the quote, else the occurrence nearest them, which is the one
+ * the editor highlights (reanchor in the web app's CodePane). Offsets are
+ * never updated after creation, so edits above a comment move its text away
+ * from them. A truncated quote (see comments.ts cap) is trusted only at its
+ * offsets. Null when the text is gone.
+ */
+export function locateQuote(content: string, anchor: { from: number; to: number; quote: string }): { from: number; to: number } | null {
+  const { from, to, quote } = anchor;
+  if (content.slice(from, to) === quote) return { from, to };
+  if (!quote || quote.length !== to - from) return null;
+  let best = -1;
+  for (let i = content.indexOf(quote); i !== -1; i = content.indexOf(quote, i + 1)) {
+    if (best === -1 || Math.abs(i - from) < Math.abs(best - from)) best = i;
+  }
+  return best === -1 ? null : { from: best, to: best + quote.length };
+}
+
+/**
  * Apply a suggestion replacement to the LIVE collab doc when one is open.
  * A disk read-modify-write would rebuild the doc from a stale snapshot and
  * silently revert every collaborator's unflushed edits — the CRDT edit below
@@ -676,21 +704,9 @@ export function applySuggestionToDoc(
   const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
   if (!doc) return 'no-doc';
   const ytext = doc.getText(TEXT_KEY);
-  const content = ytext.toString();
-  let from = -1;
-  let to = -1;
-  if (content.slice(anchor.from, anchor.to) === anchor.quote) {
-    from = anchor.from;
-    to = anchor.to;
-  } else if (
-    anchor.quote &&
-    anchor.quote.length === anchor.to - anchor.from && // an untruncated quote (see comments.ts cap)
-    content.split(anchor.quote).length === 2
-  ) {
-    from = content.indexOf(anchor.quote);
-    to = from + anchor.quote.length;
-  }
-  if (from < 0) return 'stale';
+  const at = locateQuote(ytext.toString(), anchor);
+  if (!at) return 'stale';
+  const { from, to } = at;
   const insert = replacement.replace(/\r\n?/g, '\n');
   doc.transact(() => {
     ytext.delete(from, to - from);

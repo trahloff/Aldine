@@ -11,7 +11,7 @@ import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk, signalCommitted, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, signalCommitted, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf, locateQuote, bumpCommentsSignal } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
 import { noteEdit, editorOf, forgetBranch, activitySnapshot, backfillLastEdits } from './activity.js';
@@ -789,12 +789,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         ? [...new Set(req.body!.collaborators.map((c) => normalizeEntry(String(c).trim())).filter((c) => isOrcidId(c) || isEmailAddress(c)))].slice(0, MAX_SHARE_ENTRIES)
         : prev;
       const added = requested.filter((c) => !prev.includes(c));
+      // Gaining access needs no socket to reconnect: only a share that lets
+      // fewer people in drops them (below).
+      const narrows = (list: string[]) => (meta.share?.mode === 'link' && mode !== 'link') || prev.some((c) => !list.includes(c));
       if (!auth.AUTH_ENABLED || !user) {
         // Nobody signs in to accept anything: the list is the share.
+        const revoke = narrows(requested);
         meta.share = { mode, collaborators: requested };
         await store.writeMeta(meta);
-        closeProjectConnections(meta.id);
-        publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+        if (revoke) {
+          closeProjectConnections(meta.id);
+          publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+        }
         return { ...(await publicMeta(meta, user)), invited: 0, notEmailed: added.filter((c) => !isOrcidId(c)), reason: 'accounts-off' };
       }
       const own = new Set([...recipientKeys(user), ...(user.email ? [user.email.toLowerCase()] : [])]);
@@ -812,6 +818,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (fresh.length && !(await shareLimiter.take(`u:${user.id}`, Date.now(), fresh.length))) {
         return reply.code(429).send({ error: `You can invite at most ${shareBurst} people an hour, so nothing was saved. Invite fewer people at once, or try again later.` });
       }
+      const revoke = narrows(kept);
       meta.share = { mode, collaborators: kept };
       await store.writeMeta(meta);
       // Access is checked when a collab socket connects, so a session already
@@ -819,8 +826,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // sockets: clients reconnect and re-authenticate, which re-runs the
       // check — the still-allowed resume, the revoked are refused. The event
       // reaches peer nodes (multi-node deploys) with the same effect.
-      closeProjectConnections(meta.id);
-      publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+      if (revoke) {
+        closeProjectConnections(meta.id);
+        publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+      }
       const staged = await stageInvitations(meta, user, fresh);
       const report = await sendInvitations(staged, meta, user);
       return { ...(await publicMeta(meta, user)), ...report, invitations: await ownerInvitations(req, meta.id) };
@@ -1610,6 +1619,13 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
           newRoot = await adoptRootIfUnset(req.params.id, branch, to);
         }
       } catch { /* meta unreadable — leave as-is */ }
+      // Review threads name their file; left on the old path they lose their
+      // highlights and Accept edits a file that no longer exists.
+      if (normFrom && normTo) {
+        try {
+          if (await comments.movePath(req.params.id, branch, normFrom, normTo, wasDir)) bumpCommentsSignal(req.params.id, branch);
+        } catch (err) { req.log.warn({ err }, 'moving review comments with a rename failed'); }
+      }
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
 
@@ -2229,12 +2245,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         // the anchor counts in the editor's text, which holds LF only
         const { text: content, crlf } = docView(raw);
         const suggestion = c.suggestion.replace(/\r\n?/g, '\n');
-        let next: string | null = null;
-        if (content.slice(c.anchor.from, c.anchor.to) === c.anchor.quote) {
-          next = content.slice(0, c.anchor.from) + suggestion + content.slice(c.anchor.to);
-        } else if (c.anchor.quote && c.anchor.quote.length === c.anchor.to - c.anchor.from && content.split(c.anchor.quote).length === 2) {
-          next = content.replace(c.anchor.quote, () => suggestion);
-        }
+        const at = locateQuote(content, c.anchor);
+        const next = at ? content.slice(0, at.from) + suggestion + content.slice(at.to) : null;
         if (next === null) { outcome = 'stale'; } else {
           store.writeFile(req.params.id, branch, c.file, crlf ? withCrlf(next) : next);
           refreshBranchDocsFromDisk(req.params.id, branch, [c.file]);

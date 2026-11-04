@@ -638,6 +638,10 @@ export const api = {
    *  owner took off it is removed (someone may have accepted meanwhile). */
   share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[]) =>
     req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous }) }),
+  /** Changes only who the link lets in: without a list the server keeps the
+   *  people with access as they are. */
+  shareMode: (id: string, mode: 'private' | 'link') =>
+    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode }) }),
   /** Takes one address or ORCID iD off the people with access. */
   removeCollaborator: (id: string, entry: string) =>
     req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'DELETE' }),
