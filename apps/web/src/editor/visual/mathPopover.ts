@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view';
 import { trackRange, untrack } from './positions';
 import { macrosOf } from './macros';
+import { visualNotice } from './context';
 import type { MacroSet } from './preamble';
 
 /**
@@ -8,19 +9,21 @@ import type { MacroSet } from './preamble';
  * MathLive field. "Done" writes back only the span the person changed, as
  * one precise source edit (collaborative + undoable); "Edit source" drops
  * into raw source instead. A formula MathLive would rewrite (comments, line
- * breaks, alignment, labels) and a cold MathLive cache both go straight to
- * source.
+ * breaks, alignment, labels) goes straight to source, and so does every
+ * formula while MathLive cannot load, with a notice to reload the page.
  */
 
 /** The button that leaves a widget for its LaTeX, in the formula editor and under a table. */
 export const SOURCE_BUTTON = { label: 'Edit source', title: 'Edit the LaTeX source' };
 
-interface MathTarget { innerFrom: number; innerTo: number; rect: DOMRect }
+/** `el`: the rendered formula, which the editor follows while the text scrolls. */
+interface MathTarget { innerFrom: number; innerTo: number; rect: DOMRect; el?: HTMLElement }
 
 type MathField = HTMLElement & { value: string };
 interface VirtualKeyboard extends EventTarget { visible: boolean; boundingRect: DOMRect; hide?: () => void }
 
 let mathfieldReady: Promise<boolean> | null = null;
+let mathliveLoaded = false;
 function ensureMathlive(): Promise<boolean> {
   if (!mathfieldReady) {
     mathfieldReady = import('mathlive')
@@ -28,6 +31,7 @@ function ensureMathlive(): Promise<boolean> {
         // registers <math-field>; keep MathLive's sounds/telemetry off
         (m as { MathfieldElement?: { soundsDirectory?: string | null } }).MathfieldElement &&
           ((m as unknown as { MathfieldElement: { soundsDirectory: string | null } }).MathfieldElement.soundsDirectory = null);
+        mathliveLoaded = true;
         return true;
       })
       .catch(() => {
@@ -261,6 +265,50 @@ function setMacros(mf: MathField, macros: MacroSet): boolean {
 let openPopover: { close(focusView: boolean): void } | null = null;
 let openSeq = 0;
 
+const LOAD_FAILED = 'Could not load the formula editor. Reload the page.';
+
+/**
+ * Puts a fixed-position popover under the formula at `rect`, above it when
+ * there is no room below, clear of the on-screen keyboard. A formula
+ * scrolled out of the editor's area (`area`) keeps the popover at that edge.
+ */
+function placePopover(pop: HTMLElement, rect: DOMRect, area?: DOMRect) {
+  const kb = keyboard();
+  const vv = window.visualViewport;
+  let bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  if (kb?.visible && kb.boundingRect.height > 0) bottom = Math.min(bottom, kb.boundingRect.top);
+  const clamp = (y: number) => (area ? Math.min(Math.max(y, area.top), area.bottom) : y);
+  const formulaTop = clamp(rect.top);
+  const formulaBottom = clamp(rect.bottom);
+  const h = pop.offsetHeight;
+  const w = pop.offsetWidth;
+  let top = formulaBottom + 6;
+  if (top + h > bottom - 8) top = formulaTop - 6 - h; // above the formula
+  if (top < 8) top = Math.max(8, bottom - 8 - h);
+  pop.style.top = `${top}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
+}
+
+/**
+ * What shows at the formula while MathLive loads, so the click is seen to do
+ * something. Presses go through it to the text, where they give up opening.
+ */
+function loadingShell(rect: DOMRect): HTMLElement {
+  const shell = document.createElement('div');
+  shell.className = 'vis-math-popover';
+  shell.setAttribute('data-testid', 'math-popover-loading');
+  shell.setAttribute('role', 'status');
+  shell.style.position = 'fixed';
+  shell.style.pointerEvents = 'none';
+  const line = document.createElement('div');
+  line.className = 'vis-math-popover__notice';
+  line.textContent = 'Loading the formula editor…';
+  shell.appendChild(line);
+  document.body.appendChild(shell);
+  placePopover(shell, rect);
+  return shell;
+}
+
 export function closeMathPopover(): void {
   openSeq++;
   openPopover?.close(false);
@@ -291,9 +339,17 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     closeMathPopover();
     if (focusView) view.focus();
   });
+  let shell: { close(): void } | null = null;
+  if (!mathliveLoaded) {
+    const el = loadingShell(target.rect);
+    shell = { close: () => { el.remove(); if (openPopover === shell) openPopover = null; } };
+    openPopover = shell;
+  }
   const ok = await ensureMathlive();
+  shell?.close();
   if (seq !== openSeq) { keys.release(); untrack(view, range); return; }
   const source = view.state.doc.sliceString(range.from, range.to);
+  if (!ok) visualNotice(LOAD_FAILED);
   if (!ok || !range.live || !mathliveCanEdit(source)) { keys.release(); return toSource(); }
 
   const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
@@ -352,18 +408,21 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     return toSource();
   }
 
-  const place = () => {
-    const kb = keyboard();
-    const vv = window.visualViewport;
-    let bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-    if (kb?.visible && kb.boundingRect.height > 0) bottom = Math.min(bottom, kb.boundingRect.top);
-    const h = pop.offsetHeight;
-    const w = pop.offsetWidth;
-    let top = target.rect.bottom + 6;
-    if (top + h > bottom - 8) top = target.rect.top - 6 - h; // above the formula
-    if (top < 8) top = Math.max(8, bottom - 8 - h);
-    pop.style.top = `${top}px`;
-    pop.style.left = `${Math.max(8, Math.min(target.rect.left, window.innerWidth - w - 8))}px`;
+  // where the formula is now: its rendering while that is drawn, else its source
+  let rect = target.rect;
+  const formulaRect = (): DOMRect => {
+    if (target.el?.isConnected) return target.el.getBoundingClientRect();
+    const a = range.live ? view.coordsAtPos(range.from, 1) : null;
+    const b = range.live ? view.coordsAtPos(range.to, -1) : null;
+    if (!a || !b) return rect;
+    const top = Math.min(a.top, b.top);
+    return new DOMRect(a.left, top, Math.max(1, b.right - a.left), Math.max(a.bottom, b.bottom) - top);
+  };
+  const place = () => { placePopover(pop, rect, view.scrollDOM.getBoundingClientRect()); };
+  let follow = 0;
+  const onScroll = () => {
+    if (follow) return;
+    follow = requestAnimationFrame(() => { follow = 0; rect = formulaRect(); place(); });
   };
 
   let overwrite = false;
@@ -375,6 +434,8 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     window.removeEventListener('mousedown', onOutside, true);
     keyboard()?.removeEventListener('geometrychange', place);
     window.visualViewport?.removeEventListener('resize', place);
+    view.scrollDOM.removeEventListener('scroll', onScroll);
+    cancelAnimationFrame(follow);
     keyboard()?.hide?.();
     // blurred while still connected: MathLive keeps global focus state, and a
     // field removed while focused leaves the next one unable to take focus
@@ -437,6 +498,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   window.addEventListener('mousedown', onOutside, true);
   keyboard()?.addEventListener('geometrychange', place);
   window.visualViewport?.addEventListener('resize', place);
+  view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
 
   openPopover = handle;
   place();

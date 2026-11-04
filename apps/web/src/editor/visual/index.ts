@@ -12,7 +12,7 @@ import { markPlugin } from './markPlugin';
 import { visualTheme } from './theme';
 import { ensureKatex } from './katex';
 import { registerView, unregisterView } from './refresh';
-import { setVisualContext } from './context';
+import { setVisualContext, type NoticeKind } from './context';
 import { suggestField, commentRangesField } from './suggestions';
 import { rangeTracker, widgetPos } from './positions';
 import { pasteText, rawAt } from './clipboard';
@@ -20,13 +20,13 @@ import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } fr
 import { remoteCaretReveal } from './remoteCarets';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
-import { labelsOnlyTail, mathParts } from './decorations';
+import { chipCaret, labelsOnlyTail, mathParts } from './decorations';
 import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter, paragraphEnter } from './commands';
 
 /**
  * Clicking a rendered widget: math opens the MathLive editor; chips put the
- * caret inside their construct → cursor-reveal shows the source. Positions
- * come from where the widget is now, never from when it was drawn.
+ * caret inside their construct (chipCaret) → cursor-reveal shows the source.
+ * Positions come from where the widget is now, never from when it was drawn.
  */
 const widgetClick = EditorView.domEventHandlers({
   mousedown(e, view) {
@@ -39,17 +39,21 @@ const widgetClick = EditorView.domEventHandlers({
     if (math) {
       if (view.state.doc.sliceString(at, at + math.raw.length) !== math.raw) return false;
       e.preventDefault();
-      openMathEditor(view, { innerFrom: at + math.innerStart, innerTo: at + math.innerEnd, rect: t.getBoundingClientRect() });
+      openMathEditor(view, { innerFrom: at + math.innerStart, innerTo: at + math.innerEnd, rect: t.getBoundingClientRect(), el: t });
       return true;
     }
     closeMathPopover();
-    view.dispatch({ selection: { anchor: Math.min(at + 1, view.state.doc.length) }, scrollIntoView: true });
+    view.dispatch({ selection: { anchor: chipCaret(view.state, at) }, scrollIntoView: true });
     view.focus();
     return true;
   },
 });
 
-/** Rich-text paste converts to clean LaTeX; plain prose is escaped. */
+/**
+ * Rich-text paste converts to clean LaTeX; plain prose is escaped. Text
+ * dragged in from elsewhere converts the same way; a drag out of an editor
+ * is its own copy (recordOwnCopies sees it) and drops as it is.
+ */
 const pasteLatex = EditorView.domEventHandlers({
   paste(e, view) {
     const data = e.clipboardData;
@@ -58,6 +62,17 @@ const pasteLatex = EditorView.domEventHandlers({
     if (latex == null) return false;
     e.preventDefault();
     view.dispatch(view.state.replaceSelection(latex), { userEvent: 'input.paste', scrollIntoView: true });
+    return true;
+  },
+  drop(e, view) {
+    const data = e.dataTransfer;
+    if (!data || data.files.length || view.state.readOnly) return false;
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
+    const latex = pasteText(data.getData('text/html'), data.getData('text/plain'), view.state.doc.toString(), rawAt(view.state, pos));
+    if (latex == null) return false;
+    e.preventDefault();
+    view.focus();
+    view.dispatch({ changes: { from: pos, insert: latex }, selection: { anchor: pos, head: pos + latex.length }, userEvent: 'input.drop', scrollIntoView: true });
     return true;
   },
 });
@@ -170,8 +185,8 @@ export interface VisualDeps {
   rootFile?: string;
   ydoc: Y.Doc;
   awareness: Awareness;
-  /** Shows a short message to the person, for a widget edit that could not be written. */
-  notify?: (text: string) => void;
+  /** Shows a short message to the person: a widget edit that could not be written or a widget that failed ('error'), why a widget opened its source ('info'). */
+  notify?: (text: string, kind: NoticeKind) => void;
 }
 
 /**

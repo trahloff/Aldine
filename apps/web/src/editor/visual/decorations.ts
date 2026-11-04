@@ -199,6 +199,29 @@ function ownDescendant(node: SyntaxNode, name: string, skip: string): SyntaxNode
   return null;
 }
 
+/**
+ * Where a click on the chip drawn for the construct at `at` puts the caret:
+ * at the end of a citation's or reference's keys, of a figure's caption (the
+ * one its chip shows), after a table's \begin line. Never inside a command
+ * name, where the first key typed would break it; `at` itself otherwise.
+ */
+export function chipCaret(state: EditorState, at: number): number {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(at, 1); n && n.from === at; n = n.parent) {
+    if (n.name === 'Cite' || n.name === 'Ref') {
+      const arg = n.getChild(n.name === 'Cite' ? 'BibKeyArgument' : 'RefArgument');
+      const close = (arg?.getChild('ShortTextArgument') ?? arg)?.getChild('CloseBrace');
+      return close ? close.from : at;
+    }
+    if (n.name === 'FigureEnvironment') {
+      const caption = ownDescendant(n, 'Caption', 'FigureEnvironment') ?? findDescendant(n, 'Caption');
+      const close = caption?.getChild('TextArgument')?.getChild('CloseBrace');
+      return close ? close.from : n.getChild('BeginEnv')?.to ?? at;
+    }
+    if (n.name === 'TabularEnvironment') return n.getChild('BeginEnv')?.to ?? at;
+  }
+  return at;
+}
+
 const itemLine = Decoration.line({ class: 'cm-vis-li' });
 const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
 
@@ -206,7 +229,8 @@ const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
  * Single tree walk over [from,to] emitting visual decorations. Whitelist-only:
  * anything not positively matched (unknown commands, ⚠ errors, unclosed
  * constructs) stays raw source. Verbatim subtrees are never entered. Nodes
- * intersecting a reveal range are skipped (their source shows).
+ * intersecting a reveal range show their source; headings and text styles
+ * keep their marks there.
  */
 export function walk(state: EditorState, reveals: readonly RevealRange[], from: number, to: number, emit: WalkEmit): void {
   const doc = state.doc;
@@ -318,15 +342,18 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       const rank = SECTION_RANK[n.name];
       if (rank) {
         const cmd = n.node.getChild('SectioningCommand');
-        if (!cmd || intersectsReveal(reveals, cmd.from, cmd.to)) return;
+        if (!cmd) return;
         const parts = wrapperParts(cmd, 'SectioningArgument');
         if (!parts || parts.closeTo !== cmd.to) return;
         const line = doc.lineAt(cmd.from);
         const rest = doc.sliceString(parts.closeTo, line.to);
         const ownLine = !doc.sliceString(line.from, cmd.from).trim() && headingLineTail(rest);
-        emit.atomic(cmd.from, parts.openEnd, hide);
-        if (ownLine && labelsOnlyTail(rest)) emit.atomic(parts.closeFrom, line.to, hideHeadingCloser);
-        else emit.atomic(parts.closeFrom, parts.closeTo, hide);
+        // revealed, the source shows in the heading's own type: the line keeps its size
+        if (!intersectsReveal(reveals, cmd.from, cmd.to)) {
+          emit.atomic(cmd.from, parts.openEnd, hide);
+          if (ownLine && labelsOnlyTail(rest)) emit.atomic(parts.closeFrom, line.to, hideHeadingCloser);
+          else emit.atomic(parts.closeFrom, parts.closeTo, hide);
+        }
         if (ownLine) emit.mark(line.from, line.from, headingLines[rank - 1]);
         else if (parts.openEnd < parts.closeFrom) emit.mark(parts.openEnd, parts.closeFrom, headingRun);
         return; // children of the heading argument render as plain heading text
@@ -375,11 +402,13 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
 
       const styleMark = styleMarks[n.name];
       if (styleMark) {
-        if (intersectsReveal(reveals, n.from, n.to)) return;
         const parts = wrapperParts(n.node, 'TextArgument');
         if (!parts) return;
-        emit.atomic(n.from, parts.openEnd, hide);
-        emit.atomic(parts.closeFrom, parts.closeTo, hide);
+        // revealed, the markup shows around text that keeps its style
+        if (!intersectsReveal(reveals, n.from, n.to)) {
+          emit.atomic(n.from, parts.openEnd, hide);
+          emit.atomic(parts.closeFrom, parts.closeTo, hide);
+        }
         if (parts.openEnd < parts.closeFrom) emit.mark(parts.openEnd, parts.closeFrom, styleMark);
         return; // interior may nest further styles; walk continues into it
       }

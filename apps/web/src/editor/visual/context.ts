@@ -11,14 +11,17 @@ import { preambleOf } from './preamble';
 let ctx: { projectId: string; branch: string; rootDir: string } | null = null;
 let bib: Map<string, BibEntry> | null = null;
 let bibKey = '';
-let files: { key: string; paths: Set<string> } | null = null;
-let notify: ((text: string) => void) | null = null;
+/** Each project file's mtime (undefined when the listing has none), by path. */
+let files: { key: string; paths: Map<string, number | undefined> } | null = null;
+let notify: ((text: string, kind: NoticeKind) => void) | null = null;
 let rootPreamble: { key: string; text: string | null; read: number; reading: boolean; load: () => void } | null = null;
 
 /** How long the root preamble as read stands for the file: it changes in another tab or by a collaborator. */
 const ROOT_STALE_MS = 30_000;
 
-export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string) => void): void {
+export type NoticeKind = 'info' | 'error';
+
+export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string, kind: NoticeKind) => void): void {
   const rootDir = rootFile && rootFile.includes('/') ? rootFile.slice(0, rootFile.lastIndexOf('/')) : '';
   ctx = { projectId, branch, rootDir };
   notify = onNotice ?? null;
@@ -75,19 +78,36 @@ export function preambleFor(doc: string): string | null {
   return preambleOf(doc) ?? currentRoot();
 }
 
-/** Tells the person what a widget could not do, once the widget that would say so is gone. */
-export function visualNotice(text: string): void {
-  notify?.(text);
+/** Tells the person what a widget could not do ('error') or why it opened the source ('info'), once the widget that would say so is gone. */
+export function visualNotice(text: string, kind: NoticeKind = 'error'): void {
+  notify?.(text, kind);
 }
 
-/** The project's file paths, so figure previews only ask for files that exist. */
-export function setVisualFiles(projectId: string, branch: string, paths: string[]): void {
+/** The files figure previews resolved to: a new mtime on any other file redraws nothing. */
+const figurePaths = new Set<string>();
+
+/**
+ * The project's files, so figure previews only ask for files that exist, and
+ * show a replaced one anew. Views redraw when a file comes or goes, or when
+ * a figure's own file changed.
+ */
+export function setVisualFiles(projectId: string, branch: string, entries: Array<{ path: string; mtime?: number }>): void {
   const key = `${projectId}::${branch}`;
-  const next = new Set(paths);
+  const next = new Map(entries.map((e) => [e.path, e.mtime]));
   const prev = files;
-  if (prev && prev.key === key && prev.paths.size === next.size && paths.every((p) => prev.paths.has(p))) return;
   files = { key, paths: next };
+  if (prev && prev.key === key) {
+    const sameFiles = prev.paths.size === next.size && entries.every((e) => prev.paths.has(e.path));
+    if (sameFiles && [...figurePaths].every((p) => prev.paths.get(p) === next.get(p))) return;
+  } else {
+    figurePaths.clear();
+  }
   pokeViews();
+}
+
+/** When the project file at `path` last changed, as the listing says; undefined when it doesn't. */
+export function fileVersion(path: string): number | undefined {
+  return files?.paths.get(path);
 }
 
 /** "(Knuth 1984; Lamport 1994)" for a comma-separated key list, best effort. */
@@ -130,14 +150,17 @@ export function figureFile(path: string): string | null {
   if (!ctx || !files || files.key !== `${ctx.projectId}::${ctx.branch}`) return null;
   for (const base of new Set([joinPath(ctx.rootDir, path), joinPath('', path)])) {
     for (const candidate of [base, ...GRAPHIC_EXTS.map((ext) => base + ext)]) {
-      if (files.paths.has(candidate)) return candidate;
+      if (files.paths.has(candidate)) {
+        figurePaths.add(candidate);
+        return candidate;
+      }
     }
   }
   return null;
 }
 
-/** Raw file URL for a project-relative path. */
-export function fileUrl(path: string): string | null {
+/** Raw file URL for a project-relative path; `v` (its mtime) makes a replaced file a new URL. */
+export function fileUrl(path: string, v?: number): string | null {
   if (!ctx) return null;
-  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(path)}`);
+  return withBase(`/api/projects/${ctx.projectId}/file?branch=${encodeURIComponent(ctx.branch)}&path=${encodeURIComponent(path)}${v != null ? `&v=${v}` : ''}`);
 }

@@ -67,10 +67,28 @@ function convertTable(el: Element, ctx: Ctx): string {
   return `\n\\begin{tabular}{${'l'.repeat(cols)}}\n${body}\n\\end{tabular}\n`;
 }
 
+/**
+ * The items of a list, every child kept. Google Docs writes a sub-list as a
+ * `ul`/`ol` beside the items, not inside one: it, and anything else between
+ * items, belongs to the item before it. Before the first item there is
+ * nothing to nest under, so a sub-list's items count as this list's.
+ */
+function listItems(el: Element, ctx: Ctx): string[] {
+  const items: string[] = [];
+  el.childNodes.forEach((child) => {
+    const tag = child.nodeType === Node.ELEMENT_NODE ? (child as Element).tagName.toLowerCase() : '';
+    if (tag === 'li') { items.push(convertChildren(child, ctx).trim()); return; }
+    if (!items.length && (tag === 'ul' || tag === 'ol')) { items.push(...listItems(child as Element, ctx)); return; }
+    const out = convertNode(child, ctx).trim();
+    if (!out) return;
+    if (items.length) items[items.length - 1] += `\n${out}`;
+    else items.push(out);
+  });
+  return items;
+}
+
 function convertList(el: Element, ordered: boolean, ctx: Ctx): string {
-  const items = Array.from(el.children)
-    .filter((c) => c.tagName.toLowerCase() === 'li')
-    .map((li) => `\\item ${convertChildren(li, ctx).trim()}`);
+  const items = listItems(el, ctx).map((item) => `\\item ${item}`);
   if (!items.length) return '';
   const env = ordered ? 'enumerate' : 'itemize';
   return `\n\\begin{${env}}\n${items.join('\n')}\n\\end{${env}}\n`;
