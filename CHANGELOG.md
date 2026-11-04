@@ -12,6 +12,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   many checkpoints go in, because everyone working on main sees them. When
   main already has everything on the branch, it says "Nothing to merge"
   instead.
+- Accepting a command from the completion list inserts its braces with the
+  caret inside the first pair: `\textbf{}`, `\frac{}{}`, `\section{}`.
+  Renaming the command of an existing one still inserts the name alone, and
+  `\usepackage{}` lists the packages at once.
+- Tab accepts the highlighted completion. With no list open it indents, as
+  before.
+- In-file Find (Cmd+F) opens at the top of the editor, not on top of the
+  errors list. It keeps its last query when you open another file, and Match
+  case, Whole word and Regular expression are the ones project search uses.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -35,6 +44,25 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   land.
 - "Save a checkpoint…" and "New branch…" in the palette put the cursor in the
   message or branch name field, not in the paper.
+- `\\` and Enter in a table or align row breaks the line at any typing speed.
+  The command list no longer reopens after `\\`, where Enter used to accept
+  its top entry and write `\\_`.
+- Closing LaTeX quotes (`''`) and primes (`f''(x)`) no longer leave an extra
+  apostrophe. The editor pairs only braces, brackets and parentheses as you
+  type, and double quotes in .bib files.
+- Cmd+I (Ctrl+I) makes the selection italic, as the Italic button says,
+  instead of selecting the enclosing paragraph.
+- In-file Find finds what you type: `\textbf`, `\noindent` and `\\` match
+  themselves, and replacing with `\textit` writes `\textit`, not a tab and
+  "extit".
+- The Find and Replace bar is readable in the dark theme. Its fields,
+  buttons and match highlights use the app's colours and sizes, its labels
+  are in sentence case, and on touch screens its fields are 16px, so iOS no
+  longer zooms in.
+- `\cite{` completion finds a paper by its title or author, not only by its
+  key, and shows the title next to the author and year.
+- Hovering a citation right after a typeset shows its reference, not a "No
+  bibliography entry" that corrected itself a moment later.
 
 ## [1.8.0] — 2026-11-04
 

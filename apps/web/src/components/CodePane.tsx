@@ -6,13 +6,14 @@ import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, default
 import { tags as t } from '@lezer/highlight';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
+import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { latex, latexCompletionSource } from 'codemirror-lang-latex';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
-import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, withoutKeyCommands, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
+import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
+import { findPanel, restoreFind } from '../editor/findPanel';
 import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from '../editor/visual';
@@ -392,6 +393,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           bracketMatching(),
           closeBrackets(),
+          latexCloseBrackets(filePath),
           rectangularSelection(),
           highlightActiveLine(),
           highlightSelectionMatches(),
@@ -399,7 +401,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           // registers its command list with a \cite and \ref that insert the bare name.
           autocompletion({
             override: [
-              withoutKeyCommands(latexCompletionSource(true)),
+              latexPackageCompletions(latexCompletionSource(true)),
               keyCommandCompletionSource,
               citeCompletionSource(projectId, branch),
               refCompletionSource(projectId, branch, () => filePath),
@@ -413,6 +415,14 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           closeBeginBraceInput,
           keyBraceGuard,
           citeHoverTooltip(projectId, branch),
+          // Tab takes the highlighted completion; with no list open it indents
+          Prec.highest(keymap.of([{ key: 'Tab', run: acceptCompletion }])),
+          // ahead of defaultKeymap, whose Mod-i selects the parent syntax node
+          Prec.high(keymap.of([
+            { key: 'Mod-b', run: toggleStyle('bold') },
+            { key: 'Mod-i', run: toggleStyle('italic') },
+          ])),
+          findPanel(),
           keymap.of([
             ...closeBracketsKeymap,
             ...defaultKeymap,
@@ -420,8 +430,6 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             ...yUndoManagerKeymap,
             ...completionKeymap,
             indentWithTab,
-            { key: 'Mod-b', run: toggleStyle('bold') },
-            { key: 'Mod-i', run: toggleStyle('italic') },
           ]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged || u.selectionSet) {
@@ -459,6 +467,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     });
     viewRef.current = view;
     reconfRef.current = { modeComp, spellComp, vimComp, deps };
+    restoreFind(view);
 
     syncedRef.current = false;
     const initialStats = () => {

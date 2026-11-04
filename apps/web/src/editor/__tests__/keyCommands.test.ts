@@ -3,7 +3,7 @@ import { EditorState, type TransactionSpec } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { autocompletion, CompletionContext, completionStatus, type Completion, type CompletionResult, type CompletionSource } from '@codemirror/autocomplete';
 import { latexCompletionSource } from 'codemirror-lang-latex';
-import { keyCommandCompletionSource, withoutKeyCommands, keyBraceGuard, citeCompletionSource, refCompletionSource } from '../latexExtras';
+import { keyCommandCompletionSource, latexPackageCompletions, keyBraceGuard, citeCompletionSource, refCompletionSource } from '../latexExtras';
 
 vi.mock('../../api', () => ({
   api: {
@@ -13,7 +13,7 @@ vi.mock('../../api', () => ({
 }));
 
 const sources: CompletionSource[] = [
-  withoutKeyCommands(latexCompletionSource(true)),
+  latexPackageCompletions(latexCompletionSource(true)),
   keyCommandCompletionSource,
   citeCompletionSource('p', 'main'),
   refCompletionSource('p', 'main', () => 'main.tex'),
@@ -136,5 +136,59 @@ describe('\\cite and \\ref completions bring their braces (#223)', () => {
     expect((await view.options()).map(({ option }) => option.label)).toEqual(['turing1950']);
     await view.accept('turing1950');
     expect(view.marked).toBe('\\cite[p.~3]{turing1950}|');
+  });
+});
+
+describe('no command list after \\\\, the line break', () => {
+  it('offers nothing after \\\\, so Enter ends a table row', async () => {
+    for (const marked of ['a & b \\\\|', 'a & b \\\\[2pt]x \\\\\\\\|', 'x \\\\hline|']) {
+      expect((await new View(marked).options()).map(({ option }) => option.label), marked).toEqual([]);
+      expect((await new View(marked).options(true)).map(({ option }) => option.label), `${marked} explicit`).toEqual([]);
+    }
+  });
+
+  it('offers commands after a backslash that follows \\\\', async () => {
+    const labels = (await new View('a \\\\\\sec|').options()).map(({ option }) => option.label);
+    expect(labels).toContain('\\section');
+    expect(labels).toContain('\\cite');
+  });
+});
+
+describe('accepting a command brings its braces', () => {
+  it('puts the caret inside the first pair', async () => {
+    for (const [before, label, after] of [
+      ['\\textb|', '\\textbf', '\\textbf{|}'],
+      ['\\sec|', '\\section', '\\section{|}'],
+      ['\\sec|', '\\section{...}', '\\section{|}'],
+      ['\\subs|', '\\subsection{...}', '\\subsection{|}'],
+      ['$\\fr|$', '\\frac', '$\\frac{|}{}$'],
+      ['\\multic|', '\\multicolumn', '\\multicolumn{|}{}{}'],
+    ]) {
+      const view = new View(before);
+      await view.accept(label);
+      expect(view.marked, label).toBe(after);
+    }
+  });
+
+  it('lists the packages after \\usepackage', async () => {
+    const view = new View('\\usepack|');
+    await view.accept('\\usepackage');
+    expect(view.marked).toBe('\\usepackage{|}');
+    expect(completionStatus(view.state)).toBe('pending');
+    expect((await view.options(true)).map(({ option }) => option.label)).toContain('amsmath');
+  });
+
+  it('inserts the name alone for a command without arguments, or one being renamed', async () => {
+    for (const [before, label, after] of [
+      ['\\ite|', '\\item', '\\item|'],
+      ['\\hli|', '\\hline', '\\hline|'],
+      ['\\textb|{x}', '\\textbf', '\\textbf|{x}'],
+      ['\\sec|*{Intro}', '\\section', '\\section|*{Intro}'],
+    ]) {
+      const view = new View(before);
+      await view.accept(label);
+      expect(view.marked, label).toBe(after);
+      expect(completionStatus(view.state), label).toBeNull();
+    }
   });
 });
