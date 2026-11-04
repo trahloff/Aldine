@@ -6,6 +6,7 @@ import { useAuth } from './Auth';
 import Modal from './Modal';
 import { useDialogs } from './Dialogs';
 import { addedEntries, invitationStatus, inviteSummary, isOrcidEntry, type InviteReport, type OwnerInvitation } from '../util/invites';
+import { outputSibling, type OutputFile } from '../util/outputFiles';
 
 /** Mirrors the server's collaborator filter (the share route) so an address it
  *  would silently discard is reported here instead of vanishing on save. */
@@ -46,6 +47,8 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   const dialogs = useDialogs();
   const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
   const fileStem = (project.name || 'document').replace(/[\\/:*?"<>|]/g, '-');
+  const outputs = useOutputFiles(downloads?.pdfUrl ?? null);
+  const bbl = outputs.find((f) => f.name.endsWith('.bbl'));
 
   // Accepting adds people to the list while the page that opened this
   // dialog still holds the old one: start from the server's.
@@ -180,8 +183,11 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
                 <button className="btn" disabled title="Typeset the document first" data-testid="download-pdf">PDF</button>
               )}
               <a className="btn" href={api.archiveUrl(project.id, downloads.branch)} download data-testid="download-zip">Source as ZIP</a>
+              {outputs.map((f) => (
+                <a key={f.name} className="btn" href={f.url} download={f.name} title={f === bbl ? 'Download the bibliography the last typeset wrote' : 'Download the log of the last typeset'} data-testid={`download-${f.name.slice(f.name.lastIndexOf('.') + 1)}`}>{f.name}</a>
+              ))}
             </div>
-            <p className="settings__hint">The ZIP holds every file on {downloads.branch}; it imports back into Aldine, or into Overleaf.</p>
+            <p className="settings__hint">The ZIP holds every file on {downloads.branch}; it imports back into Aldine, or into Overleaf.{bbl && ` arXiv also needs ${bbl.name}, which the ZIP leaves out.`}</p>
           </section>
         )}
 
@@ -200,6 +206,24 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
       </div>
     </Modal>
   );
+}
+
+/** The .bbl and the .log the typeset of `pdfUrl` wrote beside it, those
+ *  that are there: a document without a bibliography has no .bbl. */
+function useOutputFiles(pdfUrl: string | null): OutputFile[] {
+  const [found, setFound] = useState<OutputFile[]>([]);
+  useEffect(() => {
+    if (!pdfUrl) return;
+    let live = true;
+    const files = ['.bbl', '.log'].map((ext) => outputSibling(pdfUrl, ext)).filter((f): f is OutputFile => f != null);
+    const exists = (f: OutputFile) => fetch(f.url.replace('/output?', '/output/exists?'))
+      .then((r) => (r.ok ? r.json() : null), () => null)
+      .then((b: { exists?: boolean } | null) => !!b?.exists);
+    void Promise.all(files.map(exists))
+      .then((ok) => { if (live) setFound(files.filter((_, i) => ok[i])); });
+    return () => { live = false; };
+  }, [pdfUrl]);
+  return pdfUrl ? found : [];
 }
 
 /** Who has accepted an invitation, each with a way to take their access away. */

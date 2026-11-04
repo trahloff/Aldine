@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import type { TreeEntry } from '../api';
 
 /** What the editor area shows for a file instead of the code editor. */
@@ -37,4 +38,33 @@ export function nextZoom(current: number, dir: 1 | -1, steps: number[]): number 
   if (dir > 0) return steps.find((s) => s > current + eps) ?? steps[steps.length - 1];
   for (let i = steps.length - 1; i >= 0; i--) if (steps[i] < current - eps) return steps[i];
   return steps[0];
+}
+
+/** + and - zoom, 0 fits, wherever focus is inside the preview but in the
+ *  page field, where 0 is a digit of the page number. */
+export function zoomKeys(onZoom: (dir: 1 | -1 | 0) => void) {
+  return (e: KeyboardEvent<HTMLElement>) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
+    const dir = e.key === '+' || e.key === '=' ? 1 : e.key === '-' ? -1 : e.key === '0' ? 0 : null;
+    if (dir === null) return;
+    e.preventDefault();
+    onZoom(dir);
+  };
+}
+
+/** `zoom` held to the ends of `steps`. */
+export function clampZoom(zoom: number, steps: number[]): number {
+  return Math.min(Math.max(zoom, steps[0]), steps[steps.length - 1]);
+}
+
+/**
+ * The zoom a Ctrl+wheel event asks for. A trackpad pinch arrives as a run of
+ * them with small pixel deltas, and the scale follows the fingers at
+ * exp(-deltaY / 100) an event, as in pdf.js; a mouse wheel's notch, in lines
+ * or a large pixel delta, moves one step.
+ */
+export function wheelZoom(current: number, e: Pick<WheelEvent, 'deltaY' | 'deltaMode'>, steps: number[]): number {
+  if (!e.deltaY) return current;
+  if (e.deltaMode === 0 && Math.abs(e.deltaY) < 50) return clampZoom(current * Math.exp(-e.deltaY / 100), steps);
+  return nextZoom(current, e.deltaY < 0 ? 1 : -1, steps);
 }

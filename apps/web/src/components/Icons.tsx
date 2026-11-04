@@ -64,6 +64,15 @@ export const IconChevronLeft = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** An arrow back to the margin: from the PDF to the source beside it. */
+export const IconToSource = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.75 3.5v9" />
+    <path d="M13.25 8H5.5" />
+    <path d="M8.75 4.75 5.5 8l3.25 3.25" />
+  </svg>
+);
+
 export const IconChevronRight = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={10} height={10} strokeWidth={1.75}>
     <path d="M6 3.5 10.5 8 6 12.5" />

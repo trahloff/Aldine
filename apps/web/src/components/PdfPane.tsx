@@ -3,6 +3,8 @@ import { useShortcutLabel } from '../util/shortcuts';
 import { pagesOnScreen, scrollTopForPage, type PdfPagesStore } from '../util/pdfPages';
 import { cMapUrl, pdfjs } from '../util/pdfjs';
 import { pageLinks, resolveDest, toPage, type DestTarget, type PageBox } from '../util/pdfLinks';
+import { clampZoom, PDF_ZOOM_STEPS, wheelZoom } from '../util/filePreview';
+import { outputFileName } from '../util/outputFiles';
 import type { PageViewport } from 'pdfjs-dist';
 
 export interface PdfPaneHandle {
@@ -13,6 +15,8 @@ export interface PdfPaneHandle {
   refit(): void;
   /** Scroll so the top of a page (1-based, clamped) is at the top of the pane. */
   goToPage(page: number): void;
+  /** Inverse SyncTeX for the middle of the view; false while no page shows. */
+  sourceAtView(): boolean;
 }
 
 interface Props {
@@ -36,6 +40,8 @@ interface Props {
   onInverse?(page: number, x: number, y: number): void;
   /** Receives the page on screen and the page count; null while no PDF shows. */
   pages?: PdfPagesStore;
+  /** A pinch or Ctrl+wheel over the pages asks for this zoom. */
+  onZoom?(zoom: number): void;
 }
 
 /** A laid-out page: its canvas, CSS pixels per PDF point, and its viewport
@@ -46,7 +52,10 @@ type PageInfo = { el: HTMLCanvasElement; scale: number; view: PageViewport };
  *  the point on it, in PDF points from the page's top (null: the page top). */
 type LinkTarget = { url: string } | { page: number; y: number | null };
 
-/** How far below the pane's top a link's destination lands, in pixels. */
+/** How far below the pane's top a link's destination lands, in pixels. Page
+ *  offsets measure from the pages' box, which starts below the stale banner
+ *  when it shows: a scroll to an offset lands that point the same distance
+ *  below the pinned banner, never under it. */
 const LINK_MARGIN = 12;
 /** The band flashed at a link's destination, in PDF points: hyperref raises
  *  its anchors a line above the target, so two lines cover the heading or
@@ -83,13 +92,19 @@ function linkElement(box: PageBox, target: LinkTarget): HTMLElement {
   return el;
 }
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages, onZoom }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
+  /** The PDF link pdf.js could not open; the pane offers it as a download. */
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const renderTask = useRef(0);
-  const firstOpenFired = useRef(false);
+  /** The branch the on-open typeset was last asked for: a branch switch opens
+   *  the other branch the way opening the project does. */
+  const openedFor = useRef<string | null>(null);
+  const onInverseRef = useRef(onInverse);
+  onInverseRef.current = onInverse;
   // per-page viewport info for coordinate mapping
   const pageInfo = useRef<PageInfo[]>([]);
   /** Whether the first click of the current click run landed on a link. */
@@ -140,6 +155,30 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const i = Math.min(Math.max(1, Math.round(page)), info.length) - 1;
       scroller.scrollTo({ top: scrollTopForPage(info[i].el, info[i - 1]?.el) });
     },
+    sourceAtView() {
+      const info = pageInfo.current;
+      const scroller = scrollRef.current;
+      const inverse = onInverseRef.current;
+      if (!info.length || !scroller || !inverse) return false;
+      const view = scroller.getBoundingClientRect();
+      const x = view.left + scroller.clientWidth / 2, y = view.top + scroller.clientHeight / 2;
+      // The page under the middle of the view, or the nearest one when the
+      // middle falls in the gap between two.
+      let best = 0, bestRect = info[0].el.getBoundingClientRect(), bestDist = Infinity;
+      for (let i = 0; i < info.length; i++) {
+        const r = i === 0 ? bestRect : info[i].el.getBoundingClientRect();
+        const dist = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+        if (dist < bestDist) { best = i; bestRect = r; bestDist = dist; }
+        if (r.bottom >= y) break;
+      }
+      const { view: pageView } = info[best];
+      // The canvas's drawn size, not the laid-out scale: a zoom stretches the
+      // pages at once and lays them out again only once it settles.
+      const px = Math.min(Math.max(x, bestRect.left), bestRect.right) - bestRect.left;
+      const py = Math.min(Math.max(y, bestRect.top), bestRect.bottom) - bestRect.top;
+      inverse(best + 1, (px / bestRect.width) * pageView.width, (py / bestRect.height) * pageView.height);
+      return true;
+    },
   }), []);
 
   // The page on screen, for the page field in the preview's header. Measured
@@ -169,24 +208,85 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     };
   }, [measurePage]);
 
-  // auto-typeset once when the pane first mounts with no pdf
+  // auto-typeset once per branch when the pane opens on it with no pdf
   useEffect(() => {
-    if (!firstOpenFired.current && ready && !pdfUrl && status === 'idle') {
-      firstOpenFired.current = true;
+    const on = branch ?? '';
+    if (openedFor.current !== on && ready && !pdfUrl && status === 'idle') {
+      openedFor.current = on;
       onFirstOpen();
     }
-  }, [pdfUrl, status, ready, onFirstOpen]);
+  }, [pdfUrl, status, ready, onFirstOpen, branch]);
 
-  // Zoom clicks arrive in bursts; debounce so three +10% clicks trigger one
+  // A pinch or Ctrl+wheel over the pages zooms them, not the whole app: the
+  // listener is not passive, so that it can keep the browser from zooming.
+  // Each event chains on the zoom the one before asked for, since a pinch
+  // sends several a frame.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+  /** Where the pinch or wheel was, in client pixels: that spot of the page
+   *  stays under the pointer. */
+  const zoomAnchor = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const zoomTo = (next: number, x: number, y: number) => {
+      if (!onZoomRef.current || next === zoomRef.current) return;
+      zoomRef.current = next;
+      zoomAnchor.current = { x, y };
+      onZoomRef.current(next);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      zoomTo(wheelZoom(zoomRef.current, e, PDF_ZOOM_STEPS), e.clientX, e.clientY);
+    };
+    // Safari reports a pinch as gesture events, each with the scale since the
+    // gesture began.
+    let start = 1;
+    const onGesture = (e: Event) => {
+      e.preventDefault();
+      const g = e as Event & { scale: number; clientX: number; clientY: number };
+      if (e.type === 'gesturestart') start = zoomRef.current;
+      else if (e.type === 'gesturechange') zoomTo(clampZoom(start * g.scale, PDF_ZOOM_STEPS), g.clientX, g.clientY);
+    };
+    const gestures = ['gesturestart', 'gesturechange', 'gestureend'];
+    el.addEventListener('wheel', onWheel, { passive: false });
+    for (const t of gestures) el.addEventListener(t, onGesture);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      for (const t of gestures) el.removeEventListener(t, onGesture);
+    };
+  }, []);
+
+  // Zoom clicks arrive in bursts; debounce so three clicks trigger one
   // re-layout instead of three full render passes.
   const [layoutZoom, setLayoutZoom] = useState(zoom);
   useEffect(() => {
+    const anchor = zoomAnchor.current;
+    zoomAnchor.current = null;
+    const scroller = scrollRef.current;
+    let held: { el: HTMLElement; fx: number; fy: number } | null = null;
+    if (anchor && scroller) {
+      for (const { el } of pageInfo.current) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom < anchor.y) continue;
+        held = { el, fx: (anchor.x - r.left) / r.width, fy: (anchor.y - r.top) / r.height };
+        break;
+      }
+    }
     // The click itself must show: stretch the pages already on screen to the
     // new size at once, and let the debounced pass below redraw them sharp.
     const ratio = zoom / layoutZoom;
     for (const { el } of pageInfo.current) {
       const w = Number(el.dataset.w), h = Number(el.dataset.h);
       if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
+    }
+    if (anchor && held && scroller) {
+      const r = held.el.getBoundingClientRect();
+      scroller.scrollLeft += r.left + held.fx * r.width - anchor.x;
+      scroller.scrollTop += r.top + held.fy * r.height - anchor.y;
     }
     measurePage();
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
@@ -225,6 +325,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     innerRef.current?.replaceChildren();
     pageInfo.current = [];
     setRendered(false);
+    setFailedUrl(null);
     pagesRef.current?.set(null);
   }, [branch]);
 
@@ -351,7 +452,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           canvas.style.height = `${canvas.dataset.h}px`;
           canvas.style.background = '#fff';
           // The wrapper stacks the page's link layer on it and stays
-          // unpositioned: the canvas's offsets still measure from the pane.
+          // unpositioned: the canvas's offsets still measure from the pages' box.
           const wrap = document.createElement('div');
           wrap.className = 'pdf-page-wrap';
           wrap.appendChild(canvas);
@@ -383,7 +484,15 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         for (const { el } of info) observer.observe(el);
       } catch (err) {
         // a superseded render (fast retyping) cancels itself — that's expected, not an error
-        if ((err as { name?: string })?.name !== 'RenderingCancelledException') console.error('[pdf] render failed', err);
+        if (my !== renderTask.current || (err as { name?: string })?.name === 'RenderingCancelledException') return;
+        console.error('[pdf] render failed', err);
+        // The previous document is already released, so its pages would go
+        // blank as they scroll by: the pane says what happened instead.
+        container.replaceChildren();
+        pageInfo.current = [];
+        setRendered(false);
+        pagesRef.current?.set(null);
+        setFailedUrl(pdfUrl);
       }
     })();
     // Invalidate any in-flight render (so its guarded loop bails before touching
@@ -395,6 +504,15 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       Promise.resolve(doc).then((d) => { try { d?.destroy(); } catch { /* already gone */ } });
     };
   }, [pdfUrl, layoutZoom, widthTick, refitTick, measurePage]);
+
+  // Typesetting an unchanged document again keeps its PDF link: the new run
+  // is the moment to retry the one that would not open, once a run, so a
+  // retry that fails again waits for the next one.
+  useEffect(() => {
+    if (status !== 'compiling' || !failedUrl) return;
+    setFailedUrl(null);
+    setRefitTick((n) => n + 1);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A single click follows a link; the rest of a double-click on one does
   // nothing. Its second click would open a second tab, and after an internal
@@ -426,7 +544,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   };
 
   return (
-    <div className="pdf-pane" ref={scrollRef} data-testid="pdf-pane">
+    <div className="pdf-pane" ref={scrollRef} tabIndex={0} role="region" aria-label="Pages of the typeset PDF" data-testid="pdf-pane">
       {stale && rendered && (
         <div className="pdf-stale" data-testid="pdf-stale">Preview is from the last successful typeset</div>
       )}
@@ -435,6 +553,11 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         <div className="pdf-empty">
           {status === 'compiling' ? (
             <><span className="spinner" /><p>Typesetting your document…</p></>
+          ) : pdfUrl && failedUrl === pdfUrl ? (
+            <>
+              <p data-testid="pdf-load-error">Could not open the typeset PDF. Download it to open it in another app, or typeset again.</p>
+              <a className="btn" href={pdfUrl} download={outputFileName(pdfUrl) ?? true} data-testid="pdf-load-error-download">Download the PDF</a>
+            </>
           ) : status === 'error' ? (
             // Only blame the document when there are errors to fix — a failed
             // run without parsed errors (missing root, server trouble) isn't

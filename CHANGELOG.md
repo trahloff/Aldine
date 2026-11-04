@@ -21,6 +21,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - In-file Find (Cmd+F) opens at the top of the editor, not on top of the
   errors list. It keeps its last query when you open another file, and Match
   case, Whole word and Regular expression are the ones project search uses.
+- The PDF preview's zoom buttons step through 50, 75, 100, 125, 150, 200 and
+  300%, like the preview of a PDF file, instead of 10% at a time.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -63,6 +65,31 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   key, and shows the title next to the author and year.
 - Hovering a citation right after a typeset shows its reference, not a "No
   bibliography entry" that corrected itself a moment later.
+- A zoomed PDF preview scrolls all the way to the left edge of its pages.
+  Before, at 150% the start of every line sat off-screen, and a narrow
+  preview cut about 20 pixels off the page even at 100%.
+- A trackpad pinch or Ctrl+scroll over the PDF preview zooms the PDF, not
+  the whole app, and keeps the spot under the pointer in place. The preview
+  takes keyboard focus, so Page Down and the arrow keys scroll it, and +, −
+  and 0 zoom in, out and back to fit width.
+- The PDF preview keeps the width you drag it to across visits, and grows
+  back to it once a narrower window gives the room back. A double-click on
+  its divider goes back to the default width.
+- With auto-typeset on, switching branches, or merging one into main, shows
+  that branch's last PDF at once and typesets it again, instead of an empty
+  preview that asks you to press ⌘S.
+- The typesetting log opens after a clean run too: click the "Typeset in"
+  status above the preview, or run "View the typesetting log" from the
+  command palette.
+- In a project with a single .tex file, a warning such as an undefined
+  citation jumps to its line when you click it.
+- Jump to source no longer needs a double-click: a button above the preview
+  and a command in the palette open the source of the text in the middle of
+  the preview.
+- Share offers the .bbl that BibTeX or Biber wrote, which arXiv asks for
+  beside the source and the source ZIP leaves out, and the typesetting log.
+- When the typeset PDF cannot be opened, the preview says so and offers the
+  PDF as a download, instead of asking you to press ⌘S again.
 
 ## [1.8.0] — 2026-11-04
 
