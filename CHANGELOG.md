@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-11-04
+
 ### Changed
 - Folders in the file tree start closed, so a project with many folders no
   longer opens as one long list
