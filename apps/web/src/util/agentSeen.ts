@@ -36,3 +36,10 @@ export function markPrompted(projectId: string, branch: string, head: string): v
 export function markAcknowledged(projectId: string, branch: string, head: string): void {
   write(projectId, branch, { head, at: new Date().toISOString(), promptedHead: head });
 }
+
+/** A new branch starts at its base's head, so the base's mark holds on it:
+ *  without one its first open prompts for every Claude commit in the history. */
+export function copySeen(projectId: string, from: string, to: string): void {
+  const prev = readSeen(projectId, from);
+  if (prev) write(projectId, to, prev);
+}

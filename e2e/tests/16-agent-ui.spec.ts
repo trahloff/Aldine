@@ -330,6 +330,122 @@ test.describe('agent presence and audit UI', () => {
       // one review prompt, not two with different commit sets behind them
       await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
       await expect(page.locator('.toast', { hasText: 'Claude edited' })).toHaveCount(1);
+      // and the one left covers the batch it replaced
+      await page.getByTestId('agent-session-review').click();
+      await expect(page.getByTestId('agent-review-commit')).toHaveCount(2);
+      await expect(page.getByTestId('agent-review-modal')).toContainText('AWAY-FIRST-LINE');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('a session prompt that replaces an away prompt raised a second time still carries its batch', async ({ page, request }) => {
+    test.setTimeout(240_000);
+    const id = await createProject(request, 'Agent Toast Carry');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const first = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'CARRIED-FIRST-LINE.' }],
+        message: 'Rewrite the opening line',
+      });
+      expect(first.isError).toBeFalsy();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}/agent-activity?branch=main`)).json()).sessionActive, { timeout: 90_000 }).toBe(false);
+      await openProject(page, id);
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+      // The second sighting counts the batch as seen while its prompt is still up.
+      await page.reload();
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+      await expect.poll(() => page.evaluate((k) => JSON.parse(window.localStorage.getItem(k) || '{}').head ?? '', `aldine.agentSeen.${id}.main`)).not.toBe('');
+
+      const second = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results improve markedly across trials.' }],
+        message: 'Strengthen the results line',
+      });
+      expect(second.isError).toBeFalsy();
+      await expect(page.getByTestId('presence-agent')).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByTestId('agent-session-review')).toBeVisible({ timeout: 90_000 });
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
+      await page.getByTestId('agent-session-review').click();
+      await expect(page.getByTestId('agent-review-commit')).toHaveCount(2);
+      await expect(page.getByTestId('agent-review-modal')).toContainText('CARRIED-FIRST-LINE');
+      await expect(page.getByTestId('agent-review-modal')).toContainText('Results improve markedly');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('the review prompt stays with the branch it describes', async ({ page, request }) => {
+    test.setTimeout(240_000);
+    const id = await createProject(request, 'Agent Toast Branch');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      // made before Claude's work, so it has none of it
+      expect((await request.post(`/api/projects/${id}/branches`, { data: { name: 'side', from: 'main' } })).ok()).toBeTruthy();
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'MAIN-ONLY-LINE.' }],
+        message: 'Rewrite the opening line',
+      });
+      expect(edit.isError).toBeFalsy();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}/agent-activity?branch=main`)).json()).sessionActive, { timeout: 90_000 }).toBe(false);
+      await openProject(page, id);
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+
+      const onSide = page.waitForResponse((r) => r.url().includes('/agent-activity?branch=side') && r.request().method() === 'GET');
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('branch-side').click();
+      await expect(page.getByTestId('branch-menu')).toContainText('side');
+      expect((await (await onSide).json()).commitCount).toBe(0);
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
+
+      // back on main it is main's prompt again
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('branch-main').click();
+      await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
+
+      // and leaving for Home takes it down with the page
+      await page.getByRole('button', { name: 'Back to projects' }).click();
+      await expect(page).toHaveURL(/\/$/);
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('a branch made after reviewing Claude’s work does not prompt for it again', async ({ page, request }) => {
+    const id = await createProject(request, 'Agent Branch Mark');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      const edit = await call(client, 'edit_file', {
+        project: id, path: 'main.tex',
+        edits: [{ quote: 'Stable opening line.', replacement: 'REVIEWED-ON-MAIN.' }],
+        message: 'Rewrite the opening line',
+      });
+      expect(edit.isError).toBeFalsy();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}/agent-activity?branch=main`)).json()).sessionActive, { timeout: 90_000 }).toBe(false);
+      await openProject(page, id);
+      await page.getByTestId('agent-away-review').click();
+      await expect(page.getByTestId('agent-review-modal')).toBeVisible();
+      await page.getByRole('button', { name: 'Close' }).click();
+      await expect.poll(() => page.evaluate((k) => JSON.parse(window.localStorage.getItem(k) || '{}').head ?? '', `aldine.agentSeen.${id}.main`)).not.toBe('');
+
+      const onNew = page.waitForResponse((r) => r.url().includes('/agent-activity?branch=camera-ready') && r.request().method() === 'GET');
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('new-branch').click();
+      await page.getByTestId('new-branch-name').fill('camera-ready');
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('branch-menu')).toContainText('camera-ready', { timeout: 15_000 });
+      expect((await (await onNew).json()).commitCount).toBe(0);
+      await expect(page.locator('.cm-content')).toContainText('REVIEWED-ON-MAIN');
+      await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
