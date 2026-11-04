@@ -120,7 +120,8 @@ export interface AdminResetResult { sent: boolean; to?: string; link?: string }
 export interface AdminDeleteResult { ok: true; transferred: number; trashed: number; sharesRemoved: number }
 
 export interface BranchInfo { name: string; head: string; message: string; date: string }
-export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[] }
+/** `readOnly`: a showcase (ALDINE_PROTECTED_PROJECTS) that drops every edit; absent from older servers. */
+export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[]; readOnly?: boolean }
 /** `mtime` (ms) changes whenever the file's bytes are replaced. */
 export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; mtime?: number; binary?: boolean }
 export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string }

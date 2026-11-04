@@ -106,12 +106,14 @@ export function useLocalBranches({ projectId, current, onSwitch, onChanged, clos
   return { branches, load, create, mergeIntoMain, remove };
 }
 
-export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete }: {
+export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete, readOnly = false }: {
   name: string;
   current: boolean;
   onOpen(): void;
   onMerge(): void;
   onDelete(): void;
+  /** A read-only showcase: its branches open, nothing merges or goes. */
+  readOnly?: boolean;
 }) {
   return (
     <div className="branch-menu__row">
@@ -119,7 +121,7 @@ export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete }: {
         <span className="branch-menu__check">{current ? '✓' : ''}</span>
         <span className="branch-menu__name">{name}</span>
       </button>
-      {name !== 'main' && (
+      {name !== 'main' && !readOnly && (
         <>
           <button className="btn btn--ghost btn--small" title={`Merge ${name} into main`} onClick={onMerge} data-testid={`merge-${name}`}>⤝ main</button>
           <button className="btn btn--ghost btn--small" title={`Delete ${name}`} onClick={onDelete} data-testid={`delete-${name}`}>✕</button>
@@ -174,13 +176,15 @@ export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(
 
 /** The branch pill of a project that lives only on this server. A linked
  *  project gets RemoteSync instead, which folds the git host in. */
-export default function BranchMenu({ projectId, current, onSwitch, onChanged, onPublish }: {
+export default function BranchMenu({ projectId, current, onSwitch, onChanged, onPublish, readOnly = false }: {
   projectId: string;
   current: string;
   onSwitch(name: string): void;
   onChanged(): void;
   /** Set when this person may publish the project to a git host. */
   onPublish?: () => void;
+  /** A read-only showcase: its branches can be opened, not created, merged or deleted. */
+  readOnly?: boolean;
 }) {
   const pop = usePopover();
   const leave = useExitGhost();
@@ -204,10 +208,15 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
               onOpen={() => { pop.setOpen(false); onSwitch(b.name); }}
               onMerge={() => local.mergeIntoMain(b.name)}
               onDelete={() => local.remove(b.name)}
+              readOnly={readOnly}
             />
           ))}
-          <div className="menu__sep" />
-          <NewBranch from={current} onCreate={local.create} />
+          {!readOnly && (
+            <>
+              <div className="menu__sep" />
+              <NewBranch from={current} onCreate={local.create} />
+            </>
+          )}
           {onPublish && (
             <>
               <div className="menu__sep" />

@@ -77,6 +77,10 @@ try {
 
   const res = await app.inject({ method: 'PUT', url: `/api/projects/${ordinary.id}/file`, payload: { path: 'main.tex', content: 'mine' } });
   eq(res.statusCode, 200, 'an ordinary project still takes writes');
+
+  // The editor learns it from the project, before anyone types.
+  eq((await app.inject({ method: 'GET', url: `/api/projects/${showcase.id}` })).json().readOnly, true, 'GET project says the showcase is read-only');
+  eq((await app.inject({ method: 'GET', url: `/api/projects/${ordinary.id}` })).json().readOnly, false, 'GET project says an ordinary project is not');
 } finally {
   await app.close();
   fs.rmSync(tmp, { recursive: true, force: true });

@@ -37,6 +37,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - An invitation opened while signed out offers Sign in and Create an account
   side by side, and the line naming who invited you stays when you switch to
   creating an account.
+- On a Mac, Aldine's own shortcuts answer to ⌘ only. Ctrl+K deletes to the
+  end of the line without also opening the command palette, and Ctrl+S or
+  Ctrl+J no longer stand in for ⌘S and ⌘J. Windows and Linux are unchanged.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -169,6 +172,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   provider.
 - The avatars of the people in a file no longer stay on screen after you
   switch to an image or PDF preview.
+- Reopening or reloading a project opens the file you last had open on that
+  branch, not the main document. If that file is gone, the main document
+  opens.
+- On a read-only showcase project the editor takes no typing. A note under
+  the toolbar says the project is read-only, and its Make a copy button opens
+  your own copy to edit. Comments, project settings, checkpoints, reverts,
+  file renames and deletes from the palette, and creating, merging or
+  deleting branches are not offered there either; its branches still open.
+  Before, the editor accepted typing that was never saved or typeset, and
+  the other changes failed with an error.
+- Asymptote (`.asy`), knitr (`.Rnw`), `.ltx`, `.bbl`, `.latexmkrc` and
+  similar text files open in the code editor. Before, they showed a panel
+  saying there is no preview for them.
+- The command palette, comment and jump shortcuts do nothing while a dialog
+  is open, in the editor and on the project list. Before, ⌘K in Settings
+  opened the palette on top, and Escape then closed Settings behind it.
 
 ## [1.8.0] — 2026-11-04
 

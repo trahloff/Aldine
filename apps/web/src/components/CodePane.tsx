@@ -27,6 +27,7 @@ import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
 import { safeStorage } from '../util/safeStorage';
 import { loadVim, vimIfLoaded, vimWrite } from '../editor/vim';
+import { readOnlyDoc } from '../editor/readOnly';
 
 export type EditorMode = 'source' | 'visual';
 
@@ -154,6 +155,8 @@ interface Props {
   /** Who this client is to collaborators (awareness): the account when
    *  signed in; without one the browser's anonymous "Writer N". */
   identity?: { name: string; color: string };
+  /** A read-only showcase: nothing typed or inserted here changes the text. */
+  readOnly?: boolean;
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -215,7 +218,7 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied });
@@ -225,6 +228,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   toastRef.current = toast;
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; deps: VisualDeps } | null>(null);
+  const readOnlyRef = useRef<{ comp: Compartment; ydoc: Y.Doc; on: boolean } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
@@ -353,6 +357,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const modeComp = new Compartment();
     const spellComp = new Compartment();
     const vimComp = new Compartment();
+    const readOnlyComp = new Compartment();
     const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text, kind) => toastRef.current(text, kind) };
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
@@ -456,6 +461,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           // browser-native spellcheck on prose (only meaningful for .tex/.md)
           spellComp.of(spellcheckAttrs(spellcheck, filePath)),
           EditorView.contentAttributes.of({ 'aria-label': `Text of ${filePath}` }),
+          readOnlyComp.of(readOnly ? readOnlyDoc(ydoc) : []),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, provider.awareness),
           // after yCollab on purpose — see agentHighlight's ordering contract
@@ -468,6 +474,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     viewRef.current = view;
     reconfRef.current = { modeComp, spellComp, vimComp, deps };
     restoreFind(view);
+    readOnlyRef.current = { comp: readOnlyComp, ydoc, on: readOnly };
 
     syncedRef.current = false;
     const initialStats = () => {
@@ -500,6 +507,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       ydoc.destroy();
       viewRef.current = null;
       reconfRef.current = null;
+      readOnlyRef.current = null;
     };
   }, [projectId, branch, filePath]);
 
@@ -529,6 +537,14 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     });
     return () => { live = false; };
   }, [vim, projectId, branch, filePath]);
+  // The pane can mount before the project it belongs to has loaded (Make a
+  // copy keeps the showcase's details on screen until the copy's arrive).
+  useEffect(() => {
+    const view = viewRef.current, ro = readOnlyRef.current;
+    if (!view || !ro || ro.on === readOnly) return;
+    ro.on = readOnly;
+    view.dispatch({ effects: ro.comp.reconfigure(readOnly ? readOnlyDoc(ro.ydoc) : []) });
+  }, [readOnly]);
 
   return <div ref={hostRef} className="code-pane" data-testid="code-pane" />;
 });

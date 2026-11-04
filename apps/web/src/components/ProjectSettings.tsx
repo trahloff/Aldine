@@ -24,6 +24,8 @@ interface Props {
   onToggleVim(): void;
   /** Opened from the palette's shortcut command: scroll to that section. */
   focus?: 'shortcuts';
+  /** A read-only showcase: what is stored with the project shows, unchangeable. */
+  readOnly?: boolean;
 }
 
 /** Label and explanation on the left, the control in one column on the right. */
@@ -99,7 +101,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -138,6 +140,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
 
         <section className="settings__section" data-testid="settings-this-project">
           <div className="menu__label settings__heading">This project</div>
+          {readOnly && <p className="settings__hint" data-testid="settings-read-only">A read-only showcase keeps its settings. Make a copy to change them.</p>}
           <Row label="Name" htmlFor="settings-name">
             <input
               id="settings-name"
@@ -146,6 +149,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               onChange={(e) => setName(e.target.value)}
               onBlur={commitName}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              disabled={readOnly}
               data-testid="settings-name"
             />
           </Row>
@@ -155,6 +159,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={project.rootFile}
               onChange={(e) => onSetRoot(e.target.value)}
+              disabled={readOnly}
               data-testid="settings-root-file"
             >
               {rootOptions.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -166,6 +171,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={engine}
               onChange={(e) => onSetEngine(e.target.value)}
+              disabled={readOnly}
               data-testid="settings-engine"
             >
               {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
@@ -184,6 +190,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               type="checkbox"
               checked={!!project.stopOnFirstError}
               onChange={(e) => onSetStopOnFirstError(e.target.checked)}
+              disabled={readOnly}
               data-testid="settings-stop-on-error"
             />
           </Row>
@@ -197,6 +204,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={project.manualCommits ? 'manual' : 'auto'}
               onChange={(e) => onSetManualCommits(e.target.value === 'manual')}
+              disabled={readOnly}
               data-testid="settings-commit-mode"
             >
               <option value="auto">Automatically</option>

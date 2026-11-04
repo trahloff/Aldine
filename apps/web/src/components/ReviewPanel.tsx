@@ -14,9 +14,11 @@ interface Props {
   onDelete(c: Comment): void;
   onReply(c: Comment, body: string): void;
   onAccept(c: Comment): void;
+  /** A read-only showcase: threads can be read, not answered, resolved or deleted. */
+  readOnly?: boolean;
 }
 
-export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile, onReveal, onResolve, onDelete, onReply, onAccept }: Props) {
+export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile, onReveal, onResolve, onDelete, onReply, onAccept, readOnly = false }: Props) {
   const open = comments.filter((c) => !c.resolved);
   const resolved = comments.filter((c) => c.resolved);
 
@@ -31,7 +33,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
         <div className="review__suggestion">
           <div className="review__sugg-label">Suggested change</div>
           <pre className="review__sugg-text">{c.suggestion || '(delete)'}</pre>
-          {!c.resolved && <button className="btn btn--small btn--primary" data-testid={`accept-${c.id}`} onClick={() => onAccept(c)}>Accept</button>}
+          {!c.resolved && !readOnly && <button className="btn btn--small btn--primary" data-testid={`accept-${c.id}`} onClick={() => onAccept(c)}>Accept</button>}
         </div>
       )}
       <div className="review__meta">{c.author} · {friendlyDate(c.createdAt)}</div>
@@ -40,7 +42,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
           <span className="review__reply-author">{r.author}</span> {r.body}
         </div>
       ))}
-      <div className="review__actions">
+      {!readOnly && <div className="review__actions">
         {!c.resolved && (
           <input
             className="input review__reply-input"
@@ -58,7 +60,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
           {c.resolved ? 'Reopen' : 'Resolve'}
         </button>
         <button className="btn btn--ghost btn--small" title="Delete comment" onClick={() => onDelete(c)}>✕</button>
-      </div>
+      </div>}
     </div>
   );
 
@@ -67,8 +69,10 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
       {load === 'error' && <LoadError text="Couldn’t load the review comments." onRetry={() => onRetry?.()} testId="review-error" />}
       {load === 'loading' && comments.length === 0 && <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }} data-testid="review-loading">Loading the comments…</p>}
       {load === 'ok' && comments.length === 0 && (
-        <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }}>
-          Select text in the editor and click <strong>Comment</strong> to start a review thread.
+        <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }} data-testid="review-empty">
+          {readOnly
+            ? 'Comments are off on this read-only showcase.'
+            : <>Select text in the editor and click <strong>Comment</strong> to start a review thread.</>}
         </p>
       )}
       {open.map(card)}

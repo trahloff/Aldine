@@ -3,10 +3,12 @@ import { isMac } from '../platform';
 import { safeStorage } from './safeStorage';
 
 /**
- * A key chord. `mod` is ⌘ on a Mac and Ctrl elsewhere; the handlers accept
- * either on every platform. A chord recorded in settings also carries `code`,
- * the physical key, because Option and AltGr change what `key` reports; the
- * defaults match `key`, so an AZERTY keyboard finds M where it prints it.
+ * A key chord. `mod` is ⌘ on a Mac and Ctrl (or the Windows key) elsewhere.
+ * A Mac's Ctrl is never mod: Ctrl+K there deletes to the end of the line in
+ * every text field, the code editor's too. A chord recorded in settings also
+ * carries `code`, the physical key, because Option and AltGr change what
+ * `key` reports; the defaults match `key`, so an AZERTY keyboard finds M
+ * where it prints it.
  */
 export interface Chord { mod: boolean; shift: boolean; alt: boolean; key: string; code?: string }
 
@@ -107,8 +109,12 @@ export function sameChord(a: Chord, b: Chord): boolean {
   return chordId(a) === chordId(b);
 }
 
-export function matchesChord(e: KeyboardEvent, c: Chord): boolean {
-  if ((e.metaKey || e.ctrlKey) !== c.mod || e.shiftKey !== c.shift || e.altKey !== c.alt) return false;
+const modHeld = (e: KeyboardEvent, mac: boolean) => (mac ? e.metaKey : e.metaKey || e.ctrlKey);
+
+export function matchesChord(e: KeyboardEvent, c: Chord, mac = isMac): boolean {
+  // A Mac's Ctrl belongs to text editing (Ctrl+K) and the system (Ctrl+⌘+F), never to a chord.
+  if (mac && e.ctrlKey) return false;
+  if (modHeld(e, mac) !== c.mod || e.shiftKey !== c.shift || e.altKey !== c.alt) return false;
   // AltGr reports Ctrl+Alt on Windows, and it types characters.
   if (e.getModifierState?.('AltGraph')) return false;
   return c.code ? e.code === c.code : e.key.toLowerCase() === c.key;
@@ -119,12 +125,12 @@ export function matchesShortcut(e: KeyboardEvent, which: ShortcutId): boolean {
 }
 
 /** The chord a keydown spells, or null while only modifiers are held. */
-export function chordFromEvent(e: KeyboardEvent): Chord | null {
+export function chordFromEvent(e: KeyboardEvent, mac = isMac): Chord | null {
   if (MODIFIER_KEYS.has(e.key)) return null;
   // Option and Shift turn M into µ and 1 into !; the label wants the key.
   const fromCode = keyFromCode(e.code);
   const key = (e.altKey || e.shiftKey) && fromCode ? fromCode : e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  return { mod: e.metaKey || e.ctrlKey, shift: e.shiftKey, alt: e.altKey, key, code: e.code || undefined };
+  return { mod: modHeld(e, mac), shift: e.shiftKey, alt: e.altKey, key, code: e.code || undefined };
 }
 
 /** Why a chord cannot be used for `which`, or null when it can. */
