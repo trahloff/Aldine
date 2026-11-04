@@ -84,7 +84,20 @@ describe('visual decorations', () => {
     const s = state(doc, { anchor: 12 }); // cursor inside "bold"
     expect(s.field(revealField).ranges).toEqual([{ from: 2, to: 15 }]);
     expect(atomicRanges(s)).toEqual([]); // markup shown
-    expect(markRanges(s)).toEqual([]);
+    expect(markRanges(s)).toEqual([[10, 14, 'cm-vis-b']]); // around text still bold
+  });
+
+  it('a revealed heading shows its source in the heading\'s type', () => {
+    const doc = '\\section{Intro}\n\\paragraph{Run} in text\nBody';
+    for (const anchor of [3, doc.indexOf('Run') + 1]) {
+      const s = state(doc, { anchor });
+      expect(atomicRanges(s).some(([f]) => f === (anchor === 3 ? 0 : doc.indexOf('\\paragraph')))).toBe(false);
+    }
+    const runAt = doc.indexOf('Run');
+    const s = state(doc, { anchor: 3 });
+    expect(markRanges(s).filter(([, , cls]) => cls.startsWith('cm-vis-h'))).toEqual([[0, 0, 'cm-vis-h cm-vis-h1'], [runAt, runAt + 3, 'cm-vis-hrun']]);
+    const run = state(doc, { anchor: runAt + 1 });
+    expect(markRanges(run).filter(([, , cls]) => cls === 'cm-vis-hrun')).toEqual([[runAt, runAt + 3, 'cm-vis-hrun']]);
   });
 
   it('cursor outside the construct keeps it rendered', () => {

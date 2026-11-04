@@ -90,6 +90,30 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   beside the source and the source ZIP leaves out, and the typesetting log.
 - When the typeset PDF cannot be opened, the preview says so and offers the
   PDF as a download, instead of asking you to press ⌘S again.
+- A list pasted from Google Docs into Visual keeps its sub-items, nested
+  under the item above them. Before, every indented point was dropped.
+- LaTeX pasted into Visual from Overleaf or another .tex file stays LaTeX
+  when it holds only escapes, ties or a formula that starts with a digit
+  (`30\% (Fig.~3)`, `$2n$`), instead of turning into `\textbackslash{}`.
+- Text dragged into Visual from Word or a web page converts like a paste:
+  its bold, lists and links come along, and `%` or `&` in it no longer
+  break the document.
+- Clicking a citation or reference in Visual puts the caret at the end of
+  its keys, a figure at the end of its caption, and a table's Edit source at
+  its first cell. Before, the caret landed inside the command name, where
+  the first key typed broke it.
+- A heading or bold text you click into in Visual keeps its size and weight
+  while its source shows, so the page no longer jumps. A jump from Contents
+  puts the caret at the end of the heading's text.
+- A table cell with a comment or a line break in it says why it opens in the
+  source when you click it.
+- The formula editor shows "Loading the formula editor…" while it loads, and
+  says "Could not load the formula editor. Reload the page." when it cannot,
+  instead of opening the formula's source without a word.
+- The formula editor follows its formula when the text scrolls, and stays at
+  the edge of the editor when the formula scrolls out of view.
+- A figure replaced by an upload shows its new preview in Visual right away,
+  not after a reload.
 
 ## [1.8.0] — 2026-11-04
 

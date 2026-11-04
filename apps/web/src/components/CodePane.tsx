@@ -353,7 +353,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const modeComp = new Compartment();
     const spellComp = new Compartment();
     const vimComp = new Compartment();
-    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text) => toastRef.current(text, 'error') };
+    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text, kind) => toastRef.current(text, kind) };
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
     // session (same server-side clientID) gets a fresh start time. A start

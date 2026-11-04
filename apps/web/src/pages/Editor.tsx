@@ -870,7 +870,7 @@ export default function Editor() {
 
   // figure previews in Visual mode ask only for files that exist
   useEffect(() => {
-    setVisualFiles(id, branch, files.filter((f) => f.type === 'file').map((f) => f.path));
+    setVisualFiles(id, branch, files.filter((f) => f.type === 'file'));
   }, [id, branch, files]);
 
   // push this file's comment ranges into the editor as highlight decorations

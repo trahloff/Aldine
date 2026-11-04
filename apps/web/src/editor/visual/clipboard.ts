@@ -40,10 +40,27 @@ export function isOwnCopy(text: string): boolean {
 
 /**
  * Clipboard text that is LaTeX already, copied from a .tex file, a terminal
- * or a chat: a control word (not a Windows path's `C:\Users`), or a `$…$`
- * formula (not the `$5 … $10` of prices).
+ * or a chat: a control word (not a Windows path's `C:\Users`), an escape
+ * (`30\%`), a tie after a word (`Fig.~3`, not the `3~5` of a range), or a
+ * `$…$` formula (not the `$5 … $10` of prices).
  */
-const LATEX_TEXT = /(?:^|[^A-Za-z0-9:\\/])\\[A-Za-z]+|\\[A-Za-z]+\s*[{[]|\$[^\s$\d](?:[^$\n]*[^\s$])?\$/;
+const LATEX_TEXT = /(?:^|[^A-Za-z0-9:\\/])\\[A-Za-z]+|\\[A-Za-z]+\s*[{[]|(?:^|[^:\\/])\\[%&$#_{}]|[A-Za-z.]~[A-Za-z0-9\\]|\$[^\s$\d](?:[^$\n]*[^\s$])?\$/;
+
+/**
+ * A `$…$` formula that opens with a digit (`$2n$`, `$10^{-3}$`): it holds a
+ * letter or a math sign and ends on neither a space nor a sign, which the
+ * `$5 to $10`, `$5-$10` and `$5M and $` of prices do. Every `$` may open one.
+ */
+function digitMath(text: string): boolean {
+  for (let i = text.indexOf('$'); i >= 0; i = text.indexOf('$', i + 1)) {
+    if (!/\d/.test(text[i + 1] ?? '') || text[i - 1] === '\\') continue;
+    const end = text.indexOf('$', i + 1);
+    if (end < 0) return false;
+    const body = text.slice(i + 1, end);
+    if (!body.includes('\n') && !/[\s\-+,./]$/.test(body) && /[A-Za-z^_\\{}=<>]/.test(body)) return true;
+  }
+  return false;
+}
 
 /** Where text is taken as written (math, verbatim, a path), so an escape would show or break it. */
 const RAW_CONTENT = new Set(['Math', 'VerbatimContent', 'VerbContent', 'LstInlineContent', 'LiteralArgContent']);
@@ -71,7 +88,7 @@ export function rawAt(state: EditorState, pos: number): boolean {
  * it is.
  */
 export function pasteText(html: string, text: string, doc: string, raw = false): string | null {
-  if (raw || LATEX_TEXT.test(text) || isOwnCopy(text)) return null;
+  if (raw || LATEX_TEXT.test(text) || digitMath(text) || isOwnCopy(text)) return null;
   if (!html) {
     const escaped = escapeLatex(text);
     return escaped === text ? null : escaped;

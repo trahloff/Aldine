@@ -356,6 +356,12 @@ const CELL_TITLE = {
   lines: 'Edit in the source (Enter): this cell spans several lines',
 };
 
+/** Said when such a cell opens its source: the grid it would show in goes away with it. */
+const RAW_NOTICE = {
+  comment: 'This cell has a comment, so it opens in the source.',
+  lines: 'This cell is written on several lines, so it opens in the source.',
+};
+
 let noteIds = 0;
 
 /**
@@ -393,8 +399,9 @@ export class TableWidget extends WidgetType {
         td.textContent = cell.raw ? stripComments(cell.text) : cell.text;
         td.tabIndex = 0;
         td.title = CELL_TITLE[cell.raw ?? 'edit'];
-        const open = cell.raw
-          ? () => this.gotoSource(view, wrap, cell.from)
+        const { raw } = cell;
+        const open = raw
+          ? () => { visualNotice(RAW_NOTICE[raw], 'info'); this.gotoSource(view, wrap, cell.from); }
           : (initial?: string) => this.editCell(view, wrap, td, { cell, r, c, index }, initial);
         if (!cell.raw) openers.set(td, open);
         td.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); open(); };
@@ -453,7 +460,7 @@ export class TableWidget extends WidgetType {
         userEvent: 'input.visual',
       });
     }, 'vis-table-addcol', model.colSpec ? undefined : 'No column spec found: add columns in the source');
-    btn(SOURCE_BUTTON.label, SOURCE_BUTTON.title, () => this.gotoSource(view, wrap, 1), 'vis-table-source');
+    btn(SOURCE_BUTTON.label, SOURCE_BUTTON.title, () => this.gotoSource(view, wrap, model.rows[0][0].from), 'vis-table-source');
     wrap.appendChild(bar);
     const notice = document.createElement('span');
     notice.className = 'cm-vis-table__notice';

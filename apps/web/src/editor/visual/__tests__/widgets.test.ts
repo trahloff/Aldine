@@ -3,7 +3,7 @@ import { Compartment, EditorState, EditorSelection } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { closeBrackets, insertBracket } from '@codemirror/autocomplete';
 import { latex } from 'codemirror-lang-latex';
-import { buildAtomic, buildMarks, headingLineTail, mathParts } from '../decorations';
+import { buildAtomic, buildMarks, chipCaret, headingLineTail, mathParts } from '../decorations';
 import { breakAfterHeading } from '../commands';
 import { revealField } from '../reveal';
 import { parseTabular, tableModel } from '../widgets/table';
@@ -327,6 +327,34 @@ describe('Enter at a heading\'s closing brace', () => {
     expect(enter(doc, doc.indexOf('\\label')).ran).toBe(false);
     expect(enter(doc, doc.indexOf('Heading'), doc.indexOf('}')).ran).toBe(false);
     expect(enter(doc, doc.indexOf('end')).ran).toBe(false);
+  });
+});
+
+describe('a click on a chip (vis-10)', () => {
+  it('puts the caret where typing edits what the chip shows, never in a command name', () => {
+    const doc = [
+      'See \\cite[p.~12]{knuth1984} and \\ref{fig:a}.',
+      '\\begin{figure}[htbp]',
+      '\\begin{subfigure}{0.4\\linewidth}\\caption{Left}\\end{subfigure}',
+      '\\caption{Two panels}',
+      '\\end{figure}',
+      '\\begin{figure}',
+      '\\includegraphics{x}',
+      '\\end{figure}',
+      '\\begin{tabular}',
+      'a & b',
+      '\\end{tabular}',
+      'end',
+    ].join('\n');
+    const s = state(doc);
+    const at = (text: string, from = 0) => doc.indexOf(text, from);
+    expect(chipCaret(s, at('\\cite'))).toBe(at('}', at('knuth1984')));
+    expect(chipCaret(s, at('\\ref'))).toBe(at('}', at('fig:a')));
+    expect(chipCaret(s, at('\\begin{figure}'))).toBe(at('}', at('Two panels')));
+    const bare = at('\\begin{figure}', at('Two panels'));
+    expect(chipCaret(s, bare)).toBe(bare + '\\begin{figure}'.length);
+    expect(chipCaret(s, at('\\begin{tabular}'))).toBe(at('\\begin{tabular}') + '\\begin{tabular}'.length);
+    expect(chipCaret(s, at('end', at('\\end{tabular}') + 4))).toBe(at('end', at('\\end{tabular}') + 4));
   });
 });
 

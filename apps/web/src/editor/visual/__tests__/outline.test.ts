@@ -11,4 +11,10 @@ describe('Contents outline', () => {
     const s = EditorState.create({ doc, extensions: [latex()] });
     expect(documentOutline(s).map(({ level, title }) => [level, title])).toEqual([[1, 'First'], [1, 'Middle'], [2, 'Last']]);
   });
+
+  it('jumps to the end of a heading\'s text, where typing edits it', () => {
+    const doc = 'Intro.\n\\section{Methods}\\label{sec:m}\n\\subsection*{}\n';
+    const s = EditorState.create({ doc, extensions: [latex()] });
+    expect(documentOutline(s).map((h) => h.pos)).toEqual([doc.indexOf('}\\label'), doc.indexOf('{}') + 1]);
+  });
 });

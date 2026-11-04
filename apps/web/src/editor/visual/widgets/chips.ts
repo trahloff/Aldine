@@ -1,5 +1,5 @@
 import { WidgetType } from '@codemirror/view';
-import { citeLabel, figureFile, fileUrl } from '../context';
+import { citeLabel, figureFile, fileUrl, fileVersion } from '../context';
 import { pdfThumbnail } from './pdfThumb';
 
 /** What a screen reader says for each chip kind, before the label. */
@@ -44,20 +44,20 @@ class Chip extends WidgetType {
 
 /** Figure with an inline preview when the included graphic exists in the project. */
 class FigureWidget extends WidgetType {
-  /** `file`: the project path the graphic resolved to, or null. */
-  constructor(readonly caption: string, readonly file: string | null) {
+  /** `file`: the project path the graphic resolved to, or null; `version`: its mtime, so a replaced file draws anew. */
+  constructor(readonly caption: string, readonly file: string | null, readonly version?: number) {
     super();
   }
 
   eq(other: FigureWidget): boolean {
-    return other.caption === this.caption && other.file === this.file;
+    return other.caption === this.caption && other.file === this.file && other.version === this.version;
   }
 
   toDOM(): HTMLElement {
     const el = document.createElement('span');
     el.className = 'cm-vis-chip cm-vis-figure';
     el.setAttribute('data-testid', 'vis-chip-figure');
-    const url = this.file ? fileUrl(this.file) : null;
+    const url = this.file ? fileUrl(this.file, this.version) : null;
     if (this.file && url) {
       const img = document.createElement('img');
       // the caption shown beside the image is its text alternative
@@ -91,7 +91,8 @@ class FigureWidget extends WidgetType {
 }
 
 export function figureChip(caption: string, image: string | null = null): FigureWidget {
-  return new FigureWidget(caption, image ? figureFile(image) : null);
+  const file = image ? figureFile(image) : null;
+  return new FigureWidget(caption, file, file ? fileVersion(file) : undefined);
 }
 export function tableChip(caption: string): Chip {
   return new Chip('table', caption);

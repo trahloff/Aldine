@@ -2,7 +2,8 @@ import type { EditorState } from '@codemirror/state';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { SECTION_RANK } from './decorations';
 
-export interface OutlineEntry { level: number; title: string; line: number }
+/** `pos`: the end of the heading's text, where a jump to it puts the caret. */
+export interface OutlineEntry { level: number; title: string; line: number; pos: number }
 
 /** Headings of the document, in order, for the Contents dropdown. */
 export function documentOutline(state: EditorState): OutlineEntry[] {
@@ -24,6 +25,7 @@ export function documentOutline(state: EditorState): OutlineEntry[] {
         level: rank,
         title: state.doc.sliceString(open.to, close.from).trim().slice(0, 80) || '(untitled)',
         line: state.doc.lineAt(cmd.from).number,
+        pos: close.from,
       });
     },
   });

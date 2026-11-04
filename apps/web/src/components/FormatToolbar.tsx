@@ -49,7 +49,10 @@ function ContentsDropdown({ target }: Props) {
       onFocus={() => setOutline(target.current?.getOutline() ?? [])}
       onChange={(e) => {
         const line = Number(e.target.value);
-        if (line) target.current?.gotoLine(line);
+        // read again: the offsets listed on focus go stale with every edit
+        const heading = line ? target.current?.getOutline().find((h) => h.line === line) : undefined;
+        if (heading) target.current?.revealPos(heading.pos);
+        else if (line) target.current?.gotoLine(line);
         e.target.value = '';
       }}
     >

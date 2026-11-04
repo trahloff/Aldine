@@ -202,9 +202,11 @@ test.describe('visual editor', () => {
       await expect(page.getByTestId('vis-chip-cite')).toContainText(/knuth1984|Knuth 1984/);
       await expect(page.getByTestId('vis-chip-figure')).toContainText('A very nice plot');
       await expect(page.locator('.cm-content')).not.toContainText('\\caption');
-      // clicking the figure chip reveals its source
+      // clicking the figure chip reveals its source, the caret at the end of its caption
       await page.getByTestId('vis-chip-figure').click();
       await expect(page.locator('.cm-content')).toContainText('\\begin{figure}');
+      await page.keyboard.type(' here');
+      await expectStored(request, id, doc.replace('{A very nice plot}', '{A very nice plot here}'));
     } finally {
       await cleanup(request, id);
     }
@@ -324,6 +326,16 @@ test.describe('visual editor', () => {
       await dd.focus();
       await expect(dd.locator('option', { hasText: 'Introduction' })).toHaveCount(1);
       await expect(dd.locator('option', { hasText: 'Details' })).toHaveCount(1);
+      // a jump lands at the end of the heading's text; its source shows in the heading's type
+      await dd.selectOption({ value: '4' }); // Details, on line 4
+      await expect(page.locator('.cm-content')).toBeFocused();
+      await page.keyboard.type(' more');
+      await expectStored(request, id, DOC.replace('{Details}', '{Details more}'));
+      await expect(page.locator('.cm-line.cm-vis-h2')).toContainText('\\subsection{Details more}');
+      // so does bold the caret is in
+      await page.locator('.cm-vis-b').click();
+      await expect(page.locator('.cm-content')).toContainText('\\textbf{brave}');
+      await expect(page.locator('.cm-vis-b')).toHaveText('brave');
     } finally {
       await cleanup(request, id);
     }
@@ -471,9 +483,15 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       expected = expected.replace('$x+y$', '$x+y+1$');
       await expectStored(request, id, expected);
 
+      // a chip puts the caret at the end of its keys, a table's source opens at its first cell
       await page.getByTestId('vis-chip-cite').click();
-      await page.keyboard.type('Z');
-      expected = expected.replace('\\cite{', '\\Zcite{');
+      await page.keyboard.type(',Z');
+      expected = expected.replace('\\cite{knuth1984}', '\\cite{knuth1984,Z}');
+      await expectStored(request, id, expected);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-table-source').click();
+      await page.keyboard.type('Y');
+      expected = expected.replace('a & beta', 'Ya & beta');
       await expectStored(request, id, expected);
     } finally {
       await cleanup(request, id);
@@ -869,6 +887,14 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await paste('<p>See <a href="#results">the results section</a> for details.</p>', 'See the results section for details.');
       await expect.poll(() => stored(request, id), { timeout: 20_000 }).toContain('See the results section for details.');
       expect(await stored(request, id)).not.toContain('\\url{#');
+      // Docs writes a sub-list beside its items, not inside one
+      const item = (text: string, level: number) => `<li dir="ltr" aria-level="${level}"><p dir="ltr"><span>${text}</span></p></li>`;
+      await page.keyboard.press('Enter');
+      await paste(
+        `<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-5678"><ul>${item('One', 1)}<ul>${item('Sub a', 2)}${item('Sub b', 2)}</ul>${item('Two', 1)}</ul></b>`,
+        'One\nSub a\nSub b\nTwo',
+      );
+      await expect.poll(() => stored(request, id), { timeout: 20_000 }).toContain('\\item One\n\\begin{itemize}\n\\item Sub a\n\\item Sub b\n\\end{itemize}\n\\item Two\n\\end{itemize}');
     } finally {
       await cleanup(request, id);
     }
@@ -970,6 +996,14 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await expect.poll(() => figures.nth(0).getByTestId('vis-figure-img').evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
       await expect(figures.nth(1).getByTestId('vis-figure-img')).toHaveAttribute('src', /^data:image\/png/, { timeout: 15_000 });
       await expect(figures.nth(2)).toContainText('Figure: Two panels');
+      // a replaced figure shows its new bytes, without a reload
+      const first = figures.nth(0).getByTestId('vis-figure-img');
+      const firstSrc = await first.getAttribute('src');
+      const wide = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg==', 'base64');
+      await page.getByTestId('upload-input').setInputFiles([{ name: 'plot.png', mimeType: 'image/png', buffer: wide }]);
+      await page.getByTestId('dialog-confirm').click();
+      await expect(first).not.toHaveAttribute('src', firstSrc!);
+      await expect.poll(() => first.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBe(2);
       expect(notFound).toEqual([]);
     } finally {
       await cleanup(request, id);
@@ -1042,9 +1076,11 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await page.locator('.cm-line', { hasText: 'Introduction' }).click();
       await expect(page.locator('.cm-content')).toContainText('\\section{Introduction}');
       await page.getByTestId('vis-math').click();
+      await expect(page.getByTestId('math-popover-loading')).toHaveText('Loading the formula editor…');
       await page.keyboard.type('+1');
       arrive();
       await expect(field).toBeFocused();
+      await expect(page.getByTestId('math-popover-loading')).toHaveCount(0);
       await page.waitForTimeout(2500);
       expect(await stored(request, id)).toBe(doc);
       await expect.poll(() => field.evaluate((mf) => (mf as HTMLElement & { value: string }).value)).toBe('x^2+1');
@@ -1063,6 +1099,7 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await page.getByTestId('vis-math').click();
       await page.keyboard.type('Q');
       await page.keyboard.press('Escape');
+      await expect(page.getByTestId('math-popover-loading')).toHaveCount(0);
       await page.keyboard.type('!');
       await page.getByTestId('vis-math').click();
       await page.keyboard.type('W');
@@ -1081,6 +1118,56 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await page.waitForTimeout(500);
       await expect(pop).toHaveCount(0);
       await expectStored(request, id, doc.replace('plain end', 'plain end!?'));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('a formula editor that cannot load says to reload the page and opens the formula as source', async ({ page, request }) => {
+    const doc = 'Math $x+y$ here.\nplain end\n';
+    const id = await seedDoc(request, 'Visual Math Offline', doc);
+    await page.route(/\/assets\/mathlive[^/]*\.js/, (route) => route.abort());
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').click();
+      await expect(page.getByTestId('toasts')).toContainText('Could not load the formula editor. Reload the page.');
+      await expect(page.getByTestId('math-popover-loading')).toHaveCount(0);
+      await expect(page.getByTestId('math-popover')).toHaveCount(0);
+      await expect(page.locator('.cm-content')).toContainText('$x+y$');
+      await page.keyboard.type('z');
+      await expectStored(request, id, doc.replace('$x+y$', '$zx+y$'));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the formula editor follows its formula when the text scrolls, and stays in the editor when it scrolls away', async ({ page, request }) => {
+    const filler = (n: number) => Array.from({ length: n }, (_, i) => `Filler line ${i + 1}.`).join('\n');
+    const id = await seedDoc(request, 'Visual Math Scroll', `${filler(20)}\nMath $x+y$ here.\n${filler(120)}\nplain end\n`);
+    const pop = page.getByTestId('math-popover');
+    const math = page.getByTestId('vis-math');
+    const scrollBy = (dy: number) => page.evaluate((dy) => { document.querySelector('.cm-scroller')!.scrollTop += dy; }, dy);
+    try {
+      await openProject(page, id);
+      await math.scrollIntoViewIfNeeded();
+      // the formula a third of the way down, with room for the editor below it
+      await page.evaluate(() => {
+        const scroller = document.querySelector('.cm-scroller')!;
+        const m = document.querySelector('[data-testid="vis-math"]')!;
+        scroller.scrollTop += m.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 120;
+      });
+      await math.click();
+      await expect(page.getByTestId('math-field')).toBeFocused();
+      const gap = async () => (await pop.boundingBox())!.y - (await math.boundingBox())!.y;
+      const before = await gap();
+      await scrollBy(40);
+      await expect.poll(gap).toBeCloseTo(before, 0);
+      await scrollBy(4000);
+      await expect(pop).toBeVisible();
+      await expect(pop).toBeInViewport();
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
     } finally {
       await cleanup(request, id);
     }
@@ -1256,9 +1343,10 @@ test.describe('visual editor: wrapped cells, new rows, collaborators in a table,
       await page.keyboard.press('Enter');
       await grid.locator('td', { hasText: /^b$/ }).click();
       await page.locator('.cm-line', { hasText: 'plain end' }).click();
-      // a click on the wrapped cell goes to its source
+      // a click on the wrapped cell goes to its source, and says why
       await wrapped.click();
       await expect(page.locator('.cm-content')).toContainText('\\begin{tabular}{ll}');
+      await expect(page.getByTestId('toasts')).toContainText('This cell is written on several lines, so it opens in the source.');
       await page.waitForTimeout(2500);
       expect(await stored(request, id)).toBe(doc);
     } finally {
@@ -1430,6 +1518,35 @@ test.describe('visual editor: pastes, escapes, keys and formulas', () => {
     } finally {
       await cleanup(request, bare);
       await cleanup(request, linked);
+    }
+  });
+
+  test('text dragged in converts like a paste, and LaTeX copied from a .tex pastes as it is', async ({ page, request }) => {
+    const doc = 'prose here\nplain end\n';
+    const id = await seedDoc(request, 'Visual Drop', doc);
+    const dropAtEnd = (line: string, data: Record<string, string>) => page.evaluate(({ line, data }) => {
+      const el = [...document.querySelectorAll('.cm-line')].find((l) => l.textContent?.includes(line))!;
+      const r = el.getBoundingClientRect();
+      const dt = new DataTransfer();
+      for (const [type, value] of Object.entries(data)) dt.setData(type, value);
+      document.querySelector('.cm-content')!.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, clientX: r.right - 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+    }, { line, data });
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await dropAtEnd('prose here', { 'text/html': '<p>, dropped <b>bold</b> at 50%.</p>', 'text/plain': ', dropped bold at 50%.' });
+      let expected = doc.replace('prose here', 'prose here, dropped \\textbf{bold} at 50\\%.');
+      await expectStored(request, id, expected);
+      await dropAtEnd('plain end', { 'text/plain': ' 5 & 6' });
+      expected = expected.replace('plain end', 'plain end 5 \\& 6');
+      await expectStored(request, id, expected);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.keyboard.press('End');
+      await pasteAtEnd(page, { 'text/plain': ' 30\\% (Fig.~3) and $2n$' });
+      expected = expected.replace('plain end 5 \\& 6', 'plain end 5 \\& 6 30\\% (Fig.~3) and $2n$');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
     }
   });
 
