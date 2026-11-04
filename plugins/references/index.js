@@ -77,16 +77,22 @@ export default {
         let bib = [];
         let bibLoaded = false;
         let filter = '';
+        let bibSeq = 0;
         const loadBib = async () => {
+          const seq = ++bibSeq;
+          let entries;
           try {
             const res = await aldine.fetch(`/api/projects/${aldine.project.id}/bib?branch=${encodeURIComponent(aldine.project.branch)}`);
-            const entries = res.ok ? await res.json() : [];
-            // one row per key: LaTeX resolves a key once, whichever file holds it
-            bib = [...new Map(entries.map((e) => [e.key, e])).values()];
-          } catch { bib = []; }
+            entries = res.ok ? await res.json() : [];
+          } catch { entries = []; }
+          if (seq !== bibSeq) return;
+          // one row per key: LaTeX resolves a key once, whichever file holds it
+          bib = [...new Map(entries.map((e) => [e.key, e])).values()];
           bibLoaded = true;
           drawBib();
         };
+        // A Zotero import, an upload or a collaborator's new .bib adds entries.
+        aldine.project.onFilesChanged?.(loadBib);
         const insertKey = (key) => {
           aldine.editor.insertAtCursor(`\\cite{${key}}`);
           aldine.toast(`Inserted \\cite{${key}}`, 'ok');

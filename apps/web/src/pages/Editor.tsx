@@ -1354,7 +1354,7 @@ export default function Editor() {
 
   return (
     <div className="editor-shell" data-testid="editor-shell">
-      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} />
+      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} files={files} />
       <header className="toolbar" aria-label="Project toolbar">
         <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span

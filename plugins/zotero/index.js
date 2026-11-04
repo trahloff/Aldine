@@ -34,8 +34,12 @@ export default {
           collections: [],
           libraryPrefix: '',
           link: null,
+          isOwner: true,
+          isMember: true,
+          ownerName: '',
           searching: '',
           bibEntries: [],
+          bibLoaded: false,
         };
 
         // build() makes fresh inputs; hand focus and the caret to the new copy
@@ -52,7 +56,8 @@ export default {
         };
 
         const jfetch = async (url, init) => {
-          const res = await aldine.fetch(url, init ? { headers: { 'content-type': 'application/json' }, ...init } : undefined);
+          // A JSON content type on a request without a body is a 400 from the server.
+          const res = await aldine.fetch(url, init?.body ? { headers: { 'content-type': 'application/json' }, ...init } : init);
           const body = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
           return body;
@@ -62,7 +67,11 @@ export default {
           try {
             const p = await jfetch(`/api/projects/${aldine.project.id}`);
             state.link = p.zotero;
-            state.view = p.zotero ? 'linked' : 'connect';
+            // absent on a server without accounts, where everyone is the owner
+            state.isOwner = p.isOwner !== false;
+            state.isMember = p.isMember !== false;
+            state.ownerName = p.ownerName || '';
+            state.view = p.zotero ? 'linked' : state.isOwner ? 'connect' : 'ask-owner';
           } catch {
             state.view = 'connect';
           }
@@ -109,6 +118,7 @@ export default {
                 apiKey: state.apiKey.trim(),
                 libraryPrefix: state.libraryPrefix,
                 collectionKey: collectionKey || undefined,
+                branch: aldine.project.branch,
                 // no bibFile: the server defaults to zotero.bib NEXT TO THE ROOT
                 // FILE, which is where \addbibresource{zotero.bib} resolves
               }),
@@ -140,18 +150,35 @@ export default {
 
         const unlink = async () => {
           if (!window.confirm('Unlink Zotero from this project? The .bib file stays.')) return;
-          await jfetch(`/api/projects/${aldine.project.id}/zotero`, { method: 'DELETE' });
+          try {
+            await jfetch(`/api/projects/${aldine.project.id}/zotero`, { method: 'DELETE' });
+          } catch (err) {
+            aldine.toast(`Unlink failed: ${err.message}`, 'error');
+            return;
+          }
           await loadStatus();
         };
 
+        let bibSeq = 0;
         const loadBib = async () => {
+          const seq = ++bibSeq;
+          let entries;
           try {
-            state.bibEntries = await jfetch(`/api/projects/${aldine.project.id}/bib?branch=${encodeURIComponent(aldine.project.branch)}`);
+            entries = await jfetch(`/api/projects/${aldine.project.id}/bib?branch=${encodeURIComponent(aldine.project.branch)}`);
           } catch {
-            state.bibEntries = [];
+            entries = [];
           }
+          if (seq !== bibSeq) return;
+          state.bibEntries = entries;
+          state.bibLoaded = true;
           rerender();
         };
+        // An import, a sync or any other change to the branch's files can add
+        // entries: a list on screen reloads, a hidden one on its next focus.
+        aldine.project.onFilesChanged?.(() => {
+          if (state.bibLoaded && state.view === 'linked') loadBib();
+          else state.bibLoaded = false;
+        });
 
         let busy = false;
         const setBusy = (b) => { busy = b; rerender(); };
@@ -163,6 +190,16 @@ export default {
 
           if (state.view === 'loading') {
             wrap.append(h('div', { class: 'spinner', style: { margin: '20px auto' } }));
+            return wrap;
+          }
+
+          if (state.view === 'ask-owner') {
+            Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' });
+            wrap.append(
+              section('Zotero'),
+              h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: '0' }, dataset: { testid: 'zotero-ask-owner' } },
+                `Only ${state.ownerName ? `${state.ownerName}, the project owner,` : 'the project owner'} can link a Zotero library. Ask them to link one; its references then show here.`),
+            );
             return wrap;
           }
 
@@ -227,16 +264,22 @@ export default {
 
           // linked
           const z = state.link;
+          const [kind, libId] = String(z.libraryPrefix).split('/');
+          const library = kind === 'groups'
+            ? `Group: ${z.libraryName || libId}`
+            : `${z.username || `Zotero user ${libId}`}’s library`;
+          const collection = z.collectionKey ? ` › ${z.collectionName || `collection ${z.collectionKey}`}` : '';
+          const actions = [
+            state.isMember ? h('button', { class: 'btn btn--small', dataset: { testid: 'zotero-sync' }, disabled: busy ? '' : null, onclick: sync }, busy ? 'Syncing…' : 'Sync now') : null,
+            state.isOwner ? h('button', { class: 'btn btn--small btn--ghost', dataset: { testid: 'zotero-unlink' }, onclick: unlink }, 'Unlink') : null,
+          ].filter(Boolean);
           wrap.append(
             section('Linked library'),
-            h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '0 2px 6px' } },
-              `${z.libraryPrefix}${z.collectionKey ? ' · collection' : ''} → ${z.bibFile}`,
+            h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '0 2px 6px' }, dataset: { testid: 'zotero-linked' } },
+              `${library}${collection} → ${z.bibFile}`,
               z.lastSyncedAt ? h('div', {}, `Last synced ${new Date(z.lastSyncedAt).toLocaleString()}`) : null,
             ),
-            h('div', { style: { display: 'flex', gap: '6px' } },
-              h('button', { class: 'btn btn--small', dataset: { testid: 'zotero-sync' }, disabled: busy ? '' : null, onclick: sync }, busy ? 'Syncing…' : 'Sync now'),
-              h('button', { class: 'btn btn--small btn--ghost', onclick: unlink }, 'Unlink'),
-            ),
+            ...(actions.length ? [h('div', { style: { display: 'flex', gap: '6px' } }, ...actions)] : []),
             section('Insert citation'),
             h('input', {
               class: 'input',
@@ -245,7 +288,7 @@ export default {
               dataset: { testid: 'zotero-search' },
               value: state.searching,
               oninput: (e) => { state.searching = e.target.value; rerender(); },
-              onfocus: () => { if (!state.bibEntries.length) loadBib(); },
+              onfocus: () => { if (!state.bibLoaded) loadBib(); },
             }),
           );
 

@@ -83,6 +83,9 @@ export interface ProjectMeta {
     username?: string;
     libraryPrefix: string;
     collectionKey?: string;
+    /** Display names, looked up when the link is made: a group's name and the collection's. */
+    libraryName?: string;
+    collectionName?: string;
     lastVersion?: number;
     bibFile: string;
     lastSyncedAt?: string;

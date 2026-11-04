@@ -200,6 +200,30 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - A new branch starts with the review you did on the branch it was made
   from. Before, its first open prompted for every edit Claude had ever made
   in the project.
+- Linking a Zotero library on a branch other than main imports `zotero.bib`
+  into that branch, not into main. Sync now on a branch that has no
+  `zotero.bib` yet fetches the whole library instead of answering "Zotero
+  library unchanged".
+- A Zotero import that fails, for example with a key that cannot read the
+  chosen library, no longer leaves the project linked to that library. A
+  failed new link keeps the one that worked. When Zotero refuses the key,
+  the panel says the key can't read that library and to give it read access
+  in Zotero, instead of showing "Zotero export failed (HTTP 403)".
+- The Cite tab and the Zotero panel's citation search show new references
+  as soon as they reach the project's files (a Zotero import or sync, an
+  added reference, an upload, a collaborator's change), without a reload.
+  Plugins can listen for the same moment with
+  `aldine.project.onFilesChanged`.
+- With accounts on, a collaborator opening the Zotero panel of an unlinked
+  project is told that the owner links the library, instead of being asked
+  for an API key the server would refuse. Collaborators see Sync now but not
+  Unlink, and link visitors see neither. Unlink removes the link instead of
+  doing nothing, and one the server refuses says why. The linked library is
+  shown by account or group name and collection name, not as
+  `users/123 · collection`.
+- Citation hover and `\cite`/`\ref` completion no longer show another
+  project's references or labels when the current project's could not be
+  loaded.
 
 ## [1.8.0] — 2026-11-04
 

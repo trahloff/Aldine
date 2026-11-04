@@ -1,6 +1,16 @@
-import { readMeta, writeMeta, writeFile, ProjectMeta } from './store.js';
+import { readMeta, writeMeta, writeFile, fileExists, ProjectMeta } from './store.js';
 import { refreshBranchDocsFromDisk } from './collab.js';
-import { autoCommit } from './gitops.js';
+import { autoCommit, ensureWorktree } from './gitops.js';
+
+export type ZoteroLink = NonNullable<ProjectMeta['zotero']>;
+
+/** Zotero answered 401 or 403 for the library: the key cannot read it. The
+ *  status stays on the error for the log; people get the next step. */
+export class ZoteroAccessError extends Error {
+  constructor(readonly status: number) {
+    super('This Zotero key can\'t read that library. In Zotero, give the key read access to it, then link again.');
+  }
+}
 
 const API = process.env.ZOTERO_API_BASE || 'https://api.zotero.org';
 const HEADERS = (key: string) => ({ 'Zotero-API-Version': '3', 'Zotero-API-Key': key });
@@ -61,6 +71,7 @@ export async function fetchBib(apiKey: string, libraryPrefix: string, collection
       await new Promise((r) => setTimeout(r, wait * 1000));
       continue;
     }
+    if (res.status === 401 || res.status === 403) throw new ZoteroAccessError(res.status);
     if (!res.ok) throw new Error(`Zotero export failed (HTTP ${res.status})`);
     version = Number(res.headers.get('Last-Modified-Version') || version);
     const total = Number(res.headers.get('Total-Results') || 0);
@@ -73,14 +84,36 @@ export async function fetchBib(apiKey: string, libraryPrefix: string, collection
   return { bib: bib.trim() + '\n', version };
 }
 
+/** The names the linked view shows for a group library and a collection.
+ *  Best effort: a lookup that fails leaves the name out, never the link. */
+export async function linkNames(apiKey: string, userId: number, libraryPrefix: string, collectionKey?: string): Promise<{ libraryName?: string; collectionName?: string }> {
+  const out: { libraryName?: string; collectionName?: string } = {};
+  if (libraryPrefix.startsWith('groups/')) {
+    out.libraryName = (await listGroups(apiKey, userId).catch(() => [])).find((g) => `groups/${g.id}` === libraryPrefix)?.name;
+  }
+  if (collectionKey) {
+    out.collectionName = (await listCollections(apiKey, libraryPrefix).catch(() => [])).find((c) => c.key === collectionKey)?.name;
+  }
+  return out;
+}
+
 export interface SyncResult { synced: boolean; unchanged?: boolean; bibFile?: string; itemCount?: number }
 
-/** Sync the linked Zotero library into <bibFile> on the given branch. */
-export async function syncProject(projectId: string, branch = 'main', force = false): Promise<SyncResult> {
+/**
+ * Sync the linked Zotero library into <bibFile> on the given branch. With
+ * `link`, syncs that link instead of the stored one and stores it only once
+ * the library has been written, so a library that cannot be exported never
+ * becomes the project's link.
+ */
+export async function syncProject(projectId: string, branch = 'main', force = false, link?: ZoteroLink): Promise<SyncResult> {
   const meta = await readMeta(projectId);
-  const z = meta.zotero;
+  const z = link ?? meta.zotero;
   if (!z) throw new Error('project has no Zotero link');
-  const result = await fetchBib(z.apiKey, z.libraryPrefix, z.collectionKey, force ? undefined : z.lastVersion);
+  await ensureWorktree(projectId, branch);
+  // The version cursor is the project's, not the branch's: a branch without
+  // the file needs the whole library whatever the cursor says.
+  const full = force || !fileExists(projectId, branch, z.bibFile);
+  const result = await fetchBib(z.apiKey, z.libraryPrefix, z.collectionKey, full ? undefined : z.lastVersion);
   if (result === 'unchanged') return { synced: false, unchanged: true };
   const header = `% Auto-generated from Zotero (${z.libraryPrefix}${z.collectionKey ? ', collection ' + z.collectionKey : ''})\n% Synced ${new Date().toISOString()} — edits will be overwritten on next sync.\n\n`;
   writeFile(projectId, branch, z.bibFile, header + result.bib);

@@ -157,6 +157,8 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
       bibFile: z.bibFile,
       lastSyncedAt: z.lastSyncedAt,
       username: z.username,
+      libraryName: z.libraryName,
+      collectionName: z.collectionName,
     } : null,
     thumb: await projectThumb(meta),
   };
@@ -2122,13 +2124,14 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         // document never reads when the root lives in a subdirectory
         const bibFile = req.body?.bibFile || rootSiblingPath(meta.rootFile, 'zotero.bib');
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
-        meta.zotero = { apiKey, userId: info.userID, username: info.username, libraryPrefix, collectionKey, bibFile };
-        await store.writeMeta(meta);
+        const names = await zotero.linkNames(apiKey, info.userID, libraryPrefix, collectionKey);
+        const link = { apiKey, userId: info.userID, username: info.username, libraryPrefix, collectionKey, ...names, bibFile };
         // sync into the branch the user linked from (the plugin refreshes that branch), not always main
-        const sync = await zotero.syncProject(req.params.id, branch, true);
+        const sync = await zotero.syncProject(req.params.id, branch, true, link);
         if (sync.synced) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
         return { ok: true, ...sync };
       } catch (err: any) {
+        if (err instanceof zotero.ZoteroAccessError) req.log.warn({ status: err.status, libraryPrefix }, 'Zotero refused the export');
         return reply.code(400).send({ error: err.message });
       }
     });
@@ -2144,6 +2147,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         if (sync.synced) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
         return sync;
       } catch (err: any) {
+        if (err instanceof zotero.ZoteroAccessError) {
+          req.log.warn({ status: err.status, libraryPrefix: meta.zotero?.libraryPrefix }, 'Zotero refused the export');
+          return reply.code(400).send({ error: 'This Zotero key can\'t read the linked library any more. In Zotero, give the key read access to it, then sync again.' });
+        }
         return reply.code(400).send({ error: err.message });
       }
     });

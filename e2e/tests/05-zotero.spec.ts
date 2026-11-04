@@ -57,4 +57,85 @@ test.describe('Zotero integration (via plugin system)', () => {
       await cleanup(request, id);
     }
   });
+
+  test('a link on a branch imports there, and another branch syncs the whole library', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Branches');
+    try {
+      expect((await request.post(`/api/projects/${id}/branches`, { data: { name: 'revision', from: 'main' } })).ok()).toBeTruthy();
+      await openProject(page, id, 'revision');
+      await openPluginTab(page, 'zotero');
+      await page.getByTestId('zotero-key').fill('test-key-123');
+      await page.getByTestId('zotero-connect').click();
+      await page.getByTestId('zotero-collection').selectOption('COLL1');
+      await page.getByTestId('zotero-import').click();
+      await expect(page.getByTestId('zotero-linked')).toContainText('testuser’s library › CRDT Research → zotero.bib', { timeout: 15_000 });
+      const bibOn = async (branch: string) => (await request.get(`/api/projects/${id}/file?branch=${branch}&path=zotero.bib`)).status();
+      expect(await bibOn('revision')).toBe(200);
+      expect(await bibOn('main')).toBe(404);
+
+      // the Cite tab, mounted before the import, lists what it brought in
+      await openPluginTab(page, 'references');
+      await expect(page.getByTestId('cite-bib-turing1950')).toBeVisible();
+
+      // main never had the file: its sync fetches the library in full
+      // although Zotero reports no change since the import
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+      await page.getByTestId('zotero-sync').click();
+      await expect(page.locator('.toast', { hasText: 'Synced 2 references' })).toBeVisible({ timeout: 10_000 });
+      expect(await bibOn('main')).toBe(200);
+      await page.getByTestId('zotero-search').click();
+      await expect(page.getByTestId('cite-shannon1948')).toBeVisible();
+
+      // an unlink the server refuses says so, and the link stays on screen
+      page.on('dialog', (d) => d.accept());
+      const unlinkRoute = `**/api/projects/${id}/zotero`;
+      await page.route(unlinkRoute, (route) => route.request().method() === 'DELETE'
+        ? route.fulfill({ status: 403, json: { error: 'Only the owner can unlink the Zotero library' } })
+        : route.fallback());
+      await page.getByTestId('zotero-unlink').click();
+      await expect(page.locator('.toast', { hasText: 'Unlink failed: Only the owner can unlink the Zotero library' })).toBeVisible();
+      await expect(page.getByTestId('zotero-linked')).toBeVisible();
+      await page.unroute(unlinkRoute);
+      await page.getByTestId('zotero-unlink').click();
+      await expect(page.getByTestId('zotero-key')).toBeVisible();
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('co-authors are offered only what they can do', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Co-author');
+    try {
+      // Accounts are off in this suite, so the page is told who it is.
+      let role = { isOwner: false, isMember: true };
+      await page.route(`**/api/projects/${id}`, async (route) => {
+        const res = await route.fetch();
+        await route.fulfill({ response: res, json: { ...(await res.json()), ...role, ownerName: 'Ada Owner' } });
+      });
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+      await expect(page.getByTestId('zotero-ask-owner')).toContainText('Only Ada Owner, the project owner, can link a Zotero library.');
+      await expect(page.getByTestId('zotero-key')).toHaveCount(0);
+
+      // once the owner has linked it: a collaborator syncs, never unlinks
+      const link = await request.post(`/api/projects/${id}/zotero/link`, { data: { apiKey: 'test-key-123', libraryPrefix: 'users/777', collectionKey: 'COLL1' } });
+      expect(link.ok()).toBeTruthy();
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+      await expect(page.getByTestId('zotero-linked')).toContainText('testuser’s library › CRDT Research → zotero.bib');
+      await expect(page.getByTestId('zotero-sync')).toBeVisible();
+      await expect(page.getByTestId('zotero-unlink')).toHaveCount(0);
+
+      // a link visitor only cites from it
+      role = { isOwner: false, isMember: false };
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+      await expect(page.getByTestId('zotero-search')).toBeVisible();
+      await expect(page.getByTestId('zotero-sync')).toHaveCount(0);
+      await expect(page.getByTestId('zotero-unlink')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
 });

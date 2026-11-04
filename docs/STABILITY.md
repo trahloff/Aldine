@@ -180,7 +180,8 @@ ES module whose default export has `activate(aldine)`. The `aldine` object says
 `version: 1` and has:
 
 - `project`: `id`, `branch`, `activeFile()`, `lastCompile()`,
-  `refreshFiles()`, `refresh()`
+  `refreshFiles()`, `refresh()`, `onFilesChanged(listener)` (called each
+  time the editor re-reads the file list; returns a function that stops it)
 - `editor.insertAtCursor(text)`, `compile()`, `toast(text, kind?)`,
   `fetch(url, init?)`
 - `ui.registerSidebarPanel({ id, title, render(el) })`, `ui.showPanel(id)`

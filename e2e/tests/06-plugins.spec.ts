@@ -104,6 +104,25 @@ test.describe('plugin system', () => {
       await page.evaluate(() => (window as any).__aldineProbe.project.refreshFiles());
       await expect(page.getByTestId('file-listed-by-probe.tex')).toHaveCount(0);
 
+      // project.onFilesChanged hears every re-read of the list, a file
+      // written behind the page included, until the function it returned runs
+      await page.evaluate(() => {
+        const w = window as any;
+        w.__probeFilesChanged = 0;
+        w.__probeStopFiles = w.__aldineProbe.project.onFilesChanged(() => { w.__probeFilesChanged++; });
+      });
+      const filesChanged = () => page.evaluate(() => (window as any).__probeFilesChanged as number);
+      await page.evaluate(() => (window as any).__aldineProbe.project.refreshFiles());
+      await expect.poll(filesChanged).toBeGreaterThanOrEqual(1);
+      const before = await filesChanged();
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'behind.tex', content: 'x' } })).ok()).toBeTruthy();
+      await expect(page.getByTestId('file-behind.tex')).toBeVisible();
+      await expect.poll(filesChanged).toBeGreaterThan(before);
+      const heard = await page.evaluate(() => { const w = window as any; w.__probeStopFiles(); return w.__probeFilesChanged; });
+      await page.evaluate(() => (window as any).__aldineProbe.project.refreshFiles());
+      await page.waitForTimeout(300);
+      expect(await page.evaluate(() => (window as any).__probeFilesChanged)).toBe(heard);
+
       // editor.insertAtCursor: the cursor of a fresh editor is at the start
       const inserted = '% inserted by the plugin API probe';
       await page.evaluate((text) => (window as any).__aldineProbe.editor.insertAtCursor(`${text}\n`), inserted);
