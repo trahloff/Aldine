@@ -470,3 +470,27 @@ test.describe('the list kept for the tab', () => {
     } finally { await cleanup(request, id); }
   });
 });
+
+test.describe('a tab left open', () => {
+  test('coming back to it after a while shows what changed meanwhile, at most every 30 s', async ({ page, request }) => {
+    await page.clock.install();
+    await page.goto('/');
+    await expect(page.getByTestId('project-grid').or(page.getByTestId('projects-empty'))).toBeVisible();
+    let lists = 0;
+    page.on('request', (r) => { if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/projects') lists += 1; });
+    const backToTab = () => page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const id = await createProject(request, `Arrived While Away ${Date.now()}`);
+    try {
+      // Straight back: the list is fresh enough.
+      await backToTab();
+      await page.waitForTimeout(500);
+      expect(lists).toBe(0);
+      await expect(page.getByTestId(`project-card-${id}`)).toHaveCount(0);
+      // Half a minute later it loads again by itself.
+      await page.clock.fastForward(31_000);
+      await backToTab();
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible();
+      expect(lists).toBe(1);
+    } finally { await cleanup(request, id); }
+  });
+});

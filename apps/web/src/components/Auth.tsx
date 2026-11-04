@@ -124,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         providers={providers}
         passwordAuth={passwordAuth}
         signupApproval={signupApproval}
+        sendsEmail={sendsEmail}
         onAuthed={(u) => setUser(u)}
         onStart={() => {
           // Shown in place of a project's page: an SSO sign-in comes back to it.
@@ -171,11 +172,13 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  says so before anyone signs up. `confirmToken` goes along with the
  *  sign-in: an account that waits for approval has no session to confirm
  *  its address with afterwards; `onConfirmLinkUsed` runs once the server
- *  used it (`signedIn` false when the account still waits). */
-export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes }: {
+ *  used it (`signedIn` false when the account still waits). `sendsEmail`:
+ *  reset links go out by mail; otherwise only the administrator has them. */
+export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmail, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes }: {
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
   signupApproval?: boolean;
+  sendsEmail?: boolean;
   onAuthed(u: AuthUser): void;
   /** A sign-in starts here: a provider link followed, or the form sent to sign in or register. */
   onStart?(): void;
@@ -252,7 +255,8 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed,
       } else if (mode === 'forgot') {
         const r = await api.resetRequest(email.trim());
         if (r.token) { setToken(r.token); setMode('reset'); setInfo('Reset token issued (self-host mode). Set a new password below.'); }
-        else { setInfo('If an account exists for that email, a reset link has been sent.'); }
+        else if (sendsEmail) { setInfo('If an account exists for that email, a reset link has been sent.'); }
+        else { setInfo('This server doesn’t send email. Ask the administrator for a reset link.'); }
         setBusy(false);
         return;
       } else if (mode === 'reset') {

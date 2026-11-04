@@ -169,6 +169,56 @@ test.describe('compiler settings panel', () => {
     } finally { await cleanup(request, id); }
   });
 
+  test('the main document and the compiler follow the choice at once, go back when refused, and a new main document is typeset', async ({ page, request }) => {
+    await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+    const id = await createProject(request, 'Optimistic Settings');
+    try {
+      for (const [file, body] of [['main.tex', 'First root'], ['other.tex', 'Second root']]) {
+        const doc = `\\documentclass{article}\\begin{document}${body}\\end{document}\n`;
+        expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: file, content: doc } })).ok()).toBeTruthy();
+      }
+      await openProject(page, id);
+      await page.getByTestId('typeset-button').click();
+      await expectTypesetOk(page);
+
+      await page.getByTestId('project-settings-open').click();
+      const root = page.getByTestId('settings-root-file');
+      const engine = page.getByTestId('settings-engine');
+      const patches = `**/api/projects/${id}`;
+      // The server is slow to answer: the select shows the choice meanwhile.
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      await page.route(patches, async (route) => {
+        if (route.request().method() === 'PATCH') await held;
+        await route.continue();
+      });
+      const typeset = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith(`/api/projects/${id}/compile`));
+      await root.selectOption('other.tex');
+      await expect(root).toHaveValue('other.tex');
+      await page.waitForTimeout(300);
+      await expect(root).toHaveValue('other.tex');
+      release();
+      await expect.poll(async () => (await meta(request, id)).rootFile).toBe('other.tex');
+      // The PDF on screen was the old main document's: it is typeset again.
+      await typeset;
+      await page.unroute(patches);
+
+      // Refused: back to what is stored, and the toast says so.
+      await page.route(patches, (route) => (route.request().method() === 'PATCH'
+        ? route.fulfill({ status: 403, json: { error: 'Only the owner and collaborators can rename or reconfigure this project' } })
+        : route.continue()));
+      await engine.selectOption('lualatex');
+      await expect(page.locator('.toast').filter({ hasText: 'Could not change the engine' })).toBeVisible();
+      await expect(engine).toHaveValue('pdf');
+      await root.selectOption('main.tex');
+      await expect(page.locator('.toast').filter({ hasText: 'Could not change the main document' })).toBeVisible();
+      await expect(root).toHaveValue('other.tex');
+      await page.unroute(patches);
+      const stored = await meta(request, id);
+      expect([stored.rootFile, stored.engine ?? 'pdf']).toEqual(['other.tex', 'pdf']);
+    } finally { await cleanup(request, id); }
+  });
+
   test('GET /api/compiler reports the connected compiler', async ({ request }) => {
     const res = await request.get('/api/compiler');
     expect(res.ok()).toBeTruthy();

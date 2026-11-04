@@ -9,7 +9,7 @@ import type { MyInvitation } from '../../util/invites';
 /** Invitations to the signed-in account's confirmed address or ORCID iD,
  *  answered in place. This is where an invitation reaches its person when
  *  the server sends no email: signing in with the invited address is enough. */
-export default function InvitationsStrip({ onAccepted }: { onAccepted(): void }) {
+export default function InvitationsStrip({ onAccepted, refresh = 0 }: { onAccepted(): void; /** Bumped to fetch the list again. */ refresh?: number }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const dialogs = useDialogs();
@@ -22,7 +22,7 @@ export default function InvitationsStrip({ onAccepted }: { onAccepted(): void })
     let cancelled = false;
     api.myInvitations().then((list) => { if (!cancelled) setItems(list); }).catch(() => { if (!cancelled) setItems([]); });
     return () => { cancelled = true; };
-  }, [user?.id, user?.emailPending]);
+  }, [user?.id, user?.emailPending, refresh]);
   // Answered, withdrawn or expired elsewhere: the list says what is left.
   const reload = () => api.myInvitations().then(setItems).catch(() => {});
 

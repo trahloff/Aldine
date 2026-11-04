@@ -40,6 +40,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - On a Mac, Aldine's own shortcuts answer to ⌘ only. Ctrl+K deletes to the
   end of the line without also opening the command palette, and Ctrl+S or
   Ctrl+J no longer stand in for ⌘S and ⌘J. Windows and Linux are unchanged.
+- The project list reloads when you come back to its tab after half a
+  minute or more, so new invitations, shared projects and edits show up
+  without reloading the page.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -224,6 +227,24 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Citation hover and `\cite`/`\ref` completion no longer show another
   project's references or labels when the current project's could not be
   loaded.
+- On a server that sends no email, Forgot password says to ask the
+  administrator for a reset link, instead of saying that one was sent.
+- Someone on a share link sees the project's name and its stored settings
+  read-only, with a note that only the owner and collaborators can change
+  them, and the file tree no longer offers Set as main document. Before,
+  every change failed with an error.
+- The Main document and Compiler choices in Project settings stay on the
+  new choice while it saves and go back if the server refuses it. A new
+  main document is typeset right away when a PDF is on screen.
+- Change password in account settings is a form: Enter sends it, password
+  managers fill it in and update the saved password, and a wrong current
+  password or a short new one is shown under the fields.
+- Co-authors and link visitors can make a copy of a shared project: Make a
+  copy is in its menu on the projects page and in the editor's command
+  palette. The copy is theirs.
+- The New project tile at the end of a short project list says "Blank or
+  from a template", which is what it opens.
+- Moving a project to the trash says until when it can be restored.
 
 ## [1.8.0] — 2026-11-04
 

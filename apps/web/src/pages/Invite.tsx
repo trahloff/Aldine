@@ -104,7 +104,7 @@ function BackLink() {
 }
 
 function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parameters<typeof LoginScreen>[0]['onAuthed'] }) {
-  const { providers, passwordAuth, signupApproval } = useAuth();
+  const { providers, passwordAuth, signupApproval, sendsEmail } = useAuth();
   const owner = view.ownerName || 'Someone';
   const orcid = isOrcidEntry(view.to);
   return (
@@ -112,6 +112,7 @@ function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parame
       providers={providers}
       passwordAuth={passwordAuth}
       signupApproval={signupApproval}
+      sendsEmail={sendsEmail}
       onAuthed={onAuthed}
       // An SSO provider's callback lands on "/", and Home brings the person
       // back here: only for a sign-in started here, and not long after.

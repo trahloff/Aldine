@@ -277,9 +277,11 @@ try {
   check(codes.every((c) => c === 200 || c === 429), 'with nothing but 200 and 429');
 
   // ---- trash: purgeAt ----
-  eq((await send('DELETE', `/api/projects/${p1.id}`, 'ada')).statusCode, 200, 'P1 goes to the trash');
+  const toTrash = await send('DELETE', `/api/projects/${p1.id}`, 'ada');
+  eq(toTrash.statusCode, 200, 'P1 goes to the trash');
   const trashed = (await send('GET', '/api/projects/trash', 'ada')).json().find((t) => t.id === p1.id);
   eq(trashed.purgeAt, new Date(Date.parse(trashed.deletedAt) + 30 * 864e5).toISOString(), 'purgeAt is 30 days after the trashing');
+  eq(toTrash.json().purgeAt, trashed.purgeAt, 'the trashing says the same purgeAt');
   eq((await send('POST', `/api/projects/${p1.id}/copy`, 'ada', {})).statusCode, 404, 'a trashed project cannot be copied');
   eq((await send('POST', `/api/projects/${p1.id}/opened`, 'ada', { branch: 'main' })).statusCode, 404, 'nor opened');
 
@@ -287,7 +289,9 @@ try {
   await send('POST', `/api/projects/${p2.id}/opened`, 'carol', { branch: 'main' });
   await flushActivity();
   check((await db().listProjectActivity()).some((a) => a.projectId === p2.id), 'P2 has stored activity');
-  eq((await send('DELETE', `/api/projects/${p2.id}?permanent=1`, 'ada')).statusCode, 200, 'P2 is deleted for good');
+  const forGood = await send('DELETE', `/api/projects/${p2.id}?permanent=1`, 'ada');
+  eq(forGood.statusCode, 200, 'P2 is deleted for good');
+  eq(forGood.json().purgeAt, undefined, 'with no purgeAt');
   check((await db().getProjectOpen(people.carol.user.id, p2.id)) === null, 'Carol\'s open of it is gone');
   check((await db().getProjectOpen(people.dana.user.id, p2.id)) === null, 'and Dana\'s');
   check(!(await db().listProjectActivity()).some((a) => a.projectId === p2.id), 'and its activity');

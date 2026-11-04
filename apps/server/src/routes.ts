@@ -1366,13 +1366,17 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const meta = await store.readMeta(req.params.id);
     if (!isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can delete this project' });
     const { remote } = await trashProject(meta);
+    let purgeAt: string | undefined;
     if (req.query.permanent === '1') {
       // Opening the editor starts a typeset; one still writing .aldine-out
       // makes the removal fail. The trash above already refuses new ones.
       await typesetsSettled(req.params.id);
       await store.deleteProject(req.params.id);
+    } else {
+      const at = Date.parse((await store.readMeta(req.params.id).catch(() => null))?.deletedAt || '');
+      if (!Number.isNaN(at)) purgeAt = restorableUntil(new Date(at));
     }
-    return { ok: true, ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
+    return { ok: true, ...(purgeAt ? { purgeAt } : {}), ...(remote.scheduledFor ? { remoteScheduledFor: remote.scheduledFor } : {}), ...(remote.error ? { remoteError: remote.error } : {}) };
   });
 
   app.post<{ Params: { id: string } }>('/api/projects/:id/restore', async (req, reply) => {
