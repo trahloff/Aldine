@@ -899,8 +899,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .sidebar__collapse { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-3); cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .sidebar__collapse:hover { background: var(--bg-hover); color: var(--text); } }
 .sidebar__collapse:active { background: var(--bg-active); }
-/* a panel fills the body, so one can pin its own controls to the bottom */
-.sidebar__panel { height: 100%; }
+/* a panel fills the body, so one can pin its own controls to the bottom;
+   each scrolls on its own, so a tab keeps its place while another is shown */
+.sidebar__panel { height: 100%; overflow: auto; }
 .sidebar--hidden { display: none; }
 .sidebar-rail { flex: none; display: flex; flex-direction: column; align-items: center; width: 38px; padding-top: 6px; background: var(--bg-inset); }
 .sidebar-rail__btn { width: 26px; height: 26px; padding: 0; justify-content: center; color: var(--text-3); }
@@ -952,6 +953,17 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .tree__new .input { width: 100%; }
 .tree__error { margin: 4px 2px 0; color: var(--error); font-size: var(--text-s); line-height: 1.35; overflow-wrap: anywhere; }
 .tree__empty { display: flex; align-items: center; height: 24px; color: var(--text-3); font-size: var(--text-xs); }
+/* a row's "⋯" menu: on the open file's row, and on the row under a mouse */
+.tree__row { position: relative; }
+.tree__more { position: absolute; top: 3px; right: 3px; display: none; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); cursor: pointer; }
+.tree__row--active > .tree__more, .tree__more[aria-expanded="true"], .tree__more:focus-visible { display: inline-flex; }
+.tree__row--active > .tree__item { padding-right: 26px; }
+@media (hover: hover) and (pointer: fine) {
+  .tree__row:hover > .tree__more { display: inline-flex; }
+  .tree__row:hover > .tree__item { padding-right: 26px; }
+  .tree__more:hover { background: var(--bg-active); color: var(--text); }
+}
+.tree__more:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* editor pane */
 .code-pane { flex: 1; min-height: 0; overflow: hidden; position: relative; }
@@ -1218,7 +1230,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 }
 
 /* file tree upload */
-.filetree { position: relative; min-height: 120px; }
+.filetree { position: relative; min-height: 100%; }
 .filetree--drag::after {
   content: 'Drop to upload';
   position: absolute;

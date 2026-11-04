@@ -88,8 +88,7 @@ test.describe('venue kits fetched from the publisher', () => {
     await expect(page.getByTestId('file-main.tex')).toBeVisible();
 
     const id = new URL(page.url()).pathname.split('/').pop()!;
-    // README-venue.md is not a source file, so it is in the project without
-    // being in the default file tree.
+    // README-venue.md says where to get the kit.
     const readme = await request.get(`/api/projects/${id}/file?branch=main&path=README-venue.md`);
     expect(readme.ok()).toBeTruthy();
     const text = await readme.text();

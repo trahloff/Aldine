@@ -65,9 +65,9 @@ test.describe('blank project', () => {
       const name = page.getByTestId('new-file-name');
       await expect(name).toBeVisible();
       await expect(name).toHaveValue('main.tex');
-      // The request is one-shot: dismissing it and remounting the tree (any
-      // other sidebar tab unmounts it) must not reopen the input, which would
-      // create main.tex on the next blur.
+      // The request is one-shot: dismissing it and coming back from another
+      // sidebar tab must not reopen the input, which would create main.tex on
+      // the next blur.
       await name.press('Escape');
       await expect(name).toHaveCount(0);
       await openSidebarTab(page, 'history');

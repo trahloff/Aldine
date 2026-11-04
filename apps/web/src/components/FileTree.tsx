@@ -1,10 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type JSX } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
-import { fileIcon, IconChevronRight, IconFilePlus, IconFilter, IconFolderPlus, IconUpload } from './Icons';
+import { fileIcon, IconChevronRight, IconEllipsis, IconFilePlus, IconFilter, IconFolderPlus, IconUpload } from './Icons';
 import { useDialogs } from './Dialogs';
-import { useContextMenu, type MenuEntry } from './Menu';
+import { MenuButton, useContextMenu, type MenuEntry } from './Menu';
 import { useToast } from './Toast';
-import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, within, type TreeNode } from '../util/fileTree';
+import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, withTexExtension, within, type TreeNode } from '../util/fileTree';
 import { safeStorage } from '../util/safeStorage';
 
 interface Props {
@@ -30,10 +30,10 @@ interface Props {
   newFileRequest?: number;
   /** What the request opens: the name input for a file or a folder, or the upload picker. */
   newFileKind?: 'file' | 'folder' | 'upload';
-  /** Called once the request opened the input, so the parent resets it: the
-   *  tree is unmounted on other sidebar tabs and would otherwise reopen the
-   *  input on every remount. */
+  /** Called once the request opened the input. */
   onNewFileHandled?(): void;
+  /** On another sidebar tab: the tree stays mounted there, out of sight. */
+  hidden?: boolean;
 }
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
@@ -64,12 +64,18 @@ export function stemEnd(path: string): number {
   return dot > path.lastIndexOf('/') + 1 ? dot : path.length;
 }
 
+/** Where a path's last segment starts: a rename selects the name, not the
+ *  folders above it, so typing a new name keeps the entry where it is. */
+export const nameStart = (path: string) => path.lastIndexOf('/') + 1;
+
 const parentOf = (path: string) => path.split('/').slice(0, -1).join('/');
 
 /** The open folders, and the file whose folders were last opened for it. */
 interface KeptFolders { open: string[]; shown: string | null }
 
 const keptKey = (projectId: string) => `aldine.openFolders.${projectId}`;
+/** 'all' while the tree shows every file; unset for the Source view. */
+const viewKey = (projectId: string) => `aldine.treeView.${projectId}`;
 
 function loadKept(projectId: string): KeptFolders {
   const v = safeStorage.getJSON<{ open?: unknown; shown?: unknown } | null>(keptKey(projectId), null);
@@ -94,7 +100,7 @@ function foldersIn(files: TreeEntry[]): Set<string> {
   return dirs;
 }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const errorId = useId();
@@ -105,10 +111,15 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   const [dropDir, setDropDir] = useState<string | null>(null);
   /** The row being dragged, if the drag started in this tree. */
   const dragged = useRef<string | null>(null);
-  const [sourceOnly, setSourceOnly] = useState(true);
+  // The Source or All view is kept per project by this browser, as the open
+  // folders are below.
+  const [sourceOnly, setSourceOnly] = useState(() => safeStorage.get(viewKey(projectId)) !== 'all');
+  useEffect(() => {
+    if (sourceOnly) safeStorage.remove(viewKey(projectId));
+    else safeStorage.set(viewKey(projectId), 'all');
+  }, [projectId, sourceOnly]);
   // Folders start closed. The ones opened are kept per project by this
-  // browser: the tree is unmounted on the other sidebar tabs, and a reload
-  // would close them all again.
+  // browser: a reload would close them all again.
   const [kept] = useState(() => loadKept(projectId));
   const [openDirs, setOpenDirs] = useState<Set<string>>(() => new Set(kept.open));
   const shown = useRef(kept.shown);
@@ -150,14 +161,17 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   }, [active]);
   useEffect(() => { saveKept(projectId, openDirs, shown.current); }, [projectId, openDirs, active]);
   // Folders deleted since, here or by someone else, are forgotten, so one
-  // made again under the same name starts closed.
+  // made again under the same name starts closed. Once each time the tree is
+  // shown, not on every listing: a rename lists the files before the open
+  // folders move along with it.
   const pruned = useRef(false);
+  useEffect(() => { if (hidden) pruned.current = false; }, [hidden]);
   useEffect(() => {
-    if (pruned.current || !files.length) return;
+    if (hidden || pruned.current || !files.length) return;
     pruned.current = true;
     const dirs = foldersIn(files);
     setOpenDirs((s) => ([...s].every((p) => dirs.has(p)) ? s : new Set([...s].filter((p) => dirs.has(p)))));
-  }, [files]);
+  }, [files, hidden]);
 
   // A project with no files of the user's own (the .gitignore every project
   // carries does not count) gets main.tex suggested: that name also makes the
@@ -182,8 +196,9 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   // and on blur alike: closing would throw the typed name away.
   const submit = () => {
     if (!adding) return;
-    const path = normalizeEntryPath(name);
-    if (!path || path === adding.dir) { stopAdding(); return; }
+    const typed = normalizeEntryPath(name);
+    if (!typed || typed === adding.dir) { stopAdding(); return; }
+    const path = adding.kind === 'file' ? withTexExtension(typed) : typed;
     // A directory with no file in it is not in git and not in the Source
     // view: making it a folder again is fine.
     const taken = adding.kind === 'folder' && files.some((f) => f.type === 'file' && within(f.path, path));
@@ -209,7 +224,9 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     for (const f of Array.from(list)) {
       const path = dir ? `${dir}/${f.name}` : f.name;
       if (f.size > MAX_UPLOAD) { toast(`${f.name} is larger than 10 MB`, 'error'); continue; }
-      const buf = await f.arrayBuffer();
+      // A folder dropped from the desktop is an entry that cannot be read.
+      let buf: ArrayBuffer;
+      try { buf = await f.arrayBuffer(); } catch { toast(`Could not read ${f.name}: to upload a folder, drop the files in it`, 'error'); continue; }
       let binary = '';
       const bytes = new Uint8Array(buf);
       const chunk = 0x8000;
@@ -234,6 +251,35 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     }
     if (done.length) { reveal(dir); onUploaded(done); }
   };
+  /** For what runs after this render's props are gone: an Undo, a window listener. */
+  const latest = useRef({ rename, uploadFiles });
+  latest.current = { rename, uploadFiles };
+
+  // A file dragged over the rest of the window must not open in place of the
+  // app. Dropped on the editor it uploads to the top level, as onto the space
+  // around the rows: the drop is taken in the capture phase, before
+  // CodeMirror's handler would paste the file's text into the shared document
+  // (it skips a drop already handled). Dragged text is not a file drag.
+  useEffect(() => {
+    const fileDrag = (e: globalThis.DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    const onEditor = (e: globalThis.DragEvent) => e.target instanceof Element && !!e.target.closest('.cm-editor');
+    const over = (e: globalThis.DragEvent) => {
+      if (!fileDrag(e) || e.defaultPrevented) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = onEditor(e) ? 'copy' : 'none';
+    };
+    const drop = (e: globalThis.DragEvent) => {
+      if (!fileDrag(e)) return;
+      e.preventDefault();
+      if (onEditor(e) && e.dataTransfer!.files.length) void latest.current.uploadFiles(e.dataTransfer!.files);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('drop', drop, true);
+    return () => {
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('drop', drop, true);
+    };
+  }, []);
 
   const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
   const fileActions = (path: string): MenuEntry[] => [
@@ -241,7 +287,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     {
       id: 'rename', label: 'Rename…', testId: 'file-menu-rename',
       onSelect: async () => {
-        const to = (await dialogs.prompt({ title: `Rename ${path}`, value: path, confirmLabel: 'Rename', selectTo: stemEnd(path) }))?.trim();
+        const to = (await dialogs.prompt({ title: `Rename ${path}`, value: path, confirmLabel: 'Rename', selectFrom: nameStart(path), selectTo: stemEnd(path) }))?.trim();
         if (to && to !== path) rename(path, to);
       },
     },
@@ -277,7 +323,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     onDelete(dir);
   };
   const renameFolder = async (dir: string) => {
-    const raw = await dialogs.prompt({ title: `Rename ${dir}`, value: dir, confirmLabel: 'Rename' });
+    const raw = await dialogs.prompt({ title: `Rename ${dir}`, value: dir, confirmLabel: 'Rename', selectFrom: nameStart(dir) });
     if (raw === null) return;
     const to = normalizeEntryPath(raw);
     if (!to || to === dir) return;
@@ -315,7 +361,14 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       const from = e.dataTransfer.getData(DRAG_TYPE);
       if (from) {
         const to = moveTarget(from, dir);
-        if (to && (await rename(from, to))) reveal(dir);
+        if (to && (await rename(from, to))) {
+          reveal(dir);
+          // A slip of the pointer can move a file: the move says so, and can be taken back.
+          toast(`Moved ${to.split('/').pop()} to ${dir ? `${dir}/` : 'the top level'}`, 'ok', {
+            label: 'Undo', testId: 'undo-move', key: 'tree-move',
+            onClick: () => { void latest.current.rename(to, from).then((ok) => { if (ok) reveal(parentOf(from)); }); },
+          });
+        }
       } else if (e.dataTransfer.files.length) {
         await uploadFiles(e.dataTransfer.files, dir);
       }
@@ -336,6 +389,19 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     return sourceOnly ? sourceTree(full) : full;
   }, [files, sourceOnly]);
 
+  /** The row's menu, for whoever does not right-click: the same actions. Off
+   *  the Tab order, which reaches the row's menu with Shift+F10. */
+  const rowMenu = (node: TreeNode) => (
+    <MenuButton
+      items={() => (node.type === 'dir' ? folderActions(node.path) : fileActions(node.path))}
+      label={node.type === 'dir' ? 'Folder actions' : 'File actions'}
+      ariaLabel={`Actions for ${node.path}`} title={node.type === 'dir' ? 'Folder actions' : 'File actions'}
+      className="tree__more" testId={`row-menu-${node.path}`} menuTestId={node.type === 'dir' ? 'folder-menu' : 'file-menu'} tabIndex={-1}
+    >
+      <IconEllipsis width={14} height={14} />
+    </MenuButton>
+  );
+
   const renderNode = (node: TreeNode, depth: number): JSX.Element => {
     // one level is the chevron plus the gap, so a child's chevron sits under
     // its folder's icon
@@ -344,16 +410,19 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       const open = isOpen(node.path);
       return (
         <div key={node.path}>
-          <button
-            className={`tree__item tree__dir ${dropDir === node.path ? 'tree__item--drop' : ''}`} style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
-            data-testid={`dir-${node.path}`} title={node.path} aria-expanded={open}
-            {...folderMenu.bind(() => folderActions(node.path))}
-            {...dragSource(node.path)} {...dropTarget(node.path)}
-          >
-            <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
-            <span className="tree__icon"><FolderIcon /></span>
-            {node.name}
-          </button>
+          <div className="tree__row" {...dropTarget(node.path)}>
+            <button
+              className={`tree__item tree__dir ${dropDir === node.path ? 'tree__item--drop' : ''}`} style={{ paddingLeft: pad }} onClick={() => toggle(node.path)}
+              data-testid={`dir-${node.path}`} title={node.path} aria-expanded={open}
+              {...folderMenu.bind(() => folderActions(node.path))}
+              {...dragSource(node.path)}
+            >
+              <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
+              <span className="tree__icon"><FolderIcon /></span>
+              {node.name}
+            </button>
+            {rowMenu(node)}
+          </div>
           {open && (node.children.length
             ? node.children.map((c) => renderNode(c, depth + 1))
             : (
@@ -365,21 +434,23 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       );
     }
     return (
-      <button
-        key={node.path}
-        className={`tree__item ${active === node.path ? 'tree__item--active' : ''}`}
-        style={{ paddingLeft: pad }}
-        data-testid={`file-${node.path}`}
-        onClick={() => onOpen(node.path)}
-        {...fileMenu.bind(() => fileActions(node.path))}
-        {...dragSource(node.path)} {...dropTarget(parentOf(node.path))}
-        title={node.path}
-      >
-        <span className="tree__chevron" />
-        <span className="tree__icon">{fileIcon(node.path, node.path === rootFile)}</span>
-        {node.name}
-        {node.path === rootFile && <span className="tree__root-tag">root</span>}
-      </button>
+      <div key={node.path} className={`tree__row ${active === node.path ? 'tree__row--active' : ''}`} {...dropTarget(parentOf(node.path))}>
+        <button
+          className={`tree__item ${active === node.path ? 'tree__item--active' : ''}`}
+          style={{ paddingLeft: pad }}
+          data-testid={`file-${node.path}`}
+          onClick={() => onOpen(node.path)}
+          {...fileMenu.bind(() => fileActions(node.path))}
+          {...dragSource(node.path)}
+          title={node.path}
+        >
+          <span className="tree__chevron" />
+          <span className="tree__icon">{fileIcon(node.path, node.path === rootFile)}</span>
+          {node.name}
+          {node.path === rootFile && <span className="tree__root-tag">root</span>}
+        </button>
+        {rowMenu(node)}
+      </div>
     );
   };
 

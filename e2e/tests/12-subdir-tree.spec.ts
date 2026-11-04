@@ -96,8 +96,8 @@ test.describe('file tree clutter', () => {
       for (const p of ['paper/main.tex', '.github/workflows/ci.yml', 'Makefile', 'README.md'])
         await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: p, content: 'x\n' } });
       await openProject(page, id);
-      // source-only is the default view: Makefile/README hidden, and .github
-      // is pruned entirely (it contains no source files)
+      // source-only is the default view: Makefile hidden, and .github is
+      // pruned entirely (it contains no source files)
       await expect(page.getByTestId('dir-paper')).toBeVisible();
       await expect(page.getByTestId('file-Makefile')).toHaveCount(0);
       await expect(page.getByTestId('dir-.github')).toHaveCount(0);

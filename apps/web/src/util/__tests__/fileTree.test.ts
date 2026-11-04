@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { TreeEntry } from '../../api';
-import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, within, type TreeNode } from '../fileTree';
+import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, withTexExtension, within, type TreeNode } from '../fileTree';
 
 const file = (path: string): TreeEntry => ({ path, type: 'file' });
 const dir = (path: string): TreeEntry => ({ path, type: 'dir' });
@@ -17,6 +17,11 @@ describe('buildTree', () => {
   it('makes the folders a nested path implies, listed or not', () => {
     expect(paths(buildTree([file('a/b/c.tex')]))).toEqual(['a/', 'a/b/', 'a/b/c.tex']);
   });
+
+  it('puts numbered names in number order', () => {
+    const tree = buildTree([file('chapter10.tex'), file('chapter2.tex'), file('chapter1.tex'), dir('fig10'), dir('fig9')]);
+    expect(paths(tree)).toEqual(['fig9/', 'fig10/', 'chapter1.tex', 'chapter2.tex', 'chapter10.tex']);
+  });
 });
 
 describe('sourceTree', () => {
@@ -24,8 +29,8 @@ describe('sourceTree', () => {
     file('main.tex'), file('Makefile'),
     dir('figures'), file('figures/.gitkeep'),
     dir('tables'), dir('tables/drafts'), file('tables/drafts/.gitkeep'),
-    dir('data'), file('data/results.csv'),
-    dir('chapters'), file('chapters/intro.tex'), file('chapters/notes.txt'),
+    dir('data'), file('data/results.xlsx'),
+    dir('chapters'), file('chapters/intro.tex'), file('chapters/notes.docx'),
     dir('.github'), dir('.github/workflows'), file('.github/workflows/ci.yml'),
     dir('.vscode'), file('.vscode/.gitkeep'),
     dir('leftover'),
@@ -45,14 +50,23 @@ describe('sourceTree', () => {
 
   it('keeps a folder of non-source files without listing them', () => {
     expect(shown).toContain('data/');
-    expect(shown).not.toContain('data/results.csv');
+    expect(shown).not.toContain('data/results.xlsx');
   });
 
   it('keeps source files and drops the rest', () => {
     expect(shown).toContain('main.tex');
     expect(shown).toContain('chapters/intro.tex');
     expect(shown).not.toContain('Makefile');
-    expect(shown).not.toContain('chapters/notes.txt');
+    expect(shown).not.toContain('chapters/notes.docx');
+  });
+
+  it('keeps other TeX sources, plot data, exported figures, kit files, notes and latexmk settings', () => {
+    const kept = [
+      'results.csv', 'table.tsv', 'curve.dat', 'plot.pgf', 'jour.clo', 'jour.cfg', 'macros.def', 'paper.ltx', 'paper.latex',
+      'analysis.Rnw', 'chunk.rtex', 'diagram.asy', 'index.ist', 'font.mtx', 'german.ldf', 'english.lbx', '.latexmkrc', 'notes.txt', 'README.md',
+    ];
+    const dropped = ['Makefile', 'ci.yml', 'main.log', 'main.bbl', 'data.zip', 'template.json', '.chktexrc', 'x.latexmkrc.bak'];
+    expect(paths(sourceTree(buildTree([...kept, ...dropped].map(file)))).sort()).toEqual([...kept].sort());
   });
 
   it('drops dot-folders without source, and directories with no file at all', () => {
@@ -135,6 +149,19 @@ describe('normalizeEntryPath', () => {
     expect(normalizeEntryPath(' figures/ ')).toBe('figures');
     expect(normalizeEntryPath('./chapters//intro.tex')).toBe('chapters/intro.tex');
     expect(normalizeEntryPath('figures\\plots')).toBe('figures/plots');
+  });
+});
+
+describe('withTexExtension', () => {
+  it('adds .tex to a name with no extension, in a folder too', () => {
+    expect(withTexExtension('introduction')).toBe('introduction.tex');
+    expect(withTexExtension('chapters/intro')).toBe('chapters/intro.tex');
+  });
+
+  it('keeps an extension and a dot-file as typed', () => {
+    expect(withTexExtension('notes.txt')).toBe('notes.txt');
+    expect(withTexExtension('v1.2/intro.tex')).toBe('v1.2/intro.tex');
+    expect(withTexExtension('.latexmkrc')).toBe('.latexmkrc');
   });
 });
 

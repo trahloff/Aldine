@@ -13,9 +13,10 @@ import LoadError from './LoadError';
  *  and the commit asks for a message. `readOnly`: a showcase, whose history
  *  can be read but takes no commit.
  *  `focusRequest`: bumped by the parent to put the cursor in the message
- *  field; `onFocusHandled` resets it, because the panel remounts on every
- *  visit to the tab and would otherwise take the focus each time. */
-export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false, focusRequest = 0, onFocusHandled, readOnly = false }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean; focusRequest?: number; onFocusHandled?: () => void; readOnly?: boolean }) {
+ *  field; `onFocusHandled` resets it, so the same request never focuses twice.
+ *  `hidden`: on another sidebar tab, the panel stays mounted but neither
+ *  loads nor polls until it is shown again. */
+export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false, focusRequest = 0, onFocusHandled, readOnly = false, hidden = false }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean; focusRequest?: number; onFocusHandled?: () => void; readOnly?: boolean; hidden?: boolean }) {
   /** null until this branch's log has arrived. */
   const [log, setLog] = useState<LogEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -49,23 +50,23 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
     loadPending();
   };
   useEffect(() => { setLog(null); setFailed(false); }, [projectId, branch]);
-  useEffect(() => { load(); }, [projectId, branch, version, manual]);
+  useEffect(() => { if (!hidden) load(); }, [projectId, branch, version, manual, hidden]);
   useEffect(() => {
-    if (!focusRequest) return;
+    if (!focusRequest || hidden) return;
     inputRef.current?.focus();
     onFocusHandled?.();
-  }, [focusRequest]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focusRequest, hidden]); // eslint-disable-line react-hooks/exhaustive-deps
   // Typing changes the working tree without any signal reaching this panel.
   useEffect(() => {
-    if (!manual) return;
+    if (!manual || hidden) return;
     const t = setInterval(loadPending, 4000);
     return () => clearInterval(t);
-  }, [manual, projectId, branch]);
+  }, [manual, projectId, branch, hidden]);
   useEffect(() => {
-    if (!live) return;
+    if (!live || hidden) return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, [live, projectId, branch]);
+  }, [live, projectId, branch, hidden]);
 
   const commit = async () => {
     if (manual && !msg.trim()) { toast('Write a commit message first', 'info'); return; }
