@@ -181,7 +181,11 @@ test.describe('sidebar', () => {
       await put(request, id, 'chapters/intro.tex', '% intro\n');
       await put(request, id, 'chapters/appendix/proofs.tex', '% proofs\n');
       await openProject(page, id);
-      await expect(page.getByTestId('file-chapters/appendix/proofs.tex')).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('dir-chapters').click({ timeout: 15_000 });
+      await page.getByTestId('dir-chapters/appendix').click();
+      await expect(page.getByTestId('file-chapters/appendix/proofs.tex')).toBeVisible();
+      // a chevron still turning is wider than it will be
+      await page.locator('.tree__chevron').evaluateAll((els) => Promise.all(els.flatMap((el) => el.getAnimations().map((a) => a.finished))));
       const iconX = async (testid: string) => (await page.getByTestId(testid).locator('.tree__icon').boundingBox())!.x;
       const chevX = async (testid: string) => (await page.getByTestId(testid).locator('.tree__chevron').boundingBox())!.x;
       // a root file's icon is in the same column as a root folder's

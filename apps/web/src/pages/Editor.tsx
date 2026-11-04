@@ -1355,8 +1355,10 @@ export default function Editor() {
                     loadProject(); // the root designation may have moved with the rename
                     // a file inside a renamed folder stays open under its new path
                     if (activeFile && within(activeFile, from)) setActiveFile(to + activeFile.slice(from.length));
+                    return true;
                   } catch (err: any) {
                     toast(/already exists/i.test(err?.message) ? `"${to}" already exists` : `Could not rename: ${err.message}`, 'error');
+                    return false;
                   } finally {
                     setTimeout(() => { if (localRemoval.current === from) localRemoval.current = null; }, 0);
                   }

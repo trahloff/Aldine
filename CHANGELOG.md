@@ -7,6 +7,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- Folders in the file tree start closed, so a project with many folders no
+  longer opens as one long list
+  ([#249](https://github.com/trahloff/Aldine/issues/249)). The folders above
+  the open file open on their own, also when the file was opened from search
+  or the PDF. Folders you open or close stay that way, per project in this
+  browser, across reloads and the other sidebar tabs.
+
 ### Fixed
 - A project from the Wiley journals tile typesets without BibTeX errors. As
   Wiley ships it, the kit's Chicago bibliography style reports 164 errors on
