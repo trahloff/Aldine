@@ -160,6 +160,7 @@ test.describe('project search', () => {
 
       const b = await asWriter(ctxB, 'Bob', '#2e933c');
       await openProject(b, id);
+      await b.getByTestId('dir-chapters').click();
       await b.getByTestId('file-chapters/two.tex').click();
       await expect(b.getByTestId('active-file')).toHaveText('chapters/two.tex');
       await expect(b.locator('.cm-content')).toContainText('colour');

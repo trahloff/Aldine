@@ -11,11 +11,49 @@ test.describe('nested repos', () => {
         'figs/a.tex': 'fig\n',
       })) await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: p, content: c } });
       await openProject(page, id);
-      await expect(page.getByTestId('dir-paper')).toBeVisible();
-      await expect(page.getByTestId('dir-paper/chapters')).toBeVisible();
+      // folders start closed (#249)
+      await expect(page.getByTestId('dir-paper')).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByTestId('dir-figs')).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByTestId('dir-paper/chapters')).toHaveCount(0);
+      await page.getByTestId('dir-paper').click();
+      await page.getByTestId('dir-paper/chapters').click();
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toBeVisible();
+      await expect(page.getByTestId('file-figs/a.tex')).toHaveCount(0);
+      // the open folders stay open on another sidebar tab and after a reload
+      await page.getByTestId('tab-search').click();
+      await page.getByTestId('tab-files').click();
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toBeVisible();
+      await page.reload();
       await expect(page.getByTestId('file-paper/chapters/intro.tex')).toBeVisible();
       // collapse a folder → its child hides
       await page.getByTestId('dir-paper/chapters').click();
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toHaveCount(0);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('the open file is revealed in a closed folder', async ({ page, request }) => {
+    const id = await createProject(request, 'Reveal Tree');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/main.tex', content: '\\documentclass{article}\\begin{document}\\input{chapters/intro}\\end{document}\n' } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'paper/chapters/intro.tex', content: 'An introduction.\n' } });
+      await request.patch(`/api/projects/${id}`, { data: { rootFile: 'paper/main.tex' } });
+      await openProject(page, id);
+      await expect(page.getByTestId('file-paper/main.tex')).toHaveClass(/tree__item--active/);
+      await expect(page.getByTestId('dir-paper/chapters')).toHaveAttribute('aria-expanded', 'false');
+      // a file opened from outside the tree opens the folders above it
+      await page.getByTestId('tab-search').click();
+      await page.getByTestId('search-input').fill('introduction');
+      await page.locator('[data-testid="search-match"][data-path="paper/chapters/intro.tex"]').first().click();
+      await expect(page.getByTestId('active-file')).toHaveText('paper/chapters/intro.tex');
+      await page.getByTestId('tab-files').click();
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toHaveClass(/tree__item--active/);
+      // closed around the open file, it stays closed on another tab and after a reload
+      await page.getByTestId('dir-paper/chapters').click();
+      await page.getByTestId('tab-search').click();
+      await page.getByTestId('tab-files').click();
+      await expect(page.getByTestId('dir-paper/chapters')).toHaveAttribute('aria-expanded', 'false');
+      await page.reload();
+      await expect(page.getByTestId('dir-paper/chapters')).toHaveAttribute('aria-expanded', 'false', { timeout: 15_000 });
       await expect(page.getByTestId('file-paper/chapters/intro.tex')).toHaveCount(0);
     } finally { await cleanup(request, id); }
   });
@@ -60,7 +98,7 @@ test.describe('file tree clutter', () => {
       await openProject(page, id);
       // source-only is the default view: Makefile/README hidden, and .github
       // is pruned entirely (it contains no source files)
-      await expect(page.getByTestId('file-paper/main.tex')).toBeVisible();
+      await expect(page.getByTestId('dir-paper')).toBeVisible();
       await expect(page.getByTestId('file-Makefile')).toHaveCount(0);
       await expect(page.getByTestId('dir-.github')).toHaveCount(0);
       // switch to All: non-source files appear…

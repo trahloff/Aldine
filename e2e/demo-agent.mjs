@@ -163,6 +163,7 @@ await call('batch_write', {
   ],
   message: 'Add a discussion section',
 });
+await page.getByTestId('dir-sections').click({ timeout: 10000 });
 await page.getByTestId('file-sections/discussion.tex').waitFor({ timeout: 10000 });
 step('batch_write landed');
 idleCut(batchAt, now());

@@ -5,6 +5,7 @@ import { useDialogs } from './Dialogs';
 import { useContextMenu, type MenuEntry } from './Menu';
 import { useToast } from './Toast';
 import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, within, type TreeNode } from '../util/fileTree';
+import { safeStorage } from '../util/safeStorage';
 
 interface Props {
   files: TreeEntry[];
@@ -19,8 +20,9 @@ interface Props {
   onUploaded(paths: string[]): void;
   /** A file, or a folder with everything in it. */
   onDelete(path: string): void;
-  /** A file or a folder; a drop onto a folder moves it there the same way. */
-  onRename(from: string, to: string): void;
+  /** A file or a folder; a drop onto a folder moves it there the same way.
+   *  Resolves true once it has moved. */
+  onRename(from: string, to: string): Promise<boolean>;
   onSetRoot(path: string): void;
   /** Bumped by the parent to open the new-file input from outside the tree
    *  (the editor's empty state). */
@@ -61,6 +63,34 @@ export function stemEnd(path: string): number {
 
 const parentOf = (path: string) => path.split('/').slice(0, -1).join('/');
 
+/** The open folders, and the file whose folders were last opened for it. */
+interface KeptFolders { open: string[]; shown: string | null }
+
+const keptKey = (projectId: string) => `aldine.openFolders.${projectId}`;
+
+function loadKept(projectId: string): KeptFolders {
+  const v = safeStorage.getJSON<{ open?: unknown; shown?: unknown } | null>(keptKey(projectId), null);
+  const open = Array.isArray(v?.open) ? v.open.filter((p): p is string => typeof p === 'string') : [];
+  return { open, shown: typeof v?.shown === 'string' ? v.shown : null };
+}
+
+/** Without storage, open folders last until the tree unmounts. */
+function saveKept(projectId: string, open: Set<string>, shown: string | null): void {
+  if (open.size || shown) safeStorage.setJSON(keptKey(projectId), { open: [...open], shown });
+  else safeStorage.remove(keptKey(projectId));
+}
+
+/** Every folder in a listing, the ones above each file included. */
+function foldersIn(files: TreeEntry[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const f of files) {
+    const parts = f.path.split('/');
+    const depth = f.type === 'dir' ? parts.length : parts.length - 1;
+    for (let i = 1; i <= depth; i++) dirs.add(parts.slice(0, i).join('/'));
+  }
+  return dirs;
+}
+
 export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, onNewFileHandled }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
@@ -73,27 +103,58 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
   /** The row being dragged, if the drag started in this tree. */
   const dragged = useRef<string | null>(null);
   const [sourceOnly, setSourceOnly] = useState(true);
-  // User expand/collapse overrides. Default: dot-directories (.github, .devcontainer, …)
-  // start collapsed; everything else expanded. This overlay avoids depending on
-  // `files` at mount (which is empty on first render).
-  const [override, setOverride] = useState<Map<string, boolean>>(new Map());
+  // Folders start closed. The ones opened are kept per project by this
+  // browser: the tree is unmounted on the other sidebar tabs, and a reload
+  // would close them all again.
+  const [kept] = useState(() => loadKept(projectId));
+  const [openDirs, setOpenDirs] = useState<Set<string>>(() => new Set(kept.open));
+  const shown = useRef(kept.shown);
   const fileInput = useRef<HTMLInputElement>(null);
   /** The folder the file picker uploads into: set by the button that opened it. */
   const uploadDir = useRef('');
 
-  const isDot = (p: string) => p.split('/').pop()!.startsWith('.');
-  const isOpen = (p: string) => (override.has(p) ? override.get(p)! : !isDot(p));
-  const toggle = (p: string) => setOverride((m) => new Map(m).set(p, !isOpen(p)));
+  const isOpen = (p: string) => openDirs.has(p);
+  const toggle = (p: string) => setOpenDirs((s) => {
+    const next = new Set(s);
+    if (!next.delete(p)) next.add(p);
+    return next;
+  });
   /** Expand `dir` and every folder above it. */
   const reveal = (dir: string) => {
     if (!dir) return;
-    setOverride((m) => {
-      const next = new Map(m);
+    setOpenDirs((s) => {
       const parts = dir.split('/');
-      for (let i = 1; i <= parts.length; i++) next.set(parts.slice(0, i).join('/'), true);
-      return next;
+      const above = parts.map((_, i) => parts.slice(0, i + 1).join('/'));
+      return above.every((p) => s.has(p)) ? s : new Set([...s, ...above]);
     });
   };
+  /** A folder that moves keeps the folders open in it open at the new place. */
+  const rename = async (from: string, to: string) => {
+    if (!(await onRename(from, to))) return false;
+    setOpenDirs((s) => {
+      if (![...s].some((p) => within(p, from))) return s;
+      return new Set([...s].map((p) => (within(p, from) ? to + p.slice(from.length) : p)));
+    });
+    return true;
+  };
+  // The open file's row stays in view, however it was opened. Only a change
+  // of file reveals, so a folder closed around the open file stays closed
+  // after another tab or a reload.
+  useEffect(() => {
+    if (!active || active === shown.current) return;
+    shown.current = active;
+    reveal(parentOf(active));
+  }, [active]);
+  useEffect(() => { saveKept(projectId, openDirs, shown.current); }, [projectId, openDirs, active]);
+  // Folders deleted since, here or by someone else, are forgotten, so one
+  // made again under the same name starts closed.
+  const pruned = useRef(false);
+  useEffect(() => {
+    if (pruned.current || !files.length) return;
+    pruned.current = true;
+    const dirs = foldersIn(files);
+    setOpenDirs((s) => ([...s].every((p) => dirs.has(p)) ? s : new Set([...s].filter((p) => dirs.has(p)))));
+  }, [files]);
 
   // A project with no files of the user's own (the .gitignore every project
   // carries does not count) gets main.tex suggested: that name also makes the
@@ -173,7 +234,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       id: 'rename', label: 'Rename…', testId: 'file-menu-rename',
       onSelect: async () => {
         const to = (await dialogs.prompt({ title: `Rename ${path}`, value: path, confirmLabel: 'Rename', selectTo: stemEnd(path) }))?.trim();
-        if (to && to !== path) onRename(path, to);
+        if (to && to !== path) rename(path, to);
       },
     },
     { kind: 'separator' },
@@ -214,8 +275,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
     if (!to || to === dir) return;
     const error = entryPathError(raw) ?? (within(to, dir) ? `${dir} cannot move into a folder inside itself` : null);
     if (error) { toast(error, 'error'); return; }
-    reveal(to);
-    onRename(dir, to);
+    if (await rename(dir, to)) reveal(to);
   };
   const folderMenu = useContextMenu({ label: 'Folder actions', testId: 'folder-menu' });
   const folderActions = (dir: string): MenuEntry[] => [
@@ -247,7 +307,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
       const from = e.dataTransfer.getData(DRAG_TYPE);
       if (from) {
         const to = moveTarget(from, dir);
-        if (to) { reveal(dir); onRename(from, to); }
+        if (to && (await rename(from, to))) reveal(dir);
       } else if (e.dataTransfer.files.length) {
         await uploadFiles(e.dataTransfer.files, dir);
       }

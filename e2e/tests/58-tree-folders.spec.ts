@@ -83,7 +83,8 @@ test.describe('folders in the file tree', () => {
 
       // deleting a folder's last file leaves a directory git does not hold: not taken
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'old/a.tex', content: 'x\n' } });
-      await expect(page.getByTestId('file-old/a.tex')).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId('dir-old').click({ timeout: 10_000 });
+      await expect(page.getByTestId('file-old/a.tex')).toBeVisible();
       await request.delete(`/api/projects/${id}/file?branch=main&path=old/a.tex`);
       await expect(page.getByTestId('file-old/a.tex')).toHaveCount(0, { timeout: 10_000 });
       await expect(page.getByTestId('dir-old')).toHaveCount(0);

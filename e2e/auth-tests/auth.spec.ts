@@ -838,6 +838,8 @@ test.describe('collab under auth', () => {
     await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'paper/chapters/five.tex', content: 'LOADED-UNDER-AUTH-42\n' } });
     await page.goto(`/p/${proj.id}`);
     await expect(page.locator('.cm-content')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('dir-paper').click();
+    await page.getByTestId('dir-paper/chapters').click();
     await page.getByTestId('file-paper/chapters/five.tex').click();
     // before the token fix this stayed blank (collab never authenticated)
     await expect(page.locator('.cm-content')).toContainText('LOADED-UNDER-AUTH-42', { timeout: 15_000 });

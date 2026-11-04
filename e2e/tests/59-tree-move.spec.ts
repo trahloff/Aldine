@@ -108,7 +108,9 @@ test.describe('moving folders and files in the file tree', () => {
       await expect(page.getByTestId('file-chapters/intro.tex')).toBeVisible();
       await expect(page.getByTestId('file-intro.tex')).toHaveCount(0);
 
-      // a file's row stands for its folder
+      // a file's row stands for its folder; an open folder stays open where it lands
+      await page.getByTestId('dir-figures').click();
+      await expect(page.getByTestId('file-figures/plot.tex')).toBeVisible();
       await page.getByTestId('dir-figures').dragTo(page.getByTestId('file-chapters/one.tex'));
       await expect(page.getByTestId('dir-chapters/figures')).toBeVisible();
       await expect(page.getByTestId('file-chapters/figures/plot.tex')).toBeVisible();

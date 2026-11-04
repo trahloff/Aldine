@@ -67,6 +67,7 @@ test.describe('forward SyncTeX', () => {
       await page.getByTestId('typeset-button').click();
       await expectTypesetOk(page);
 
+      await page.getByTestId('dir-paper/sections').click();
       await page.getByTestId('file-paper/sections/a.tex').click();
       await expect(page.locator('.cm-content')).toContainText('Section paragraph');
       await page.locator('.cm-line').nth(6).click();
