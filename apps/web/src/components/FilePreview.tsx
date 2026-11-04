@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import { api, type TreeEntry } from '../api';
-import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind } from '../util/filePreview';
+import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind, zoomKeys } from '../util/filePreview';
 import { createPdfPagesStore, pagesOnScreen, scrollTopForPage } from '../util/pdfPages';
 import { cMapUrl, pdfjs } from '../util/pdfjs';
 import { IconFile } from './Icons';
@@ -69,18 +69,6 @@ function ZoomControls({ label, fitLabel, onZoom }: { label: string; fitLabel: st
       <button type="button" className="btn btn--ghost btn--small" onClick={() => onZoom(1)} title="Zoom in" aria-label="Zoom in" data-testid="preview-zoom-in">+</button>
     </div>
   );
-}
-
-/** + and - zoom, 0 fits, wherever focus is inside the preview but in the
- *  page field, where 0 is a digit of the page number. */
-function zoomKeys(onZoom: (dir: 1 | -1 | 0) => void) {
-  return (e: KeyboardEvent<HTMLElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
-    const dir = e.key === '+' || e.key === '=' ? 1 : e.key === '-' ? -1 : e.key === '0' ? 0 : null;
-    if (dir === null) return;
-    e.preventDefault();
-    onZoom(dir);
-  };
 }
 
 function ImagePreview({ url, path, name, size }: { url: string; path: string; name: string; size?: number }) {

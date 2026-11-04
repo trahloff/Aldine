@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind } from '../filePreview';
+import { clampZoom, formatBytes, IMAGE_ZOOM_STEPS, nextZoom, PDF_ZOOM_STEPS, previewKind, wheelZoom } from '../filePreview';
 
 describe('previewKind', () => {
   it('shows images and PDFs as previews, whatever the case of the extension', () => {
@@ -42,5 +42,28 @@ describe('nextZoom', () => {
     expect(nextZoom(3, 1, PDF_ZOOM_STEPS)).toBe(3);
     expect(nextZoom(0.5, -1, PDF_ZOOM_STEPS)).toBe(0.5);
     expect(nextZoom(0.01, -1, IMAGE_ZOOM_STEPS)).toBe(0.1);
+  });
+});
+
+describe('wheelZoom', () => {
+  const pixel = (deltaY: number) => ({ deltaY, deltaMode: 0 });
+
+  it('follows a pinch: small pixel deltas scale smoothly, and the two directions undo each other', () => {
+    const z = wheelZoom(1, pixel(-10), PDF_ZOOM_STEPS);
+    expect(z).toBeCloseTo(Math.exp(0.1));
+    expect(wheelZoom(z, pixel(10), PDF_ZOOM_STEPS)).toBeCloseTo(1);
+  });
+
+  it('moves a mouse notch one step, in lines or in a large pixel delta', () => {
+    expect(wheelZoom(1, pixel(-100), PDF_ZOOM_STEPS)).toBe(1.25);
+    expect(wheelZoom(1, pixel(100), PDF_ZOOM_STEPS)).toBe(0.75);
+    expect(wheelZoom(1.5, { deltaY: -3, deltaMode: 1 }, PDF_ZOOM_STEPS)).toBe(2);
+  });
+
+  it('stays inside the steps and ignores an event without vertical delta', () => {
+    expect(wheelZoom(2.9, pixel(-40), PDF_ZOOM_STEPS)).toBe(3);
+    expect(wheelZoom(0.5, pixel(40), PDF_ZOOM_STEPS)).toBe(0.5);
+    expect(wheelZoom(1.1, pixel(0), PDF_ZOOM_STEPS)).toBe(1.1);
+    expect(clampZoom(7, PDF_ZOOM_STEPS)).toBe(3);
   });
 });

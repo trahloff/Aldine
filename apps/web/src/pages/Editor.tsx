@@ -13,7 +13,7 @@ import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import { setVisualFiles } from '../editor/visual/context';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import FilePreview from '../components/FilePreview';
-import { previewKind } from '../util/filePreview';
+import { nextZoom, PDF_ZOOM_STEPS, previewKind, zoomKeys } from '../util/filePreview';
 import PdfPageNav from '../components/PdfPageNav';
 import { createPdfPagesStore } from '../util/pdfPages';
 import BranchMenu from '../components/BranchMenu';
@@ -23,7 +23,7 @@ import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
-import { IconChevronLeft, IconChevronRight, IconSearch, IconSidebar } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -73,6 +73,9 @@ const EDITOR_MIN = 270;
  *  the default, so a narrow or hidden sidebar doesn't let the preview take
  *  space that showing or widening it again would need. */
 const sidebarRoom = (w: number) => Math.max(SIDEBAR_DEFAULT, w);
+/** The preview's width in px, once someone has dragged its divider. */
+const PDF_WIDTH = 'aldine.pdfWidth';
+const pdfDefault = () => Math.max(360, Math.round(window.innerWidth * 0.4));
 /** Source or Visual, the last one this browser chose; Source until then. */
 const EDITOR_MODE = 'aldine.editorMode';
 /** Vim keybindings in the code editor, '1' when on. */
@@ -104,13 +107,27 @@ export default function Editor() {
   // The on-open typeset waits for the first file listing: before it, every
   // project looks empty and a blank one must not compile at all.
   const [filesLoaded, setFilesLoaded] = useState(false);
+  /** Whose listing `files` is (`id::branch`): the preview opens a branch on
+   *  that branch's files, not on the ones of the branch it came from. */
+  const [filesFor, setFilesFor] = useState('');
   const [newFileRequest, setNewFileRequest] = useState(0);
   const [newEntryKind, setNewEntryKind] = useState<'file' | 'folder' | 'upload'>('file');
   const [commitFocusRequest, setCommitFocusRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
   const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
-  const [pdfWidth, setPdfWidth] = useState(() => Math.max(360, Math.round(window.innerWidth * 0.4)));
+  const [pdfWidth, setPdfWidth] = useState(() => {
+    const w = Number(safeStorage.get(PDF_WIDTH));
+    return w >= 280 ? w : pdfDefault();
+  });
+  /** The width last chosen with the preview's divider, kept like the sidebar's. */
+  const pdfChosen = useRef(pdfWidth);
+  const resizePdf = (w: number, done: boolean) => {
+    setPdfWidth(w);
+    if (!done) return;
+    pdfChosen.current = w;
+    safeStorage.set(PDF_WIDTH, String(w));
+  };
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const w = Number(safeStorage.get(SIDEBAR_WIDTH));
     return w >= SIDEBAR_MIN && w <= SIDEBAR_MAX ? w : SIDEBAR_DEFAULT;
@@ -134,12 +151,10 @@ export default function Editor() {
   // leave them wider than the room for them and squeeze the editor away. The
   // preview gives way first, then the sidebar; a remembered sidebar width
   // from a wider window is fitted the same way on open.
-  const pdfWidthRef = useRef(pdfWidth);
-  pdfWidthRef.current = pdfWidth;
   useEffect(() => {
     const fit = () => {
       const chosen = sidebarChosen.current;
-      const pdf = Math.min(pdfWidthRef.current, Math.max(280, window.innerWidth - sidebarRoom(chosen) - EDITOR_MIN));
+      const pdf = Math.min(pdfChosen.current, Math.max(280, window.innerWidth - sidebarRoom(chosen) - EDITOR_MIN));
       setPdfWidth(pdf);
       setSidebarWidth(Math.min(chosen, Math.max(SIDEBAR_MIN, window.innerWidth - pdf - EDITOR_MIN)));
     };
@@ -268,7 +283,8 @@ export default function Editor() {
   // so they neither open on load nor count against the empty state.
   const isUserFile = (f: TreeEntry) => f.type === 'file' && !f.path.split('/').pop()!.startsWith('.');
   const hasFiles = files.some(isUserFile);
-  const hasTex = files.some((f) => f.type === 'file' && /\.tex$/i.test(f.path));
+  const texFiles = files.filter((f) => f.type === 'file' && /\.tex$/i.test(f.path));
+  const hasTex = texFiles.length > 0;
   const hasTexRef = useRef(hasTex);
   hasTexRef.current = hasTex;
 
@@ -316,6 +332,7 @@ export default function Editor() {
     try {
       const f = await api.listFiles(id, branch);
       setFiles(f);
+      setFilesFor(`${id}::${branch}`);
       // files changed (rename/delete/upload/Zotero import) → bib & label indexes are stale
       invalidateBibCache();
       invalidateLabelCache();
@@ -441,10 +458,27 @@ export default function Editor() {
         pendingRef.current = false;
         const full = pendingFullRef.current;
         pendingFullRef.current = false;
-        setTimeout(() => doCompile(0, full ? undefined : { draft: draftRef.current }), 400);
+        // Through the ref: after a branch switch the queued request (often the
+        // new branch's on-open typeset) belongs to the branch now on screen.
+        setTimeout(() => doCompileRef.current(0, full ? undefined : { draft: draftRef.current }), 400);
       }
     }
   }, [id, branch]);
+  const doCompileRef = useRef(doCompile);
+  doCompileRef.current = doCompile;
+
+  /** The typeset a branch opens with: the branch's last run on screen at once
+   *  when this node remembers one with a PDF, and a fresh run to bring it up
+   *  to date. */
+  const openTypeset = useCallback(() => {
+    api.compileStatus(id, branch).then(({ result: run }) => {
+      if (branchRef.current !== branch || !run?.pdfUrl || !shouldAdoptRun(shownRunIdRef.current, run.runId, false)) return;
+      shownRunIdRef.current = run.runId;
+      // The fresh run is under way: the status keeps saying so.
+      setCompile((c) => (c.result || c.status === 'error' ? c : { ...c, status: c.status === 'compiling' ? 'compiling' : run.ok ? 'ok' : 'error', result: run }));
+    }).catch(() => { /* the fresh run brings the PDF instead */ });
+    doCompile();
+  }, [id, branch, doCompile]);
 
   const clearAgentWatchdog = useCallback(() => {
     if (agentWatchdog.current) { clearTimeout(agentWatchdog.current); agentWatchdog.current = null; }
@@ -1007,6 +1041,19 @@ export default function Editor() {
     }
   }, [id, branch, activeFile, toast]);
 
+  // Inverse SyncTeX without a mouse: the text in the middle of the preview.
+  const jumpToSource = useCallback(() => {
+    if (!pdfRef.current?.sourceAtView()) toast('Typeset first: there is no PDF to jump from', 'error');
+  }, [toast]);
+
+  /** A zoom step in or out, or back to fit width (0), which refits the pages
+   *  when they already are at fit width. */
+  const zoomPdf = (dir: 1 | -1 | 0) => {
+    if (dir !== 0) setZoom((z) => nextZoom(z, dir, PDF_ZOOM_STEPS));
+    else if (zoom === 1) pdfRef.current?.refit();
+    else setZoom(1);
+  };
+
   // Typeset, command palette, jump to PDF and comment, on the keys this
   // browser chose in settings (util/shortcuts.ts)
   useEffect(() => {
@@ -1068,6 +1115,7 @@ export default function Editor() {
         run: () => setDraftTypeset((d) => { safeStorage.set('aldine.draftTypeset', d ? '0' : '1'); return !d; }),
       },
       { id: 'jump-pdf', group: 'Actions', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
+      { id: 'jump-source', group: 'Actions', title: 'Jump to source: the middle of the PDF preview', run: jumpToSource },
       { id: 'comment', group: 'Actions', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
       { id: 'search', group: 'Actions', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
       { id: 'replace', group: 'Actions', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
@@ -1122,6 +1170,9 @@ export default function Editor() {
         run: () => { setTab('files'); setSidebar(false); setNewEntryKind(kind); setNewFileRequest((n) => n + 1); },
       })),
     ];
+    if (compile.result != null) {
+      cmds.push({ id: 'view-log', group: 'View', title: 'View the typesetting log', run: () => setShowLog(true) });
+    }
     if (ignored.length > 0) {
       cmds.push({ id: 'unignore-warnings', group: 'View', title: `Show ignored warnings again (${ignored.length} kind${ignored.length === 1 ? '' : 's'})`, run: () => setIgnored([]) });
     }
@@ -1175,7 +1226,7 @@ export default function Editor() {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1523,8 +1574,10 @@ export default function Editor() {
                       const hint = hintFor(e.message);
                       const file = (e as { file?: string }).file;
                       // Warnings carry no file attribution — jumping would land at
-                      // a meaningless line in the root file, so they don't jump.
-                      const clickable = e.line != null && (file != null || e.type === 'error');
+                      // a meaningless line in the root file, so they don't jump,
+                      // unless the project has only the one .tex they can be in.
+                      const target = file ?? (texFiles.length === 1 ? texFiles[0].path : undefined);
+                      const clickable = e.line != null && (target != null || e.type === 'error');
                       const body = (
                         <>
                           <span className={`errors__badge errors__badge--${e.type}`}>{e.type === 'error' ? 'Error' : 'Warning'}</span>
@@ -1539,7 +1592,7 @@ export default function Editor() {
                         return (
                           <div key={i} className="errors__row errors__row--warning" data-testid="problem-warning">
                             {clickable
-                              ? <button className="errors__jump" onClick={() => jumpToLine(e.line, file)}>{body}</button>
+                              ? <button className="errors__jump" onClick={() => jumpToLine(e.line, target)}>{body}</button>
                               : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
                             <button className="btn btn--ghost btn--small errors__ignore" onClick={() => ignoreWarning(e.message)} title="Hide warnings like this one in this project" data-testid="problem-ignore">Ignore</button>
                           </div>
@@ -1579,22 +1632,28 @@ export default function Editor() {
           side={-1}
           label="Resize preview"
           testId="pane-resizer"
-          onResize={(w) => setPdfWidth(w)}
-          onReset={() => setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4)))}
+          onResize={resizePdf}
+          onReset={() => { pdfChosen.current = pdfDefault(); setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4))); safeStorage.remove(PDF_WIDTH); }}
           onDragging={setResizing}
         />
 
         {/* data-pdf: the run on screen, for tests that follow it across typesets */}
-        <section className="pane pane--preview" aria-label="PDF preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined}>
+        <section className="pane pane--preview" aria-label="PDF preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined} onKeyDown={zoomKeys(zoomPdf)}>
           <div className="pane__header">
             <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
+              ) : (compile.status === 'ok' || compile.status === 'error') && compile.result ? (
+                // The run's outcome opens its log: after a clean run there is no
+                // problems panel to hold the button.
+                <button className="pdf-status__log" onClick={() => setShowLog(true)} title="View the typesetting log" data-testid="pdf-status-log">
+                  {compile.status === 'ok' && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
+                    <span className="pdf-status__draft" data-testid="draft-pending" title="A quick single pass while you type. References and the bibliography settle in a full typeset a few seconds after you stop, or when you press Typeset."> · draft, references next</span>
+                  )}</>}
+                  {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
+                </button>
               ) : (<>
                 {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
-                {compile.status === 'ok' && compile.result && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
-                  <span className="pdf-status__draft" data-testid="draft-pending" title="A quick single pass while you type. References and the bibliography settle in a full typeset a few seconds after you stop, or when you press Typeset."> · draft, references next</span>
-                )}</>}
                 {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
               </>)}
             </span>
@@ -1616,6 +1675,17 @@ export default function Editor() {
               );
             })()}
             <span className="toolbar__spacer" />
+            {hasPdf && (
+              <button
+                className="btn btn--ghost btn--small jump__source"
+                onClick={jumpToSource}
+                title="Jump to source: the text in the middle of the preview"
+                aria-label="Jump to source"
+                data-testid="jump-to-source"
+              >
+                <IconToSource />
+              </button>
+            )}
             {activeFile && !previewing && (
               <button
                 className="btn btn--ghost btn--small"
@@ -1628,9 +1698,9 @@ export default function Editor() {
             )}
             <PdfPageNav store={pdfPages} onGo={(page) => pdfRef.current?.goToPage(page)} />
             <div className="zoom" data-testid="zoom-controls">
-              <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" aria-label="Zoom out">−</button>
-              <button className="zoom__label" onClick={() => { if (zoom === 1) pdfRef.current?.refit(); else setZoom(1); }} title="Reset to fit width" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
-              <button className="btn btn--ghost btn--small" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} title="Zoom in" aria-label="Zoom in">+</button>
+              <button className="btn btn--ghost btn--small" onClick={() => zoomPdf(-1)} title="Zoom out (-)" aria-label="Zoom out">−</button>
+              <button className="zoom__label" onClick={() => zoomPdf(0)} title="Reset to fit width (0)" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
+              <button className="btn btn--ghost btn--small" onClick={() => zoomPdf(1)} title="Zoom in (+)" aria-label="Zoom in">+</button>
             </div>
             <button
               className={`auto-toggle ${auto ? 'auto-toggle--on' : ''}`}
@@ -1654,11 +1724,12 @@ export default function Editor() {
             // The on-open typeset is auto-typeset's job — a user who turned the
             // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
             // A project without a .tex has nothing to typeset.
-            ready={filesLoaded}
+            ready={filesLoaded && filesFor === `${id}::${branch}`}
             hasTex={hasTex}
-            onFirstOpen={() => { if (autoRef.current && hasTexRef.current) doCompile(); }}
+            onFirstOpen={() => { if (autoRef.current && hasTexRef.current) openTypeset(); }}
             onInverse={onPdfInverse}
             pages={pdfPages}
+            onZoom={setZoom}
           />
         </section>
       </div>

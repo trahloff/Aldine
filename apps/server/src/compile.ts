@@ -272,8 +272,9 @@ export interface CompileStatus {
 }
 
 /** The branch's last run as this node remembers it. A pure memory read: it is
- *  reached once per agent-caused run per client, never polled, and must never
- *  grow a disk stat, a git call or a compiler round trip. */
+ *  reached once per agent-caused run per client and once each time a client
+ *  opens a branch with auto-typeset on, never polled, and must never grow a
+ *  disk stat, a git call or a compiler round trip. */
 export function compileStatus(projectId: string, branch: string): CompileStatus {
   const key = `${projectId}::${branch}`;
   const last = lastRun.get(key) ?? null;
