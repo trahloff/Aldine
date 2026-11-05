@@ -43,7 +43,13 @@ export function PaletteTrigger({ onOpen, label }: { onOpen(): void; label: strin
 export function usePaletteHotkey(toggle: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (matchesShortcut(e, 'palette')) { e.preventDefault(); toggle(); }
+      if (!matchesShortcut(e, 'palette') || e.defaultPrevented) return;
+      e.preventDefault();
+      // Over another dialog the palette would open on top, and Escape would
+      // then close the dialog underneath. The copy a closing dialog leaves
+      // for its exit animation has no role.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]:not(.palette)')) return;
+      toggle();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

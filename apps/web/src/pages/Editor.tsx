@@ -53,6 +53,7 @@ import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
 import { safeStorage } from '../util/safeStorage';
+import { lastOpenFile, rememberOpenFile } from '../util/openFile';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
@@ -90,6 +91,13 @@ function inTextField(target: EventTarget | null): boolean {
   if (el.closest('.cm-editor')) return false;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
 }
+
+/** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
+const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file']);
+
+/** A dialog is open; the command palette is one too. The copy a closing
+ *  dialog leaves for its exit animation has no role. */
+const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]');
 
 export default function Editor() {
   const { id = '' } = useParams();
@@ -414,13 +422,18 @@ export default function Editor() {
     setParams(next, { replace: true });
   };
 
+  /** The project and branch whose open file the loader below has chosen:
+   *  until it has, the file on screen belongs to the branch before. */
+  const [openFor, setOpenFor] = useState('');
   useEffect(() => {
     (async () => {
       const p = await loadProject();
       if (!p) return;
       const f = await loadFiles();
-      const first = f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
+      const last = lastOpenFile(id, branch);
+      const first = (last && f.find((e) => e.type === 'file' && e.path === last)) || f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
+      setOpenFor(`${id}::${branch}`);
       applyDeepLink(p, f);
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
@@ -433,6 +446,9 @@ export default function Editor() {
       }
     })();
   }, [id, branch, loadTry]);
+  useEffect(() => {
+    if (activeFile && openFor === `${id}::${branch}`) rememberOpenFile(id, branch, activeFile);
+  }, [id, branch, activeFile, openFor]);
 
   const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean }) => {
     const draft = !!opts?.draft;
@@ -909,11 +925,11 @@ export default function Editor() {
   }, [comments, activeFile]);
 
   const startComment = useCallback(() => {
-    if (!activeFile) return;
+    if (!activeFile || project?.readOnly) return;
     const sel = codeRef.current?.getSelection();
     if (!sel) { toast('Select some text to comment on first.', 'info'); return; }
     setComposing(sel);
-  }, [activeFile, toast]);
+  }, [activeFile, project?.readOnly, toast]);
 
   const submitComment = useCallback(async (body: string, suggestion?: string) => {
     if (!composing || !activeFile) return;
@@ -1007,13 +1023,13 @@ export default function Editor() {
     const onAction = (e: Event) => {
       const { id: cid, action } = (e as CustomEvent<{ id: string; action: 'accept' | 'resolve' }>).detail;
       const c = comments.find((x) => x.id === cid);
-      if (!c) return;
+      if (!c || project?.readOnly) return;
       if (action === 'accept') acceptSuggestion(c);
       else api.resolveComment(id, c.id, true).then(() => { loadComments(); bumpComments(); });
     };
     window.addEventListener('aldine:suggestion', onAction);
     return () => window.removeEventListener('aldine:suggestion', onAction);
-  }, [comments, id, acceptSuggestion, loadComments, bumpComments]);
+  }, [comments, id, acceptSuggestion, loadComments, bumpComments, project?.readOnly]);
 
 
   // The preview is stale when the last run produced no PDF: the server keeps
@@ -1086,25 +1102,27 @@ export default function Editor() {
   // browser chose in settings (util/shortcuts.ts)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (matchesShortcut(e, 'comment')) {
-        e.preventDefault();
-        startComment();
-      } else if (matchesShortcut(e, 'typeset')) {
+      // A key the editor or a dialog already acted on is theirs. Over an open
+      // dialog the composer and the palette would open on top of it, and
+      // Escape would then close the dialog underneath instead.
+      if (matchesShortcut(e, 'typeset')) {
         e.preventDefault();
         doCompile();
       } else if (matchesShortcut(e, 'palette')) {
+        if (e.defaultPrevented) return;
         e.preventDefault();
-        setPaletteOpen((o) => !o);
+        const overDialog = dialogOpen();
+        setPaletteOpen((o) => !o && !overDialog);
       } else if (matchesShortcut(e, 'search')) {
         // An open dialog keeps the keys: the panel's field would take focus
         // behind its backdrop.
-        if (document.querySelector('[aria-modal="true"]')) return;
+        if (dialogOpen()) return;
         e.preventDefault();
         // The editor's selection becomes the query only when the keys were
         // pressed there; from the results it would replace what was typed.
         const fromEditor = e.target instanceof Element && !!e.target.closest('.cm-editor');
         openSearch(fromEditor ? codeRef.current?.getSelection()?.quote : undefined);
-      } else if (matchesShortcut(e, 'jump') && !e.defaultPrevented && !inTextField(e.target)) {
+      } else if (matchesShortcut(e, 'jump') && !e.defaultPrevented && !inTextField(e.target) && !dialogOpen()) {
         // Text fields other than the code editor (comment composer, dialogs,
         // palette) keep the keystroke: a jump against the editor's cursor
         // from there is noise.
@@ -1114,7 +1132,20 @@ export default function Editor() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doCompile, jumpToPdf, startComment, openSearch]);
+  }, [doCompile, jumpToPdf, openSearch]);
+  // The comment chord is taken before the editor sees it: CodeMirror reads
+  // Ctrl+Shift+M as its Ctrl+M (Tab focus mode) on Linux and Windows and
+  // claims the key. An open dialog keeps it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesShortcut(e, 'comment') || e.defaultPrevented || dialogOpen()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startComment();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [startComment]);
 
   const pluginCtx = useMemo(() => ({
     projectId: id,
@@ -1255,8 +1286,10 @@ export default function Editor() {
     for (const f of files.filter(isUserFile)) {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
     }
+    // A showcase refuses every write; these commands would only fail or open nothing.
+    if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.isOwner, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1275,6 +1308,20 @@ export default function Editor() {
   // a PDF is already on screen when the last compile produced one (recompiles keep it visible)
   const hasPdf = compile.result?.pdfUrl != null;
 
+  // A showcase visitor edits their own copy, opened in its place.
+  const [copying, setCopying] = useState(false);
+  const copyShowcase = async () => {
+    setCopying(true);
+    try {
+      const c = await api.copyProject(id);
+      if (c.remoteError) toast(c.remoteError, 'error');
+      navigate(`/p/${c.id}`);
+    } catch (err: any) {
+      toast(`Could not make a copy: ${err.message}`, 'error');
+    } finally {
+      setCopying(false);
+    }
+  };
   if (!project) return loadError ? <ProjectUnavailable projectId={id} error={loadError} onRetry={() => setLoadTry((n) => n + 1)} /> : <div className="editor-shell" />;
 
   // Without auth everyone is owner and member; with it, trust the server's word.
@@ -1290,7 +1337,7 @@ export default function Editor() {
         <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
-          contentEditable
+          contentEditable={!project.readOnly}
           suppressContentEditableWarning
           data-testid="project-name"
           onBlur={(e) => renameProject(e.currentTarget, e.currentTarget.textContent || '')}
@@ -1300,7 +1347,7 @@ export default function Editor() {
         </span>
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
-        {project.remote && canSync ? (
+        {project.remote && canSync && !project.readOnly ? (
           <RemoteSync
             projectId={id}
             link={project.remote}
@@ -1318,7 +1365,8 @@ export default function Editor() {
             current={branch}
             onSwitch={switchBranch}
             onChanged={() => { loadProject(); loadFiles(); }}
-            onPublish={!project.remote && isProjectOwner ? () => setPublishOpen(true) : undefined}
+            onPublish={!project.remote && isProjectOwner && !project.readOnly ? () => setPublishOpen(true) : undefined}
+            readOnly={!!project.readOnly}
           />
         )}
         {visualFile && (
@@ -1331,9 +1379,11 @@ export default function Editor() {
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
         <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
-        <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
-          Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
-        </button>
+        {!project.readOnly && (
+          <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
+            Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
+          </button>
+        )}
         <Presence users={users} />
         <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
           {sidebarHidden ? 'Files' : 'Hide files'}
@@ -1357,6 +1407,12 @@ export default function Editor() {
           exists the banner has nothing left to say. */}
       {isProjectOwner && project.remotePending && !project.remote && (
         <RemotePendingBanner key={id} projectId={id} namespace={project.remotePending.namespace} onProvisioned={loadProject} />
+      )}
+      {project.readOnly && (
+        <div className="showcase-note" role="status" data-testid="showcase-note">
+          <span className="showcase-note__text">This showcase project is read-only. Make a copy to edit it.</span>
+          <button className="btn btn--small btn--primary" onClick={copyShowcase} disabled={copying} data-testid="showcase-copy">{copying ? 'Copying…' : 'Make a copy'}</button>
+        </div>
       )}
 
       <div className={`workspace${resizing ? ' workspace--resizing' : ''}`}>
@@ -1487,7 +1543,7 @@ export default function Editor() {
                 onSetRoot={setRootFile}
               />
             )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} />}
+            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} />}
             {tab === 'review' && (
               <ReviewPanel
                 comments={comments}
@@ -1499,6 +1555,7 @@ export default function Editor() {
                 onDelete={async (c) => { if (!(await dialogs.confirm({ title: 'Delete this comment thread?', confirmLabel: 'Delete thread', danger: true }))) return; await api.deleteComment(id, c.id); await loadComments(); bumpComments(); }}
                 onReply={async (c, body) => { await api.replyComment(id, c.id, body, identity.name); await loadComments(); bumpComments(); }}
                 onAccept={acceptSuggestion}
+                readOnly={!!project.readOnly}
               />
             )}
             {/* Always mounted, like the plugin panels: the query, the toggles
@@ -1560,6 +1617,7 @@ export default function Editor() {
                 onAccessDenied={onAccessDenied}
                 mode={paneMode}
                 identity={identity}
+                readOnly={!!project.readOnly}
               />
             </>
           ) : filesLoaded && !hasFiles ? (
@@ -1801,9 +1859,11 @@ export default function Editor() {
             ))}
             <div className="modal__row">
               <button className="btn" onClick={() => setAgentReview(null)}>Close</button>
-              <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">
-                Revert these changes
-              </button>
+              {!project.readOnly && (
+                <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">
+                  Revert these changes
+                </button>
+              )}
             </div>
           </div>
         </Modal>
@@ -1825,6 +1885,7 @@ export default function Editor() {
           onToggleAutoTypeset={toggleAuto}
           onToggleVim={toggleVim}
           focus={settingsOpen === 'shortcuts' ? 'shortcuts' : undefined}
+          readOnly={!!project.readOnly}
         />
       )}
 
@@ -1857,7 +1918,7 @@ export default function Editor() {
             })()}</pre>
             <div className="modal__row">
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 'var(--text-s)' }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
-                <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} />
+                <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} disabled={!!project?.readOnly} />
                 Stop on first error
               </label>
               <button className="btn" onClick={() => setShowLog(false)}>Close</button>

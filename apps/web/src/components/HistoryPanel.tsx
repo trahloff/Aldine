@@ -10,11 +10,12 @@ import LoadError from './LoadError';
  *  a revert, an agent session ending); `live` polls while an agent is present,
  *  because its commits land on the autosave debounce, after the signal.
  *  `manual`: the project commits by hand, so the panel lists what is waiting
- *  and the commit asks for a message.
+ *  and the commit asks for a message. `readOnly`: a showcase, whose history
+ *  can be read but takes no commit.
  *  `focusRequest`: bumped by the parent to put the cursor in the message
  *  field; `onFocusHandled` resets it, because the panel remounts on every
  *  visit to the tab and would otherwise take the focus each time. */
-export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false, focusRequest = 0, onFocusHandled }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean; focusRequest?: number; onFocusHandled?: () => void }) {
+export default function HistoryPanel({ projectId, branch, version = 0, live = false, manual = false, focusRequest = 0, onFocusHandled, readOnly = false }: { projectId: string; branch: string; version?: number; live?: boolean; manual?: boolean; focusRequest?: number; onFocusHandled?: () => void; readOnly?: boolean }) {
   /** null until this branch's log has arrived. */
   const [log, setLog] = useState<LogEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -82,7 +83,7 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
 
   return (
     <div className="panel-list" data-testid="history-panel">
-      <div style={{ display: 'flex', gap: 6, padding: '2px 0 8px' }}>
+      {!readOnly && <div style={{ display: 'flex', gap: 6, padding: '2px 0 8px' }}>
         <input
           ref={inputRef}
           className="input"
@@ -94,8 +95,8 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit(); }}
         />
         <button className="btn btn--small" onClick={commit} data-testid="commit-button" style={{ height: 28 }}>{manual ? 'Commit' : 'Save'}</button>
-      </div>
-      {manual && pending && (
+      </div>}
+      {manual && pending && !readOnly && (
         <div className="history__pending" data-testid="uncommitted-changes" title={pending.join('\n')}>
           {pending.length === 0 ? 'No uncommitted changes' : `${pending.length} ${pending.length === 1 ? 'file' : 'files'} not committed yet: ${pending.slice(0, 3).join(', ')}${pending.length > 3 ? ', …' : ''}`}
         </div>

@@ -34,16 +34,34 @@ describe('shortcut labels', () => {
 });
 
 describe('matching a keydown', () => {
-  it('takes Cmd or Ctrl as the modifier, and needs the exact extra modifiers', () => {
+  it('takes Ctrl or the Windows key as the modifier off a Mac, and needs the exact extra modifiers', () => {
     const comment = chordFor('comment');
-    expect(matchesChord(key('M', 'KeyM', { metaKey: true, shiftKey: true }), comment)).toBe(true);
-    expect(matchesChord(key('M', 'KeyM', { ctrlKey: true, shiftKey: true }), comment)).toBe(true);
-    expect(matchesChord(key('m', 'KeyM', { metaKey: true }), comment)).toBe(false);
-    expect(matchesChord(key('M', 'KeyM', { metaKey: true, shiftKey: true, altKey: true }), comment)).toBe(false);
+    expect(matchesChord(key('M', 'KeyM', { ctrlKey: true, shiftKey: true }), comment, false)).toBe(true);
+    expect(matchesChord(key('M', 'KeyM', { metaKey: true, shiftKey: true }), comment, false)).toBe(true);
+    expect(matchesChord(key('m', 'KeyM', { ctrlKey: true }), comment, false)).toBe(false);
+    expect(matchesChord(key('M', 'KeyM', { ctrlKey: true, shiftKey: true, altKey: true }), comment, false)).toBe(false);
+  });
+
+  it('takes only ⌘ on a Mac, where Ctrl+K deletes to the end of the line', () => {
+    const palette = chordFor('palette');
+    expect(matchesChord(key('k', 'KeyK', { metaKey: true }), palette, true)).toBe(true);
+    expect(matchesChord(key('k', 'KeyK', { ctrlKey: true }), palette, true)).toBe(false);
+    expect(matchesChord(key('k', 'KeyK', { metaKey: true, ctrlKey: true }), palette, true)).toBe(false);
+    expect(matchesChord(key('M', 'KeyM', { metaKey: true, shiftKey: true }), chordFor('comment'), true)).toBe(true);
+    // a chord without the modifier is not Ctrl+key either
+    const f2 = { mod: false, shift: false, alt: false, key: 'F2', code: 'F2' };
+    expect(matchesChord(key('F2', 'F2'), f2, true)).toBe(true);
+    expect(matchesChord(key('F2', 'F2', { ctrlKey: true }), f2, true)).toBe(false);
+  });
+
+  it('records Ctrl on a Mac as no modifier, as the keys will match it', () => {
+    expect(chordFromEvent(key('e', 'KeyE', { ctrlKey: true }), true)?.mod).toBe(false);
+    expect(chordFromEvent(key('e', 'KeyE', { metaKey: true }), true)?.mod).toBe(true);
+    expect(chordFromEvent(key('e', 'KeyE', { ctrlKey: true }), false)?.mod).toBe(true);
   });
 
   it('finds a default by the letter printed on the key, so AZERTY works', () => {
-    expect(matchesChord(key('M', 'Semicolon', { ctrlKey: true, shiftKey: true }), chordFor('comment'))).toBe(true);
+    expect(matchesChord(key('M', 'Semicolon', { ctrlKey: true, shiftKey: true }), chordFor('comment'), false)).toBe(true);
   });
 
   it('finds a recorded chord by the physical key, which Option does not change', () => {
@@ -54,7 +72,7 @@ describe('matching a keydown', () => {
 
   it('ignores AltGr, which types characters', () => {
     const recorded = { mod: true, shift: false, alt: true, key: 'q', code: 'KeyQ' };
-    expect(matchesChord(key('@', 'KeyQ', { ctrlKey: true, altKey: true }, true), recorded)).toBe(false);
+    expect(matchesChord(key('@', 'KeyQ', { ctrlKey: true, altKey: true }, true), recorded, false)).toBe(false);
   });
 
   it('waits while only modifiers are held', () => {

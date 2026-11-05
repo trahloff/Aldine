@@ -1152,6 +1152,20 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     });
   }
 
+  // Test hook (never in production): make a project a showcase at runtime.
+  // The collab sockets and GET project follow the set as it is; the REST
+  // write guard above exists only when the set was non-empty at boot.
+  if (process.env.ALDINE_TEST_HOOKS === '1') {
+    app.post<{ Params: { id: string } }>('/api/test/showcase/:id', async (req) => {
+      protectedProjects.add(req.params.id);
+      return { ok: true };
+    });
+    app.delete<{ Params: { id: string } }>('/api/test/showcase/:id', async (req) => {
+      protectedProjects.delete(req.params.id);
+      return { ok: true };
+    });
+  }
+
   // Asked for at boot so the first gallery request is served from the cache
   // instead of waiting on the compiler.
   warmVenueCache();
@@ -1303,7 +1317,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try {
       const meta = await store.readMeta(req.params.id);
       const branches = await gitops.listBranches(meta.id);
-      return { ...(await publicMeta(meta, reqUser(req))), branches };
+      // readOnly: a showcase, whose collab sockets drop every edit.
+      return { ...(await publicMeta(meta, reqUser(req))), branches, readOnly: protectedProjects.has(meta.id) };
     } catch {
       return reply.code(404).send({ error: 'project not found' });
     }

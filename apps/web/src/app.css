@@ -610,6 +610,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* Provisioning failed at create time: the owner's banner under the toolbar */
 .remote-pending { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: var(--text-s); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); border-bottom: 1px solid var(--hairline); }
 .remote-pending__text { flex: 1; min-width: 0; }
+/* A read-only showcase: the visitor's way to an editable copy */
+.showcase-note { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: var(--text-s); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); border-bottom: 1px solid var(--hairline); }
+.showcase-note__text { flex: 1; min-width: 0; }
 .conflict__list { margin: 8px 0; padding: 8px 10px; background: var(--bg-inset); border-radius: var(--radius-s); font-family: var(--font-mono); font-size: var(--text-s); max-height: 160px; overflow-y: auto; list-style: none; }
 .conflict__list li { padding: 2px 0; color: var(--error); }
 .btn--danger { background: var(--error); color: #fff; border-color: transparent; }

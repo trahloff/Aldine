@@ -200,8 +200,9 @@ export function seedError(files: unknown): string | null {
   return null;
 }
 
+/** A dotfile (`.gitignore`, `.latexmkrc`) matches by its whole name. */
 export function isTextFile(p: string): boolean {
-  return /\.(tex|bib|cls|sty|bst|bbx|cbx|md|txt|csv|tsv|dat|log|json|yml|yaml|xml|svg|lua|py|def|clo|dtx|ins|lco|tikz|pgf|toml|cfg|gitignore)$/i.test(p) || !path.basename(p).includes('.');
+  return /\.(tex|ltx|latex|bib|bibtex|bbl|cls|sty|bst|bbx|cbx|lbx|ldf|md|rmd|rnw|rtex|asy|txt|csv|tsv|dat|log|json|yml|yaml|xml|svg|lua|py|def|clo|dtx|ins|ist|mtx|lco|tikz|pgf|gv|mf|mk|xmpdata|toml|cfg|gitignore|latexmkrc|chktexrc)$/i.test(p) || !path.basename(p).includes('.');
 }
 
 const RAW_TYPES: Record<string, string> = {
