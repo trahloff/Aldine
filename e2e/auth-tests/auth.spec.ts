@@ -322,6 +322,7 @@ test.describe('auth', () => {
   });
 
   test('the link mode applies when chosen: a link copied without Save opens for another account, and Invite only shuts it', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
     const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
     const page = await owner.newPage();
     await register(page, uniq());
@@ -339,7 +340,7 @@ test.describe('auth', () => {
     await page.keyboard.press('Escape'); // nothing typed, so nothing to ask about
     await expect(page.getByTestId('share-modal')).toHaveCount(0);
 
-    const visitor = await browser.newContext();
+    const visitor = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.62' } });
     await visitor.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
     const visitorPage = await visitor.newPage();
     await visitorPage.goto(link);
@@ -368,14 +369,15 @@ test.describe('auth', () => {
   });
 
   test('a project that will not open says why in place: the account, the invitation if one waits, or Try again', async ({ browser }) => {
-    const owner = await browser.newContext();
+    // its own client address keeps it off the sign-in limit the suite shares
+    const owner = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.63' } });
     const ownerPage = await owner.newPage();
     const ownerEmail = uniq();
     await register(ownerPage, ownerEmail, 'password123', 'Olive Owner');
     await confirmEmail(ownerPage.request, ownerEmail);
     const proj = await (await ownerPage.request.post('/api/projects', { data: { name: 'Not Yet Yours' } })).json();
 
-    const b = await browser.newContext();
+    const b = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.63' } });
     const bPage = await b.newPage();
     const bEmail = uniq();
     await register(bPage, bEmail, 'password123', 'Bea');
@@ -407,6 +409,8 @@ test.describe('auth', () => {
   });
 
   test('a session that ended on the way to a project offers Sign in again, and signing in comes back to the project', async ({ page }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.64' });
     const email = uniq();
     await register(page, email);
     const proj = await (await page.request.post('/api/projects', { data: { name: 'Session Ended' } })).json();
