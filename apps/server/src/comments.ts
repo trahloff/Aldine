@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from './db/index.js';
 import type { Comment } from './db/types.js';
+import { importPath } from './util.js';
 
 /**
  * Review comments — anchored to a text range in a file, threaded, resolvable,
@@ -52,6 +53,26 @@ export async function resolveComment(projectId: string, id: string, resolved: bo
   c.resolved = resolved;
   await db().saveComments(projectId, list);
   return c;
+}
+
+/** A file or folder on `branch` moved from `from` to `to` (both normalised
+ *  tree paths): its comments, or those of every file under the folder, move
+ *  with it. Returns how many moved. */
+export async function movePath(projectId: string, branch: string, from: string, to: string, wasDir: boolean): Promise<number> {
+  const list = await db().loadComments(projectId);
+  let moved = 0;
+  for (const c of list) {
+    if (c.branch !== branch) continue;
+    const file = importPath(c.file);
+    if (!file) continue;
+    const next = !wasDir ? (file === from ? to : null)
+      : file.startsWith(`${from}/`) ? to + file.slice(from.length) : null;
+    if (next === null) continue;
+    c.file = next;
+    moved++;
+  }
+  if (moved) await db().saveComments(projectId, list);
+  return moved;
 }
 
 export async function deleteComment(projectId: string, id: string): Promise<void> {

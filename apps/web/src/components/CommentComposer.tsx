@@ -13,10 +13,14 @@ export default function CommentComposer({ quote, onSubmit, onClose }: {
   const [suggestion, setSuggestion] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // The box starts from the selected text; left as it is, nothing is
+  // suggested, and emptied it suggests deleting the selection.
+  const suggested = suggesting && suggestion !== quote ? suggestion : undefined;
+  const ready = !busy && (!!body.trim() || suggested !== undefined);
   const submit = () => {
-    if (!body.trim() || busy) return;
+    if (!ready) return;
     setBusy(true);
-    onSubmit(body.trim(), suggesting && suggestion ? suggestion : undefined);
+    onSubmit(body.trim(), suggested);
   };
 
   return (
@@ -37,21 +41,24 @@ export default function CommentComposer({ quote, onSubmit, onClose }: {
         {suggesting ? (
           <textarea
             className="input composer__body"
-            placeholder="Suggested replacement for the selected text"
+            placeholder="Leave empty to suggest deleting the selected text"
+            aria-label="Suggested replacement for the selected text"
             value={suggestion}
             data-testid="comment-suggestion"
+            autoFocus
             onChange={(e) => setSuggestion(e.target.value)}
+            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit(); }}
           />
         ) : (
-          <button className="btn btn--ghost btn--small composer__suggest" onClick={() => setSuggesting(true)} data-testid="comment-suggest-toggle">
+          <button className="btn btn--ghost btn--small composer__suggest" onClick={() => { setSuggestion(quote); setSuggesting(true); }} data-testid="comment-suggest-toggle">
             + Suggest a replacement
           </button>
         )}
 
         <div className="modal__row" style={{ marginTop: 12 }}>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" onClick={submit} disabled={!body.trim() || busy} data-testid="comment-submit">
-            {busy ? '…' : 'Comment'} <span className="composer__hint">{isMac ? '⌘⏎' : 'Ctrl+Enter'}</span>
+          <button className="btn btn--primary" onClick={submit} disabled={!ready} data-testid="comment-submit">
+            {busy ? '…' : suggested === '' ? 'Suggest deleting' : 'Comment'} <span className="composer__hint">{isMac ? '⌘⏎' : 'Ctrl+Enter'}</span>
           </button>
         </div>
       </div>

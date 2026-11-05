@@ -561,6 +561,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .login__input { width: 100%; height: 34px; }
 .login__submit { width: 100%; height: 34px; justify-content: center; margin-top: 4px; }
 .login__switch { width: 100%; justify-content: center; margin-top: 8px; color: var(--text-2); }
+.login__choice { display: flex; gap: 8px; }
+.login__choice > .login__submit { flex: 1 1 0; width: auto; }
 .login__error { color: var(--error); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info { color: var(--ok-text); font-size: var(--text-s); margin: 2px 0 8px; }
 .login__info--warn { color: var(--warn-text); }

@@ -30,7 +30,6 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
 }) {
   const { authEnabled } = useAuth();
   const invitations = canManage && authEnabled;
-  const [mode, setMode] = useState<'private' | 'link'>(project.share?.mode || 'private');
   // With invitations the field only adds people, and who has access is the
   // list below it. Without accounts the field is the whole list.
   const [emails, setEmails] = useState(invitations ? '' : (project.share?.collaborators || []).join(', '));
@@ -38,11 +37,10 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   const [invites, setInvites] = useState<OwnerInvitation[]>([]);
   // After a save that invited someone the dialog stays open to say who got
   // mail and to offer the links; the caller hears of the save when it
-  // closes, however it closes. A removal applies at once and is heard of
-  // the same way.
+  // closes, however it closes. A removal and a change of mode apply at once
+  // and are heard of the same way.
   const [result, setResult] = useState<{ updated: ProjectSummary; sent: string | null; manual: string | null } | null>(null);
-  const [removed, setRemoved] = useState<ProjectSummary | null>(null);
-  const close = () => (result ? onSaved(result.updated) : removed ? onSaved(removed) : onClose());
+  const [applied, setApplied] = useState<ProjectSummary | null>(null);
   const toast = useToast();
   const dialogs = useDialogs();
   const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
@@ -54,6 +52,10 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   // dialog still holds the old one: start from the server's.
   const [base, setBase] = useState(project.share?.collaborators || []);
   const [savedMode, setSavedMode] = useState(project.share?.mode || 'private');
+  // The mode a radio click is applying; the link is offered only once the
+  // server has it, so a copied link always opens.
+  const [switching, setSwitching] = useState<'private' | 'link' | null>(null);
+  const mode = switching ?? savedMode;
   useEffect(() => {
     if (!invitations) return;
     api.projectInvitations(project.id).then(setInvites).catch(() => setInvites([]));
@@ -63,6 +65,41 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
       setSavedMode(p.share.mode);
     }).catch(() => {});
   }, [invitations, project.id]);
+
+  const typedEntries = () => emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
+  // The mode applies on click; only the address field waits for Save.
+  const unsaved = () => (invitations ? typedEntries().length > 0 : typedEntries().join(',') !== base.join(','));
+  const finish = () => (result ? onSaved(result.updated) : applied ? onSaved(applied) : onClose());
+  const close = async () => {
+    if (!result && canManage && unsaved()) {
+      const ok = await dialogs.confirm({
+        title: invitations ? 'Close without inviting?' : 'Close without saving?',
+        body: invitations
+          ? 'The addresses you typed have not been invited. To invite them, go back and press Save.'
+          : 'The collaborator list you typed has not been saved. To keep it, go back and press Save.',
+        confirmLabel: 'Discard and close',
+      });
+      if (!ok) return;
+    }
+    finish();
+  };
+
+  const switchMode = async (next: 'private' | 'link') => {
+    if (next === savedMode || switching) return;
+    setSwitching(next);
+    try {
+      const updated = await api.shareMode(project.id, next);
+      setSavedMode(updated.share?.mode || next);
+      setApplied(updated);
+      toast(next === 'link'
+        ? 'Link sharing on: anyone signed in with the link can edit'
+        : 'Link sharing off: only you and your collaborators can open the project', 'ok');
+    } catch (err: any) {
+      toast(`Could not change link sharing: ${err.message}`, 'error');
+    } finally {
+      setSwitching(null);
+    }
+  };
 
   const copyLink = async () => {
     try {
@@ -74,8 +111,9 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   };
 
   const save = async () => {
+    if (busy || switching) return;
     // Separators people actually paste: commas, semicolons, newlines.
-    const typed = emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
+    const typed = typedEntries();
     const bad = typed.filter((e) => !EMAIL_RE.test(e) && !ORCID_RE.test(e));
     if (bad.length) { toast(`Not an email address or ORCID iD: ${bad.join(', ')}`, 'error'); return; }
     const list = invitations ? [...base, ...addedEntries(base, typed)] : typed;
@@ -86,7 +124,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     setBusy(true);
     try {
       const open = new Set(invites.filter((i) => i.state === 'pending').map((i) => i.to));
-      const updated = await api.share(project.id, mode, list, base);
+      const updated = await api.share(project.id, savedMode, list, base);
       if (updated.invitations) setInvites(updated.invitations);
       const added = addedEntries(base, list).filter((c) => !open.has(c));
       if (added.length === 0) {
@@ -106,7 +144,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     const ok = await dialogs.confirm({
       title: `Remove ${who}?`,
       body: savedMode === 'link'
-        ? `${who} is no longer a collaborator, but anyone signed in with the link can still open “${project.name}”. To keep them out, choose Invite only and save.`
+        ? `${who} is no longer a collaborator, but anyone signed in with the link can still open “${project.name}”. To keep them out, choose Invite only as well.`
         : `${who} loses access to “${project.name}” right away. If they have it open, their edits stop reaching the project. To let them back in, invite them again.`,
       confirmLabel: 'Remove access',
       danger: true,
@@ -115,7 +153,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     try {
       const updated = await api.removeCollaborator(project.id, who);
       setBase(updated.share?.collaborators || []);
-      setRemoved(updated);
+      setApplied(updated);
       toast(`Removed ${who}`, 'ok');
     } catch (err: any) {
       toast(`Could not remove ${who}: ${err.message}`, 'error');
@@ -141,14 +179,14 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
           <>
             <p className="modal__sub">Choose who can open and edit this project.</p>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-              <input type="radio" name="share-mode" checked={mode === 'private'} onChange={() => setMode('private')} data-testid="share-private" />
+              <input type="radio" name="share-mode" checked={mode === 'private'} disabled={busy || !!switching} onChange={() => switchMode('private')} data-testid="share-private" />
               <span><strong>Invite only</strong> — you and the collaborators below</span>
             </label>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-              <input type="radio" name="share-mode" checked={mode === 'link'} onChange={() => setMode('link')} data-testid="share-link" />
+              <input type="radio" name="share-mode" checked={mode === 'link'} disabled={busy || !!switching} onChange={() => switchMode('link')} data-testid="share-link" />
               <span><strong>Anyone signed in with the link</strong> can edit — once they open it, it stays in their project list until they remove it</span>
             </label>
-            {mode === 'link' && (
+            {savedMode === 'link' && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
                 <code data-testid="share-url" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--text-s)' }}>{shareUrl}</code>
                 <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
@@ -196,8 +234,8 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
             <button className="btn btn--primary" onClick={close} data-testid="share-done">Done</button>
           ) : canManage ? (
             <>
-              <button className="btn" onClick={close}>Cancel</button>
-              <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>
+              <button className="btn" onClick={close} data-testid="share-close">Close</button>
+              <button className="btn btn--primary" onClick={save} disabled={busy || !!switching} data-testid="share-save">Save</button>
             </>
           ) : (
             <button className="btn" onClick={onClose} data-testid="share-close">Close</button>

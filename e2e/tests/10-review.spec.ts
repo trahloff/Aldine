@@ -36,6 +36,33 @@ test.describe('review mode', () => {
     }
   });
 
+  test('a suggestion starts from the selected text, and emptied it suggests deleting it', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Delete');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'REDUNDANT words stay.\n' } });
+      await openProject(page, id);
+      await expect(page.locator('.cm-content')).toContainText('REDUNDANT', { timeout: 10_000 });
+      const line = await page.locator('.cm-line').first().boundingBox();
+      await page.mouse.dblclick(line!.x + 30, line!.y + line!.height / 2);
+      await expect.poll(async () => await page.evaluate(() => window.getSelection()?.toString())).toBe('REDUNDANT');
+
+      await page.getByTestId('add-comment').click();
+      await page.getByTestId('comment-suggest-toggle').click();
+      await expect(page.getByTestId('comment-suggestion')).toHaveValue('REDUNDANT');
+      await expect(page.getByTestId('comment-submit'), 'an unchanged suggestion with no comment is nothing to send').toBeDisabled();
+      await page.getByTestId('comment-suggestion').fill('');
+      await expect(page.getByTestId('comment-submit')).toContainText('Suggest deleting');
+      await page.getByTestId('comment-submit').click();
+
+      await expect(page.getByTestId('review-panel')).toContainText('(delete)', { timeout: 10_000 });
+      await page.locator('[data-testid^="accept-"]').first().click();
+      await expect(page.locator('.cm-content')).toContainText(' words stay.');
+      await expect(page.locator('.cm-content')).not.toContainText('REDUNDANT');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('comment can be resolved and reopened', async ({ page, request }) => {
     const id = await createProject(request, 'Review Resolve');
     try {
@@ -104,6 +131,28 @@ test.describe('comment re-anchoring (QA regression)', () => {
       await openProject(page, id);
       await expect(page.locator('.cm-comment-range')).toContainText('ANCHOR_ME', { timeout: 10_000 });
       await expect(page.locator('.cm-comment-range')).not.toContainText('PREPENDED');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('clicking a thread in Review opens its file and selects its text, after edits moved it', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Jump');
+    try {
+      const body = 'line one\nline two\nJUMP_HERE and more\n';
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'other.tex', content: body } });
+      const from = body.indexOf('JUMP_HERE');
+      const c = await (await request.post(`/api/projects/${id}/comments`, {
+        data: { branch: 'main', file: 'other.tex', anchor: { from, to: from + 9, quote: 'JUMP_HERE' }, body: 'jump test' },
+      })).json();
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'other.tex', content: `inserted above\n${body}` } });
+
+      await openProject(page, id);
+      await expect(page.getByTestId('active-file')).toHaveText('main.tex');
+      await page.getByTestId('tab-review').click();
+      await page.getByTestId(`comment-${c.id}`).locator('.review__anchor').click();
+      await expect(page.getByTestId('active-file')).toHaveText('other.tex');
+      await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('JUMP_HERE');
     } finally {
       await cleanup(request, id);
     }

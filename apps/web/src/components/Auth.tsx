@@ -1,9 +1,10 @@
 import { createContext, useContext, useEffect, useState, type JSX } from 'react';
-import { withBase } from '../basePath';
+import { BASE_PATH, withBase } from '../basePath';
 import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
 import Wordmark from './Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
-import { appSignInStarts } from '../util/signInStart';
+import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
+import { projectOfPath } from '../util/projectResume';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -124,7 +125,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         passwordAuth={passwordAuth}
         signupApproval={signupApproval}
         onAuthed={(u) => setUser(u)}
-        onStart={() => appSignInStarts()}
+        onStart={() => {
+          // Shown in place of a project's page: an SSO sign-in comes back to it.
+          const path = window.location.pathname;
+          const id = path.startsWith(BASE_PATH) ? projectOfPath(path.slice(BASE_PATH.length)) : null;
+          if (id) projectSignInStarts(id); else appSignInStarts();
+        }}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
         confirmToken={confirmToken && !user ? confirmToken : undefined}
         onConfirmLinkUsed={(signedIn) => {
@@ -166,7 +172,7 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  sign-in: an account that waits for approval has no session to confirm
  *  its address with afterwards; `onConfirmLinkUsed` runs once the server
  *  used it (`signedIn` false when the account still waits). */
-export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed }: {
+export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes }: {
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
   signupApproval?: boolean;
@@ -180,6 +186,9 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed,
   initialEmail?: string;
   confirmToken?: string;
   onConfirmLinkUsed?(signedIn: boolean): void;
+  /** Signing in and creating an account sit side by side, for someone who
+   *  may have no account yet (an invitation). */
+  bothModes?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState(initialEmail ?? '');
@@ -204,7 +213,9 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed,
     return () => window.clearInterval(t);
   }, [waitUntil]);
 
-  const reset = () => { setError(''); setInfo(''); setWaiting(''); setWaitUntil(0); };
+  // The arrival notice says why the person is here; it outlasts a switch to
+  // sign-up and a failed attempt.
+  const reset = () => { setError(''); setInfo((i) => (notice && i === notice ? i : '')); setWaiting(''); setWaitUntil(0); };
 
   // Arriving from a password-reset email link (…/?reset_token=…): pre-fill the
   // token and jump straight to the "set a new password" step.
@@ -274,6 +285,13 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed,
     : mode === 'forgot' ? (busy ? 'Sending…' : 'Send reset link')
     : (busy ? 'Setting password…' : 'Set password');
 
+  const switchMode = () => { reset(); setMode(mode === 'login' ? 'register' : 'login'); };
+  const submitButton = (
+    <button type="submit" className="btn btn--primary login__submit" disabled={busy || waitLeft > 0} aria-busy={busy || undefined} data-testid="auth-submit">
+      {waitLeft > 0 && !busy ? `Try again in ${waitLeft} s` : submitLabel}
+    </button>
+  );
+
   return (
     <main className="login">
       <div className="login__card">
@@ -339,13 +357,18 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, onAuthed,
               {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} role="status" data-testid="auth-info">{info}</p>}
               {waiting && <p className="login__info login__info--warn" role="status" data-testid="auth-waiting">{waiting}</p>}
 
-              <button type="submit" className="btn btn--primary login__submit" disabled={busy || waitLeft > 0} aria-busy={busy || undefined} data-testid="auth-submit">
-                {waitLeft > 0 && !busy ? `Try again in ${waitLeft} s` : submitLabel}
-              </button>
+              {bothModes && (mode === 'login' || mode === 'register') ? (
+                <div className="login__choice">
+                  {submitButton}
+                  <button type="button" className="btn login__submit" data-testid="auth-switch" onClick={switchMode}>
+                    {mode === 'login' ? 'Create an account' : 'Sign in instead'}
+                  </button>
+                </div>
+              ) : submitButton}
             </form>
 
-            {(mode === 'login' || mode === 'register') && (
-              <button type="button" className="btn btn--ghost login__switch" data-testid="auth-switch" onClick={() => { reset(); setMode(mode === 'login' ? 'register' : 'login'); }}>
+            {!bothModes && (mode === 'login' || mode === 'register') && (
+              <button type="button" className="btn btn--ghost login__switch" data-testid="auth-switch" onClick={switchMode}>
                 {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
               </button>
             )}

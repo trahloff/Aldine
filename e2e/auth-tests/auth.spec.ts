@@ -321,6 +321,129 @@ test.describe('auth', () => {
     await carol.close();
   });
 
+  test('the link mode applies when chosen: a link copied without Save opens for another account, and Invite only shuts it', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const page = await owner.newPage();
+    await register(page, uniq());
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Link Without Save' } })).json();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+
+    await page.getByTestId('share-project').click();
+    await page.getByTestId('share-link').check();
+    await expect(page.locator('.toast', { hasText: 'Link sharing on' })).toBeVisible();
+    await page.getByTestId('share-copy-link').click();
+    await expect(page.locator('.toast', { hasText: 'Link copied' })).toBeVisible();
+    const link = await page.evaluate(() => navigator.clipboard.readText());
+    expect(link).toMatch(new RegExp(`/p/${proj.id}$`));
+    await page.keyboard.press('Escape'); // nothing typed, so nothing to ask about
+    await expect(page.getByTestId('share-modal')).toHaveCount(0);
+
+    const visitor = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.62' } });
+    await visitor.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
+    const visitorPage = await visitor.newPage();
+    await visitorPage.goto(link);
+    await expect(visitorPage.getByTestId('editor-shell')).toBeVisible();
+    await expect(visitorPage.locator('.cm-content')).toBeVisible();
+
+    // typed addresses are what can still be unsaved: closing asks first
+    await page.getByTestId('share-project').click();
+    await expect(page.getByTestId('share-link')).toBeChecked();
+    await page.getByTestId('share-emails').fill('someone@example.edu');
+    await page.getByTestId('share-close').click();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Close without inviting?');
+    await page.getByTestId('dialog-cancel').click();
+    await expect(page.getByTestId('share-emails')).toHaveValue('someone@example.edu');
+    await page.getByTestId('share-emails').fill('');
+
+    // Invite only applies at once too, and shuts the visitor out
+    await page.getByTestId('share-private').check();
+    await expect(page.locator('.toast', { hasText: 'Link sharing off' })).toBeVisible();
+    await expect(page.getByTestId('share-url')).toHaveCount(0);
+    await page.getByTestId('share-close').click();
+    await expect(page.getByTestId('share-modal')).toHaveCount(0);
+    expect((await visitor.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await owner.close();
+    await visitor.close();
+  });
+
+  test('a project that will not open says why in place: the account, the invitation if one waits, or Try again', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    const owner = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.63' } });
+    const ownerPage = await owner.newPage();
+    const ownerEmail = uniq();
+    await register(ownerPage, ownerEmail, 'password123', 'Olive Owner');
+    await confirmEmail(ownerPage.request, ownerEmail);
+    const proj = await (await ownerPage.request.post('/api/projects', { data: { name: 'Not Yet Yours' } })).json();
+
+    const b = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.63' } });
+    const bPage = await b.newPage();
+    const bEmail = uniq();
+    await register(bPage, bEmail, 'password123', 'Bea');
+    await confirmEmail(b.request, bEmail);
+    await bPage.goto(`/p/${proj.id}`);
+    await expect(bPage.getByTestId('project-denied')).toContainText('You don’t have access to this project');
+    await expect(bPage.getByTestId('project-denied-account')).toHaveText(bEmail);
+    await expect(bPage.getByTestId('project-denied-switch')).toBeVisible();
+    await expect(bPage.getByTestId('project-denied-accept')).toHaveCount(0);
+    await expect(bPage).toHaveURL(new RegExp(`/p/${proj.id}$`));
+
+    // invited meanwhile: the same page accepts and opens the project
+    expect((await ownerPage.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [bEmail] } })).ok()).toBeTruthy();
+    await bPage.reload();
+    await expect(bPage.getByTestId('project-denied')).toContainText('You’re invited to “Not Yet Yours”');
+    await bPage.getByTestId('project-denied-accept').click();
+    await expect(bPage.getByTestId('editor-shell')).toBeVisible();
+
+    // no answer from the server: stay, and try again in place
+    await bPage.route(`**/api/projects/${proj.id}`, (route) => route.abort());
+    await bPage.reload();
+    await expect(bPage.getByTestId('project-unreachable')).toBeVisible();
+    await expect(bPage).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await bPage.unroute(`**/api/projects/${proj.id}`);
+    await bPage.getByTestId('project-retry').click();
+    await expect(bPage.getByTestId('editor-shell')).toBeVisible();
+    await owner.close();
+    await b.close();
+  });
+
+  test('a session that ended on the way to a project offers Sign in again, and signing in comes back to the project', async ({ page }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.64' });
+    const email = uniq();
+    await register(page, email);
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Session Ended' } })).json();
+    await page.goto('/');
+    await expect(page.getByTestId(`open-${proj.id}`)).toBeVisible();
+    // the session ends while the page still holds the signed-in account
+    expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
+    await page.getByTestId(`open-${proj.id}`).click();
+    await expect(page.getByTestId('project-signed-out')).toContainText('Your session has ended');
+    await expect(page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+
+    // a password sign-in stays on the page
+    await page.getByTestId('project-signin').click();
+    await page.getByTestId('auth-email').fill(email);
+    await page.getByTestId('auth-password').fill('password123');
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    expect(await page.evaluate(() => sessionStorage.getItem('aldine.project.resume')), 'nothing left for Home to bring back').toBeNull();
+
+    // an SSO provider's callback lands on Home, which brings the sign-in back here
+    expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
+    await page.reload();
+    await page.getByTestId('auth-email').fill(email);
+    await page.getByTestId('auth-password').fill('not-the-password');
+    await page.getByTestId('auth-submit').click(); // starts a sign-in on this page
+    await expect(page.getByTestId('auth-error')).toBeVisible();
+    expect((await page.request.post('/api/auth/login', { data: { email, password: 'password123' } })).ok()).toBeTruthy();
+    await page.goto('/');
+    await expect(page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+  });
+
   test('collaborators see each other under their account names, not the anonymous writer', async ({ page, browser }) => {
     const email = uniq();
     await register(page, email, 'password123', 'Ada Presence');
@@ -439,7 +562,12 @@ test.describe('invitations', () => {
     await expect(bPage.getByTestId('auth-email')).toHaveValue(bEmail);
     await expect(bPage.getByTestId('auth-info')).toContainText(`Olive Owner invited ${bEmail} to a project.`);
     await expect(bPage.locator('body')).not.toContainText(name);
+    // signing in and creating an account are offered side by side, and the
+    // notice of who invited them stays when they pick sign-up
+    await expect(bPage.getByTestId('auth-submit')).toHaveText('Sign in');
+    await expect(bPage.getByTestId('auth-switch')).toHaveText('Create an account');
     await bPage.getByTestId('auth-switch').click();
+    await expect(bPage.getByTestId('auth-info')).toContainText(`Olive Owner invited ${bEmail} to a project.`);
     await bPage.getByTestId('auth-name').fill('Bob');
     await bPage.getByTestId('auth-password').fill('password123');
     await bPage.getByTestId('auth-submit').click();

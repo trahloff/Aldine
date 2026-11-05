@@ -122,6 +122,7 @@ function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parame
         ? `${owner} invited the ORCID iD ${view.to} to a project. Sign in with that ORCID iD to see it.`
         : `${owner} invited ${view.to} to a project. Sign in or create an account with that address to see it.`}
       initialEmail={orcid ? undefined : view.to}
+      bothModes
     />
   );
 }

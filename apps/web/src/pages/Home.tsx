@@ -29,6 +29,7 @@ import ConnectClaudeModal from '../components/ClaudeConnect';
 import { useMinuteTick } from '../util/dates';
 import { takeOAuthResume } from '../util/oauthParams';
 import { takeInviteResume } from '../util/invites';
+import { takeProjectResume } from '../util/projectResume';
 import { importSummary } from '../util/engines';
 import { safeSession, safeStorage } from '../util/safeStorage';
 import { gridMove, isGridKey } from '../util/rovingGrid';
@@ -247,14 +248,16 @@ export default function Home() {
   }, [projects]);
 
   // Signed in through an SSO provider while an app was waiting on
-  // /oauth/authorize, or from an invitation's page: the provider callback
-  // lands here, so go back to where the sign-in started.
+  // /oauth/authorize, from an invitation's page or from a project's: the
+  // provider callback lands here, so go back to where the sign-in started.
   useEffect(() => {
     if (!authEnabled || !user) return;
     const resume = takeOAuthResume();
     const invite = takeInviteResume();
+    const project = takeProjectResume();
     if (resume) navigate(resume, { replace: true });
     else if (invite) navigate(invite, { replace: true });
+    else if (project) navigate(project, { replace: true });
   }, []);
   useEffect(() => {
     api.remotes().then((list) => {
