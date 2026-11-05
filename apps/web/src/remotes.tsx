@@ -13,8 +13,14 @@ export interface RemoteDescriptor {
   icon: ReactElement;
   changeRequest: 'pull request' | 'merge request';
   tokenPlaceholder: string;
-  /** Where to create a token, and which scope it needs. */
+  /** Where to create a token, and which scope it needs, when there is no page to link to. */
   tokenHelp: string;
+  /** The host's new-token page on the instance at `base`, scopes filled in where the host allows it; null without an instance. */
+  tokenPage(base: string | undefined): string | null;
+  /** Follows "Create a token on <host>" when that links to `tokenPage`. */
+  tokenPageNote: string;
+  /** A page for a token limited to one repository, where the host has one apart from `tokenPage`. */
+  repoTokenPage?: { url: string; note: string };
   /** The host can be self-hosted, so connecting may take a base URL. */
   selfHosted: boolean;
   /** No canonical instance: the connect form always asks for the URL. */
@@ -44,6 +50,9 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     changeRequest: 'pull request',
     tokenPlaceholder: 'GitHub token (needs repo scope)',
     tokenHelp: 'Create one at github.com → Settings → Developer settings → Personal access tokens, with repo access.',
+    tokenPage: () => 'https://github.com/settings/tokens/new?scopes=repo&description=Aldine',
+    tokenPageNote: ' with the repo scope already ticked.',
+    repoTokenPage: { url: 'https://github.com/settings/personal-access-tokens/new', note: ', choose only this repository and give it Contents: read and write.' },
     selfHosted: false,
     baseUrlRequired: false,
     defaultBaseUrl: 'https://github.com',
@@ -56,6 +65,8 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     changeRequest: 'merge request',
     tokenPlaceholder: 'GitLab token (needs api scope)',
     tokenHelp: 'Create one on your GitLab under Settings → Access tokens, with the api scope.',
+    tokenPage: (base) => `${base || 'https://gitlab.com'}/-/user_settings/personal_access_tokens?name=Aldine&scopes=api`,
+    tokenPageNote: ' with the api scope already ticked.',
     selfHosted: true,
     baseUrlRequired: false,
     defaultBaseUrl: 'https://gitlab.com',
@@ -68,6 +79,8 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     changeRequest: 'pull request',
     tokenPlaceholder: 'Gitea or Forgejo token (read:user, write:repository, write:user)',
     tokenHelp: 'Create one on your instance under Settings → Applications → Manage access tokens, with read:user and write:repository; publishing a project as a new repository also needs write:user. Codeberg runs Forgejo.',
+    tokenPage: (base) => (base ? `${base}/user/settings/applications` : null),
+    tokenPageNote: ' under Manage access tokens, with read:user and write:repository; publishing a project as a new repository also needs write:user.',
     selfHosted: true,
     baseUrlRequired: true,
     defaultBaseUrl: 'https://codeberg.org',
@@ -83,6 +96,15 @@ export function isRemoteProviderId(v: unknown): v is RemoteProviderId {
 
 export function remoteDescriptor(id: RemoteProviderId): RemoteDescriptor {
   return REMOTES[id];
+}
+
+/** An instance URL fit for a link: http(s) only, without a trailing slash or
+ *  the API path a pasted swagger URL carries; null for anything else. */
+export function instanceBase(raw: string | undefined): string | null {
+  let u: URL;
+  try { u = new URL((raw || '').trim()); } catch { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  return `${u.origin}${u.pathname.replace(/\/+$/, '').replace(/\/api\/v[14]$/, '')}`;
 }
 
 /** "merge request" → "Merge request", for the start of a sentence-case string. */

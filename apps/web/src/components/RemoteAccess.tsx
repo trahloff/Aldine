@@ -3,16 +3,18 @@ import { api, RemoteAccess as Access, RemoteStatus } from '../api';
 import { remoteDescriptor, RemoteProviderId } from '../remotes';
 import { useToast } from './Toast';
 import Modal from './Modal';
-import RemoteConnectForm from './RemoteConnect';
+import RemoteConnectForm, { TokenHelp } from './RemoteConnect';
 
 /** Whose token a linked project syncs with, and the two places to change it:
  *  a token stored on this project (the owner's call; it wins over every
  *  account) and the viewer's own account connection. `rejected` is the
- *  server's message when the host just refused the token in use. */
-export default function RemoteAccess({ projectId, provider, fullName, isOwner, rejected, onClose, onChanged }: {
+ *  server's message when the host just refused the token in use. `instance`
+ *  is the instance the link was made on, where a project token is checked. */
+export default function RemoteAccess({ projectId, provider, fullName, instance, isOwner, rejected, onClose, onChanged }: {
   projectId: string;
   provider: RemoteProviderId;
   fullName: string;
+  instance?: string;
   isOwner: boolean;
   rejected: string | null;
   onClose(): void;
@@ -119,6 +121,7 @@ export default function RemoteAccess({ projectId, provider, fullName, isOwner, r
             <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>
               Any {d.label} account's token that can push to {fullName} works, one limited to this repository too. Everyone who syncs this project uses it, and nobody can read it back.
             </p>
+            <TokenHelp provider={provider} base={instance} instanceUrl={status?.instanceUrl} testId={`${provider}-project-token-page`} />
           </div>
         )}
 
@@ -136,7 +139,7 @@ export default function RemoteAccess({ projectId, provider, fullName, isOwner, r
         </div>
         {status && editing === 'account' && (
           <div style={{ marginTop: 8 }}>
-            <RemoteConnectForm provider={provider} status={status} onConnected={() => changed(`Connected your ${d.label} account`)} />
+            <RemoteConnectForm provider={provider} status={status} onConnected={() => changed(`Connected your ${d.label} account`)} returnTo={`/p/${projectId}`} />
           </div>
         )}
 

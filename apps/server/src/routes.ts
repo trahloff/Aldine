@@ -2292,6 +2292,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return p;
   };
   const oauthCallbackPath = (p: Provider) => p.id === 'github' ? '/api/github/oauth/callback' : `/api/remotes/${p.id}/oauth/callback`;
+  /** A connect started in a project's editor returns there, and only there:
+   *  anything but `/p/<id>` is dropped, so the state cookie can never carry
+   *  another origin or path the callback would redirect to. */
+  const oauthReturnPath = (raw: unknown): string | null => typeof raw === 'string' && /^\/p\/[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : null;
   /** Upstream failures: an expired or revoked token gets a reason the UI can act on (reconnect), the rest is a 502. */
   const upstreamError = (reply: any, err: any, label: string) => {
     if (err instanceof remotes.RemoteApiError && err.status === 401) {
@@ -2315,7 +2319,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   providerRoute('get', 'status', async (p, req, reply) => {
     if (requireSignIn(req, reply)) return;
     const conn = await remotes.getConnection(remoteUserId(req), p.id);
-    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, oauth: p.oauthEnabled(), selfHosted: p.selfHosted, baseUrlRequired: !!p.baseUrlRequired };
+    return { connected: !!conn, login: conn?.login, baseUrl: conn?.baseUrl, instanceUrl: p.defaultInstanceUrl?.(), oauth: p.oauthEnabled(), selfHosted: p.selfHosted, baseUrlRequired: !!p.baseUrlRequired };
   });
 
   providerRoute('post', 'connect', async (p, req, reply) => {
@@ -2349,7 +2353,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
-    reply.header('set-cookie', `aldine_remote_state=${p.id}.${state}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    const back = oauthReturnPath(req.query?.return);
+    reply.header('set-cookie', `aldine_remote_state=${p.id}.${state}${back ? `.${encodeURIComponent(back)}` : ''}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     return reply.redirect(p.connectUrl(state, `${publicBase(req)}${oauthCallbackPath(p)}`));
   });
 
@@ -2357,15 +2362,17 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     const cookies = auth.parseCookies(req.headers.cookie);
     const q = req.query as { code?: string; state?: string };
-    if (!q.code || !q.state || cookies.aldine_remote_state !== `${p.id}.${q.state}`) {
+    const [cookieProvider, cookieState, ...cookieBack] = (cookies.aldine_remote_state || '').split('.');
+    if (!q.code || !q.state || cookieProvider !== p.id || cookieState !== q.state) {
       return reply.code(400).send({ error: 'OAuth state mismatch — please try again' });
     }
+    const back = oauthReturnPath(cookieBack.join('.'));
     try {
       const token = await p.exchangeCode(q.code, `${publicBase(req)}${oauthCallbackPath(p)}`);
       const me = await p.whoami({ token, login: '' });
       await remotes.setConnection(remoteUserId(req), p.id, { token, login: me.login, name: me.name });
       reply.header('set-cookie', `aldine_remote_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
-      return reply.redirect(`${config.basePath}/?remote=${p.id}`);
+      return reply.redirect(back ? `${config.basePath}${back}` : `${config.basePath}/?remote=${p.id}`);
     } catch (err: any) {
       return reply.code(400).send({ error: `${p.label} connect failed: ${err.message}` });
     }
@@ -2528,7 +2535,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { await gitops.pushToRemote(req.params.id, 'main', p.tokenUrl(info.cloneUrl, conn.token, conn.login)); }
     catch (err: any) {
       // repo exists and the link is stored — the user can retry the push from the sync UI
-      return reply.code(502).send({ error: `Repository created but the first push failed: ${err.message}. Use Push to retry.`, ...linkBody(link) });
+      return reply.code(502).send({ error: `Repository created but the first push failed: ${err.message}. Use Push to retry.`, code: 'linked-push-failed', ...linkBody(link) });
     }
     return { ok: true, ...linkBody(link) };
   });
@@ -2601,7 +2608,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // Switch which remote branch this project tracks. Saves current work (commit +
-  // push) first so nothing is lost, then checks out the target branch.
+  // push) first, then checks out the target branch.
   projectRoute('post', 'switch-branch', async (req, reply) => {
     // Persists the link's remoteBranch — repoints the project for everyone.
     if (!(await requireOwner(req, reply, 'change the tracked remote branch'))) return;
@@ -2611,8 +2618,21 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (target === l.remoteBranch) return { ok: true };
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name).catch(() => {});
-      await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url).catch(() => {}); // best-effort save
+      // The hard reset below drops uncommitted edits and every commit of main
+      // the host lacks, so a save that does not land stops the switch, unless
+      // main has nothing the host lacks.
+      try { await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name); }
+      catch { return reply.code(409).send({ error: 'Could not save the latest edits before switching, so nothing changed. Try again in a moment.', code: 'save-failed' }); }
+      try { await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url); }
+      catch (err: any) {
+        gitops.forgetRemoteStatus(req.params.id);
+        const s = await gitops.remoteStatus(req.params.id, l.remoteBranch, l.url).catch(() => null);
+        if (!s || s.ahead > 0) {
+          return syncFailed(reply, l, err, () => reply.code(409).send(s?.behind
+            ? { error: `${l.provider.label} has newer commits on ${l.remoteBranch}. Pull first, then switch.`, code: 'pull-first' }
+            : { error: `Could not push to ${l.provider.label} before switching, so nothing changed: ${err.message}`, code: 'push-failed' }));
+        }
+      }
       const changed = await gitops.resetToRemote(req.params.id, target, l.url);
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: target }); await store.writeMeta(l.meta);
       refreshBranchDocsFromDisk(req.params.id, 'main');

@@ -107,6 +107,7 @@ export const gitlab: RemoteProvider = {
   pathHint: 'Expected a project path like "group/project"',
   normalizeBaseUrl,
   instanceOrigin(conn) { return new URL(conn.baseUrl || instanceUrl()).origin; },
+  defaultInstanceUrl() { return instanceUrl(); },
   apiOverridden() { return !!process.env.GITLAB_API_BASE; },
 
   oauthEnabled() {

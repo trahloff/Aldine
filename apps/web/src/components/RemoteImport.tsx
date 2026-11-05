@@ -4,7 +4,7 @@ import { remoteDescriptor, RemoteProviderId } from '../remotes';
 import { useToast } from './Toast';
 import { friendlyDate } from '../util/dates';
 import Modal from './Modal';
-import RemoteConnectForm from './RemoteConnect';
+import RemoteConnectForm, { TokenHelp } from './RemoteConnect';
 
 /** Connect a git host and import a repository as a new project — the primary create flow. */
 export default function RemoteImport({ provider, onClose, onImported }: {
@@ -127,7 +127,7 @@ export default function RemoteImport({ provider, onClose, onImported }: {
           </>
         )}
 
-        {status && <SingleRepoClone provider={provider} onImported={onImported} />}
+        {status && <SingleRepoClone provider={provider} instanceUrl={status.instanceUrl} onImported={onImported} />}
 
         <div className="modal__row" style={{ marginTop: 14 }}><button className="btn" onClick={onClose}>Close</button></div>
       </div>
@@ -138,7 +138,7 @@ export default function RemoteImport({ provider, onClose, onImported }: {
 /** Clone one repository with a token given just for it: a repository of
  *  another account, or a token limited to that repository. The token stays
  *  with the new project and never becomes the account's connection. */
-function SingleRepoClone({ provider, onImported }: { provider: RemoteProviderId; onImported(id: string): void }) {
+function SingleRepoClone({ provider, instanceUrl, onImported }: { provider: RemoteProviderId; instanceUrl?: string; onImported(id: string): void }) {
   const d = remoteDescriptor(provider);
   const [open, setOpen] = useState(false);
   const [repo, setRepo] = useState('');
@@ -179,6 +179,7 @@ function SingleRepoClone({ provider, onImported }: { provider: RemoteProviderId;
       <button className="btn btn--primary" style={{ width: '100%', justifyContent: 'center' }} onClick={clone} disabled={busy || !repo.trim() || !token.trim()} data-testid={`${provider}-single-clone`}>
         {busy ? 'Cloning…' : 'Clone'}
       </button>
+      <TokenHelp provider={provider} base={baseUrl} instanceUrl={instanceUrl} testId={`${provider}-single-token-page`} oneRepo />
       <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>
         The token stays with the new project only: it syncs with it, and your account connection is left as it is.
       </p>
