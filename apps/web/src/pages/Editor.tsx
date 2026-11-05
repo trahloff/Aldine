@@ -1105,11 +1105,7 @@ export default function Editor() {
       // A key the editor or a dialog already acted on is theirs. Over an open
       // dialog the composer and the palette would open on top of it, and
       // Escape would then close the dialog underneath instead.
-      if (matchesShortcut(e, 'comment')) {
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        if (!dialogOpen()) startComment();
-      } else if (matchesShortcut(e, 'typeset')) {
+      if (matchesShortcut(e, 'typeset')) {
         e.preventDefault();
         doCompile();
       } else if (matchesShortcut(e, 'palette')) {
@@ -1136,7 +1132,20 @@ export default function Editor() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [doCompile, jumpToPdf, startComment, openSearch]);
+  }, [doCompile, jumpToPdf, openSearch]);
+  // The comment chord is taken before the editor sees it: CodeMirror reads
+  // Ctrl+Shift+M as its Ctrl+M (Tab focus mode) on Linux and Windows and
+  // claims the key. An open dialog keeps it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesShortcut(e, 'comment') || e.defaultPrevented || dialogOpen()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startComment();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [startComment]);
 
   const pluginCtx = useMemo(() => ({
     projectId: id,
