@@ -22,6 +22,7 @@ import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
 import { chipCaret, labelsOnlyTail, mathParts } from './decorations';
 import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter, paragraphEnter } from './commands';
+import { clickSequence, retargetsClick } from './clicks';
 
 /**
  * Clicking a rendered widget: math opens the MathLive editor; chips put the
@@ -30,7 +31,7 @@ import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter
  */
 const widgetClick = EditorView.domEventHandlers({
   mousedown(e, view) {
-    if (e.button !== 0) return false;
+    if (e.button !== 0 || retargetsClick(view, e)) return false;
     const t = (e.target as HTMLElement).closest?.('.cm-vis-math, .cm-vis-chip') as HTMLElement | null;
     if (!t) return false;
     const at = widgetPos(view, t);
@@ -200,7 +201,7 @@ export { recordOwnCopies } from './clipboard';
 export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [
-    revealField, macroField, atomicField, atomicFiller, markPlugin, visualTheme, widgetClick, pasteLatex, katexLifecycle,
+    revealField, macroField, atomicField, atomicFiller, markPlugin, visualTheme, widgetClick, clickSequence, pasteLatex, katexLifecycle,
     commentRangesField, suggestField, rangeTracker, remoteCaretReveal(deps.awareness), headingCloserStop,
     Prec.high(keymap.of([
       // elsewhere, and in a formula that only edits as source, Mod-Enter keeps its usual meaning

@@ -196,6 +196,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - A heading or bold text you click into in Visual keeps its size and weight
   while its source shows, so the page no longer jumps. A jump from Contents
   puts the caret at the end of the heading's text.
+- Double-clicking a word in bold or italic text or in a heading in Visual
+  selects that word. Before, the first click showed the source and moved
+  the text, so the second click landed on the command name or a citation,
+  and typing broke the command. A triple-click still selects the line.
 - A table cell with a comment or a line break in it says why it opens in the
   source when you click it.
 - The formula editor shows "Loading the formula editor…" while it loads, and

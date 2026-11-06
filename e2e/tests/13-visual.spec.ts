@@ -122,6 +122,71 @@ test.describe('visual editor', () => {
     }
   });
 
+  test('a double-click selects the word it lands on in bold, italic and headings, and a triple-click its line', async ({ page, request }) => {
+    let doc = [
+      '\\section{Introduction}',
+      'Hello \\textbf{brave} new \\emph{world} of text.',
+      'See \\textbf{key} result \\cite{knuth1984} now.',
+      '',
+      '\\subsection{Details}',
+      'Some \\textbf{strong} claims.',
+      'plain end',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Double Click', doc);
+    /** The centre of `word` as drawn before the first click, which may show or hide source around it. */
+    const centre = (word: string) => page.evaluate((w) => {
+      const walker = document.createTreeWalker(document.querySelector('.cm-content')!, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const at = n.textContent!.indexOf(w);
+        if (at < 0) continue;
+        const r = document.createRange();
+        r.setStart(n, at);
+        r.setEnd(n, at + w.length);
+        const b = r.getBoundingClientRect();
+        return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+      }
+      throw new Error(`"${w}" is not in the editor`);
+    }, word);
+    const replaceAt = async (at: { x: number; y: number }, by: string, from: string, to: string) => {
+      await page.mouse.dblclick(at.x, at.y);
+      await page.keyboard.type(by);
+      doc = doc.replace(from, to);
+      await expectStored(request, id, doc);
+    };
+    const replaceWord = async (word: string, by: string, from: string, to: string) => replaceAt(await centre(word), by, from, to);
+    const deleteLine = async (word: string, line: string) => {
+      const at = await centre(word);
+      await page.mouse.click(at.x, at.y, { clickCount: 3 });
+      await page.keyboard.press('Backspace');
+      doc = doc.replace(`${line}\n`, '');
+      await expectStored(request, id, doc);
+    };
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await expect(page.locator('.cm-vis-h1')).toHaveCount(1);
+      await expect(page.locator('.cm-content')).not.toContainText('\\textbf{');
+      await replaceWord('brave', 'bold', '\\textbf{brave}', '\\textbf{bold}');
+      // the caret is in the bold, its source shown: the first click hides it again and the text moves left
+      await replaceWord('new', 'fresh', '} new \\emph', '} fresh \\emph');
+      await replaceWord('world', 'earth', '\\emph{world}', '\\emph{earth}');
+      await replaceWord('Introduction', 'Overview', '\\section{Introduction}', '\\section{Overview}');
+      // hiding the bold again moves the citation under the pointer: the second click still selects the word
+      const key = await centre('key');
+      await page.mouse.click(key.x, key.y);
+      await expect(page.locator('.cm-content')).toContainText('\\textbf{key}');
+      await replaceWord('result', 'outcome', ' result \\cite', ' outcome \\cite');
+      // past the end of a heading's text, where a click puts the caret before its hidden brace
+      const h2 = (await page.locator('.cm-line.cm-vis-h2').boundingBox())!;
+      await replaceAt({ x: h2.x + h2.width - 20, y: h2.y + h2.height / 2 }, 'Findings', '\\subsection{Details}', '\\subsection{Findings}');
+      await deleteLine('strong', 'Some \\textbf{strong} claims.');
+      await deleteLine('Findings', '\\subsection{Findings}');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('a visual-mode cursor tour never changes a byte of source', async ({ page, request }) => {
     const id = await seed(request, 'Visual Bytes');
     try {
