@@ -294,6 +294,25 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Switching sidebar tabs keeps the Files, History and Review tabs as they
   were: the tree's Source or All view and scroll, a half-typed commit
   message and a half-typed reply.
+- On a read-only showcase, the file tree opens files and folders and
+  switches between Source and All, and offers nothing else: no New file, New
+  folder or Upload, no "⋯" or right-click menu, and no dragging rows or
+  dropping files onto it. The command palette leaves out New file…, New
+  folder… and Upload files… there too, and a showcase with no files says it
+  is read-only instead of offering New file. Before, each of them failed
+  with an error.
+- Someone on a share link no longer finds Typeset with…, Stop on first error
+  and Commit changes in the command palette, which only the owner and
+  collaborators can change. Before, each failed with an error.
+- Going from one project straight to another, such as opening a copy from
+  its toast or going back in the browser, shows the second project's own
+  file tree: its open folders and its Source or All view. Before, the first
+  project's tree stayed on screen and was saved as the second one's.
+- After Undo on a project-wide Replace all, the Search panel searches again
+  and lists the matches that are back. Before, it kept showing the results
+  from after the replace until you searched again.
+- Go to line (Cmd+Alt+G, Ctrl+Alt+G) opens at the top of the editor, like
+  Find, instead of at the bottom.
 
 ## [1.8.0] — 2026-11-04
 

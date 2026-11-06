@@ -1,6 +1,6 @@
-import { EditorState, type Extension, type StateEffect } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
-import { search, SearchQuery, setSearchQuery } from '@codemirror/search';
+import { EditorSelection, EditorState, type Extension, type StateEffect } from '@codemirror/state';
+import { EditorView, showDialog, type Command, type KeyBinding } from '@codemirror/view';
+import { gotoLine, search, searchKeymap, SearchQuery, setSearchQuery } from '@codemirror/search';
 import { safeStorage } from '../util/safeStorage';
 
 /** Match case, whole word and regex: the project search panel's key, so both finds share them. */
@@ -111,6 +111,46 @@ const findTheme = EditorView.theme({
 export function findPanel(): Extension {
   return [search({ top: true, literal: true, ...storedToggles() }), literalQueries, rememberQuery, findPhrases, findTheme];
 }
+
+/**
+ * Go to line, above the text like Find: CodeMirror's own opens below it. It
+ * takes what CodeMirror's takes: a line, +n or -n lines from the cursor, a
+ * percentage of the document, and :column after any of them.
+ */
+export const gotoLineTop: Command = (view) => {
+  const { close, result } = showDialog(view, {
+    label: view.state.phrase('Go to line'),
+    input: { type: 'text', name: 'line', value: String(view.state.doc.lineAt(view.state.selection.main.head).number) },
+    focus: true,
+    submitLabel: view.state.phrase('go'),
+    top: true,
+  });
+  result.then((form) => {
+    const field = form?.elements.namedItem('line') as HTMLInputElement | null;
+    const match = field && /^([+-])?(\d+)?(:\d+)?(%)?$/.exec(field.value);
+    if (!match) { view.dispatch({ effects: close }); return; }
+    // The document as it is now: collaborators may have edited it while the dialog was open.
+    const { state } = view;
+    const start = state.doc.lineAt(state.selection.main.head);
+    const [, sign, ln, cl, percent] = match;
+    const col = cl ? +cl.slice(1) : 0;
+    let line = ln ? +ln : start.number;
+    if (ln && percent) {
+      let pc = line / 100;
+      if (sign) pc = pc * (sign === '-' ? -1 : 1) + start.number / state.doc.lines;
+      line = Math.round(state.doc.lines * pc);
+    } else if (ln && sign) {
+      line = line * (sign === '-' ? -1 : 1) + start.number;
+    }
+    const to = state.doc.line(Math.max(1, Math.min(state.doc.lines, line)));
+    const selection = EditorSelection.cursor(to.from + Math.max(0, Math.min(col, to.length)));
+    view.dispatch({ effects: [close, EditorView.scrollIntoView(selection.from, { y: 'center' })], selection });
+  });
+  return true;
+};
+
+/** CodeMirror's search keys, with Mod-Alt-G opening Go to line above the text. */
+export const findKeymap: readonly KeyBinding[] = searchKeymap.map((b) => (b.run === gotoLine ? { ...b, run: gotoLineTop } : b));
 
 /** Carries the last Find query into a pane just built for another file. */
 export function restoreFind(view: EditorView): void {

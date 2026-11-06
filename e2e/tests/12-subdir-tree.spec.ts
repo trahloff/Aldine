@@ -58,6 +58,48 @@ test.describe('nested repos', () => {
     } finally { await cleanup(request, id); }
   });
 
+  test('a project opened straight from another shows its own tree, and going back shows the first one\'s', async ({ page, request }) => {
+    const name = `Tree Of The First ${Date.now()}`;
+    const id = await createProject(request, name);
+    let copy = '';
+    try {
+      for (const p of ['paper/main.tex', 'paper/chapters/intro.tex', 'Makefile'])
+        await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: p, content: 'x\n' } });
+      await openProject(page, id);
+      await page.getByTestId('dir-paper').click();
+      await page.getByTestId('dir-paper/chapters').click();
+      await page.getByTestId('source-only').click();
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toBeVisible();
+      await expect(page.getByTestId('file-Makefile')).toBeVisible();
+
+      // the copy has the same folders, opened from the palette without a reload
+      await page.getByTestId('palette-open').click();
+      await page.getByTestId('palette-input').fill('Make a copy');
+      await page.getByTestId('palette-item-make-copy').click();
+      await page.locator('.toast', { hasText: `Made a copy: “${name} copy”` }).getByTestId('copy-open').click();
+      await expect(page.getByTestId('project-name')).toHaveText(`${name} copy`);
+      copy = new URL(page.url()).pathname.split('/').pop()!;
+      expect(copy).not.toBe(id);
+      await expect(page.getByTestId('dir-paper')).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByTestId('source-only')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByTestId('file-Makefile')).toHaveCount(0);
+
+      // back in the first project, its folders and its All view are as it left them
+      await page.goBack();
+      await expect(page.getByTestId('project-name')).toHaveText(name);
+      await expect(page.getByTestId('file-paper/chapters/intro.tex')).toBeVisible();
+      await expect(page.getByTestId('source-only')).toHaveAttribute('aria-pressed', 'false');
+      // and the copy kept nothing of them
+      await page.goForward();
+      await expect(page.getByTestId('project-name')).toHaveText(`${name} copy`);
+      await expect(page.getByTestId('dir-paper')).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByTestId('source-only')).toHaveAttribute('aria-pressed', 'true');
+    } finally {
+      await cleanup(request, id);
+      if (copy) await cleanup(request, copy);
+    }
+  });
+
   test('a root file in a subdirectory compiles (latexmk -cd)', async ({ page, request }) => {
     const id = await createProject(request, 'Subdir Root');
     try {

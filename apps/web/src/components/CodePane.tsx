@@ -5,7 +5,7 @@ import { EditorState, StateField, StateEffect, Compartment, Prec } from '@codemi
 import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { highlightSelectionMatches } from '@codemirror/search';
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { latex, latexCompletionSource } from 'codemirror-lang-latex';
 import * as Y from 'yjs';
@@ -13,7 +13,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
-import { findPanel, restoreFind } from '../editor/findPanel';
+import { findKeymap, findPanel, restoreFind } from '../editor/findPanel';
 import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from '../editor/visual';
@@ -431,7 +431,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           keymap.of([
             ...closeBracketsKeymap,
             ...defaultKeymap,
-            ...searchKeymap,
+            ...findKeymap,
             ...yUndoManagerKeymap,
             ...completionKeymap,
             indentWithTab,
@@ -537,8 +537,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     });
     return () => { live = false; };
   }, [vim, projectId, branch, filePath]);
-  // The pane can mount before the project it belongs to has loaded (Make a
-  // copy keeps the showcase's details on screen until the copy's arrive).
+  // The project's details load again while its pane is open, and the
+  // showcase flag in them can have changed.
   useEffect(() => {
     const view = viewRef.current, ro = readOnlyRef.current;
     if (!view || !ro || ro.on === readOnly) return;

@@ -6,6 +6,18 @@ const DOC = '\\documentclass{article}\n\\begin{document}\nShowcase text.\n\\end{
 const readFile = async (request: import('@playwright/test').APIRequestContext, id: string, path: string) =>
   (await request.get(`/api/projects/${id}/file?branch=main&path=${encodeURIComponent(path)}`)).text();
 
+/** Drops a file from outside the page onto `selector`: true when the page took
+ *  both the dragover and the drop, so the browser does not open the file. */
+const dropFile = (page: import('@playwright/test').Page, selector: string, name: string) =>
+  page.evaluate(({ selector, name }) => {
+    const el = document.querySelector(selector)!;
+    const r = el.getBoundingClientRect();
+    const dt = new DataTransfer();
+    dt.items.add(new File(['dropped'], name, { type: 'text/plain' }));
+    const opts = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.x + r.width / 2, clientY: r.y + Math.min(r.height / 2, 12) };
+    return !el.dispatchEvent(new DragEvent('dragover', opts)) && !el.dispatchEvent(new DragEvent('drop', opts));
+  }, { selector, name });
+
 test.describe('the editor remembers, refuses and stays out of the way', () => {
   test('a reload opens the file that was open, per branch, and the main document once it is gone', async ({ page, request }) => {
     const id = await createProject(request, 'Reopen Last File');
@@ -41,6 +53,7 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
     let copy = '';
     try {
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: DOC } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'chapters/one.tex', content: 'One.\n' } });
       expect((await request.post(`/api/projects/${id}/branches`, { data: { name: 'draft' } })).ok()).toBe(true);
       expect((await request.post(`/api/test/showcase/${id}`)).ok()).toBe(true);
       expect((await (await request.get(`/api/projects/${id}`)).json()).readOnly).toBe(true);
@@ -50,6 +63,27 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       const content = page.locator('.cm-content');
       await expect(content).toContainText('Showcase text.');
       await expect(content).toHaveAttribute('aria-readonly', 'true');
+
+      // the file tree opens files and folders and changes its view, and nothing else
+      for (const control of ['new-file', 'new-folder', 'upload-file', 'row-menu-main.tex', 'row-menu-chapters']) {
+        await expect(page.getByTestId(control), control).toHaveCount(0);
+      }
+      await expect(page.locator('.filetree__hint')).toHaveCount(0);
+      await page.getByTestId('source-only').click();
+      await expect(page.getByTestId('source-only')).toHaveAttribute('aria-pressed', 'false');
+      await page.getByTestId('source-only').click();
+      await page.getByTestId('dir-chapters').click();
+      await expect(page.getByTestId('file-chapters/one.tex')).toBeVisible();
+      for (const row of ['file-main.tex', 'dir-chapters']) {
+        await expect(page.getByTestId(row), row).not.toHaveAttribute('draggable', 'true');
+        await page.getByTestId(row).click({ button: 'right' });
+        await expect(page.getByTestId('file-menu'), row).toHaveCount(0);
+        await expect(page.getByTestId('folder-menu'), row).toHaveCount(0);
+      }
+      // a file from the desktop is not uploaded, and does not open in place of the app
+      for (const target of ['[data-testid="file-tree"]', '[data-testid="dir-chapters"]', '.cm-content']) {
+        expect(await dropFile(page, target, 'dropped.tex'), target).toBe(true);
+      }
 
       // what would only be refused is not offered: comments, the project's settings
       await expect(page.getByTestId('add-comment')).toHaveCount(0);
@@ -69,6 +103,11 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       await page.getByTestId('palette-input').fill('Typeset');
       await expect(page.getByTestId('palette-item-typeset')).toBeVisible();
       await expect(page.getByTestId('palette-item-engine-lualatex')).toHaveCount(0);
+      await page.getByTestId('palette-input').fill('New');
+      await expect(page.getByTestId('palette-item-new-file')).toHaveCount(0);
+      await expect(page.getByTestId('palette-item-new-folder')).toHaveCount(0);
+      await page.getByTestId('palette-input').fill('Upload files');
+      await expect(page.getByTestId('palette-item-upload-files')).toHaveCount(0);
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('command-palette')).toHaveCount(0);
 
@@ -85,6 +124,8 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       // past the collab debounce: nothing reached the server's document
       await page.waitForTimeout(3000);
       expect(await readFile(request, id, 'main.tex')).toBe(DOC);
+      expect((await request.get(`/api/projects/${id}/file?branch=main&path=dropped.tex`)).status(), 'no drop was uploaded').toBe(404);
+      await expect(page.locator('.toast', { hasText: 'dropped.tex' })).toHaveCount(0);
       await page.reload();
       await expect(page.locator('.cm-content')).toContainText('Showcase text.');
       await expect(page.locator('.cm-content')).not.toContainText('Typed by a visitor');
@@ -119,6 +160,8 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       copy = new URL(page.url()).pathname.split('/').pop()!;
       await expect(page.getByTestId('showcase-note')).toHaveCount(0);
       await expect(page.getByTestId('add-comment')).toBeVisible();
+      await expect(page.getByTestId('new-file')).toBeVisible();
+      await expect(page.getByTestId('row-menu-main.tex')).toHaveCount(1);
       await openSidebarTab(page, 'history');
       await expect(page.getByTestId('commit-button')).toBeVisible();
       await expect(page.locator('.cm-content')).not.toHaveAttribute('aria-readonly', 'true');
@@ -133,6 +176,23 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       await request.delete(`/api/test/showcase/${id}`).catch(() => {});
       await cleanup(request, id);
       if (copy) await cleanup(request, copy);
+    }
+  });
+
+  test('a showcase with no files says it is read-only instead of offering New file', async ({ page, request }) => {
+    const res = await request.post('/api/projects', { data: { name: 'Empty Showcase', template: 'blank' } });
+    expect(res.ok()).toBe(true);
+    const id = (await res.json()).id as string;
+    try {
+      expect((await request.post(`/api/test/showcase/${id}`)).ok()).toBe(true);
+      await page.goto(`/p/${id}`);
+      await expect(page.getByTestId('empty-project')).toBeVisible();
+      await expect(page.getByTestId('empty-showcase')).toHaveText('This showcase project is read-only. Make a copy to edit it.');
+      await expect(page.getByTestId('empty-new-file')).toHaveCount(0);
+      await expect(page.getByTestId('new-file')).toHaveCount(0);
+    } finally {
+      await request.delete(`/api/test/showcase/${id}`).catch(() => {});
+      await cleanup(request, id);
     }
   });
 

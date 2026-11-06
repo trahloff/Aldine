@@ -94,7 +94,9 @@ function inTextField(target: EventTarget | null): boolean {
 }
 
 /** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
-const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file']);
+const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files']);
+/** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
+const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
 
 /** A dialog is open; the command palette is one too. The copy a closing
  *  dialog leaves for its exit animation has no role. */
@@ -213,6 +215,8 @@ export default function Editor() {
   const [settingsOpen, setSettingsOpen] = useState<boolean | 'shortcuts'>(false);
   const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump'), search: useShortcutLabel('search') };
   const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
+  /** Bumped when an Undo puts back text the project search found matches in. */
+  const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const { authEnabled, user } = useAuth();
@@ -1027,6 +1031,7 @@ export default function Editor() {
         try {
           const r = await api.revertCommits(id, branch, [commit], deleted ? 'Undo the project-wide delete' : 'Undo the project-wide replace', identity.name);
           bumpHistory();
+          setSearchVersion((v) => v + 1);
           if (!r.ok) { toast('Nothing to undo — the text is already back', 'info'); return; }
           onDocChanged(true);
           toast(`Undid the ${deleted ? 'delete' : 'replace'} of ${n(res.replaced, 'match', 'matches')}`, 'ok');
@@ -1340,8 +1345,10 @@ export default function Editor() {
     }
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
+    // Someone here on a share link may not reconfigure the project: these would only be refused.
+    if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1540,6 +1547,7 @@ export default function Editor() {
                 newFileKind={newEntryKind}
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
                 hidden={tab !== 'files'}
+                readOnly={!!project.readOnly}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -1620,6 +1628,7 @@ export default function Editor() {
                 manual={!!project.manualCommits}
                 author={identity.name}
                 focus={searchFocus}
+                version={searchVersion}
                 onOpenMatch={openMatch}
                 onReplaced={onReplaced}
               />
@@ -1674,8 +1683,14 @@ export default function Editor() {
             </>
           ) : filesLoaded && !hasFiles ? (
             <div className="pdf-empty" data-testid="empty-project">
-              <p>Create a file to start writing.</p>
-              <button className="btn btn--primary" data-testid="empty-new-file" onClick={() => { setTab('files'); setNewFileRequest((n) => n + 1); }}>New file</button>
+              {project.readOnly ? (
+                <p data-testid="empty-showcase">This showcase project is read-only. Make a copy to edit it.</p>
+              ) : (
+                <>
+                  <p>Create a file to start writing.</p>
+                  <button className="btn btn--primary" data-testid="empty-new-file" onClick={() => { setTab('files'); setNewFileRequest((n) => n + 1); }}>New file</button>
+                </>
+              )}
             </div>
           ) : (
             <div className="pdf-empty"><p>Select a file to start writing.</p></div>

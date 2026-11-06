@@ -38,6 +38,8 @@ interface Props {
   /** Commit author without accounts (the browser's name); the server ignores it otherwise. */
   author?: string;
   focus: SearchFocus | null;
+  /** Bumped when the text changed outside the panel (an Undo of its replace): the query runs again. */
+  version?: number;
   onOpenMatch(path: string, m: SearchMatch, focusEditor: boolean): void;
   /** `deleted`: the replacement was empty. */
   onReplaced(res: ReplaceResult, deleted: boolean): void;
@@ -50,7 +52,7 @@ type Item =
   | { key: string; kind: 'file'; path: string }
   | { key: string; kind: 'match'; path: string; m: SearchMatch };
 
-export default function SearchPanel({ projectId, branch, rootFile, manual, author, focus, onOpenMatch, onReplaced }: Props) {
+export default function SearchPanel({ projectId, branch, rootFile, manual, author, focus, version = 0, onOpenMatch, onReplaced }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const [query, setQuery] = useState('');
@@ -134,6 +136,8 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
     timer.current = setTimeout(() => { timer.current = null; run(); }, query ? DEBOUNCE_MS : 0);
     return () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
   }, [query, toggles, run]);
+
+  useEffect(() => { if (version) run(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => { abort.current?.abort(); }, []);
 
