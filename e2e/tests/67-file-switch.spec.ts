@@ -106,7 +106,11 @@ test.describe('switching files', () => {
       await page.keyboard.press('ControlOrMeta+z');
       await expect(page.locator('.cm-content')).not.toContainText('TYPED-BEFORE');
       await expect(page.locator('.cm-activeLine')).toHaveText(/^Line 3 of chapter A/);
-      await page.keyboard.press('ControlOrMeta+Shift+z');
+      // Capital Z: a keyboard held with Shift reports key "Z", while
+      // Playwright's "Shift+z" sends key "z" with shiftKey set. CodeMirror
+      // looks that up as Mod-z first, and y-codemirror's Undo claims every
+      // key it runs on, so off macOS the lowercase spelling never redoes.
+      await page.keyboard.press('ControlOrMeta+Shift+Z');
       await expect(page.locator('.cm-line', { hasText: 'Line 3 of chapter A' })).toHaveText(/ TYPED-BEFORE$/);
 
       // and the other file's history stays its own
@@ -114,6 +118,43 @@ test.describe('switching files', () => {
       await page.locator('.cm-content').click();
       await page.keyboard.press('ControlOrMeta+z');
       await openFile(page, 'a.tex', 'TYPED-BEFORE');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('on Linux and Windows, Ctrl+Shift+Z redoes after a switch', async ({ page, request }) => {
+    // CodeMirror reads the platform once, when it loads: the page has to
+    // look like Linux before any script runs.
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64' });
+      const ua = navigator.userAgent.replace(/\(Macintosh;[^)]*\)/, '(X11; Linux x86_64)');
+      Object.defineProperty(Navigator.prototype, 'userAgent', { get: () => ua });
+    });
+    const id = await createProject(request, 'File Switch Redo Linux');
+    try {
+      await put(request, id, 'a.tex', chapter('A', 40));
+      await put(request, id, 'b.tex', '% chapter B\nShort file.\n');
+      await openProject(page, id);
+      expect(await page.evaluate(() => navigator.platform)).toBe('Linux x86_64');
+      await openFile(page, 'a.tex', 'Line 1 of chapter A');
+      await page.locator('.cm-line', { hasText: 'Line 3 of chapter A' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.type(' TYPED-BEFORE');
+      await expect(page.locator('.cm-content')).toContainText('TYPED-BEFORE');
+
+      await openFile(page, 'b.tex', 'Short file.');
+      await openFile(page, 'a.tex', 'TYPED-BEFORE');
+      await page.locator('.cm-line', { hasText: 'Line 20 of chapter A' }).click();
+      await page.keyboard.press('Control+z');
+      await expect(page.locator('.cm-content')).not.toContainText('TYPED-BEFORE');
+      // capital Z, as a real keyboard sends it: see the test above
+      await page.keyboard.press('Control+Shift+Z');
+      await expect(page.locator('.cm-line', { hasText: 'Line 3 of chapter A' })).toHaveText(/ TYPED-BEFORE$/);
+      await page.keyboard.press('Control+z');
+      await expect(page.locator('.cm-content')).not.toContainText('TYPED-BEFORE');
+      await page.keyboard.press('Control+y');
+      await expect(page.locator('.cm-line', { hasText: 'Line 3 of chapter A' })).toHaveText(/ TYPED-BEFORE$/);
     } finally {
       await cleanup(request, id);
     }
