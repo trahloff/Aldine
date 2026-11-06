@@ -237,6 +237,8 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
   connection.
 - **REF-3** — My `.bib` refreshes from Zotero with version-aware sync.
 - **REF-4** — I search my Zotero library and insert a citation from a panel.
+- **REF-5** — When my paper doesn't load the Zotero `.bib`, the panel says so
+  and adds the line for me, for biblatex or BibTeX; the citations then resolve.
 
 ## Review mode (REV)
 

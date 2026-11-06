@@ -40,6 +40,8 @@ export default {
           searching: '',
           bibEntries: [],
           bibLoaded: false,
+          // whether the document reads the linked .bib: GET /zotero/bib-load
+          bibLoad: null,
         };
 
         // build() makes fresh inputs; hand focus and the caret to the new copy
@@ -76,6 +78,46 @@ export default {
             state.view = 'connect';
           }
           busy = false;
+          rerender();
+          if (state.view === 'linked') checkBibLoad();
+        };
+
+        const bibLoadUrl = () => `/api/projects/${aldine.project.id}/zotero/bib-load`;
+        let bibLoadSeq = 0;
+        const checkBibLoad = async () => {
+          const seq = ++bibLoadSeq;
+          let s;
+          try {
+            s = await jfetch(`${bibLoadUrl()}?branch=${encodeURIComponent(aldine.project.branch)}`);
+          } catch {
+            s = null;
+          }
+          if (seq !== bibLoadSeq) return;
+          state.bibLoad = s;
+          rerender();
+        };
+
+        const fixLabel = (fix, done) => {
+          const verb = done ? 'Added' : 'Add';
+          return fix.kind === 'bibliography'
+            ? `${verb} ${fix.entry} to \\bibliography in ${fix.file}`
+            : `${verb} ${fix.command} to ${fix.file}`;
+        };
+
+        let adding = false;
+        const addBibLine = async () => {
+          adding = true;
+          rerender();
+          bibLoadSeq++;
+          try {
+            const res = await jfetch(bibLoadUrl(), { method: 'POST', body: JSON.stringify({ branch: aldine.project.branch }) });
+            if (res.added) aldine.toast(fixLabel(res.added, true), 'ok');
+            else if (res.loaded) aldine.toast(`${res.rootFile || 'The document'} already loads ${res.bibFile}`, 'ok');
+            state.bibLoad = res;
+          } catch (err) {
+            aldine.toast(`Adding the line failed: ${err.message}`, 'error');
+          }
+          adding = false;
           rerender();
         };
 
@@ -178,12 +220,46 @@ export default {
         aldine.project.onFilesChanged?.(() => {
           if (state.bibLoaded && state.view === 'linked') loadBib();
           else state.bibLoaded = false;
+          if (state.view === 'linked') checkBibLoad();
         });
+        // The panel stays mounted while another tab shows: a line typed by
+        // hand in the meantime is seen when it shows again.
+        if (typeof IntersectionObserver === 'function') {
+          new IntersectionObserver((seen) => {
+            if (state.view === 'linked' && seen.some((e) => e.isIntersecting)) checkBibLoad();
+          }).observe(root);
+        }
 
         let busy = false;
         const setBusy = (b) => { busy = b; rerender(); };
 
         const section = (label) => h('div', { class: 'menu__label', style: { padding: '8px 2px 4px' } }, label);
+
+        // Without the line that loads it, every citation from the .bib is undefined.
+        function unloadedNote() {
+          const load = state.bibLoad;
+          if (!load || load.loaded) return null;
+          return h('div', {
+            dataset: { testid: 'zotero-bib-unloaded' },
+            style: {
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px',
+              margin: '10px 0 2px', padding: '8px 10px', borderRadius: 'var(--radius-m)',
+              background: 'var(--warn-soft)', fontSize: '12px', lineHeight: '1.5',
+            },
+          },
+            h('span', {}, `${load.rootFile || 'The document'} doesn’t load ${load.bibFile}, so its citations stay undefined.`),
+            load.fix
+              ? h('button', {
+                class: 'btn btn--small btn--primary',
+                style: { height: 'auto', minHeight: '28px', padding: '4px 10px', whiteSpace: 'normal', textAlign: 'left', overflowWrap: 'anywhere' },
+                dataset: { testid: 'zotero-load-bib' },
+                disabled: adding ? '' : null,
+                onclick: addBibLine,
+              }, adding ? 'Adding…' : fixLabel(load.fix))
+              : h('span', { dataset: { testid: 'zotero-bib-hint' }, style: { color: 'var(--text-2)' } },
+                `Add ${load.lines.biblatex} after \\usepackage{biblatex}, or ${load.lines.bibtex} after \\bibliographystyle{…} for BibTeX.`),
+          );
+        }
 
         function build() {
           const wrap = h('div', { class: 'panel-list', dataset: { testid: 'zotero-panel' }, style: { padding: '2px' } });
@@ -280,6 +356,7 @@ export default {
               z.lastSyncedAt ? h('div', {}, `Last synced ${new Date(z.lastSyncedAt).toLocaleString()}`) : null,
             ),
             ...(actions.length ? [h('div', { style: { display: 'flex', gap: '6px' } }, ...actions)] : []),
+            ...[unloadedNote()].filter(Boolean),
             section('Insert citation'),
             h('input', {
               class: 'input',

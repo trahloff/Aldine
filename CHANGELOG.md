@@ -368,6 +368,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   added reference, an upload, a collaborator's change), without a reload.
   Plugins can listen for the same moment with
   `aldine.project.onFilesChanged`.
+- When the paper doesn't load `zotero.bib`, the Zotero panel says so:
+  "main.tex doesn't load zotero.bib, so its citations stay undefined." One
+  click adds the line through the open document:
+  `\addbibresource{zotero.bib}` after the paper's last `\addbibresource` or
+  its `\usepackage{biblatex}`, or `zotero` in its `\bibliography{…}` list. A
+  BibTeX paper with a style but no `\bibliography` gets
+  `\bibliography{zotero}` before `\end{document}`; a paper with no
+  bibliography set up is told which line to add. Before, the import wrote
+  `zotero.bib` and every citation from it printed as undefined. The hint on
+  an undefined citation now points at that line instead of a sync.
+- A Zotero sync, and a reference added from the Cite tab, no longer undo
+  the last few seconds of typing in an open file.
 - With accounts on, a collaborator opening the Zotero panel of an unlinked
   project is told that the owner links the library, instead of being asked
   for an API key the server would refuse. Collaborators see Sync now but not

@@ -1,5 +1,38 @@
+import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup, openPluginTab } from './helpers';
+import { createProject, openProject, cleanup, openPluginTab, typeset } from './helpers';
+
+/** Auto-typeset compiles on open; the typesets here are the test's own. */
+async function withoutAutoTypeset(page: Page): Promise<void> {
+  await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+}
+
+/** The next typeset's response: { ok, errors, log, … }. */
+async function typesetResult(page: Page): Promise<{ ok: boolean; errors: Array<{ message: string }>; log: string }> {
+  const res = page.waitForResponse((r) => r.url().includes('/compile') && r.request().method() === 'POST', { timeout: 120_000 });
+  await typeset(page);
+  return (await res).json();
+}
+
+/** What a typeset made of a citation key: undefined in the log, or in the .bbl;
+ *  `missing`, a package the compiler's TeX Live lacks. */
+async function citation(page: Page, request: APIRequestContext, id: string, key: string) {
+  const result = await typesetResult(page);
+  const bbl = await request.get(`/api/projects/${id}/output?branch=main&path=${encodeURIComponent('.aldine-out/main.bbl')}`);
+  return {
+    missing: /File `([^']+\.sty)' not found/.exec(result.log)?.[1] ?? null,
+    ok: result.ok,
+    undefined: new RegExp(`Citation .${key}. .*undefined|could not be found in the database: ${key}`).test(result.log)
+      || result.errors.some((e) => e.message.includes(key) && /undefined|not be found|didn't find/i.test(e.message)),
+    inBbl: bbl.ok() && (await bbl.text()).includes(key),
+  };
+}
+
+/** Put the caret at the end of the line that holds `text`. */
+async function caretAfter(page: Page, text: string): Promise<void> {
+  await page.locator('.cm-line', { hasText: text }).click();
+  await page.keyboard.press('End');
+}
 
 /** Runs against the mock Zotero API (tests/mock-zotero.mjs, key: test-key-123). */
 test.describe('Zotero integration (via plugin system)', () => {
@@ -99,6 +132,85 @@ test.describe('Zotero integration (via plugin system)', () => {
       await page.unroute(unlinkRoute);
       await page.getByTestId('zotero-unlink').click();
       await expect(page.getByTestId('zotero-key')).toBeVisible();
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('a paper that does not load zotero.bib gets the line in one click, and its citations resolve', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Load Biblatex');
+    try {
+      await withoutAutoTypeset(page);
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+      await page.getByTestId('zotero-key').fill('test-key-123');
+      await page.getByTestId('zotero-connect').click();
+      await page.getByTestId('zotero-import').click();
+
+      // the default paper loads references.bib with biblatex, not zotero.bib
+      const note = page.getByTestId('zotero-bib-unloaded');
+      await expect(note).toContainText('main.tex doesn’t load zotero.bib, so its citations stay undefined.', { timeout: 15_000 });
+      const add = page.getByTestId('zotero-load-bib');
+      await expect(add).toHaveText('Add \\addbibresource{zotero.bib} to main.tex');
+
+      await caretAfter(page, 'Start writing here');
+      await page.getByTestId('zotero-search').click();
+      await page.keyboard.type('turing');
+      await page.getByTestId('cite-turing1950').click();
+      await expect(page.locator('.cm-content')).toContainText('\\cite{turing1950}');
+
+      await add.click();
+      await expect(page.locator('.toast', { hasText: 'Added \\addbibresource{zotero.bib} to main.tex' })).toBeVisible();
+      await expect(note).toHaveCount(0);
+      await expect(page.getByTestId('zotero-panel')).not.toContainText('null');
+      // through the open document: the line is in the editor, after the one that was there
+      await expect(page.locator('.cm-content')).toContainText('\\addbibresource{references.bib}\\addbibresource{zotero.bib}');
+
+      const typeset = await citation(page, request, id, 'turing1950');
+      test.skip(typeset.missing === 'biblatex.sty', 'BasicTeX has no biblatex; CI typesets this with its TeX Live image');
+      expect(typeset).toEqual({ missing: null, ok: true, undefined: false, inBbl: true });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('a BibTeX paper gets zotero in its \\bibliography list; one with no bibliography is told which line to add', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Load BibTeX');
+    const put = async (content: string) => {
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content } })).ok()).toBeTruthy();
+    };
+    const BODY = ['\\documentclass{article}', '\\usepackage{natbib}', '\\begin{document}', 'Prior work.', ''];
+    try {
+      await put([...BODY, '\\end{document}', ''].join('\n'));
+      const link = await request.post(`/api/projects/${id}/zotero/link`, { data: { apiKey: 'test-key-123', libraryPrefix: 'users/777' } });
+      expect(link.ok()).toBeTruthy();
+      await withoutAutoTypeset(page);
+      await openProject(page, id);
+      await openPluginTab(page, 'zotero');
+
+      // neither biblatex nor a BibTeX style: no edit is clearly right
+      const note = page.getByTestId('zotero-bib-unloaded');
+      await expect(page.getByTestId('zotero-bib-hint')).toHaveText(
+        'Add \\addbibresource{zotero.bib} after \\usepackage{biblatex}, or \\bibliography{zotero} after \\bibliographystyle{…} for BibTeX.');
+      await expect(page.getByTestId('zotero-load-bib')).toHaveCount(0);
+
+      // a co-author sets up BibTeX: the panel follows the file
+      await put([...BODY, '\\bibliographystyle{plainnat}', '\\bibliography{references}', '\\end{document}', ''].join('\n'));
+      const add = page.getByTestId('zotero-load-bib');
+      await expect(add).toHaveText('Add zotero to \\bibliography in main.tex', { timeout: 15_000 });
+
+      await caretAfter(page, 'Prior work.');
+      await page.getByTestId('zotero-search').click();
+      await page.keyboard.type('shannon');
+      await page.getByTestId('cite-shannon1948').click();
+      await expect(page.locator('.cm-content')).toContainText('Prior work.\\cite{shannon1948}');
+      expect(await citation(page, request, id, 'shannon1948')).toMatchObject({ undefined: true, inBbl: false });
+
+      await add.click();
+      await expect(page.locator('.toast', { hasText: 'Added zotero to \\bibliography in main.tex' })).toBeVisible();
+      await expect(note).toHaveCount(0);
+      await expect(page.locator('.cm-content')).toContainText('\\bibliography{references,zotero}');
+      expect(await citation(page, request, id, 'shannon1948')).toEqual({ missing: null, ok: true, undefined: false, inBbl: true });
     } finally {
       await cleanup(request, id);
     }
