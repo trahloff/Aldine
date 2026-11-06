@@ -573,6 +573,8 @@ test.describe('auth', () => {
     const proj = await (await page.request.post('/api/projects', { data: { name: 'Refused Request' } })).json();
     await page.goto(`/p/${proj.id}`);
     await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    // the typeset a project opens with must be over, or the button is still busy
+    await expect(page.getByTestId('typeset-button')).toBeEnabled({ timeout: 90_000 });
 
     // the socket stays up; the next request is refused
     expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
