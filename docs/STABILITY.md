@@ -179,12 +179,16 @@ A plugin is a folder with a `manifest.json` (`id`, `name`, `version`,
 ES module whose default export has `activate(aldine)`. The `aldine` object says
 `version: 1` and has:
 
-- `project`: `id`, `branch`, `activeFile()`, `lastCompile()`,
+- `project`: `id`, `branch`, `activeFile()`, `lastCompile()` (`ok`,
+  `errors`, `log`, and `explicit`: someone asked for that typeset),
   `refreshFiles()`, `refresh()`, `onFilesChanged(listener)` (called each
   time the editor re-reads the file list; returns a function that stops it)
 - `editor.insertAtCursor(text)`, `compile()`, `toast(text, kind?)`,
   `fetch(url, init?)`
-- `ui.registerSidebarPanel({ id, title, render(el) })`, `ui.showPanel(id)`
+- `ui.registerSidebarPanel({ id, title, render(el) })`,
+  `ui.showPanel(id, { reveal? })` (`reveal: false` leaves a hidden sidebar
+  hidden), `ui.registerErrorsAction({ id, label, title?, run() })` (a button
+  in the errors list's header while the last typeset failed)
 
 From 1.0 these keep working across 1.x. A change that breaks a plugin raises
 `aldine.version` and ships in a major release. The routes a plugin reaches

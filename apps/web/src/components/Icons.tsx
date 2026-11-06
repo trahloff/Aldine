@@ -163,6 +163,14 @@ export const IconUpload = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** An arrow down into a tray: download. */
+export const IconDownload = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M8 2.5v7.75M4.75 7 8 10.25 11.25 7" />
+    <path d="M2.5 10v2.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25V10" />
+  </svg>
+);
+
 /** A funnel: show only some of the list. */
 export const IconFilter = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>

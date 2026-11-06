@@ -124,10 +124,14 @@ export interface BranchInfo { name: string; head: string; message: string; date:
 export interface ProjectDetail extends ProjectSummary { branches: BranchInfo[]; readOnly?: boolean }
 /** `mtime` (ms) changes whenever the file's bytes are replaced. */
 export interface TreeEntry { path: string; type: 'file' | 'dir'; size?: number; mtime?: number; binary?: boolean }
-export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string }
+/** `file`: the project file the row is about, as the compiler named it (an
+ *  installed .sty keeps its absolute path); absent when TeX did not say. */
+export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line: number | null; message: string; file?: string }
 export interface CompileResult {
   ok: boolean;
   timedOut?: boolean;
+  /** Someone stopped the run before it finished. */
+  stopped?: boolean;
   pdf: string | null;
   pdfUrl: string | null;
   /** The run failed and pdfUrl is the last successful one, unchanged. */
@@ -490,6 +494,8 @@ export const api = {
     req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) }) }),
   compileStatus: (id: string, branch: string) =>
     req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
+  stopCompile: (id: string, branch: string) =>
+    req<{ ok: true }>(`/api/projects/${id}/compile/stop`, { method: 'POST', body: JSON.stringify({ branch }) }),
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -1848,9 +1848,22 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (user) await usage.recordCompile(user.id, result.durationMs || 0);
       return result;
     } catch (err: any) {
-      return reply.code(400).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: err.message });
+      return reply.code(err instanceof CompilerUnavailableError ? 503 : 400).send({ ok: false, pdf: null, pdfUrl: null, log: '', errors: [], durationMs: 0, error: err.message });
     } finally {
       compileGate.release(key);
+    }
+  });
+
+  // Ends the branch's typeset, running or queued, and nothing else. Whoever
+  // may open the branch in the editor may stop it: the shared preHandler
+  // checks project access as for the compile route, an access token is
+  // refused (it is no route of the Agent API), and so is a showcase visitor.
+  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/compile/stop', async (req, reply) => {
+    try {
+      await stopTypeset(req.params.id, req.body?.branch || 'main');
+      return { ok: true };
+    } catch (err: any) {
+      return reply.code(err instanceof CompilerUnavailableError ? 503 : 400).send({ error: err.message });
     }
   });
 
@@ -2844,7 +2857,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     });
 
   // ---------- plugins ----------
-  app.get('/api/plugins', async () => listPlugins());
+  // The AI fix runs on the server's key: without one its tab would only say
+  // so to people who cannot set it.
+  app.get('/api/plugins', async () => listPlugins().map((p) => (p.id === 'aifix' && !aiConfigured() ? { ...p, enabled: false } : p)));
 
   app.get<{ Params: { pluginId: string; '*': string } }>('/plugins/:pluginId/*', async (req, reply) => {
     const abs = pluginAssetPath(req.params.pluginId, req.params['*']);

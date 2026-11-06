@@ -99,6 +99,59 @@ test.describe('AI error fix (plugin)', () => {
     }
   });
 
+  test('auto-fix diagnoses only a typeset someone asked for, and leaves a hidden sidebar hidden', async ({ page, request }) => {
+    const id = await createProject(request, 'AI Fix Asked');
+    try {
+      await page.route('**/api/ai/status', async (route) => {
+        const res = await route.fetch();
+        await route.fulfill({ response: res, json: { ...(await res.json()), autoFix: true } });
+      });
+      let diagnoses = 0;
+      page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/ai/fix')) diagnoses++; });
+      await page.addInitScript(() => localStorage.setItem('aldine.sidebarHidden', '1'));
+      await request.put(`/api/projects/${id}/file`, {
+        data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\nHello world.\n\\end{document}\n' },
+      });
+      await openProject(page, id);
+      await expect(page.getByTestId('pdf-status')).toContainText('Typeset in', { timeout: 120_000 });
+
+      // an error auto-typeset finds while typing is not diagnosed
+      await page.locator('.cm-line', { hasText: 'Hello world.' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.type(' \\thisisnotacommand');
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
+      await page.waitForTimeout(3_500); // two of the panel's 1.5 s checks
+      expect(diagnoses).toBe(0);
+
+      // the same error from Typeset is, and the sidebar stays folded away
+      await page.getByTestId('typeset-button').click();
+      await expect.poll(() => diagnoses, { timeout: 20_000 }).toBe(1);
+      await expect(page.getByTestId('sidebar-expand')).toBeVisible();
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('Diagnose with AI in the errors list opens Fix with the explanation', async ({ page, request }) => {
+    const id = await createProject(request, 'AI Fix Header');
+    try {
+      await page.addInitScript(() => localStorage.setItem('aldine.sidebarHidden', '1'));
+      await request.put(`/api/projects/${id}/file`, {
+        data: { branch: 'main', path: 'main.tex', content: '\\documentclass{article}\n\\begin{document}\n\\thisisnotacommand\nHello world.\n\\end{document}\n' },
+      });
+      await openProject(page, id);
+      const action = page.getByTestId('errors-action-aifix-diagnose');
+      await expect(action).toHaveText('Diagnose with AI', { timeout: 120_000 });
+      await action.click();
+      await expect(page.getByTestId('sidebar-expand')).toHaveCount(0);
+      await expect(page.getByTestId('tab-more')).toHaveText(/^Fix/);
+      await expect(page.getByTestId('aifix-explanation')).toContainText(/not defined/, { timeout: 20_000 });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('AI status endpoint reports configured, auto-fix off by default', async ({ request }) => {
     const res = await request.get('/api/ai/status');
     expect(res.ok()).toBeTruthy();
