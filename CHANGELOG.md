@@ -132,6 +132,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   beside the source and the source ZIP leaves out, and the typesetting log.
 - When the typeset PDF cannot be opened, the preview says so and offers the
   PDF as a download, instead of asking you to press ⌘S again.
+- Zooming the PDF preview, or dragging its divider, keeps the page you are
+  reading in the middle of the preview, and no longer downloads the PDF
+  again. Before, zooming to 200% on page 10 landed near page 5.
+- A new typeset, automatic or not, no longer turns the page you are reading
+  white for a moment. The preview keeps the old pages on screen until the
+  new ones are drawn, and stays on the same page.
+- After a run that stopped at the first error, the last good PDF in the
+  preview still draws its pages as you scroll and zoom. Before, pages you
+  scrolled to stayed white, and a zoom could load the stopped run's partial
+  PDF in its place.
 - A list pasted from Google Docs into Visual keeps its sub-items, nested
   under the item above them. Before, every indented point was dropped.
 - LaTeX pasted into Visual from Overleaf or another .tex file stays LaTeX

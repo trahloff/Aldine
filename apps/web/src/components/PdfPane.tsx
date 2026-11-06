@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
 import { useShortcutLabel } from '../util/shortcuts';
-import { pagesOnScreen, scrollTopForPage, type PdfPagesStore } from '../util/pdfPages';
+import { pagesAt, pagesOnScreen, scrollTopForPage, scrollToSpot, spotAt, type PageSpot, type PdfPagesStore } from '../util/pdfPages';
 import { cMapUrl, pdfjs } from '../util/pdfjs';
 import { pageLinks, resolveDest, toPage, type DestTarget, type PageBox } from '../util/pdfLinks';
 import { clampZoom, PDF_ZOOM_STEPS, wheelZoom } from '../util/filePreview';
 import { outputFileName } from '../util/outputFiles';
-import type { PageViewport } from 'pdfjs-dist';
+import type { PageViewport, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */
@@ -92,6 +92,202 @@ function linkElement(box: PageBox, target: LinkTarget): HTMLElement {
   return el;
 }
 
+/** A typeset PDF, held for as long as its link is the one shown: a zoom or a
+ *  width change lays it out again without fetching it. /output can't be
+ *  cached for this: a halted run rewrites the file behind the link it keeps.
+ *  `views` are its pages at scale 1. */
+type LoadedPdf = { url: string; pdf: PDFDocumentProxy; views: PageViewport[] };
+
+/** Pixels past the predicted view that are drawn before a layout shows, for
+ *  the padding and banner the prediction leaves out. */
+const DRAW_MARGIN = 40;
+
+/** One layout of a document's pages at one size, built off screen: it draws
+ *  the pages that will be on screen first, replaces the shown layout, and then
+ *  draws pages as they come near the view. */
+interface Layout {
+  pdf: PDFDocumentProxy;
+  /** The zoom it was laid out at. */
+  zoom: number;
+  info: PageInfo[];
+  frag: DocumentFragment;
+  draw(i: number): void;
+  drawn(i: number): boolean;
+  /** Resolves once every page asked for so far is drawn or has failed. */
+  settled(): Promise<void>;
+  /** Draws and links pages near the view of `scroller`, and frees far ones. */
+  watch(scroller: HTMLElement): void;
+  /** Stops drawing and frees the canvases; the layout must be off screen. */
+  stop(): void;
+}
+
+function createLayout(doc: LoadedPdf, width: number, zoom: number, dests: Map<string, Promise<DestTarget | null>>): Layout {
+  const { pdf } = doc;
+  // Virtualized rendering: every page gets a correctly-sized canvas
+  // immediately (layout only, no rasterization), so scroll geometry, SyncTeX
+  // offsets, and test selectors are all valid from the start. Pixels are
+  // rasterized only for pages near the viewport; far offscreen pages release
+  // their backing store (a 100-page paper would otherwise hold ~660 MB of
+  // RGBA at zoom 1, gigabytes when zoomed).
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const states = new Map<number, 'blank' | 'rendering' | 'done'>();
+  const tasks = new Set<RenderTask>();
+  const linked = new Set<number>();
+  let chain: Promise<void> = Promise.resolve(); // serialize worker renders
+  let live = true;
+  let observer: IntersectionObserver | null = null;
+
+  const frag = document.createDocumentFragment();
+  const info: PageInfo[] = doc.views.map((view, k) => {
+    const scale = width / view.width;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'pdf-page';
+    canvas.dataset.page = String(k + 1);
+    canvas.dataset.w = String(Math.floor(view.width * scale));
+    canvas.dataset.h = String(Math.floor(view.height * scale));
+    canvas.style.width = `${canvas.dataset.w}px`;
+    canvas.style.height = `${canvas.dataset.h}px`;
+    canvas.style.background = '#fff';
+    // The wrapper stacks the page's link layer on it and stays
+    // unpositioned: the canvas's offsets still measure from the pages' box.
+    const wrap = document.createElement('div');
+    wrap.className = 'pdf-page-wrap';
+    wrap.appendChild(canvas);
+    frag.appendChild(wrap);
+    states.set(k + 1, 'blank');
+    return { el: canvas, scale, view };
+  });
+
+  const draw = (i: number) => {
+    const state = states.get(i);
+    if (!state || state === 'rendering' || state === 'done') return;
+    states.set(i, 'rendering');
+    chain = chain.then(async () => {
+      const page = info[i - 1];
+      try {
+        if (!live) return;
+        const proxy = await pdf.getPage(i);
+        if (!live) return;
+        const viewport = proxy.getViewport({ scale: page.scale });
+        const canvas = page.el;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        const cctx = canvas.getContext('2d')!;
+        cctx.scale(dpr, dpr);
+        const task = proxy.render({ canvasContext: cctx, viewport });
+        tasks.add(task);
+        try { await task.promise; } finally { tasks.delete(task); }
+        if (live) states.set(i, 'done');
+      } catch (err) {
+        if (live && (err as { name?: string })?.name !== 'RenderingCancelledException') console.error('[pdf] page render failed', err);
+      } finally {
+        if (states.get(i) === 'rendering') states.set(i, 'blank');
+      }
+    });
+  };
+
+  // A page's links, laid over it the first time it comes near the viewport;
+  // percent boxes keep them on their spots however the page is sized.
+  const linkify = (i: number) => {
+    if (linked.has(i)) return;
+    linked.add(i);
+    (async () => {
+      try {
+        const page = await pdf.getPage(i);
+        const annotations = await page.getAnnotations({ intent: 'display' });
+        if (!live) return;
+        const view = info[i - 1]?.view;
+        if (!view) return;
+        const found = await Promise.all(pageLinks(annotations, view).map(async (link): Promise<[PageBox, LinkTarget] | null> => {
+          if ('url' in link) return [link.box, { url: link.url }];
+          const key = typeof link.dest === 'string' ? `name:${link.dest}` : JSON.stringify(link.dest);
+          let target = dests.get(key);
+          if (!target) dests.set(key, (target = resolveDest(pdf, link.dest)));
+          const t = await target;
+          const on = t && info[t.page - 1]?.view;
+          if (!t || !on) return null;
+          return [link.box, { page: t.page, y: t.y == null ? null : Math.max(0, toPage(on, t.x ?? 0, t.y)[1]) }];
+        }));
+        const host = info[i - 1]?.el.parentElement;
+        if (!live || !host) return;
+        const layer = document.createElement('div');
+        layer.className = 'pdf-links';
+        for (const f of found) if (f) layer.appendChild(linkElement(...f));
+        if (layer.childElementCount) host.appendChild(layer);
+      } catch (err) {
+        if (live) console.error('[pdf] page links failed', err);
+      }
+    })();
+  };
+
+  const release = (i: number) => {
+    if (states.get(i) !== 'done') return;
+    // Zero the backing store (frees the bitmap); CSS size stays, so layout,
+    // offsets, and visibility checks are untouched.
+    const { el } = info[i - 1];
+    el.width = 0;
+    el.height = 0;
+    states.set(i, 'blank');
+  };
+
+  return {
+    pdf,
+    zoom,
+    info,
+    frag,
+    draw,
+    drawn: (i) => states.get(i) === 'done',
+    settled: () => chain,
+    watch(scroller) {
+      if (!live) return;
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const i = Number((entry.target as HTMLElement).dataset.page);
+          if (!i) continue;
+          if (entry.isIntersecting) { draw(i); linkify(i); }
+          else release(i);
+        }
+      }, { root: scroller, rootMargin: '150% 0px' });
+      for (const { el } of info) observer.observe(el);
+    },
+    stop() {
+      live = false;
+      observer?.disconnect();
+      for (const task of tasks) task.cancel();
+      for (const { el } of info) { el.width = 0; el.height = 0; }
+    },
+  };
+}
+
+/** The pages' boxes on screen, read one at a time. */
+const rectOf = (info: PageInfo[]) => (i: number) => info[i].el.getBoundingClientRect();
+
+/** The middle of the pane's view, in client pixels. */
+function viewMiddle(scroller: HTMLElement): { x: number; y: number } {
+  const r = scroller.getBoundingClientRect();
+  return { x: r.left + scroller.clientWidth / 2, y: r.top + scroller.clientHeight / 2 };
+}
+
+/** Scroll so `spot` is at (x, y) again. */
+function scrollBackTo(scroller: HTMLElement, info: PageInfo[], spot: PageSpot, x: number, y: number) {
+  if (!info.length) return;
+  const by = scrollToSpot(info.length, rectOf(info), spot, x, y);
+  scroller.scrollLeft += by.left;
+  scroller.scrollTop += by.top;
+}
+
+/** Size the pages `ratio` times their laid-out size: the zoom shows at once,
+ *  and the next layout draws them sharp. */
+function stretch(info: PageInfo[], ratio: number) {
+  for (const { el } of info) {
+    const w = Number(el.dataset.w), h = Number(el.dataset.h);
+    if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
+  }
+}
+
+/** CSS pixels per PDF point of a page as it is sized now, stretched or not. */
+const shownScale = (info: PageInfo) => info.el.offsetHeight / info.view.height;
+
 const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages, onZoom }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
@@ -99,7 +295,23 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   const [rendered, setRendered] = useState(false);
   /** The PDF link pdf.js could not open; the pane offers it as a download. */
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  /** Bumped by each layout and by anything that empties the pane: a layout
+   *  that is no longer the latest never replaces the pages on screen. */
   const renderTask = useRef(0);
+  /** The latest PDF loaded for pdfUrl; it is laid out at every zoom and width. */
+  const [doc, setDoc] = useState<LoadedPdf | null>(null);
+  const docRef = useRef<LoadedPdf | null>(null);
+  /** The layout on screen. Its document stays open until another one's pages
+   *  replace it, also while pdfUrl is null after a run that left no PDF. */
+  const shown = useRef<Layout | null>(null);
+  /** Every document opened and not yet destroyed. */
+  const docs = useRef(new Set<PDFDocumentProxy>());
+  /** Bumped when the pane empties, so a load started before is dropped. */
+  const loads = useRef(0);
+  const [loadTick, setLoadTick] = useState(0);
+  // Each destination resolves once a document: one bibliography entry can be
+  // cited on every page.
+  const dests = useRef(new WeakMap<PDFDocumentProxy, Map<string, Promise<DestTarget | null>>>());
   /** The branch the on-open typeset was last asked for: a branch switch opens
    *  the other branch the way opening the project does. */
   const openedFor = useRef<string | null>(null);
@@ -113,11 +325,12 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   /** Flash a band across a page, `top` and `height` in PDF points. */
   const flash = (info: PageInfo, top: number, height: number) => {
     const el = document.createElement('div');
+    const scale = shownScale(info);
     el.className = 'pdf-flash';
     el.style.left = `${info.el.offsetLeft}px`;
-    el.style.top = `${info.el.offsetTop + top * info.scale}px`;
+    el.style.top = `${info.el.offsetTop + top * scale}px`;
     el.style.width = `${info.el.clientWidth}px`;
-    el.style.height = `${Math.max(16, height * info.scale)}px`;
+    el.style.height = `${Math.max(16, height * scale)}px`;
     innerRef.current?.appendChild(el);
     setTimeout(() => el.remove(), 1400);
   };
@@ -132,7 +345,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       scroller.scrollTo({ top: scrollTopForPage(info.el, all[page - 2]?.el), behavior: 'smooth' });
       return;
     }
-    scroller.scrollTo({ top: info.el.offsetTop + y * info.scale - LINK_MARGIN, behavior: 'smooth' });
+    scroller.scrollTo({ top: info.el.offsetTop + y * shownScale(info) - LINK_MARGIN, behavior: 'smooth' });
     flash(info, y, LINK_FLASH);
   };
 
@@ -141,7 +354,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const info = pageInfo.current[page - 1];
       const scroller = scrollRef.current;
       if (!info || !scroller) return;
-      const top = info.el.offsetTop + y * info.scale;
+      const top = info.el.offsetTop + y * shownScale(info);
       scroller.scrollTo({ top: top - scroller.clientHeight / 3, behavior: 'smooth' });
       flash(info, y - h, h * 2);
     },
@@ -264,29 +477,17 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   // re-layout instead of three full render passes.
   const [layoutZoom, setLayoutZoom] = useState(zoom);
   useEffect(() => {
-    const anchor = zoomAnchor.current;
-    zoomAnchor.current = null;
     const scroller = scrollRef.current;
-    let held: { el: HTMLElement; fx: number; fy: number } | null = null;
-    if (anchor && scroller) {
-      for (const { el } of pageInfo.current) {
-        const r = el.getBoundingClientRect();
-        if (r.bottom < anchor.y) continue;
-        held = { el, fx: (anchor.x - r.left) / r.width, fy: (anchor.y - r.top) / r.height };
-        break;
-      }
-    }
-    // The click itself must show: stretch the pages already on screen to the
-    // new size at once, and let the debounced pass below redraw them sharp.
-    const ratio = zoom / layoutZoom;
-    for (const { el } of pageInfo.current) {
-      const w = Number(el.dataset.w), h = Number(el.dataset.h);
-      if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
-    }
-    if (anchor && held && scroller) {
-      const r = held.el.getBoundingClientRect();
-      scroller.scrollLeft += r.left + held.fx * r.width - anchor.x;
-      scroller.scrollTop += r.top + held.fy * r.height - anchor.y;
+    const layout = shown.current;
+    // A zoom from the buttons or keys holds the middle of the view in place.
+    const at = zoomAnchor.current ?? (scroller && viewMiddle(scroller));
+    zoomAnchor.current = null;
+    if (scroller && layout && at) {
+      const spot = spotAt(layout.info.length, rectOf(layout.info), at.x, at.y);
+      // The click itself must show: stretch the pages already on screen to
+      // the new size at once, and let the debounced layout redraw them sharp.
+      stretch(layout.info, zoom / layout.zoom);
+      if (spot) scrollBackTo(scroller, layout.info, spot, at.x, at.y);
     }
     measurePage();
     const t = setTimeout(() => setLayoutZoom(zoom), 150);
@@ -294,11 +495,11 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   }, [zoom]);
 
   // A width change (splitter drag, window resize) must re-run the fit-to-width
-  // layout: the render pass below reads scroller.clientWidth once and bakes it
+  // layout: the layout below reads scroller.clientWidth once and bakes it
   // into every canvas size, so without tracking it the pages keep their old
   // width and zooming is the only way out. Debounced like zoom bursts — a drag
   // emits a resize event per frame. widthTick is purely the layout trigger;
-  // the pass reads the live width itself.
+  // the layout reads the live width itself.
   const [widthTick, setWidthTick] = useState(0);
   const [refitTick, setRefitTick] = useState(0);
   useEffect(() => {
@@ -317,193 +518,141 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     return () => { clearTimeout(t); ro.disconnect(); };
   }, []);
 
+  /** Destroy every document that is neither the latest loaded nor on screen. */
+  const collect = useCallback(() => {
+    for (const pdf of docs.current) {
+      if (pdf === docRef.current?.pdf || pdf === shown.current?.pdf) continue;
+      docs.current.delete(pdf);
+      void pdf.destroy().catch(() => { /* already gone */ });
+    }
+  }, []);
+
+  /** Take the pages off screen and let go of their documents. */
+  const empty = useCallback(() => {
+    renderTask.current++;
+    loads.current++;
+    innerRef.current?.replaceChildren();
+    pageInfo.current = [];
+    shown.current?.stop();
+    shown.current = null;
+    docRef.current = null;
+    setDoc(null);
+    collect();
+    setRendered(false);
+    pagesRef.current?.set(null);
+  }, [collect]);
+
   // A branch switch nulls pdfUrl, which alone never touches the canvases —
   // the pane would keep showing the previous branch's pages, and a failed
   // typeset on the new branch would label them as its last successful one.
   useEffect(() => {
-    renderTask.current++;
-    innerRef.current?.replaceChildren();
-    pageInfo.current = [];
-    setRendered(false);
+    empty();
     setFailedUrl(null);
-    pagesRef.current?.set(null);
-  }, [branch]);
+  }, [branch, empty]);
 
+  useEffect(() => () => {
+    renderTask.current++;
+    shown.current?.stop();
+    shown.current = null;
+    docRef.current = null;
+    collect();
+  }, [collect]);
+
+  // One document per link. A null pdfUrl (a run that left no PDF) keeps the
+  // one on screen, and the same link again (an unchanged document) is the
+  // document already open.
   useEffect(() => {
-    if (!pdfUrl || !innerRef.current) return;
-    const my = ++renderTask.current;
-    const container = innerRef.current;
-    const scroller = scrollRef.current!;
-    const prevScroll = scroller.scrollTop;
-    let doc: Awaited<ReturnType<typeof pdfjs.getDocument>['promise']> | null = null;
-    let observer: IntersectionObserver | null = null;
-
-    // Virtualized rendering: every page gets a correctly-sized canvas
-    // immediately (layout only — getViewport, no rasterization), so scroll
-    // geometry, SyncTeX offsets, and test selectors are all valid from the
-    // start. Pixels are rasterized only for pages near the viewport; far
-    // offscreen pages release their backing store (a 100-page paper would
-    // otherwise hold ~660 MB of RGBA at zoom 1, gigabytes when zoomed).
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const states = new Map<number, 'blank' | 'rendering' | 'done'>();
-    let chain: Promise<void> = Promise.resolve(); // serialize worker renders
-    const linked = new Set<number>();
-    // Each destination resolves once a pass: one bibliography entry can be
-    // cited on every page.
-    const dests = new Map<string, Promise<DestTarget | null>>();
-
-    const rasterize = (i: number) => {
-      if (states.get(i) === 'rendering' || states.get(i) === 'done') return;
-      states.set(i, 'rendering');
-      chain = chain.then(async () => {
-        if (my !== renderTask.current || !doc) return;
-        const info = pageInfo.current[i - 1];
-        if (!info) return;
-        try {
-          const page = await doc.getPage(i);
-          if (my !== renderTask.current) return;
-          const viewport = page.getViewport({ scale: info.scale });
-          const canvas = info.el;
-          canvas.width = Math.floor(viewport.width * dpr);
-          canvas.height = Math.floor(viewport.height * dpr);
-          const cctx = canvas.getContext('2d')!;
-          cctx.scale(dpr, dpr);
-          await page.render({ canvasContext: cctx, viewport }).promise;
-          if (my === renderTask.current) states.set(i, 'done');
-        } catch (err) {
-          states.set(i, 'blank');
-          if ((err as { name?: string })?.name !== 'RenderingCancelledException') console.error('[pdf] page render failed', err);
-        }
-      });
-    };
-
-    // A page's links, laid over it the first time it comes near the viewport;
-    // percent boxes keep them on their spots however the page is sized.
-    const linkify = (i: number) => {
-      if (linked.has(i) || !doc) return;
-      linked.add(i);
-      const d = doc;
-      (async () => {
-        try {
-          const page = await d.getPage(i);
-          const annotations = await page.getAnnotations({ intent: 'display' });
-          if (my !== renderTask.current) return;
-          const view = pageInfo.current[i - 1]?.view;
-          if (!view) return;
-          const found = await Promise.all(pageLinks(annotations, view).map(async (link): Promise<[PageBox, LinkTarget] | null> => {
-            if ('url' in link) return [link.box, { url: link.url }];
-            const key = typeof link.dest === 'string' ? `name:${link.dest}` : JSON.stringify(link.dest);
-            let target = dests.get(key);
-            if (!target) dests.set(key, (target = resolveDest(d, link.dest)));
-            const t = await target;
-            const on = t && pageInfo.current[t.page - 1]?.view;
-            if (!t || !on) return null;
-            return [link.box, { page: t.page, y: t.y == null ? null : Math.max(0, toPage(on, t.x ?? 0, t.y)[1]) }];
-          }));
-          const host = pageInfo.current[i - 1]?.el.parentElement;
-          if (my !== renderTask.current || !host) return;
-          const layer = document.createElement('div');
-          layer.className = 'pdf-links';
-          for (const f of found) if (f) layer.appendChild(linkElement(...f));
-          if (layer.childElementCount) host.appendChild(layer);
-        } catch (err) {
-          if (my === renderTask.current) console.error('[pdf] page links failed', err);
-        }
-      })();
-    };
-
-    const release = (i: number) => {
-      if (states.get(i) !== 'done') return;
-      const info = pageInfo.current[i - 1];
-      if (!info) return;
-      // Zero the backing store (frees the bitmap); CSS size stays, so layout,
-      // offsets, and visibility checks are untouched.
-      info.el.width = 0;
-      info.el.height = 0;
-      states.set(i, 'blank');
-    };
-
+    if (!pdfUrl || docRef.current?.url === pdfUrl) return;
+    const gen = loads.current;
+    let live = true, kept = false;
+    // CJK PDFs embed Identity-H CID fonts; pdf.js needs the packed CMaps to
+    // map their glyphs or every CJK character renders as blank space (Latin
+    // text and math are unaffected). cMapUrl says where they are served from.
+    const task = pdfjs.getDocument({ url: pdfUrl, cMapUrl, cMapPacked: true });
     (async () => {
       try {
-        // CJK PDFs embed Identity-H CID fonts; pdf.js needs the packed CMaps
-        // to map their glyphs or every CJK character renders as blank space
-        // (Latin text and math are unaffected). cMapUrl says where they are
-        // served from.
-        doc = await pdfjs.getDocument({
-          url: pdfUrl,
-          cMapUrl,
-          cMapPacked: true,
-        }).promise;
-        if (my !== renderTask.current) { try { doc.destroy(); } catch { /* noop */ } return; }
-        const width = Math.max(320, scroller.clientWidth - 36) * layoutZoom;
-        const frag = document.createDocumentFragment();
-        const info: PageInfo[] = [];
-        for (let i = 1; i <= doc.numPages; i++) {
-          const page = await doc.getPage(i);
-          if (my !== renderTask.current) return;
-          const base = page.getViewport({ scale: 1 });
-          const scale = width / base.width;
-          const canvas = document.createElement('canvas');
-          canvas.className = 'pdf-page';
-          canvas.dataset.page = String(i);
-          canvas.dataset.w = String(Math.floor(base.width * scale));
-          canvas.dataset.h = String(Math.floor(base.height * scale));
-          canvas.style.width = `${canvas.dataset.w}px`;
-          canvas.style.height = `${canvas.dataset.h}px`;
-          canvas.style.background = '#fff';
-          // The wrapper stacks the page's link layer on it and stays
-          // unpositioned: the canvas's offsets still measure from the pages' box.
-          const wrap = document.createElement('div');
-          wrap.className = 'pdf-page-wrap';
-          wrap.appendChild(canvas);
-          frag.appendChild(wrap);
-          info.push({ el: canvas, scale, view: base });
-          states.set(i, 'blank');
+        const pdf = await task.promise;
+        const views: PageViewport[] = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          views.push((await pdf.getPage(i)).getViewport({ scale: 1 }));
+          if (!live || gen !== loads.current) return;
         }
-        if (my !== renderTask.current) return;
-        container.replaceChildren(frag);
-        pageInfo.current = info;
-        scroller.scrollTop = prevScroll;
-
-        // First visible page rasterizes before the spinner goes away — no
-        // flash of blank paper on open.
-        rasterize(1);
-        await chain;
-        if (my !== renderTask.current) return;
-        setRendered(true);
-        measurePage();
-
-        observer = new IntersectionObserver((entries) => {
-          for (const entry of entries) {
-            const i = Number((entry.target as HTMLElement).dataset.page);
-            if (!i) continue;
-            if (entry.isIntersecting) { rasterize(i); linkify(i); }
-            else release(i);
-          }
-        }, { root: scroller, rootMargin: '150% 0px' });
-        for (const { el } of info) observer.observe(el);
+        if (!live || gen !== loads.current) return;
+        kept = true;
+        docs.current.add(pdf);
+        docRef.current = { url: pdfUrl, pdf, views };
+        setDoc(docRef.current);
+        collect();
       } catch (err) {
-        // a superseded render (fast retyping) cancels itself — that's expected, not an error
-        if (my !== renderTask.current || (err as { name?: string })?.name === 'RenderingCancelledException') return;
+        if (!live || gen !== loads.current) return;
         console.error('[pdf] render failed', err);
-        // The previous document is already released, so its pages would go
-        // blank as they scroll by: the pane says what happened instead.
-        container.replaceChildren();
-        pageInfo.current = [];
-        setRendered(false);
-        pagesRef.current?.set(null);
+        empty();
         setFailedUrl(pdfUrl);
       }
     })();
-    // Invalidate any in-flight render (so its guarded loop bails before touching
-    // the DOM/state) and release the pdf.js document — each compile is a unique
-    // URL, so without this the worker's document memory accretes every typeset.
     return () => {
-      renderTask.current++;
-      observer?.disconnect();
-      Promise.resolve(doc).then((d) => { try { d?.destroy(); } catch { /* already gone */ } });
+      live = false;
+      if (!kept) void task.destroy();
     };
-  }, [pdfUrl, layoutZoom, widthTick, refitTick, measurePage]);
+  }, [pdfUrl, loadTick, collect, empty]);
+
+  // Each layout draws the pages it will put on screen before they replace
+  // the ones there, and holds the spot in the middle of the view: a zoom, a
+  // width change and a new typeset all keep the page being read, drawn.
+  useEffect(() => {
+    const container = innerRef.current, scroller = scrollRef.current;
+    if (!doc || !container || !scroller) return;
+    const my = ++renderTask.current;
+    // A newer document, or an emptied pane, supersedes this layout.
+    const current = () => my === renderTask.current && docRef.current === doc;
+    let map = dests.current.get(doc.pdf);
+    if (!map) dests.current.set(doc.pdf, (map = new Map()));
+    const width = Math.max(320, scroller.clientWidth - 36) * layoutZoom;
+    const layout = createLayout(doc, width, layoutZoom, map);
+    const spotNow = () => {
+      const on = shown.current;
+      const at = viewMiddle(scroller);
+      return { at, spot: on ? spotAt(on.info.length, rectOf(on.info), at.x, at.y) : null };
+    };
+    (async () => {
+      try {
+        // A zoom asked for after this layout started shows as a stretch.
+        const ratio = () => zoomRef.current / layoutZoom;
+        const gap = parseFloat(getComputedStyle(container).rowGap) || 0;
+        // The view can move while pages draw: whatever came on screen meanwhile
+        // is drawn too, a few rounds at most.
+        for (let round = 0; round < 3; round++) {
+          const { spot } = spotNow();
+          const heights = layout.info.map(({ el }) => Number(el.dataset.h) * ratio());
+          const due = pagesAt(heights, gap, spot, scroller.clientHeight / 2, scroller.clientHeight, DRAW_MARGIN)
+            .map((i) => i + 1).filter((i) => !layout.drawn(i));
+          if (!due.length) break;
+          for (const i of due) layout.draw(i);
+          await layout.settled();
+          if (!current()) return;
+        }
+        if (!current()) return;
+        const { at, spot } = spotNow();
+        const prev = shown.current;
+        container.replaceChildren(layout.frag);
+        pageInfo.current = layout.info;
+        if (ratio() !== 1) stretch(layout.info, ratio());
+        if (spot) scrollBackTo(scroller, layout.info, spot, at.x, at.y);
+        shown.current = layout;
+        prev?.stop();
+        collect();
+        setRendered(true);
+        measurePage();
+        layout.watch(scroller);
+      } catch (err) {
+        if (!current()) return;
+        console.error('[pdf] render failed', err);
+        empty();
+        setFailedUrl(doc.url);
+      }
+    })();
+    return () => { if (shown.current !== layout) layout.stop(); };
+  }, [doc, layoutZoom, widthTick, refitTick, measurePage, collect, empty]);
 
   // Typesetting an unchanged document again keeps its PDF link: the new run
   // is the moment to retry the one that would not open, once a run, so a
@@ -511,7 +660,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   useEffect(() => {
     if (status !== 'compiling' || !failedUrl) return;
     setFailedUrl(null);
-    setRefitTick((n) => n + 1);
+    setLoadTick((n) => n + 1);
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A single click follows a link; the rest of a double-click on one does
@@ -538,9 +687,8 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     const info = pageInfo.current[idx];
     if (!info) return;
     const rect = target.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / info.scale;
-    const y = (e.clientY - rect.top) / info.scale;
-    onInverse(idx + 1, x, y);
+    const scale = rect.height / info.view.height;
+    onInverse(idx + 1, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
   };
 
   return (

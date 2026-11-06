@@ -85,3 +85,65 @@ export function createPdfPagesStore() {
 }
 
 export type PdfPagesStore = ReturnType<typeof createPdfPagesStore>;
+
+/** A point of the document: a page (0-based) and where on it, as fractions
+ *  of the page's box. Unlike a scroll offset in pixels, it names the same
+ *  place after a zoom, a width change or a new typeset. */
+export interface PageSpot { page: number; fx: number; fy: number }
+
+export interface Rect { left: number; top: number; width: number; height: number }
+
+/**
+ * The spot at (x, y) among `count` pages stacked top to bottom, `rect` read
+ * lazily. It is on the first page whose bottom edge is at or below y, so a
+ * point in the gap between two pages belongs to the one below, and a point
+ * past the last page to the last.
+ */
+export function spotAt(count: number, rect: (i: number) => Rect, x: number, y: number): PageSpot | null {
+  if (count <= 0) return null;
+  let lo = 0, hi = count - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const r = rect(mid);
+    if (r.top + r.height < y) lo = mid + 1;
+    else hi = mid;
+  }
+  const r = rect(lo);
+  return { page: lo, fx: r.width ? (x - r.left) / r.width : 0, fy: r.height ? (y - r.top) / r.height : 0 };
+}
+
+/** How far to scroll so that `spot` is back at (x, y). A document that has
+ *  fewer pages now holds it on its last page. */
+export function scrollToSpot(count: number, rect: (i: number) => Rect, spot: PageSpot, x: number, y: number): { left: number; top: number } {
+  const r = rect(Math.min(spot.page, count - 1));
+  return { left: r.left + spot.fx * r.width - x, top: r.top + spot.fy * r.height - y };
+}
+
+/**
+ * The pages (0-based) on screen once `spot` is `refY` pixels below the top
+ * of a view `viewHeight` tall, for pages `heights` tall stacked `gap` apart.
+ * The view stays inside the pages, as the scroll range keeps it; `margin`
+ * pixels past either edge count as on screen. Without a spot the view is at
+ * the top.
+ */
+export function pagesAt(heights: number[], gap: number, spot: PageSpot | null, refY: number, viewHeight: number, margin = 0): number[] {
+  const n = heights.length;
+  if (!n) return [];
+  const tops: number[] = [];
+  let y = 0;
+  for (const h of heights) { tops.push(y); y += h + gap; }
+  const end = y - gap;
+  let start = 0;
+  if (spot) {
+    const i = Math.min(spot.page, n - 1);
+    start = tops[i] + spot.fy * heights[i] - refY;
+  }
+  start = Math.max(0, Math.min(start, end - viewHeight));
+  const from = start - margin, to = start + viewHeight + margin;
+  const on: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (tops[i] >= to) break;
+    if (tops[i] + heights[i] > from) on.push(i);
+  }
+  return on;
+}
