@@ -141,8 +141,20 @@ export default function Home() {
   const [params, setParams] = useSearchParams();
   const show: Show = parseShow(params.get('show'), authEnabled);
   // In the address, so Back and the editor's back button return to the same search.
-  const query = params.get('q') ?? '';
+  // The field keeps its own text and the address follows it: typing outruns
+  // the router, whose updates start from the last render's address and would
+  // drop keystrokes typed in between.
+  const urlQuery = params.get('q') ?? '';
+  const [query, setQueryText] = useState(urlQuery);
+  const sentQuery = useRef(urlQuery);
+  useEffect(() => {
+    if (urlQuery === sentQuery.current) return;
+    sentQuery.current = urlQuery;
+    setQueryText(urlQuery);
+  }, [urlQuery]);
   const setQuery = useCallback((q: string) => {
+    setQueryText(q);
+    sentQuery.current = q;
     setParams((cur) => {
       const next = new URLSearchParams(cur);
       if (q) next.set('q', q); else next.delete('q');
