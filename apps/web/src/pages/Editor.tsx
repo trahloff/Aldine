@@ -109,7 +109,7 @@ function inTextField(target: EventTarget | null): boolean {
 }
 
 /** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
-const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files']);
+const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder']);
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
 
@@ -142,7 +142,7 @@ export default function Editor() {
    *  that branch's files, not on the ones of the branch it came from. */
   const [filesFor, setFilesFor] = useState('');
   const [newFileRequest, setNewFileRequest] = useState(0);
-  const [newEntryKind, setNewEntryKind] = useState<'file' | 'folder' | 'upload'>('file');
+  const [newEntryKind, setNewEntryKind] = useState<'file' | 'folder' | 'upload' | 'upload-folder'>('file');
   const [commitFocusRequest, setCommitFocusRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
@@ -1498,6 +1498,7 @@ export default function Editor() {
         keywords: kind === 'upload' ? 'add import images' : `create add${kind === 'folder' ? ' directory' : ''}`,
         run: () => { setTab('files'); setSidebar(false); setNewEntryKind(kind); setNewFileRequest((n) => n + 1); },
       })),
+      { id: 'upload-folder', group: 'Project', title: 'Upload a folder…', keywords: 'add import directory', run: () => { setTab('files'); setSidebar(false); setNewEntryKind('upload-folder'); setNewFileRequest((n) => n + 1); } },
     ];
     if (compile.result != null) {
       cmds.push({ id: 'view-log', group: 'View', title: 'View the typesetting log', run: () => setShowLog(true) });

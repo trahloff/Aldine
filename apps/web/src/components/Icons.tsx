@@ -187,6 +187,14 @@ export const IconDownload = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** A folder with an arrow up out of it: upload a folder. */
+export const IconFolderUpload = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h2.5l1.5 1.5h5.5c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5v-7.5Z" />
+    <path d="M8 11.25v-4.5M6 8.75l2-2 2 2" />
+  </svg>
+);
+
 /** A funnel: show only some of the list. */
 export const IconFilter = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>

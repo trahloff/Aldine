@@ -499,6 +499,24 @@ export const api = {
   },
   writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean; baseVersion?: number } = {}) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}), ...(opts.baseVersion !== undefined ? { baseVersion: opts.baseVersion } : {}) }) }),
+  /** writeFile of base64 content with upload progress: the bytes of the
+   *  request sent so far, of how many. */
+  writeFileWithProgress: (id: string, branch: string, path: string, base64: string, opts: { createOnly?: boolean; onProgress?(sent: number, total: number): void } = {}) =>
+    new Promise<{ ok: boolean }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', withBase(`/api/projects/${id}/file`));
+      xhr.setRequestHeader('content-type', 'application/json');
+      xhr.responseType = 'text';
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total); };
+      xhr.onload = () => {
+        let body: any = null;
+        try { body = JSON.parse(xhr.responseText); } catch { /* not JSON: a proxy's page */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body ?? { ok: true });
+        else reject(new ApiError(body?.error || `HTTP ${xhr.status}`, xhr.status, undefined, typeof body?.code === 'string' ? body.code : undefined));
+      };
+      xhr.onerror = () => reject(new ApiError('The server could not be reached', 0));
+      xhr.send(JSON.stringify({ branch, path, content: base64, encoding: 'base64', ...(opts.createOnly ? { createOnly: true } : {}) }));
+    }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
   /** `commit`: the deletion's own commit, whose revert undoes it; `pending`: it waits for a hand-made commit. */

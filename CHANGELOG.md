@@ -209,6 +209,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   edits wait asks for a commit message for them first, instead of
   committing them as "aldine: checkpoint before …" or "Local changes before
   pull".
+- The Source view of the file tree always lists the open file and the files
+  you just made or uploaded, whatever their type, and a row below the files
+  says how many it hides, with Show all. Before, a new notes.yaml or an
+  uploaded build.sh did not appear in the tree.
+- New file and New folder start in the open file's folder, and the name is
+  typed in that folder in the tree. The tree's buttons stay at the foot of
+  the sidebar while a long tree scrolls. Before, new files went to the top
+  level and the buttons scrolled away below the last row.
+- Folders can be uploaded: drop one on the file tree, or choose one with
+  Upload a folder, a folder's "Upload folder to folder…" or "Upload a
+  folder…" in the command palette. Its files keep their paths inside it, and
+  dot-files such as .DS_Store and .git are left out.
+- Uploads show their progress at the foot of the file tree ("Uploading 3 of
+  12…") and send three files at a time. Uploading files that already exist
+  asks once for all of them, Replace all or Skip existing, and Enter skips
+  them. Before, each file asked on its own.
+- The file tree works from the keyboard: it is one Tab stop, the arrow keys
+  move through it and open or close folders, Home and End go to the first
+  and last row, typing a name jumps to it, F2 renames and Delete (⌘⌫ on a
+  Mac) deletes. Screen readers hear it as a tree and which file is open.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -519,8 +539,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   in place of Aldine. Dropped on the editor, it is uploaded instead of having
   its text pasted into the document, and the tree takes drops on the whole
   sidebar below its rows.
-- A folder dropped on the file tree says it cannot be read, and the files
-  dropped with it still upload. Before, nothing happened at all.
+- A dropped file that cannot be read says so, and the files dropped with it
+  still upload. Before, nothing happened at all.
 - A file or folder that could not be deleted says so, from the tree and from
   the command palette.
 - The file tree sorts numbered names in number order: chapter2 before

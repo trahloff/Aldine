@@ -90,7 +90,9 @@ traces as the `playwright-<suite>` artifact.
 - `META_DIR` is deliberately outside `DATA_DIR` so the compiler container can
   never read API keys — don't "simplify" them onto one volume.
 - The file tree defaults to source-only view; e2e that asserts non-source
-  files must toggle to "All" first.
+  files must toggle to "All" first. The open file and files the tab just
+  created or uploaded show in it anyway, so an absence check needs a file
+  added through the API.
 - Dark theme is the app default (stamped pre-paint in `index.html`);
   Playwright `colorScheme` emulation does *not* switch the app theme —
   drive `localStorage['aldine.theme']` instead.
