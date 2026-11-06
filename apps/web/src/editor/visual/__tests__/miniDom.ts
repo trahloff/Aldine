@@ -5,7 +5,8 @@ import { vi } from 'vitest';
  * one: elements, text, attributes, inline styles and tag-name selectors.
  * Markup is taken as written, so fixtures close every tag they open (no
  * implied end tags, no foster parenting); void elements need no end tag.
- * Tag names may carry a namespace prefix, as Word's `<o:p>` does.
+ * Tag names may carry a namespace prefix, as Word's `<o:p>` does. Comments
+ * are kept, Word's `<![if …]>` among them, as an HTML parser keeps them.
  */
 const VOID = new Set(['area', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'wbr']);
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -22,10 +23,15 @@ class MiniText {
   constructor(readonly textContent: string) {}
 }
 
+class MiniComment {
+  readonly nodeType = 8;
+  constructor(readonly textContent: string) {}
+}
+
 class MiniElement {
   readonly nodeType = 1;
   readonly tagName: string;
-  readonly childNodes: Array<MiniElement | MiniText> = [];
+  readonly childNodes: Array<MiniElement | MiniText | MiniComment> = [];
   readonly style: Record<string, string> = {};
 
   constructor(tag: string, private readonly attrs: Record<string, string> = {}) {
@@ -42,7 +48,7 @@ class MiniElement {
   }
 
   get textContent(): string {
-    return this.childNodes.map((c) => c.textContent).join('');
+    return this.childNodes.map((c) => (c instanceof MiniComment ? '' : c.textContent)).join('');
   }
 
   getAttribute(name: string): string | null {
@@ -71,11 +77,13 @@ class MiniElement {
 function parse(html: string): MiniElement {
   const body = new MiniElement('body');
   const stack = [body];
-  const token = /<!--[\s\S]*?-->|<!doctype[^>]*>|<\/([a-z][\w:-]*)\s*>|<([a-z][\w:-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>|[^<]+|</gi;
+  const token = /<!--([\s\S]*?)-->|<!doctype[^>]*>|<!([^>]*)>|<\/([a-z][\w:-]*)\s*>|<([a-z][\w:-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>|[^<]+|</gi;
   for (const m of html.matchAll(token)) {
     const top = stack[stack.length - 1];
-    const [whole, close, open, attrText] = m;
-    if (close) {
+    const [whole, comment, bogus, close, open, attrText] = m;
+    if (comment !== undefined || bogus !== undefined) {
+      top.childNodes.push(new MiniComment(comment ?? bogus));
+    } else if (close) {
       const i = stack.map((e) => e.tagName).lastIndexOf(close.toUpperCase());
       if (i > 0) stack.length = i;
     } else if (open) {
@@ -95,7 +103,7 @@ function parse(html: string): MiniElement {
 
 /** Puts DOMParser and Node on globalThis for the code under test. */
 export function installMiniDom(): void {
-  vi.stubGlobal('Node', { ELEMENT_NODE: 1, TEXT_NODE: 3 });
+  vi.stubGlobal('Node', { ELEMENT_NODE: 1, TEXT_NODE: 3, COMMENT_NODE: 8 });
   vi.stubGlobal('DOMParser', class {
     parseFromString(html: string) {
       return { body: parse(html) };

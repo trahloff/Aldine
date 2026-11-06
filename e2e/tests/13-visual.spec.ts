@@ -1499,7 +1499,8 @@ test.describe('visual editor: wrapped cells, new rows, collaborators in a table,
       await expect(input).toHaveAttribute('aria-label', 'Row 3, column 1');
       await A.page.keyboard.type('ma');
       await A.page.keyboard.press('Enter');
-      let expected = TABLE_DOC.replace('a & b \\\\\n', 'a & b \\\\ x & y \\\\\n').replace('c & d', 'gamma & d');
+      // the & typed in a cell is text (vis-6); the \\ still breaks the row
+      let expected = TABLE_DOC.replace('a & b \\\\\n', 'a & b \\\\ x \\& y \\\\\n').replace('c & d', 'gamma & d');
       await expectStored(request, id, expected);
 
       // the collaborator changes the very cell: told first, Enter then replaces it

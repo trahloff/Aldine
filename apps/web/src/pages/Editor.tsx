@@ -12,7 +12,7 @@ import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
-import { setVisualFiles } from '../editor/visual/context';
+import { setVisualEngine, setVisualFiles } from '../editor/visual/context';
 import { closeParkedDocs } from '../editor/docCache';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import FilePreview from '../components/FilePreview';
@@ -25,7 +25,8 @@ import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel, type PluginErrorsAction } from '../plugins/host';
-import { hintFor } from '../editor/errorHints';
+import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
+import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
 import { IconChevronLeft, IconChevronRight, IconDownload, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
@@ -939,6 +940,30 @@ export default function Editor() {
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 60));
   };
 
+  /**
+   * XeLaTeX with a font that has Greek and math symbols: the root file's
+   * preamble gets it through its open document (one undo step), then the
+   * engine changes and the PDF is typeset again.
+   */
+  const typesetWithUnicodeFont = () => {
+    if (!project) return;
+    const root = project.rootFile;
+    let plan: UnicodeFontPlan | null = null;
+    const edit = () => codeRef.current?.editDocument((text) => {
+      plan = unicodeFontPlan(text);
+      return plan.kind === 'edit' ? plan.changes : null;
+    }, () => {
+      const done = plan as UnicodeFontPlan | null;
+      if (done?.kind === 'manual') toast(`To print these characters with XeLaTeX, change line ${done.line} of ${root}, ${done.text}: load it only for pdfLaTeX, with \\usepackage{iftex} before it and \\ifPDFTeX … \\fi around it.`, 'error');
+      else if (done?.kind === 'keep') toast('This document sets its own main font, so only the engine changed. A warning names each character the font lacks.');
+      void setEngine('xelatex');
+    });
+    if (activeFile !== root) {
+      setActiveFile(root);
+      requestAnimationFrame(() => setTimeout(edit, 60));
+    } else edit();
+  };
+
   const insertAtCursor = useCallback((text: string) => codeRef.current?.insertAtCursor(text), []);
 
   // ---- review comments ----
@@ -1041,6 +1066,8 @@ export default function Editor() {
   useEffect(() => {
     setVisualFiles(id, branch, files.filter((f) => f.type === 'file'));
   }, [id, branch, files]);
+  // a paste in Visual writes Unicode math as commands for pdfLaTeX
+  useEffect(() => { setVisualEngine(project?.engine ?? null); }, [project?.engine]);
 
   // The docs kept for files left earlier (editor/docCache) are this branch's
   // files only: a kept doc of a file the branch no longer has goes to disk
@@ -1351,7 +1378,7 @@ export default function Editor() {
           id: 'edit-at-cursor', group: 'Actions', title: 'Edit the formula, table, citation or figure at the cursor', hint: shortcut('Enter'),
           run: () => {
             const opened = codeRef.current?.editAtCursor();
-            if (opened === 'source') toast('This formula opens as source: the formula editor would rewrite its \\label, alignment, comments or line breaks');
+            if (opened === 'source') toast('This formula opens as source: the formula editor would rewrite its alignment, comments, line breaks or a \\label inside it');
             else if (!opened) toast('Put the cursor in or beside a formula, table, citation or figure first');
             if (opened !== 'opened') requestAnimationFrame(() => codeRef.current?.focus());
           },
@@ -1829,6 +1856,7 @@ export default function Editor() {
             // there is, or (for an error TeX gave no file) in the main document.
             // A file that is not the project's (an installed .sty) has no line
             // here to go to.
+            const unicodeOffer = [...errors].sort((a, b) => (a.type === 'error' ? 0 : 1) - (b.type === 'error' ? 0 : 1)).find((x) => offersUnicodeEngine(x.message));
             const row = (e: (typeof errors)[number], i: number, testId?: string) => {
               const hint = hintFor(e.message);
               const file = e.file;
@@ -1852,6 +1880,20 @@ export default function Editor() {
                       ? <button className="errors__jump" onClick={() => jumpToLine(e.line, target)}>{body}</button>
                       : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
                     <button className="btn btn--ghost btn--small errors__ignore" onClick={() => ignoreWarning(e.message)} title="Hide warnings like this one in this project" data-testid="problem-ignore">Ignore</button>
+                  </div>
+                );
+              }
+              // once, on the first such error: each character the engine stops at is a row of its own
+              if (e === unicodeOffer && project?.engine === 'pdf' && !project.readOnly && !(authEnabled && !project.isMember)) {
+                return (
+                  <div key={i} className="errors__row errors__row--offer" data-testid="problem-unicode">
+                    {clickable
+                      ? <button className="errors__jump" onClick={() => jumpToLine(e.line, target)}>{body}</button>
+                      : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
+                    <button className="btn btn--small errors__offer" onClick={typesetWithUnicodeFont} data-testid="problem-engine-font">Typeset with XeLaTeX and a font that has these characters</button>
+                    {ENGINES.filter((x) => x.id !== 'pdf').map((x) => (
+                      <button key={x.id} className="btn btn--ghost btn--small errors__offer" onClick={() => setEngine(x.id)} data-testid={`problem-engine-${x.id}`}>Typeset with {x.label}</button>
+                    ))}
                   </div>
                 );
               }

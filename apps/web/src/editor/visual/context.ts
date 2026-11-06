@@ -1,16 +1,18 @@
 import { api, BibEntry } from '../../api';
 import { withBase } from '../../basePath';
 import { pokeViews } from './refresh';
-import { preambleOf } from './preamble';
+import { preambleOf, stripComments } from './preamble';
 
 /**
  * Project context for widgets that need more than the document text (cite
  * labels from the bibliography, image URLs). Set by visualExtensions() when a
  * pane mounts; decoration building itself stays pure.
  */
-let ctx: { projectId: string; branch: string; rootDir: string } | null = null;
+let ctx: { projectId: string; branch: string; rootDir: string; rootFile: string | null } | null = null;
 let bib: Map<string, BibEntry> | null = null;
 let bibKey = '';
+/** Bumped each time the bibliography arrives, so widgets drawing citation labels draw them anew. */
+let bibRev = 0;
 /** Each project file's mtime (undefined when the listing has none), by path. */
 let files: { key: string; paths: Map<string, number | undefined> } | null = null;
 let notify: ((text: string, kind: NoticeKind) => void) | null = null;
@@ -23,14 +25,14 @@ export type NoticeKind = 'info' | 'error';
 
 export function setVisualContext(projectId: string, branch: string, rootFile?: string, onNotice?: (text: string, kind: NoticeKind) => void): void {
   const rootDir = rootFile && rootFile.includes('/') ? rootFile.slice(0, rootFile.lastIndexOf('/')) : '';
-  ctx = { projectId, branch, rootDir };
+  ctx = { projectId, branch, rootDir, rootFile: rootFile ?? null };
   notify = onNotice ?? null;
   const key = `${projectId}::${branch}`;
   if (key !== bibKey) {
     bibKey = key;
     bib = null;
     api.bib(projectId, branch)
-      .then((entries) => { bib = new Map(entries.map((e) => [e.key, e])); pokeViews(); })
+      .then((entries) => { bib = new Map(entries.map((e) => [e.key, e])); bibRev++; pokeViews(); })
       .catch(() => { bib = new Map(); });
   }
   const rootKey = `${key}::${rootFile ?? ''}`;
@@ -71,11 +73,95 @@ export function rootPreambleText(): string | null {
 }
 
 /**
+ * Files a preamble takes definitions from (\input, \include, a package
+ * the project has as a .sty of its own), by path: the text as last read and
+ * the listing's mtime when it was read.
+ */
+const included = new Map<string, { key: string; v: number | undefined; text: string | null; reading: boolean }>();
+const INCLUDE_DEPTH = 4;
+const INCLUDE_FILES = 40;
+const INCLUDE = /\\(input|include|usepackage|RequirePackage)(?![A-Za-z])\s*(?:\[[^\]]*\]\s*)?(?:\{([^{}]*)\}|([^\s{}\\%]+))/g;
+
+/** The project file `\input{name}` (or, `pkg`, `\usepackage{name}`) reads, as TeX run from the root file's folder finds it; null when there is none. */
+function includedPath(name: string, pkg: boolean): string | null {
+  if (!ctx || !files || files.key !== `${ctx.projectId}::${ctx.branch}`) return null;
+  const n = name.trim();
+  if (!n) return null;
+  for (const base of new Set([joinPath(ctx.rootDir, n), joinPath('', n)])) {
+    for (const ext of pkg ? ['.sty'] : ['', '.tex']) if (files.paths.has(base + ext)) return base + ext;
+  }
+  return null;
+}
+
+function readIncluded(path: string, entry: NonNullable<ReturnType<typeof included.get>>, v: number | undefined): void {
+  if (!ctx) return;
+  entry.reading = true;
+  api.readFile(ctx.projectId, ctx.branch, path)
+    .then((text) => {
+      const changed = text !== entry.text;
+      entry.text = text;
+      entry.v = v;
+      if (changed && included.get(path) === entry) pokeViews();
+    })
+    .catch(() => { entry.text ??= ''; entry.v = v; })
+    .finally(() => { entry.reading = false; });
+}
+
+/** An included file's text as last read. One never read, or changed since by the listing, is read again; views redraw when it arrives different. */
+function includedText(path: string): string {
+  const key = `${ctx!.projectId}::${ctx!.branch}`;
+  const v = files?.paths.get(path);
+  let entry = included.get(path);
+  if (!entry || entry.key !== key) {
+    entry = { key, v, text: null, reading: false };
+    included.set(path, entry);
+  }
+  if ((entry.text === null || entry.v !== v) && !entry.reading) readIncluded(path, entry, v);
+  return entry.text ?? '';
+}
+
+/**
+ * `preamble` with the project files it \input's (and the packages it loads
+ * that the project has itself) written in after each command, theirs in
+ * turn too, so their definitions count in the order TeX reads them. A file
+ * not read yet counts once it arrives.
+ */
+export function withIncludes(preamble: string | null): string | null {
+  if (preamble === null || !ctx) return preamble;
+  let budget = INCLUDE_FILES;
+  const expand = (text: string, depth: number, seen: Set<string>): string => text.replace(INCLUDE, (whole, cmd: string, braced?: string, bare?: string) => {
+    const pkg = cmd === 'usepackage' || cmd === 'RequirePackage';
+    if (pkg && braced === undefined) return whole;
+    let out = whole;
+    for (const name of pkg ? braced!.split(',') : [braced ?? bare ?? '']) {
+      const path = includedPath(name, pkg);
+      if (!path || seen.has(path) || depth >= INCLUDE_DEPTH || budget <= 0) continue;
+      budget--;
+      out += `\n${expand(stripComments(includedText(path)), depth + 1, new Set([...seen, path]))}\n`;
+    }
+    return out;
+  });
+  return expand(preamble, 0, new Set());
+}
+
+/**
  * The preamble that applies to `doc`: its own when it has one, otherwise
  * the root file's as last read (a chapter \input by main.tex), or null.
  */
 export function preambleFor(doc: string): string | null {
   return preambleOf(doc) ?? currentRoot();
+}
+
+let engine: string | null = null;
+
+/** The project's typesetting engine, as the project settings name it ('pdf', 'xelatex', 'lualatex'). */
+export function setVisualEngine(id: string | null): void {
+  engine = id;
+}
+
+/** Whether pasted Unicode math must become commands: pdfLaTeX (the default while the engine is unknown) cannot read it. */
+export function pasteNeedsSymbols(): boolean {
+  return engine !== 'xelatex' && engine !== 'lualatex';
 }
 
 /** Tells the person what a widget could not do ('error') or why it opened the source ('info'), once the widget that would say so is gone. */
@@ -96,6 +182,12 @@ export function setVisualFiles(projectId: string, branch: string, entries: Array
   const next = new Map(entries.map((e) => [e.path, e.mtime]));
   const prev = files;
   files = { key, paths: next };
+  // a file the formulas' macros come from changed: read it again, and redraw when it differs
+  for (const [path, entry] of included) {
+    if (entry.key === key && entry.text !== null && !entry.reading && entry.v !== next.get(path)) readIncluded(path, entry, next.get(path));
+  }
+  const root = ctx?.rootFile;
+  if (prev && prev.key === key && root && prev.paths.get(root) !== next.get(root)) rootPreamble?.load();
   if (prev && prev.key === key) {
     const sameFiles = prev.paths.size === next.size && entries.every((e) => prev.paths.has(e.path));
     if (sameFiles && [...figurePaths].every((p) => prev.paths.get(p) === next.get(p))) return;
@@ -108,6 +200,10 @@ export function setVisualFiles(projectId: string, branch: string, entries: Array
 /** When the project file at `path` last changed, as the listing says; undefined when it doesn't. */
 export function fileVersion(path: string): number | undefined {
   return files?.paths.get(path);
+}
+
+export function bibRevision(): number {
+  return bibRev;
 }
 
 /** "(Knuth 1984; Lamport 1994)" for a comma-separated key list, best effort. */

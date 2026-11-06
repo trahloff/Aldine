@@ -14,12 +14,62 @@ export function escapeLatex(text: string): string {
   return text.replace(/[\\&%$#_{}~^]/g, (c) => SPECIALS[c]);
 }
 
+/** Unicode math and Greek as math-mode LaTeX. */
+const UNICODE_MATH: Record<string, string> = {
+  α: '\\alpha', β: '\\beta', γ: '\\gamma', δ: '\\delta', ε: '\\varepsilon', ϵ: '\\epsilon', ζ: '\\zeta', η: '\\eta',
+  θ: '\\theta', ϑ: '\\vartheta', ι: '\\iota', κ: '\\kappa', λ: '\\lambda', μ: '\\mu', ν: '\\nu', ξ: '\\xi', ο: 'o',
+  π: '\\pi', ϖ: '\\varpi', ρ: '\\rho', ϱ: '\\varrho', σ: '\\sigma', ς: '\\varsigma', τ: '\\tau', υ: '\\upsilon',
+  φ: '\\varphi', ϕ: '\\phi', χ: '\\chi', ψ: '\\psi', ω: '\\omega',
+  Γ: '\\Gamma', Δ: '\\Delta', Θ: '\\Theta', Λ: '\\Lambda', Ξ: '\\Xi', Π: '\\Pi', Σ: '\\Sigma', Υ: '\\Upsilon',
+  Φ: '\\Phi', Ψ: '\\Psi', Ω: '\\Omega',
+  '≤': '\\le', '≥': '\\ge', '≠': '\\neq', '≈': '\\approx', '≡': '\\equiv', '∼': '\\sim', '≃': '\\simeq', '≅': '\\cong',
+  '∝': '\\propto', '≪': '\\ll', '≫': '\\gg', '≺': '\\prec', '≻': '\\succ', '⊥': '\\perp', '∥': '\\parallel', '∣': '\\mid',
+  '⊂': '\\subset', '⊃': '\\supset', '⊆': '\\subseteq', '⊇': '\\supseteq', '∈': '\\in', '∉': '\\notin', '∋': '\\ni',
+  '±': '\\pm', '∓': '\\mp', '×': '\\times', '÷': '\\div', '·': '\\cdot', '⋅': '\\cdot', '∗': '\\ast', '∘': '\\circ',
+  '∙': '\\bullet', '⊕': '\\oplus', '⊗': '\\otimes', '∪': '\\cup', '∩': '\\cap', '∧': '\\wedge', '∨': '\\vee',
+  '∖': '\\setminus', '−': '-', '∑': '\\sum', '∏': '\\prod', '∐': '\\coprod', '∫': '\\int', '∮': '\\oint', '√': '\\surd',
+  '∂': '\\partial', '∇': '\\nabla', '∞': '\\infty', '∅': '\\emptyset', '∀': '\\forall', '∃': '\\exists', '¬': '\\neg',
+  '′': "'", '″': "''", '‴': "'''", ℓ: '\\ell', ℏ: '\\hbar', ħ: '\\hbar', '℘': '\\wp', ℜ: '\\Re', ℑ: '\\Im', ℵ: '\\aleph',
+  '∠': '\\angle', '△': '\\triangle', '°': '^{\\circ}', '…': '\\ldots', '⋯': '\\cdots', '⋮': '\\vdots', '⋱': '\\ddots',
+  '→': '\\to', '←': '\\leftarrow', '↔': '\\leftrightarrow', '⇒': '\\Rightarrow', '⇐': '\\Leftarrow', '⇔': '\\Leftrightarrow',
+  '↦': '\\mapsto', '↑': '\\uparrow', '↓': '\\downarrow', '⟶': '\\longrightarrow', '⟹': '\\Longrightarrow',
+  µ: '\\mu', '⟨': '\\langle', '⟩': '\\rangle', '‖': '\\|', '⌈': '\\lceil', '⌉': '\\rceil', '⌊': '\\lfloor', '⌋': '\\rfloor',
+};
+
+/** Characters of UNICODE_MATH that pdfLaTeX's UTF-8 input typesets in text as they are. */
+const PDF_TEXT_OK = new Set('±×÷·°µ¬…→←↑↓');
+const PROSE_SYMBOL = new RegExp(`[${Object.keys(UNICODE_MATH).filter((c) => !PDF_TEXT_OK.has(c)).join('')}]`, 'gu');
+
+/**
+ * Prose as LaTeX: specials escaped and, with `symbols` (pdfLaTeX, whose
+ * input stops at a Greek letter or ≤), math symbols written as the commands
+ * that typeset them in text and math alike.
+ */
+export function proseLatex(text: string, symbols = false): string {
+  const escaped = escapeLatex(text);
+  return symbols ? escaped.replace(PROSE_SYMBOL, (c) => (/^[A-Za-z]$/.test(UNICODE_MATH[c]) ? UNICODE_MATH[c] : `\\ensuremath{${UNICODE_MATH[c]}}`)) : escaped;
+}
+
+/** Characters as math-mode LaTeX: symbols as commands, specials escaped. */
+function mathChars(text: string): string {
+  let out = '';
+  for (const c of text) {
+    const cmd = UNICODE_MATH[c];
+    if (cmd) out += /^\\[A-Za-z]+$/.test(cmd) ? `${cmd} ` : cmd;
+    else if (/[&%$#{}]/.test(c)) out += `\\${c}`;
+    else if (c === '\\') out += '\\backslash ';
+    else if (c === ' ') out += ' ';
+    else out += c;
+  }
+  return out;
+}
+
 /**
  * A stretch of pasted text that is LaTeX already, `[from, to)`. `percent`: a
  * `%` in it is a percent sign, since the stretch sits on one line where a
- * comment would swallow its own closing brace or `$`.
+ * comment would swallow its own closing brace or `$`. `math`: a formula.
  */
-export interface LatexRun { from: number; to: number; percent: boolean }
+export interface LatexRun { from: number; to: number; percent: boolean; math?: boolean }
 
 const LETTER = /[A-Za-z]/;
 const ARG_AHEAD = /[^\S\n]*[{[]/y;
@@ -63,7 +113,8 @@ function environment(t: string, i: number, nameAt: number, argsEnd: number): Lat
     depth += m[1] === 'begin' ? 1 : -1;
     if (depth) continue;
     const to = m.index + m[0].length;
-    return { from: i, to, percent: !VERBATIM_ENVS.test(env) && !t.slice(i, to).includes('\n') };
+    const verbatim = VERBATIM_ENVS.test(env);
+    return { from: i, to, percent: !verbatim && !t.slice(i, to).includes('\n'), math: !verbatim };
   }
   return null;
 }
@@ -96,7 +147,7 @@ function dollarMath(t: string, i: number): LatexRun | null {
   if (t[i + 1] === '$') {
     const close = t.indexOf('$$', i + 2);
     const body = close < 0 || t[i - 1] === '$' || t[close + 2] === '$' ? '' : t.slice(i + 2, close);
-    return /\S/.test(body) && !body.includes('$') ? { from: i, to: close + 2, percent: !body.includes('\n') } : null;
+    return /\S/.test(body) && !body.includes('$') ? { from: i, to: close + 2, percent: !body.includes('\n'), math: true } : null;
   }
   const close = t.indexOf('$', i + 1);
   if (close < 0) return null;
@@ -104,7 +155,7 @@ function dollarMath(t: string, i: number): LatexRun | null {
   if (body.includes('\n')) return null;
   const letterLed = /^[^\s\d]/.test(body) && /\S$/.test(body);
   const digitLed = /^\d/.test(body) && !/[\s\-+,./]$/.test(body) && /[A-Za-z^_\\{}=<>]/.test(body);
-  return letterLed || digitLed ? { from: i, to: close + 1, percent: true } : null;
+  return letterLed || digitLed ? { from: i, to: close + 1, percent: true, math: true } : null;
 }
 
 /** `\(…\)` on one line, or `\[…\]`. */
@@ -114,7 +165,7 @@ function delimitedMath(t: string, i: number): LatexRun | null {
   if (close < 0) return null;
   const body = t.slice(i + 2, close);
   if (!/\S/.test(body) || (!display && body.includes('\n'))) return null;
-  return { from: i, to: close + 2, percent: !body.includes('\n') };
+  return { from: i, to: close + 2, percent: !body.includes('\n'), math: true };
 }
 
 function runAt(t: string, i: number): LatexRun | null {
@@ -163,7 +214,29 @@ function isBlock(el: Element): boolean {
   return /^(p|div|h[1-6]|ul|ol|li|table|tr|blockquote|br|section|article)$/i.test(el.tagName);
 }
 
-const UNSEEN = /^(style|script|head|meta|title)$/i;
+const UNSEEN = /^(style|script|head|meta|title|del)$/i;
+
+/** A MathJax 2 script holding a formula's TeX source. */
+function texScript(el: Element): boolean {
+  return /^script$/i.test(el.tagName) && /^math\/tex\b/i.test(el.getAttribute('type') || '');
+}
+
+/**
+ * Elements whose text the paste leaves out: the page's machinery, deleted
+ * text (Word's tracked deletions), Word's own list numbers and bullets, and
+ * what is hidden from screen readers as a copy of something else (the drawn
+ * glyphs of a KaTeX or MathJax formula, Wikipedia's formula image).
+ */
+function unseen(el: Element): boolean {
+  if (UNSEEN.test(el.tagName) && !texScript(el)) return true;
+  if (el.getAttribute('aria-hidden') === 'true') return true;
+  return /mso-list:\s*Ignore/i.test(el.getAttribute('style') || '');
+}
+
+/** Elements that paste as one formula, whatever their text says. */
+function formulaElement(el: Element): boolean {
+  return /^math$/i.test(el.tagName) || texScript(el);
+}
 
 /**
  * What the clipboard's text nodes write, worked out over each line of the
@@ -174,7 +247,7 @@ const UNSEEN = /^(style|script|head|meta|title)$/i;
  */
 interface Lines { latex: Map<Node, string>; kept: Set<Node>; inFormula: Set<Element> }
 
-function readLines(root: Node): Lines {
+function readLines(root: Node, symbols: boolean): Lines {
   let text = '';
   const nodes: Array<{ node: Node; from: number; to: number }> = [];
   const blocks: Array<{ el: Element; at: number }> = [];
@@ -185,8 +258,12 @@ function readLines(root: Node): Lines {
       text += s;
       return;
     }
-    if (node.nodeType !== Node.ELEMENT_NODE || UNSEEN.test((node as Element).tagName)) return;
+    if (node.nodeType !== Node.ELEMENT_NODE || unseen(node as Element)) return;
     const el = node as Element;
+    if (formulaElement(el)) {
+      text += ' ';
+      return;
+    }
     const block = isBlock(el) || /^t[dh]$/i.test(el.tagName);
     if (block) text += '\n';
     el.childNodes.forEach(walk);
@@ -208,12 +285,12 @@ function readLines(root: Node): Lines {
       const run = runs[k];
       const a = Math.max(run.from, from);
       const b = Math.min(run.to, to);
-      out += escapeLatex(text.slice(at, a));
+      out += proseLatex(text.slice(at, a), symbols);
       for (let m = a; m < b; m++) out += run.percent && text[m] === '%' && text[m - 1] !== '\\' ? '\\%' : text[m];
       kept += b - a;
       at = b;
     }
-    lines.latex.set(node, out + escapeLatex(text.slice(at, to)));
+    lines.latex.set(node, out + proseLatex(text.slice(at, to), symbols));
     if (to > from && kept === to - from) lines.kept.add(node);
   }
   r = 0;
@@ -249,8 +326,12 @@ export function isCodeHtml(html: string): boolean {
 /**
  * Formatting already applied by an enclosing command, so nested runs don't
  * repeat it. `wrapped`: inside any command's argument. `url`: \url is defined.
+ * `symbols`: Unicode math is written as commands (pdfLaTeX).
  */
-interface Ctx { bold: boolean; italic: boolean; heading: boolean; wrapped: boolean; url: boolean; lines: Lines }
+interface Ctx {
+  bold: boolean; italic: boolean; heading: boolean; wrapped: boolean; url: boolean; symbols: boolean;
+  script: 'sup' | 'sub' | null; lines: Lines;
+}
 
 /** Whether all the text under `el` is LaTeX the paste spells out. */
 function keptWhole(el: Element, ctx: Ctx): boolean {
@@ -286,13 +367,107 @@ function styledItalic(el: Element): boolean | null {
   return s === 'italic' || s === 'oblique';
 }
 
-function convertChildren(node: Node, ctx: Ctx): string {
-  let out = '';
-  node.childNodes.forEach((child) => { out += convertNode(child, ctx); });
+/** Superscript or subscript as the tag or (Google Docs) the run's vertical-align says. */
+function styledScript(el: Element, tag: string): 'sup' | 'sub' | null {
+  if (tag === 'sup' || tag === 'sub') return tag;
+  const v = (el as HTMLElement).style?.verticalAlign;
+  return v === 'super' ? 'sup' : v === 'sub' ? 'sub' : null;
+}
+
+/** A paragraph of a desktop Word list: its level, and whether its marker is a number. */
+interface WordItem { el: Element; level: number; ordered: boolean }
+
+const WORD_LIST = /mso-list:\s*l\d+\s+level(\d+)/i;
+
+function wordItem(node: Node): WordItem | null {
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+  const el = node as Element;
+  const m = /^(p|div)$/i.test(el.tagName) ? WORD_LIST.exec(el.getAttribute('style') || '') : null;
+  if (!m) return null;
+  let marker = '';
+  const find = (n: Node): boolean => {
+    if (n.nodeType !== Node.ELEMENT_NODE) return false;
+    if (/mso-list:\s*Ignore/i.test((n as Element).getAttribute('style') || '')) {
+      marker = (n.textContent || '').replace(/[\s ]+/g, '');
+      return true;
+    }
+    return Array.from(n.childNodes).some(find);
+  };
+  find(el);
+  const ordered = /^[([]?(?:\d+(?:\.\d+)*[.)\]]?|[A-Za-z][.)\]]|[ivxlcdmIVXLCDM]+[.)\]])$/.test(marker);
+  return { el, level: Number(m[1]), ordered };
+}
+
+/** Word's list paragraphs as itemize/enumerate, nested by their levels. */
+function convertWordList(items: WordItem[], ctx: Ctx): string {
+  const open: Array<{ level: number; env: string }> = [];
+  let out = '\n';
+  for (const item of items) {
+    while (open.length && open[open.length - 1].level > item.level) out += `\\end{${open.pop()!.env}}\n`;
+    const top = open[open.length - 1];
+    if (!top || top.level < item.level) {
+      const env = item.ordered ? 'enumerate' : 'itemize';
+      open.push({ level: item.level, env });
+      out += `\\begin{${env}}\n`;
+    }
+    out += `\\item ${convertChildren(item.el, ctx).trim().replace(/\n{2,}/g, '\n')}\n`;
+  }
+  while (open.length) out += `\\end{${open.pop()!.env}}\n`;
   return out;
 }
 
+const blankText = (n: Node) => n.nodeType === Node.TEXT_NODE && !/\S/.test(n.textContent || '');
+
+/** A MathJax 2 formula's drawing, when the script after it holds the formula's TeX. */
+function mathJaxFrame(kids: Node[], i: number): boolean {
+  const el = kids[i];
+  if (el.nodeType !== Node.ELEMENT_NODE || !/\bMathJax/.test((el as Element).getAttribute('class') || '')) return false;
+  for (let j = i + 1; j < kids.length; j++) {
+    if (blankText(kids[j])) continue;
+    return kids[j].nodeType === Node.ELEMENT_NODE && texScript(kids[j] as Element);
+  }
+  return false;
+}
+
+function convertChildren(node: Node, ctx: Ctx): string {
+  let out = '';
+  const kids = Array.from(node.childNodes);
+  for (let i = 0; i < kids.length; i++) {
+    const first = wordItem(kids[i]);
+    if (first) {
+      const items = [first];
+      let j = i + 1;
+      for (; j < kids.length; j++) {
+        if (blankText(kids[j])) continue;
+        const item = wordItem(kids[j]);
+        if (!item) break;
+        items.push(item);
+      }
+      out += convertWordList(items, ctx);
+      i = j - 1;
+      continue;
+    }
+    if (mathJaxFrame(kids, i)) continue;
+    out += convertNode(kids[i], ctx);
+  }
+  return out;
+}
+
+/**
+ * arXiv's HTML (LaTeXML) lays a display equation out as a table: its parts
+ * in cells (an aligned one split at its `&`), its number in a cell of its
+ * own. Each row is one display formula.
+ */
+function equationTable(el: Element): string {
+  const rows = Array.from(el.querySelectorAll('tr')).map((tr) => Array.from(tr.querySelectorAll('td'))
+    .filter((td) => !/\bltx_eqn_eqno\b/.test(td.getAttribute('class') || ''))
+    .flatMap((td) => Array.from(td.querySelectorAll('math')).map((m) => mathmlSource(m).trim().replace(/^\\displaystyle\b\s*/, '')))
+    .join(' '));
+  return `\n${rows.map((tex) => formula(tex, true)).filter(Boolean).join('\n')}\n`;
+}
+
 function convertTable(el: Element, ctx: Ctx): string {
+  if (/\bltx_eqn/.test(el.getAttribute('class') || '')) return equationTable(el);
   const rows = Array.from(el.querySelectorAll('tr')).map((tr) =>
     Array.from(tr.querySelectorAll('td,th')).map((td) => convertChildren(td, ctx).trim().replace(/\n+/g, ' ')),
   ).filter((r) => r.length);
@@ -336,13 +511,175 @@ function heading(cmd: string, el: Element, ctx: Ctx): string {
   return `\n\\${cmd}{${convertChildren(el, { ...ctx, heading: true, wrapped: true }).trim()}}\n`;
 }
 
-function convertNode(node: Node, ctx: Ctx): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return ctx.lines.latex.get(node) ?? escapeLatex((node.textContent || '').replace(/\s+/g, ' '));
+/** Element children by tag name, namespace prefix included (`m:e`), case aside. */
+function childrenNamed(el: Element, name: string): Element[] {
+  const want = name.toLowerCase();
+  return Array.from(el.childNodes).filter((c): c is Element => c.nodeType === Node.ELEMENT_NODE && (c as Element).tagName.toLowerCase() === want);
+}
+
+/** `s` as a sub- or superscript's base: one token as it is, anything longer braced. */
+function base(s: string): string {
+  const t = s.trim();
+  return /^(?:[A-Za-z0-9]|\\[A-Za-z]+)$/.test(t) ? t : `{${t}}`;
+}
+
+/** Function names TeX sets upright as operators. */
+const MATH_FUNCTIONS = /^(?:sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|coth|arcsin|arccos|arctan|log|ln|lg|exp|lim|liminf|limsup|max|min|sup|inf|det|dim|ker|arg|deg|gcd|hom|Pr)$/;
+
+function operatorName(name: string): string {
+  const t = name.trim();
+  if (MATH_FUNCTIONS.test(t)) return `\\${t} `;
+  return /^[A-Za-z]{2,}$/.test(t) ? `\\mathrm{${t}}` : t;
+}
+
+/** Combining accents (and their spacing forms) as the accent commands. */
+const ACCENTS: Record<string, string> = {
+  '̂': 'hat', '^': 'hat', '̃': 'tilde', '~': 'tilde', '̇': 'dot', '˙': 'dot', '̈': 'ddot', '¨': 'ddot',
+  '⃗': 'vec', '→': 'vec', '̄': 'bar', '̅': 'bar', '¯': 'bar', '́': 'acute', '̀': 'grave', '̌': 'check',
+};
+
+const tidyMath = (tex: string) => tex.replace(/\s+/g, ' ').replace(/ ([}^_)\]])/g, '$1').trim();
+
+/** MathML as LaTeX, for a formula that carries no TeX of its own. */
+function mathmlTex(el: Element): string {
+  const kids = Array.from(el.childNodes).filter((c): c is Element => c.nodeType === Node.ELEMENT_NODE);
+  const sub = (i: number) => (kids[i] ? mathmlTex(kids[i]) : '');
+  const all = () => kids.map(mathmlTex).join('');
+  const text = (el.textContent || '').trim();
+  switch (el.tagName.toLowerCase().replace(/^\w+:/, '')) {
+    case 'mi': return text.length > 1 && !UNICODE_MATH[text] ? operatorName(text) : mathChars(text);
+    case 'mn': case 'mo': return mathChars(text);
+    case 'mtext': case 'ms': return text ? `\\mbox{${escapeLatex(text)}}` : '';
+    case 'mspace': return ' ';
+    case 'msup': return `${base(sub(0))}^{${sub(1)}}`;
+    case 'msub': return `${base(sub(0))}_{${sub(1)}}`;
+    case 'msubsup': case 'munderover': return `${base(sub(0))}_{${sub(1)}}^{${sub(2)}}`;
+    case 'munder': return `${base(sub(0))}_{${sub(1)}}`;
+    case 'mover': {
+      const accent = ACCENTS[(kids[1]?.textContent || '').trim()];
+      return accent ? `\\${accent}{${sub(0)}}` : `${base(sub(0))}^{${sub(1)}}`;
+    }
+    case 'mfrac': return `\\frac{${sub(0)}}{${sub(1)}}`;
+    case 'msqrt': return `\\sqrt{${all()}}`;
+    case 'mroot': return `\\sqrt[${sub(1)}]{${sub(0)}}`;
+    case 'mfenced': {
+      const open = el.getAttribute('open') ?? '(';
+      const close = el.getAttribute('close') ?? ')';
+      return `\\left${delimiter(open)} ${kids.map(mathmlTex).join(el.getAttribute('separators') ?? ',')} \\right${delimiter(close)}`;
+    }
+    case 'mtable': {
+      const rows = kids.map((tr) => Array.from(tr.childNodes).filter((c): c is Element => c.nodeType === Node.ELEMENT_NODE).map(mathmlTex));
+      const cols = Math.max(1, ...rows.map((r) => r.length));
+      return `\\begin{array}{${'c'.repeat(cols)}} ${rows.map((r) => r.join(' & ')).join(' \\\\ ')} \\end{array}`;
+    }
+    case 'semantics': return sub(0);
+    case 'annotation': case 'annotation-xml': case 'mphantom': return '';
+    default: return all();
   }
+}
+
+/** A delimiter character as what \left or \right takes. */
+function delimiter(c: string): string {
+  if (!c) return '.';
+  if (c === '{' || c === '}') return `\\${c}`;
+  return UNICODE_MATH[c] ?? c;
+}
+
+/** The TeX a MathML formula carries (an x-tex annotation, as KaTeX, Wikipedia and arXiv write it, or its alttext), or MathML read as LaTeX. */
+function mathmlSource(math: Element): string {
+  for (const a of math.querySelectorAll('annotation')) {
+    if (/^(?:application\/x-tex|tex|latex)$/i.test((a.getAttribute('encoding') || '').trim())) return a.textContent || '';
+  }
+  return math.getAttribute('alttext') ?? tidyMath(mathmlTex(math));
+}
+
+/** A formula's TeX as inline or display math; Wikipedia wraps its TeX in {\displaystyle …}. */
+function formula(tex: string, display: boolean): string {
+  let t = tex.trim();
+  const style = /^\{\s*\\(?:display|text)style\b([\s\S]*)\}$/.exec(t);
+  if (style) t = style[1].trim();
+  t = t.replace(/^\\displaystyle\b\s*/, '').replace(/\n\s*\n/g, '\n');
+  if (!t) return '';
+  return display ? `\\[ ${t} \\]` : `$${t.replace(/\s*\n\s*/g, ' ')}$`;
+}
+
+/** Word's equation (OMML) as LaTeX. Its HTML formatting wraps the parts and is passed through. */
+function ommlTex(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return mathChars(node.textContent || '');
   if (node.nodeType !== Node.ELEMENT_NODE) return '';
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
+  const inner = () => Array.from(el.childNodes).map(ommlTex).join('');
+  if (!tag.startsWith('m:')) return inner();
+  const part = (name: string) => childrenNamed(el, `m:${name}`).map(ommlTex).join('');
+  const prop = (pr: string, name: string): string | null => {
+    const holder = childrenNamed(el, `m:${pr}`)[0];
+    const p = holder && childrenNamed(holder, `m:${name}`)[0];
+    return p ? p.getAttribute('m:val') ?? '' : null;
+  };
+  const scripts = (tex: string, sub: string, sup: string) => `${tex}${sub.trim() ? `_{${sub}}` : ''}${sup.trim() ? `^{${sup}}` : ''}`;
+  switch (tag.slice(2)) {
+    case 'ssup': return `${base(part('e'))}^{${part('sup')}}`;
+    case 'ssub': return `${base(part('e'))}_{${part('sub')}}`;
+    case 'ssubsup': return `${base(part('e'))}_{${part('sub')}}^{${part('sup')}}`;
+    case 'spre': return `{}_{${part('sub')}}^{${part('sup')}}${base(part('e'))}`;
+    case 'f': return `\\frac{${part('num')}}{${part('den')}}`;
+    case 'rad': {
+      const deg = part('deg').trim();
+      return `\\sqrt${deg ? `[${deg}]` : ''}{${part('e')}}`;
+    }
+    case 'nary': return `${scripts(mathChars(prop('naryPr', 'chr') || '∫').trim(), part('sub'), part('sup'))} ${part('e')}`;
+    case 'd': {
+      const sep = mathChars(prop('dPr', 'sepChr') ?? ',');
+      const es = childrenNamed(el, 'm:e').map(ommlTex);
+      return `\\left${delimiter(prop('dPr', 'begChr') ?? '(')} ${es.join(sep)} \\right${delimiter(prop('dPr', 'endChr') ?? ')')}`;
+    }
+    case 'func': return `${operatorName(part('fName'))} ${part('e')}`;
+    case 'acc': return `\\${ACCENTS[prop('accPr', 'chr') ?? '̂'] ?? 'hat'}{${part('e')}}`;
+    case 'bar': return `\\${prop('barPr', 'pos') === 'bot' ? 'underline' : 'overline'}{${part('e')}}`;
+    case 'limlow': return scripts(operatorName(part('e')), part('lim'), '');
+    case 'limupp': return scripts(base(part('e')), '', part('lim'));
+    case 'm': {
+      const rows = childrenNamed(el, 'm:mr').map((mr) => childrenNamed(mr, 'm:e').map(ommlTex));
+      const cols = Math.max(1, ...rows.map((r) => r.length));
+      return `\\begin{array}{${'c'.repeat(cols)}} ${rows.map((r) => r.join(' & ')).join(' \\\\ ')} \\end{array}`;
+    }
+    case 'eqarr': return `\\begin{array}{l} ${childrenNamed(el, 'm:e').map(ommlTex).join(' \\\\ ')} \\end{array}`;
+    default: return /pr$/.test(tag) ? '' : inner();
+  }
+}
+
+/** Word's equations, which it writes into a conditional comment (its fallback image is useless off the author's disk). */
+function wordEquations(comment: string): string {
+  const m = /^\[if gte msEquation \d+\]>([\s\S]*)<!\[endif\]$/.exec(comment.trim());
+  if (!m) return '';
+  const out: string[] = [];
+  const visit = (el: Element) => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'm:omathpara') {
+      for (const math of childrenNamed(el, 'm:omath')) out.push(formula(tidyMath(ommlTex(math)), true));
+      return;
+    }
+    if (tag === 'm:omath') { out.push(formula(tidyMath(ommlTex(el)), false)); return; }
+    Array.from(el.childNodes).forEach((c) => { if (c.nodeType === Node.ELEMENT_NODE) visit(c as Element); });
+  };
+  // OMML closes empty elements XML-style (`<m:chr m:val="∑"/>`), which an HTML parser reads as an opening tag
+  const markup = m[1].replace(/<([a-z][\w:-]*)(\s[^<>]*?)?\/>/gi, '<$1$2></$1>');
+  visit(new DOMParser().parseFromString(markup, 'text/html').body);
+  return out.filter(Boolean).join(' ');
+}
+
+function convertNode(node: Node, ctx: Ctx): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return ctx.lines.latex.get(node) ?? proseLatex((node.textContent || '').replace(/\s+/g, ' '), ctx.symbols);
+  }
+  if (node.nodeType === Node.COMMENT_NODE) return wordEquations(node.textContent || '');
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'math') return formula(mathmlSource(el), el.getAttribute('display') === 'block');
+  if (texScript(el)) return formula(el.textContent || '', /mode\s*=\s*display/i.test(el.getAttribute('type') || ''));
+  if (unseen(el)) return '';
   switch (tag) {
     case 'h1': return heading('section', el, ctx);
     case 'h2': return heading('subsection', el, ctx);
@@ -366,10 +703,10 @@ function convertNode(node: Node, ctx: Ctx): string {
     case 'ol': return convertList(el, true, ctx);
     case 'table': return convertTable(el, ctx);
     case 'br': return '\n';
-    case 'style': case 'script': case 'head': case 'meta': case 'title': return '';
     default: {
       const bold = styledBold(el) ?? (tag === 'b' || tag === 'strong' ? true : null);
       const italic = styledItalic(el) ?? (tag === 'i' || tag === 'em' ? true : null);
+      const script = styledScript(el, tag);
       const wrappers: string[] = [];
       // An inline command around a paragraph break is a runaway argument (the
       // compile stops), so block content is never wrapped.
@@ -380,6 +717,7 @@ function convertNode(node: Node, ctx: Ctx): string {
         if (italic && !ctx.italic) { wrappers.push('textit'); next.italic = true; }
         if (tag === 'u') wrappers.push('underline');
         if (tag === 'code' || tag === 'tt') wrappers.push('texttt');
+        if (script && ctx.script !== script) { wrappers.push(script === 'sup' ? 'textsuperscript' : 'textsubscript'); next.script = script; }
       }
       if (wrappers.length) next.wrapped = true;
       let inner = convertChildren(el, next);
@@ -398,12 +736,15 @@ function convertNode(node: Node, ctx: Ctx): string {
 
 /**
  * `url`: whether the document defines \url; without it links keep their
- * address as escaped text. LaTeX the text spells out (latexRuns) stays as
- * written, and the prose around it is escaped.
+ * address as escaped text. `symbols`: write Unicode math as LaTeX commands,
+ * for pdfLaTeX. LaTeX the text spells out (latexRuns) stays as written, and
+ * the prose around it is escaped.
  */
-export function htmlToLatex(html: string, opts: { url?: boolean } = {}): string {
+export function htmlToLatex(html: string, opts: { url?: boolean; symbols?: boolean } = {}): string {
   const dom = new DOMParser().parseFromString(html, 'text/html');
-  return convertNode(dom.body, { bold: false, italic: false, heading: false, wrapped: false, url: opts.url ?? false, lines: readLines(dom.body) })
+  const symbols = opts.symbols ?? false;
+  const ctx: Ctx = { bold: false, italic: false, heading: false, wrapped: false, url: opts.url ?? false, symbols, script: null, lines: readLines(dom.body, symbols) };
+  return convertNode(dom.body, ctx)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

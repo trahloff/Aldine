@@ -93,6 +93,8 @@ export interface CodePaneHandle {
   /** Open the collab connection again, on a fresh socket: after a sign-in
    *  in place, so edits this tab holds reach the server. */
   reconnect(): void;
+  /** Changes the open document as `edit` says once it has synced, in one undo step of its own; `done` says whether anything changed. */
+  editDocument(edit: (text: string) => Array<{ from: number; to: number; insert: string }> | null, done?: (changed: boolean) => void): void;
 }
 
 /** Comment highlight decorations, updatable via an effect and tracking edits. */
@@ -245,6 +247,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     | null
   >(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoRef = useRef<Y.UndoManager | null>(null);
+  const pendingEdits = useRef<Array<() => void>>([]);
 
   const applyRange = (view: EditorView, from: number, to: number, quote: string, focus: boolean, context?: MatchContext) => {
     const r = reanchor(view.state.doc, { from, to, quote }, context);
@@ -335,6 +339,19 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     reconnect() {
       if (providerRef.current) reconnectProvider(providerRef.current);
     },
+    editDocument(edit, done) {
+      const run = () => {
+        const view = viewRef.current;
+        const changes = view ? edit(view.state.doc.toString()) : null;
+        if (!view || !changes?.length) { done?.(false); return; }
+        undoRef.current?.stopCapturing();
+        view.dispatch({ changes, userEvent: 'input' });
+        undoRef.current?.stopCapturing();
+        done?.(true);
+      };
+      if (viewRef.current && syncedRef.current) run();
+      else pendingEdits.current.push(run);
+    },
   }), []);
 
   // A layout effect: the view is in place before the browser paints the
@@ -366,7 +383,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     // Until the first sync the editor holds an empty document: an edit made to
     // it would land at the top of the file once the server's text arrives.
     const loadGate = new Compartment();
-    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, notify: (text, kind) => toastRef.current(text, kind) };
+    const deps: VisualDeps = { projectId, branch, rootFile, ydoc, awareness, undoManager, notify: (text, kind) => toastRef.current(text, kind) };
+    undoRef.current = undoManager;
     // First-seen times per agent client, so the presence tooltip can say when
     // the session started; entries drop with the awareness state so the next
     // session (same server-side clientID) gets a fresh start time. A start
@@ -522,6 +540,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         const s = clampSpot(back, view.state.doc.length);
         view.dispatch({ selection: spotSelection(s), effects: spotScroll(s) });
       }
+      for (const run of pendingEdits.current.splice(0)) run();
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.
@@ -560,6 +579,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       pendingGoto.current = null;
       document.removeEventListener('visibilitychange', keepSpot);
       undoManager.off('stack-item-popped', onPopped);
+      pendingEdits.current = [];
       ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
       provider.off('authenticationFailed', onDenied);

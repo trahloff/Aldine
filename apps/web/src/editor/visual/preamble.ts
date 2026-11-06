@@ -5,7 +5,7 @@
  */
 
 /** Drop %-comments (an escaped \% stays), so commented-out lines never count. */
-function stripComments(text: string): string {
+export function stripComments(text: string): string {
   return text.replace(/(^|[^\\])%.*$/gm, '$1');
 }
 
@@ -61,34 +61,62 @@ function skipSpace(text: string, i: number): number {
   return i;
 }
 
+/** A command name written `\name` or `{\name}` at `i`: the name and the index after it. */
+function commandName(text: string, i: number): { name: string; end: number } | null {
+  if (text[i] === '{') {
+    const g = group(text, i);
+    const n = g && /^\s*\\([A-Za-z]+)\s*$/.exec(g.body);
+    return g && n ? { name: n[1], end: g.end } : null;
+  }
+  const n = /^\\([A-Za-z]+)/.exec(text.slice(i));
+  return n ? { name: n[1], end: i + n[0].length } : null;
+}
+
+/**
+ * Bodies a formula renderer cannot expand: package internals (`@`), TeX's
+ * conditionals and definitions made inside a definition.
+ */
+const NOT_MATH = /@|\\(?:(?!iff(?![A-Za-z]))if[a-zA-Z]*|fi|else|or|expandafter|csname|endcsname|noexpand|futurelet|afterassignment|catcode|global|g?def|edef|xdef|let|(?:re)?newcommand|providecommand)(?![A-Za-z])/;
+
 /**
  * The macros a formula may use from the preamble: \newcommand,
  * \renewcommand and \providecommand without an optional argument (with up
- * to nine plain arguments), and \DeclareMathOperator. Anything else is left
- * out, and a formula using it keeps opening as source.
+ * to nine plain arguments), \DeclareMathOperator, \DeclarePairedDelimiter,
+ * \def and \gdef with plain `#1#2` parameters, and \let to another command.
+ * Anything else is left out, and a formula using it keeps opening as source.
  */
 export function preambleMacros(preamble: string | null): MacroSet {
   if (!preamble) return NO_MACROS;
   const defs: Record<string, MacroDef> = {};
-  const re = /\\(newcommand|renewcommand|providecommand|DeclareMathOperator)(\*?)/g;
+  const re = /\\(newcommand|renewcommand|providecommand|DeclareMathOperator|DeclarePairedDelimiter|g?def|let)(?![A-Za-z])(\*?)/g;
   for (let m = re.exec(preamble); m; m = re.exec(preamble)) {
-    let i = skipSpace(preamble, m.index + m[0].length);
-    let name: string | null = null;
-    if (preamble[i] === '{') {
-      const g = group(preamble, i);
-      const n = g && /^\s*\\([A-Za-z]+)\s*$/.exec(g.body);
-      if (!g || !n) continue;
-      name = n[1];
-      i = g.end;
-    } else {
-      const n = /^\\([A-Za-z]+)/.exec(preamble.slice(i));
-      if (!n) continue;
-      name = n[1];
-      i += n[0].length;
+    const kind = m[1];
+    const cmd = commandName(preamble, skipSpace(preamble, m.index + m[0].length));
+    if (!cmd || cmd.name.includes('@')) continue;
+    const { name } = cmd;
+    let i = skipSpace(preamble, cmd.end);
+    if (kind === 'let') {
+      if (preamble[i] === '=') i = skipSpace(preamble, i + 1);
+      const to = /^\\([A-Za-z]+)(?![A-Za-z])/.exec(preamble.slice(i));
+      if (to && to[1] !== 'relax' && !to[1].includes('@')) defs[name] = { def: `\\${to[1]}`, args: 0 };
+      continue;
     }
-    i = skipSpace(preamble, i);
     let args = 0;
-    if (m[1] !== 'DeclareMathOperator') {
+    if (kind === 'def' || kind === 'gdef') {
+      // only #1#2… in order: delimited parameters (\def\x#1.{…}) have no counterpart in a formula renderer
+      const params = /^(?:#[1-9])*/.exec(preamble.slice(i))![0];
+      if (params !== Array.from({ length: params.length / 2 }, (_, k) => `#${k + 1}`).join('')) continue;
+      args = params.length / 2;
+      i += params.length;
+      if (preamble[i] !== '{') continue;
+    } else if (kind === 'DeclarePairedDelimiter') {
+      const open = group(preamble, i);
+      const close = open && group(preamble, skipSpace(preamble, open.end));
+      if (!open || !close) continue;
+      re.lastIndex = close.end;
+      defs[name] = { def: `${open.body.trim()} #1 ${close.body.trim()}`, args: 1 };
+      continue;
+    } else if (kind !== 'DeclareMathOperator') {
       const a = /^\[\s*([0-9])\s*\]/.exec(preamble.slice(i));
       if (a) {
         args = Number(a[1]);
@@ -99,10 +127,11 @@ export function preambleMacros(preamble: string | null): MacroSet {
     const body = group(preamble, i);
     if (!body) continue;
     re.lastIndex = body.end;
+    if (NOT_MATH.test(body.body)) continue;
     // a body that names an argument it does not take is not a definition TeX accepts
     if ([...body.body.matchAll(/#([0-9])/g)].some((x) => Number(x[1]) < 1 || Number(x[1]) > args)) continue;
-    const def = m[1] === 'DeclareMathOperator' ? `\\operatorname${m[2]}{${body.body}}` : body.body;
-    if (m[1] === 'providecommand' && defs[name]) continue;
+    const def = kind === 'DeclareMathOperator' ? `\\operatorname${m[2]}{${body.body}}` : body.body;
+    if (kind === 'providecommand' && defs[name]) continue;
     defs[name] = { def, args };
   }
   const names = Object.keys(defs).sort();

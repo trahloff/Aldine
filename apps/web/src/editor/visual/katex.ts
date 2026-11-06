@@ -28,6 +28,9 @@ export function katexReady(): boolean {
   return katex !== null;
 }
 
+/** What KaTeX draws it cannot typeset in: muted, not an alarm. The widget's title says why. */
+export const UNDRAWN_COLOR = 'var(--text-2)';
+
 const cache = new Map<string, string>();
 const CACHE_MAX = 500;
 
@@ -66,7 +69,7 @@ export function renderMath(source: string, displayMode: boolean, macros: MacroSe
     // MathML is what screen readers read; KaTeX hides its HTML copy from them
     // a fresh map each time: KaTeX writes \gdef definitions into the one it gets
     const katexMacros = Object.fromEntries(Object.entries(macros.defs).map(([name, m]) => [`\\${name}`, m.def]));
-    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, output: 'htmlAndMathml', macros: katexMacros });
+    html = katex.renderToString(cleaned, { displayMode, throwOnError: false, errorColor: UNDRAWN_COLOR, output: 'htmlAndMathml', macros: katexMacros });
   } catch {
     return ''; // signals render failure → widget falls back to raw source
   }

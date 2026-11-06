@@ -1,6 +1,11 @@
 /** Plain-English hints for the most common LaTeX errors. */
 
+/** pdfLaTeX's error for a character its input encoding cannot typeset (a Greek letter, ≤). */
+const UNICODE_CHAR = /Unicode character (\S+) \(U\+[0-9A-F]+\)/i;
+
 const HINTS: Array<{ re: RegExp; hint: string }> = [
+  { re: UNICODE_CHAR, hint: 'pdfLaTeX can’t typeset “$1”. Typeset with XeLaTeX and a font that has it, or write it as a LaTeX command (pasting in Visual mode does this for you).' },
+  { re: /Missing character: There is no (\S+) /, hint: 'The font has no “$1”, so the PDF leaves it out. Choose a font that has it with \\setmainfont (fontspec), or write it as a LaTeX command.' },
   { re: /Undefined control sequence/i, hint: 'A command isn’t defined — check its spelling, or add the \\usepackage that provides it.' },
   { re: /Missing \$ inserted/i, hint: 'Math content outside math mode — wrap symbols like _ ^ \\alpha in $…$.' },
   { re: /File `?([^']+?)\.sty'? not found/i, hint: 'The package “$1” isn’t in this server’s TeX Live image (or is misspelled in \\usepackage). Self-hosting? Add “RUN tlmgr install $1” to a derived compiler image (README: “Need a package it does not have?”), or set ALDINE_TEXLIVE=-full and pull again to get all of TeX Live.' },
@@ -25,4 +30,9 @@ export function hintFor(message: string): string | null {
     if (m) return hint.replace(/\$(\d)/g, (_, i) => m[Number(i)] ?? '');
   }
   return null;
+}
+
+/** Whether the error is one another engine fixes: pdfLaTeX stopping at a Unicode character. */
+export function offersUnicodeEngine(message: string): boolean {
+  return UNICODE_CHAR.test(message);
 }

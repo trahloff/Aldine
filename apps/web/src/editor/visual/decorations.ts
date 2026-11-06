@@ -55,11 +55,11 @@ const headingRun = Decoration.mark({ class: 'cm-vis-hrun' });
 const urlMark = Decoration.mark({ class: 'cm-vis-url' });
 
 /** Escapes that typeset as one character: `\%` → %. `\\` and `\ ` are not among them. */
-const CTRL_SYMBOLS: Record<string, string> = {
+export const CTRL_SYMBOLS: Record<string, string> = {
   '\\%': '%', '\\&': '&', '\\$': '$', '\\#': '#', '\\_': '_', '\\{': '{', '\\}': '}',
 };
 /** Control words that typeset as one character, written bare or with an empty `{}`. */
-const CTRL_WORDS: Record<string, string> = {
+export const CTRL_WORDS: Record<string, string> = {
   '\\ldots': '…', '\\dots': '…', '\\textellipsis': '…',
   '\\textasciitilde': '~', '\\textasciicircum': '^', '\\textbackslash': '\\',
 };
@@ -304,7 +304,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         if (!begin || !end || end.to !== n.to) return;
         const model = tableModel(doc, n.node);
         const source = doc.sliceString(n.from, n.to);
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: model ? new TableWidget(model, source) : tableChip(''), closed: true }));
+        emit.atomic(n.from, n.to, Decoration.replace({ widget: model ? new TableWidget(model, source, macros) : tableChip(''), closed: true }));
         return false;
       }
 
