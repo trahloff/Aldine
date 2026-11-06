@@ -5,28 +5,35 @@ const put = (request: import('@playwright/test').APIRequestContext, id: string, 
   request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path, content } });
 
 /**
- * The sidebar keeps three tabs of its own (Files, Cite, Review) and one More
- * menu for the rest, History included; it folds to a rail and remembers that,
+ * The sidebar keeps its own tabs (Files, Search, History, Cite, Review) and
+ * one More menu for the other panels; it folds to a rail and remembers that,
  * and its divider sets its width (#193).
  */
 test.describe('sidebar', () => {
-  test('Files, Cite and Review are tabs; History is in More', async ({ page, request }) => {
+  test('Files, Search, History, Cite and Review are tabs; the other panels are in More', async ({ page, request }) => {
     const id = await createProject(request, 'Sidebar Tabs');
     try {
       await openProject(page, id);
       await expect(page.getByTestId('tab-plugin:references')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId('tab-plugin:references')).toHaveText('Cite');
-      await expect(page.getByTestId('tab-history')).toHaveCount(0);
+      // History is one click away, where Overleaf people look for it
+      await expect(page.getByTestId('tab-history')).toBeVisible();
+      await expect(page.getByTestId('tab-history')).toHaveAttribute('aria-label', 'History');
       // one row: every tab at the same height
       const tops = await page.locator('.sidebar__tabs > *').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
       expect(new Set(tops).size).toBe(1);
+      // More is a ⋯ until one of its panels is open
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels');
 
-      await page.getByTestId('tab-more').click();
-      await expect(page.getByTestId('tab-more-menu').getByTestId('tab-plugin:zotero')).toBeVisible();
       await page.getByTestId('tab-history').click();
       await expect(page.getByTestId('history-panel')).toBeVisible();
-      await expect(page.getByTestId('tab-more')).toHaveText(/^History/);
-      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('tab-history')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-selected', 'false');
+
+      await page.getByTestId('tab-more').click();
+      const menu = page.getByTestId('tab-more-menu');
+      await expect(menu.getByTestId('tab-plugin:zotero')).toBeVisible();
+      await expect(menu.getByTestId('tab-history')).toHaveCount(0);
     } finally { await cleanup(request, id); }
   });
 

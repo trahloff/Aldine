@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, ReplaceResult, SearchMatch, SearchQuery, SearchResult } from '../api';
 import { useDialogs } from './Dialogs';
 import { useToast } from './Toast';
-import { fileIcon, IconChevronRight, IconRefresh, IconReplace, IconX } from './Icons';
+import { fileIcon, IconChevronRight, IconRefresh, IconReplace, IconTrash, IconX } from './Icons';
 import { safeStorage } from '../util/safeStorage';
 
 /** Match case / whole word / regex, remembered per browser; the query is not. */
@@ -260,9 +260,10 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
     }
   };
 
-  const del = replacement === '';
+  /** Nothing to replace with: the rows offer nothing, and Replace all waits. Deleting is its own action. */
+  const empty = replacement === '';
   const replaceOne = async (path: string, m: SearchMatch) => {
-    if (!shown || busy || shown.branch !== branch) return;
+    if (!shown || busy || shown.branch !== branch || empty) return;
     const file = shown.result.files.find((f) => f.path === path);
     if (!file) return;
     const same = file.matches.filter((x) => x.text === m.text);
@@ -272,20 +273,26 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
     setBusy(true);
     try {
       const target = { path, text: m.text, preview: m.preview, ordinal: same.indexOf(m), count: same.length, alike };
-      onReplaced(await api.replace(projectId, branch, shown.query, replacement, { match: target }, author), del);
+      onReplaced(await api.replace(projectId, branch, shown.query, replacement, { match: target }, author), false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) toast('That match changed — results updated');
-      else toast(`Could not ${del ? 'delete' : 'replace'}: ${(err as Error).message}`, 'error');
+      else toast(`Could not replace: ${(err as Error).message}`, 'error');
     } finally {
       setBusy(false);
       rerunAfterReplace(Math.max(0, at));
     }
   };
 
-  const canReplaceAll = !!shown && shown.branch === branch && files.length > 0 && !busy && !truncated;
-  const replaceAll = async () => {
-    if (!shown || !canReplaceAll) return;
+  const canActOnAll = !!shown && shown.branch === branch && files.length > 0 && !busy && !truncated;
+  /** Every match shown, replaced with the text in the field, or deleted. */
+  const replaceAll = async (del: boolean) => {
+    if (!del && empty) {
+      if (canActOnAll) toast('Type what to replace the matches with, or use Delete matches');
+      return;
+    }
+    if (!shown || !canActOnAll) return;
     const q = shown.query;
+    const withText = del ? '' : replacement;
     const names = files.map((f) => f.path);
     const where = names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
     const ok = await dialogs.confirm({
@@ -297,7 +304,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
     if (!ok) return;
     setBusy(true);
     try {
-      onReplaced(await api.replace(projectId, branch, q, replacement, { paths: names }, author), del);
+      onReplaced(await api.replace(projectId, branch, q, withText, { paths: names }, author), del);
     } catch (err) {
       toast(`Could not ${del ? 'delete' : 'replace'}: ${(err as Error).message}`, 'error');
     } finally {
@@ -306,7 +313,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
     }
   };
 
-  const diff = !!shown && !shown.query.regex && !del;
+  const diff = !!shown && !shown.query.regex && !empty;
   const large = shown?.result.skipped.large ?? [];
   const largeCount = shown?.result.skipped.largeCount ?? large.length;
   const longMatches = shown?.result.skipped.longMatches ?? 0;
@@ -321,9 +328,11 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
   const announcement = !query || searching || !shown ? ''
     : shown.result.files.length === 0 ? `No results for “${shown.query.q}”`
       : [summary, leftOut ? `${count(leftOut, 'file')} left out` : '', truncatedNote, largeNote, longNote].filter(Boolean).join('. ');
-  const replaceAllTitle = truncated === 'matches' ? 'Too many matches to replace at once — narrow the search'
-    : truncated === 'bytes' ? 'Too much text searched to replace at once — narrow the search'
-      : manual ? 'Replace every match shown; the changes wait in History for your commit' : 'Replace every match shown, as one commit';
+  const tooMuch = truncated === 'matches' ? 'Too many matches to change at once — narrow the search'
+    : truncated === 'bytes' ? 'Too much text searched to change at once — narrow the search' : '';
+  const replaceAllTitle = tooMuch || (empty ? 'Type what to replace the matches with first'
+    : manual ? 'Replace every match shown; the changes wait in History for your commit' : 'Replace every match shown, as one commit');
+  const deleteAllTitle = tooMuch || (manual ? 'Delete every match shown; the changes wait in History for your commit' : 'Delete every match shown, as one commit you can undo');
   const setRef = (key: string) => (el: HTMLElement | null) => { if (el) itemRefs.current.set(key, el); else itemRefs.current.delete(key); };
 
   return (
@@ -364,17 +373,27 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
           autoComplete="off"
           data-testid="search-replace-input"
           onChange={(e) => setReplacement(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void replaceAll(); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void replaceAll(false); } }}
         />
         {/* aria-disabled, not disabled: the confirm hands focus back to this button as it closes */}
         <button
           className="btn btn--small"
-          aria-disabled={!canReplaceAll}
+          aria-disabled={!canActOnAll || empty}
           title={replaceAllTitle}
           data-testid="search-replace-all"
-          onClick={() => void replaceAll()}
+          onClick={() => void replaceAll(false)}
         >
           Replace all
+        </button>
+        <button
+          className="btn btn--small search__delete-all"
+          aria-disabled={!canActOnAll}
+          title={deleteAllTitle}
+          aria-label="Delete matches"
+          data-testid="search-delete-all"
+          onClick={() => void replaceAll(true)}
+        >
+          <IconTrash />
         </button>
       </div>
 
@@ -476,20 +495,22 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
                             {text.slice(0, start)}
                             {diff
                               ? <><del>{text.slice(start, end)}</del><ins>{replacement}</ins></>
-                              : <mark className={del ? 'search__mark--delete' : undefined}>{text.slice(start, end)}</mark>}
+                              : <mark>{text.slice(start, end)}</mark>}
                             {text.slice(end)}
                           </span>
-                          <button
-                            className="search__icon-btn search__replace-one"
-                            title={del ? 'Delete this match' : 'Replace this match'}
-                            aria-label={del ? 'Delete this match' : 'Replace this match'}
-                            tabIndex={tabStop === key ? 0 : -1}
-                            aria-disabled={busy}
-                            data-testid="search-replace-one"
-                            onClick={(e) => { e.stopPropagation(); void replaceOne(f.path, m); }}
-                          >
-                            {del ? <IconX /> : <IconReplace />}
-                          </button>
+                          {!empty && (
+                            <button
+                              className="search__icon-btn search__replace-one"
+                              title="Replace this match"
+                              aria-label="Replace this match"
+                              tabIndex={tabStop === key ? 0 : -1}
+                              aria-disabled={busy}
+                              data-testid="search-replace-one"
+                              onClick={(e) => { e.stopPropagation(); void replaceOne(f.path, m); }}
+                            >
+                              <IconReplace />
+                            </button>
+                          )}
                         </div>
                       );
                     })}

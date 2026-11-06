@@ -1,24 +1,25 @@
-/** Renders a unified git patch with per-line coloring. The four git header
- *  lines of each file (diff --git, index, ---, +++) collapse into one row
- *  naming the file: the reader is a researcher, not a git user. */
+import { useMemo } from 'react';
+import { parsePatch } from '../util/patch';
+
+/** Renders a unified git patch with per-line coloring and, inside an edited
+ *  line, the words that changed. The git header lines of each file collapse
+ *  into one row naming the file: the reader is a researcher, not a git user. */
 export default function DiffView({ patch }: { patch: string }) {
+  const lines = useMemo(() => parsePatch(patch), [patch]);
   if (!patch.trim()) return <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', padding: 8 }}>No changes in this commit.</p>;
-  const lines = patch.split('\n');
   return (
     <pre className="diff" data-testid="diff-view">
       {lines.map((l, i) => {
-        let cls = 'diff__ctx';
-        let text = l || ' ';
-        if (l.startsWith('diff --git')) {
-          cls = 'diff__file';
-          const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
-          text = m ? (m[1] === m[2] ? m[1] : `${m[1]} → ${m[2]}`) : l;
-        } else if (l.startsWith('index ') || l.startsWith('--- ') || l.startsWith('+++ ') || l.startsWith('new file mode') || l.startsWith('deleted file mode')) {
-          return null;
-        } else if (l.startsWith('@@')) cls = 'diff__hunk';
-        else if (l.startsWith('+')) cls = 'diff__add';
-        else if (l.startsWith('-')) cls = 'diff__del';
-        return <div key={i} className={cls}>{text}</div>;
+        if ((l.kind === 'add' || l.kind === 'del') && l.words) {
+          const Mark = l.kind === 'add' ? 'ins' : 'del';
+          return (
+            <div key={i} className={`diff__${l.kind}`}>
+              {l.text[0]}
+              {l.words.map((s, k) => (s.changed ? <Mark key={k} className="diff__word" data-testid="diff-word">{s.text}</Mark> : s.text))}
+            </div>
+          );
+        }
+        return <div key={i} className={`diff__${l.kind}`}>{l.text}</div>;
       })}
     </pre>
   );

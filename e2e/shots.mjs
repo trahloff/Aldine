@@ -127,7 +127,6 @@ for (const scheme of ['light', 'dark']) {
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
     await p.getByTestId('pdf-status').getByText(/Typeset in/).waitFor({ timeout: 120000 }).catch(() => {});
     await p.waitForSelector('canvas.pdf-page', { timeout: 120000 }).catch(() => {});
-    await p.getByTestId('tab-more').click();
     await p.getByTestId('tab-history').click();
     await p.waitForTimeout(400);
   });

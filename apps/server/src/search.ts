@@ -5,6 +5,7 @@ import * as gitops from './gitops.js';
 import { openDocContent, flushBranchDocs, applyEditsToDoc, refreshBranchDocsFromDisk, bumpFilesSignal, notifyCommitted, scheduleCommit, docView, withCrlf, inFileLineEndings } from './collab.js';
 import { cleanCommitMessage, importPath, looksBinary, safeJoin } from './util.js';
 import { searchGate, searchSlots } from './ratelimit.js';
+import { saveImage } from './undoImages.js';
 import { buildPattern, rebaseMatches, type MatchTarget, type PickResult, type ScanInput, type ScanLimits, type ScanMatch, type ScanResult, type SearchOptions, type WorkerJob } from './search-scan.js';
 
 export const SEARCH_LIMITS = {
@@ -250,6 +251,8 @@ export interface ReplaceResponse {
   files: Array<{ path: string; replaced: number; skipped: number }>;
   commit: string | null;
   pending: boolean;
+  /** With manual commits: the token that undoes the replace (undoImages), null when none was kept. */
+  undo?: string | null;
 }
 
 /** A project-relative path a replace may touch: no `..`, no hidden segment. */
@@ -416,9 +419,13 @@ export async function replaceInProject(projectId: string, branch: string, body: 
         scheduleCommit(projectId, branch);
       }
     }
+    // No commit to revert: what the files held is kept for the undo instead.
+    const undo = manual && written.length
+      ? await saveImage(projectId, branch, written.map((w) => ({ path: w.path, before: Buffer.from(w.before), after: Buffer.from(w.after) }))).catch(() => null)
+      : null;
     // After the commit, so a client refetching History on the signal sees it.
     if (written.length) bumpFilesSignal(projectId, branch);
     files.sort((a, b) => a.path.localeCompare(b.path));
-    return { replaced, skipped, files, commit, pending: manual && written.length > 0 };
+    return { replaced, skipped, files, commit, pending: manual && written.length > 0, ...(manual ? { undo } : {}) };
   });
 }

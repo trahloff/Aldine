@@ -1,33 +1,48 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, BranchInfo } from '../api';
+import { api, BranchInfo, localUser } from '../api';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
+import Modal from './Modal';
 import { useExitGhost } from '../exitGhost';
 import { usePopover } from '../util/usePopover';
 import { copySeen } from '../util/agentSeen';
+import { askWaitingCommit } from '../util/waitingCommit';
 
 export const BranchIcon = () => (
   <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zm-2.25.75a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.492 2.492 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25zM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM3.5 3.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0z"/></svg>
 );
 
 /** The project's own branches (a worktree each, on this server): list,
- *  create, merge into main, delete. */
-export function useLocalBranches({ projectId, current, onSwitch, onChanged, close }: {
+ *  create, merge into main, delete. `dialog` is the merge-conflict dialog,
+ *  for the caller to render outside its menu. `manual`: the project commits
+ *  by hand, so edits still waiting are committed under a message the person
+ *  gives before a branch or a merge takes them along. */
+export function useLocalBranches({ projectId, current, onSwitch, onChanged, close, manual = false }: {
   projectId: string;
   current: string;
   onSwitch(name: string): void;
   onChanged(): void;
   close(): void;
+  manual?: boolean;
 }) {
   const [branches, setBranches] = useState<BranchInfo[]>([]);
+  /** A merge into main that stopped on conflicts: the branch and the files. */
+  const [conflict, setConflict] = useState<{ from: string; files: string[] } | null>(null);
+  const [bringing, setBringing] = useState(false);
   const toast = useToast();
   const dialogs = useDialogs();
 
   const load = () => api.branches(projectId).then(setBranches).catch(() => {});
 
+  /** The message for the edits waiting on `on`; undefined: none wait; null: cancelled. */
+  const waiting = (on: string[], before: string, confirmLabel: string) =>
+    (manual ? askWaitingCommit(dialogs, projectId, on, { before, confirmLabel }) : Promise.resolve(undefined));
+
   const create = async (n: string) => {
+    const checkpoint = await waiting([current], 'branching', 'Commit and create branch');
+    if (checkpoint === null) return false;
     try {
-      await api.createBranch(projectId, n, current);
+      await api.createBranch(projectId, n, current, checkpoint ? { message: checkpoint, author: localUser().name } : undefined);
       // Before the switch: the new branch's first open reads this mark.
       copySeen(projectId, current, n);
       close();
@@ -68,20 +83,68 @@ export function useLocalBranches({ projectId, current, onSwitch, onChanged, clos
     }
     const body = `${what ? `${what} into main. ` : ''}Everyone working on main sees them.`;
     if (!(await dialogs.confirm({ title: `Merge ${from} into main?`, body, confirmLabel: 'Merge into main' }))) return;
+    const checkpoint = await waiting([from, 'main'], 'merging', 'Commit and merge');
+    if (checkpoint === null) return;
     try {
-      const res = await api.merge(projectId, from, 'main');
+      const res = await api.merge(projectId, from, 'main', localUser().name, checkpoint ? { checkpoint } : undefined);
       if (res.ok) {
         toast(`Merged ${from} into main`, 'ok');
         close();
         onSwitch('main');
         onChanged();
+      } else if (res.conflicts?.length) {
+        close();
+        setConflict({ from, files: res.conflicts });
       } else {
-        toast(res.conflicts?.length ? `Merge conflicts in: ${res.conflicts.join(', ')}` : 'Merge failed', 'error');
+        toast(res.message ? `Could not merge ${from} into main: ${res.message}` : `Could not merge ${from} into main`, 'error');
       }
     } catch (err: any) {
-      toast(`Merge failed: ${err.message}`, 'error');
+      toast(`Could not merge ${from} into main: ${err.message}`, 'error');
     }
   };
+
+  /** Main's changes into the branch, both versions kept where they collide:
+   *  the person settles them on the branch, then merges into main cleanly. */
+  const bringMainIn = async () => {
+    if (!conflict || bringing) return;
+    const into = conflict.from;
+    const checkpoint = await waiting(['main', into], 'bringing main in', 'Commit and bring main in');
+    if (checkpoint === null) return;
+    setBringing(true);
+    try {
+      const res = await api.merge(projectId, 'main', into, localUser().name, { keepConflicts: true, ...(checkpoint ? { checkpoint } : {}) });
+      if (!res.ok) {
+        toast(res.message ? `Could not bring main into ${into}: ${res.message}` : `Could not bring main into ${into}`, 'error');
+        return;
+      }
+      setConflict(null);
+      if (current !== into) onSwitch(into);
+      onChanged();
+      const marked = res.conflicts?.length ?? 0;
+      toast(marked ? `Brought main into ${into}: ${marked === 1 ? '1 file holds' : `${marked} files hold`} both versions` : `Brought main into ${into}`, 'ok');
+    } catch (err: any) {
+      toast(`Could not bring main into ${into}: ${err.message}`, 'error');
+    } finally {
+      setBringing(false);
+    }
+  };
+
+  const dialog = conflict && (
+    <Modal onClose={() => setConflict(null)} label={`${conflict.from} and main changed the same lines`} width={480} testId="merge-conflict-dialog">
+      <h2 style={{ marginBottom: 8 }}>{conflict.from} and main changed the same lines</h2>
+      <p className="modal__sub">Nothing was merged. Both branches changed {conflict.files.length === 1 ? 'this file' : 'these files'}:</p>
+      <ul className="conflict__list" data-testid="merge-conflict-files">{conflict.files.map((f) => <li key={f}>{f}</li>)}</ul>
+      <p style={{ fontSize: 'var(--text-s)', color: 'var(--text-2)', lineHeight: 1.5 }}>
+        Bring main into {conflict.from} to settle them there. Each of these files then holds both versions, between lines of
+        {' '}<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> and <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>. Keep the text you want, delete the rest
+        and the marks, then merge {conflict.from} into main again.
+      </p>
+      <div className="modal__row" style={{ marginTop: 12 }}>
+        <button className="btn" onClick={() => setConflict(null)} data-testid="merge-conflict-cancel">Cancel</button>
+        <button className="btn btn--primary" onClick={() => void bringMainIn()} aria-disabled={bringing} data-testid="merge-conflict-bring-main">Bring main into {conflict.from}</button>
+      </div>
+    </Modal>
+  );
 
   const remove = async (n: string) => {
     // Deleting is permanent (git branch -D, no reflog surfaced anywhere), so
@@ -106,7 +169,7 @@ export function useLocalBranches({ projectId, current, onSwitch, onChanged, clos
     onChanged();
   };
 
-  return { branches, load, create, mergeIntoMain, remove };
+  return { branches, load, create, mergeIntoMain, remove, dialog };
 }
 
 export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete, readOnly = false }: {
@@ -181,7 +244,7 @@ export function NewBranch({ from, onCreate, blocked }: { from: string; onCreate(
 
 /** The branch pill of a project that lives only on this server. A linked
  *  project gets RemoteSync instead, which folds the git host in. */
-export default function BranchMenu({ projectId, current, onSwitch, onChanged, onPublish, readOnly = false }: {
+export default function BranchMenu({ projectId, current, onSwitch, onChanged, onPublish, readOnly = false, manual = false }: {
   projectId: string;
   current: string;
   onSwitch(name: string): void;
@@ -190,10 +253,12 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
   onPublish?: () => void;
   /** A read-only showcase: its branches can be opened, not created, merged or deleted. */
   readOnly?: boolean;
+  /** The project commits by hand. */
+  manual?: boolean;
 }) {
   const pop = usePopover();
   const leave = useExitGhost();
-  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close });
+  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close, manual });
   useEffect(() => { if (pop.open) local.load(); }, [pop.open, projectId]);
 
   return (
@@ -232,6 +297,7 @@ export default function BranchMenu({ projectId, current, onSwitch, onChanged, on
           )}
         </div>
       )}
+      {local.dialog}
     </div>
   );
 }

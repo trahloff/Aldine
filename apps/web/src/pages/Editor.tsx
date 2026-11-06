@@ -27,7 +27,7 @@ import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronLeft, IconChevronRight, IconDownload, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconDownload, IconEllipsis, IconHistory, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -44,6 +44,7 @@ import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import { mergeAgentBatches, type AgentBatch } from '../util/agentReview';
+import { askWaitingCommit } from '../util/waitingCommit';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
@@ -76,8 +77,8 @@ const STOP_AFTER_MS = 1000;
  *  Claude wrote hundreds of commits into shows a count, not a wall. */
 const AGENT_REVIEW_MAX_COMMITS = 20;
 
-/** The sidebar tabs beside Files and Review; every other panel, History
- *  included, sits in the More menu. */
+/** The plugin panels with a sidebar tab of their own, beside Files, Search,
+ *  History and Review; every other one sits in the More menu. */
 const PINNED_PANELS = ['plugin:references'];
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
 /** The sidebar's width in px, once someone has dragged it. */
@@ -822,9 +823,13 @@ export default function Editor() {
 
   const revertAgent = useCallback(async () => {
     if (!agentReview) return;
+    const checkpoint = project?.manualCommits
+      ? await askWaitingCommit(dialogs, id, [agentReview.branch], { before: 'reverting Claude’s edits', confirmLabel: 'Commit and revert' })
+      : undefined;
+    if (checkpoint === null) return;
     try {
       // log order is newest-first — exactly what the revert endpoint expects.
-      const res = await api.revertCommits(id, agentReview.branch, agentReview.hashes, 'Revert Claude’s edits', identity.name);
+      const res = await api.revertCommits(id, agentReview.branch, agentReview.hashes, 'Revert Claude’s edits', identity.name, checkpoint);
       setAgentReview(null);
       toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
       bumpHistory();
@@ -840,7 +845,19 @@ export default function Editor() {
       // The server's conflict message already opens with "Could not revert".
       toast(/^Could not revert/.test(err.message) ? err.message : `Could not revert: ${err.message}`, 'error');
     }
-  }, [agentReview, id, branch, identity, compile.result, doCompile, loadFiles, toast, bumpHistory]);
+  }, [agentReview, id, branch, identity, compile.result, doCompile, loadFiles, toast, bumpHistory, project?.manualCommits, dialogs]);
+
+  /** Claude's commits on this branch whatever the review mark says: the way
+   *  back to a session whose prompt is long gone. */
+  const reviewClaudeEdits = useCallback(async () => {
+    try {
+      const res = await api.agentActivity(id, branch, null, true);
+      if (!res.commitCount) { toast(`Claude has not edited ${branch}`, 'info'); return; }
+      if (await openAgentReview(res.commits, res.commitCount, branch)) await recordSeen(res.head, 'acknowledged');
+    } catch (err: any) {
+      toast(`Could not load Claude’s edits: ${err.message}`, 'error');
+    }
+  }, [id, branch, toast, openAgentReview, recordSeen]);
 
   const toggleAuto = () => {
     const next = !auto;
@@ -1154,9 +1171,12 @@ export default function Editor() {
     const where = changed.length === 1 ? changed[0].path : n(changed.length, 'file', 'files');
     const pending = res.pending ? ` — commit ${res.replaced === 1 ? 'it' : 'them'} from History` : '';
     const skipped = res.skipped ? `; ${res.skipped.toLocaleString('en-US')} changed while replacing and ${res.skipped === 1 ? 'was' : 'were'} left alone` : '';
-    // The replace is one commit; reverting it is the undo. Typing cannot undo
-    // it: the edits reached the editor from the server, not as keystrokes.
+    // The replace is one commit; reverting it is the undo. With manual commits
+    // there is none: the server kept what the files held instead. Typing cannot
+    // undo it: the edits reached the editor from the server, not as keystrokes.
     const commit = res.commit;
+    const image = res.undo;
+    const undone = () => `Undid the ${deleted ? 'delete' : 'replace'} of ${n(res.replaced, 'match', 'matches')}`;
     const undo = commit ? {
       label: 'Undo',
       testId: 'replace-undo',
@@ -1167,14 +1187,76 @@ export default function Editor() {
           setSearchVersion((v) => v + 1);
           if (!r.ok) { toast('Nothing to undo — the text is already back', 'info'); return; }
           onDocChanged(true);
-          toast(`Undid the ${deleted ? 'delete' : 'replace'} of ${n(res.replaced, 'match', 'matches')}`, 'ok');
+          toast(undone(), 'ok');
         } catch (err: any) {
           toast(/^Could not revert/.test(err.message) ? err.message : `Could not undo: ${err.message}`, 'error');
+        }
+      },
+    } : image ? {
+      label: 'Undo',
+      testId: 'replace-undo',
+      onClick: async () => {
+        try {
+          const r = await api.undoEdit(id, branch, image);
+          bumpHistory();
+          setSearchVersion((v) => v + 1);
+          if (r.restored.length) onDocChanged(true);
+          toast(r.skipped.length ? `${r.restored.length ? `${undone()}; ` : ''}left ${r.skipped.join(', ')} alone: changed since` : undone(), r.restored.length ? 'ok' : 'info');
+        } catch (err: any) {
+          toast(`Could not undo: ${err.message}`, 'error');
         }
       },
     } : undefined;
     toast(`${deleted ? 'Deleted' : 'Replaced'} ${n(res.replaced, 'match', 'matches')} in ${where}${pending}${skipped}`, 'ok', undo);
   }, [id, branch, identity, bumpHistory, onDocChanged, toast]);
+
+  // With automatic commits a deletion is one commit; reverting it is the
+  // undo. The tree follows the files signal the revert sends.
+  const onDeleted = useCallback((path: string, res: { commit?: string | null; pending?: boolean; undo?: string | null }, rootBefore?: string) => {
+    bumpHistory();
+    const putRootBack = async () => {
+      if (rootBefore && within(rootBefore, path)) await api.patchProject(id, { rootFile: rootBefore }).catch(() => {});
+      await loadFiles();
+      loadProject();
+      onDocChanged(true);
+    };
+    const image = res.undo;
+    if (res.pending) {
+      // No commit to revert with manual commits: the server kept the files instead.
+      toast(`Deleted ${path} — commit it from History`, 'ok', image ? {
+        label: 'Undo',
+        testId: 'delete-undo',
+        onClick: async () => {
+          try {
+            const r = await api.undoEdit(id, branch, image);
+            bumpHistory();
+            if (r.restored.length) await putRootBack();
+            toast(r.skipped.length ? `${r.restored.length ? `Restored ${path}; ` : ''}left ${r.skipped.join(', ')} alone: made again since` : `Restored ${path}`, r.restored.length ? 'ok' : 'info');
+          } catch (err: any) {
+            toast(`Could not undo: ${err.message}`, 'error');
+          }
+        },
+      } : undefined);
+      return;
+    }
+    const commit = res.commit;
+    toast(`Deleted ${path}`, 'ok', commit ? {
+      label: 'Undo',
+      testId: 'delete-undo',
+      onClick: async () => {
+        try {
+          const r = await api.revertCommits(id, branch, [commit], `Undo the deletion of ${path}`, identity.name);
+          bumpHistory();
+          if (!r.ok) { toast(`Nothing to undo — ${path} is already back`, 'info'); return; }
+          // the deletion moved the main document elsewhere; its undo moves it back
+          await putRootBack();
+          toast(`Restored ${path}`, 'ok');
+        } catch (err: any) {
+          toast(/^Could not revert/.test(err.message) ? err.message : `Could not undo: ${err.message}`, 'error');
+        }
+      },
+    } : undefined);
+  }, [id, branch, identity, bumpHistory, loadFiles, loadProject, onDocChanged, toast]);
 
   // Accept happens server-side against the LIVE collab doc — a client-side
   // read-replace-write of the disk copy silently reverted every collaborator's
@@ -1396,6 +1478,7 @@ export default function Editor() {
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
       { id: 'show-history', group: 'Git', title: 'Show history', keywords: 'versions checkpoints commits', run: () => { setTab('history'); setSidebar(false); } },
+      { id: 'review-claude', group: 'Git', title: 'Review Claude’s recent edits', keywords: 'agent ai claude session revert undo', run: () => { void reviewClaudeEdits(); } },
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', keywords: 'history versions commit', run: () => { setTab('history'); setSidebar(false); setCommitFocusRequest((n) => n + 1); } },
       {
         id: 'newbranch', group: 'Git', title: 'New branch…', run: () => {
@@ -1456,14 +1539,17 @@ export default function Editor() {
       cmds.push({
         id: 'delete-file', group: 'Project', title: `Delete ${activeFile}…`, run: async () => {
           if (await dialogs.confirm({ title: `Delete ${activeFile}?`, confirmLabel: 'Delete file', danger: true })) {
+            const rootBefore = project?.rootFile;
+            let res: Awaited<ReturnType<typeof api.deleteFile>>;
             try {
-              await api.deleteFile(id, branch, activeFile);
+              res = await api.deleteFile(id, branch, activeFile, identity.name);
             } catch (err: any) {
               toast(`Could not delete ${activeFile}: ${err.message}`, 'error');
               return;
             }
             await loadFiles();
             setActiveFile(null);
+            onDeleted(activeFile, res, rootBefore);
           }
         },
       });
@@ -1484,7 +1570,7 @@ export default function Editor() {
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1576,6 +1662,7 @@ export default function Editor() {
             onChanged={() => { loadProject(); loadFiles(); }}
             onPulled={() => { loadFiles(); loadProject(); }}
             onAutopushChange={() => loadProject()}
+            manual={!!project.manualCommits}
           />
         ) : (
           <BranchMenu
@@ -1585,6 +1672,7 @@ export default function Editor() {
             onChanged={() => { loadProject(); loadFiles(); }}
             onPublish={!project.remote && isProjectOwner && !project.readOnly ? () => setPublishOpen(true) : undefined}
             readOnly={!!project.readOnly}
+            manual={!!project.manualCommits}
           />
         )}
         {visualFile && (
@@ -1659,6 +1747,17 @@ export default function Editor() {
             >
               <IconSearch />
             </button>
+            <button
+              className={`sidebar__tab sidebar__tab--icon ${tab === 'history' ? 'sidebar__tab--active' : ''}`}
+              onClick={() => setTab('history')}
+              role="tab"
+              aria-selected={tab === 'history'}
+              aria-label="History"
+              title="History: every change, and the way back"
+              data-testid="tab-history"
+            >
+              <IconHistory />
+            </button>
             {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => (
               <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} data-testid={`tab-${p.id}`}>
                 {p.title}
@@ -1668,21 +1767,26 @@ export default function Editor() {
               Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
             </button>
             {(() => {
-              const more = [{ id: 'history', title: 'History' }, ...pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id))];
+              const more = pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id));
               const shown = more.find((p) => p.id === tab);
+              if (!more.length) return null;
               return (
-                <div className="sidebar__more">
+                <div className={`sidebar__more${shown ? '' : ' sidebar__more--icon'}`}>
                   <MenuButton
                     className={`sidebar__tab ${shown ? 'sidebar__tab--active' : ''}`}
                     role="tab"
                     selected={!!shown}
                     label="More panels"
+                    ariaLabel={shown ? undefined : 'More panels'}
+                    title={shown ? undefined : 'More panels'}
                     placement="bottom-end"
                     testId="tab-more"
                     menuTestId="tab-more-menu"
                     items={more.map((p) => ({ id: p.id, label: p.title, checked: tab === p.id, role: 'radio' as const, testId: `tab-${p.id}`, onSelect: () => setTab(p.id) }))}
                   >
-                    <span className="sidebar__more-label">{shown ? shown.title : 'More'}</span><span className="sidebar__chev" aria-hidden="true"><IconChevronRight /></span>
+                    {shown
+                      ? <><span className="sidebar__more-label">{shown.title}</span><span className="sidebar__chev" aria-hidden="true"><IconChevronRight /></span></>
+                      : <IconEllipsis />}
                   </MenuButton>
                 </div>
               );
@@ -1731,11 +1835,13 @@ export default function Editor() {
                 }}
                 onDelete={async (path) => {
                   localRemoval.current = path;
+                  const rootBefore = project.rootFile;
                   try {
-                    await api.deleteFile(id, branch, path);
+                    const res = await api.deleteFile(id, branch, path, identity.name);
                     await loadFiles();
                     loadProject(); // deleting the root re-derives (or unsets) it
                     if (activeFile && within(activeFile, path)) setActiveFile(null);
+                    onDeleted(path, res, rootBefore);
                   } catch (err: any) {
                     toast(`Could not delete ${path}: ${err.message}`, 'error');
                   } finally {
@@ -1761,7 +1867,7 @@ export default function Editor() {
                 onSetRoot={canSync ? setRootFile : undefined}
               />
             </div>
-            <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} hidden={tab !== 'history'} /></div>
+            <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} hidden={tab !== 'history'} onReverted={() => onDocChanged(true)} /></div>
             <div className="sidebar__panel" style={{ display: tab === 'review' ? 'block' : 'none' }}>
               <ReviewPanel
                 comments={comments}

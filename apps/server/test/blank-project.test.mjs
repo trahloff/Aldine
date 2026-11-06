@@ -75,6 +75,8 @@ const userFiles = (id) => store.listFiles(id, 'main').filter((f) => f.type === '
 const rootOf = async (id) => (await store.readMeta(id)).rootFile;
 const put = (id, p, content = '') => app.inject({ method: 'PUT', url: `/api/projects/${id}/file`, payload: { branch: 'main', path: p, content, createOnly: true } });
 const del = (id, p) => app.inject({ method: 'DELETE', url: `/api/projects/${id}/file?branch=main&path=${encodeURIComponent(p)}` });
+/** The delete's answer about the root; the deletion's own commit rides along beside it. */
+const rootAnswer = (r) => { const { ok, newRoot } = r.json(); return { ok, newRoot }; };
 const compile = (id) => app.inject({ method: 'POST', url: `/api/projects/${id}/compile`, payload: { branch: 'main' } });
 
 try {
@@ -159,9 +161,9 @@ try {
   eq(await rootOf(blank.id), 'main.tex', 'root unchanged by extra.tex');
 
   res = await del(blank.id, 'main.tex');
-  eq(res.json(), { ok: true, newRoot: 'extra.tex' }, 'deleting the root re-points it at the other .tex');
+  eq(rootAnswer(res), { ok: true, newRoot: 'extra.tex' }, 'deleting the root re-points it at the other .tex');
   res = await del(blank.id, 'extra.tex');
-  eq(res.json(), { ok: true }, 'deleting the last .tex reports no new root');
+  eq(rootAnswer(res), { ok: true }, 'deleting the last .tex reports no new root');
   eq(await rootOf(blank.id), '', 'root unset once no .tex remains');
 
   res = await app.inject({ method: 'POST', url: `/api/projects/${blank.id}/file/rename`, payload: { branch: 'main', from: 'notes.md', to: 'intro.tex' } });
@@ -193,7 +195,7 @@ try {
   res = await app.inject({ method: 'POST', url: `/api/projects/${dotted.id}/file/rename`, payload: { branch: 'main', from: './main.tex', to: 'paper//main.tex' } });
   eq(res.json(), { ok: true, newRoot: 'paper/main.tex' }, 'a renamed root keeps its designation, normalised');
   res = await del(dotted.id, './paper/main.tex');
-  eq(res.json(), { ok: true }, 'deleting the root through an unnormalised path unsets it');
+  eq(rootAnswer(res), { ok: true }, 'deleting the root through an unnormalised path unsets it');
   eq(await rootOf(dotted.id), '', 'root unset');
 
   // ---- adoption ranks like an import ----
@@ -224,7 +226,7 @@ try {
   const rederive = res.json();
   eq(rederive.rootFile, 'main.tex', 'main.tex is the initial root');
   res = await del(rederive.id, 'main.tex');
-  eq(res.json(), { ok: true, newRoot: 'thesis.tex' }, 'deleting the root re-derives by ranking, not by sort order');
+  eq(rootAnswer(res), { ok: true, newRoot: 'thesis.tex' }, 'deleting the root re-derives by ranking, not by sort order');
 
   res = await create({ name: 'Adopt on write', template: 'blank' });
   const adopt = res.json();

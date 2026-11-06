@@ -112,6 +112,22 @@ export const IconReplace = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** A clock whose rim turns back: History, the earlier versions. */
+export const IconHistory = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.75 8a5.25 5.25 0 1 0 1.54-3.71" />
+    <path d="M2.5 2.25v2.5H5" />
+    <path d="M8 5.25V8l1.9 1.4" />
+  </svg>
+);
+
+/** A bookmark: a version someone named. */
+export const IconBookmark = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={11} height={11}>
+    <path d="M4.5 2h7v12L8 11.25 4.5 14Z" />
+  </svg>
+);
+
 /** A circular arrow: run the same thing again. */
 export const IconRefresh = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={13} height={13}>

@@ -479,6 +479,11 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
   session ending replaces an away prompt still on screen. Your own commits never trigger
   it, and a branch with a long agent history shows the count with the newest
   20 commits' diffs, which are also the only ones Revert undoes.
+- **Later.** Once the prompt is gone, **Review Claude's recent edits** in the
+  command palette opens the same review for Claude's newest commits on the
+  branch, whatever was seen before. Each of Claude's commits is also a row in
+  History with the violet dot; its diff has **Undo this change**, which
+  reverts that one commit the same way.
 
 ## The PDF in the chat
 
@@ -538,9 +543,13 @@ If you do not want to expose the instance:
   the server never relies on the model to decline. An unauthenticated `/mcp`
   would be a public write path into every project; the configuration is made
   unrepresentable instead of discouraged.
-- **What a credential can do.** Read, edit, create, rename and delete files,
-  typeset, commit, revert, start a branch, comment and add references in the
-  projects it reaches; create projects if unscoped.
+- **What a credential can do.** Through the MCP tools: read, write and
+  create files, typeset, commit and add references in the projects it
+  reaches, and create projects if unscoped. The same credential on the REST
+  API can also rename and delete files, revert commits, start a branch,
+  comment and change the project's settings. No MCP tool reverts: undoing
+  Claude's work is the person's, from the review prompt or History (see
+  "Review" above).
   Protected (showcase) projects stay read-only. Agent typesets take at most
   one of the account's two concurrent slots, so the person always keeps one,
   and count against the account's monthly quota.
@@ -560,7 +569,8 @@ If you do not want to expose the instance:
   Connect session, also ends its refresh tokens. A reused refresh token
   revokes the whole family. Resetting or changing the account's password
   revokes every token and Connect session of the account.
-- **Rollback.** Every write is a commit; any change is one revert away.
+- **Rollback.** Every write is a commit; any change is one revert away, from
+  the review prompt or the change's diff in History.
 
 ## Troubleshooting
 
