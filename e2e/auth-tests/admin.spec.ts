@@ -24,6 +24,15 @@ async function signIn(page: import('@playwright/test').Page, email: string, name
   await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
 }
 
+/** A researcher at the mock ORCID (mock-orcid.mjs) no earlier run used. */
+async function orcidPersona(): Promise<{ code: string }> {
+  const digits = `${Date.now()}${Math.floor(Math.random() * 1e4)}`.padStart(15, '0').slice(-12);
+  const p = { code: `a${digits}`, orcid: `0009-${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`, name: 'Admin-listed Researcher', email: null };
+  const res = await fetch(`http://localhost:${Number(process.env.E2E_AUTH_MOCK_PORT || 4929)}/__personas`, { method: 'POST', body: JSON.stringify(p) });
+  expect(res.ok, 'the mock ORCID took the persona').toBeTruthy();
+  return p;
+}
+
 test.describe('server admin', () => {
   test('a regular account gets no link, no page, and 403 from the API', async ({ page }) => {
     await signIn(page, uniq('plain'), 'Plain');
@@ -42,11 +51,19 @@ test.describe('server admin', () => {
   });
 
   test('the allow-listed account sees counts and the accounts table', async ({ page, browser }) => {
-    // One more account guarantees the table has somebody besides the admin.
-    const other = await browser.newContext();
+    // One more account guarantees the table has somebody besides the admin;
+    // it connects ORCID, so its Sign-in column lists both ways in.
+    const other = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.88' } });
     const otherEmail = uniq('other');
     await other.request.post('/api/auth/register', { data: { email: otherEmail, password: 'password123', name: 'Other' } });
     await other.request.post('/api/projects', { data: { name: 'Counted' } });
+    const persona = await orcidPersona();
+    const start = await other.request.post('/api/auth/sign-in-methods/orcid', { data: {} });
+    expect(start.ok(), 'connect starts').toBeTruthy();
+    const otherPage = await other.newPage();
+    await otherPage.goto((await start.json()).url);
+    await otherPage.getByTestId(`persona-${persona.code}`).click();
+    await expect(otherPage.getByTestId('sign-in-method-orcid-disconnect')).toBeVisible({ timeout: 15_000 });
     await other.close();
 
     await signIn(page, ADMIN_EMAIL, 'Admin');
@@ -64,6 +81,8 @@ test.describe('server admin', () => {
     await expect(rows.filter({ hasText: otherEmail })).toHaveCount(1);
     await expect(rows.filter({ hasText: otherEmail })).toContainText('1'); // owns one project
     await expect(rows.filter({ hasText: ADMIN_EMAIL })).toContainText('admin');
+    await expect(rows.filter({ hasText: otherEmail }).getByTestId('admin-sign-in')).toHaveText('Password, ORCID');
+    await expect(rows.filter({ hasText: ADMIN_EMAIL }).getByTestId('admin-sign-in')).toHaveText('Password');
 
     const stats = await (await page.request.get('/api/admin/stats')).json();
     expect(stats.admins).toEqual([ADMIN_EMAIL]);

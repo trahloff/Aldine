@@ -143,6 +143,15 @@ export interface SessionRow extends ResetRow { createdAt: number }
 export const PRE_RENEWAL_SESSION_MS = 30 * 864e5;
 
 /**
+ * A single sign-on identity connected to an account that signs in another
+ * way (a password account): signing in with the provider opens `userId`.
+ * `subject` is the provider-scoped stable id, as on User, never an address.
+ * At most one link per subject and per (account, provider), and a subject is
+ * never both linked and an account's own.
+ */
+export interface SignInLink { subject: string; userId: string; provider: string; createdAt: string }
+
+/**
  * Personal access token (headless agent credential). `hash` is the SHA-256
  * digest of the secret — the plaintext token is never stored. `projectIds:
  * null` means all of the user's projects; a non-null list restricts the token
@@ -300,11 +309,11 @@ export interface DataStore {
    *  that field alone. */
   setDisabled(id: string, disabledAt: string | null): Promise<void>;
   /** Remove the account and every row that exists only for it: sessions,
-   *  reset links, access and refresh tokens, linked connections, its project
-   *  list rows and review marks. Usage seconds stay, they make up the
-   *  instance totals. The projects it owns and the shares naming it are the
-   *  caller's to settle first. The account row goes last, so a removal cut
-   *  short can be run again. */
+   *  reset links, access and refresh tokens, linked connections, sign-in
+   *  links, its project list rows and review marks. Usage seconds stay,
+   *  they make up the instance totals. The projects it owns and the shares
+   *  naming it are the caller's to settle first. The account row goes last,
+   *  so a removal cut short can be run again. */
   deleteUser(id: string): Promise<void>;
 
   // sessions (revocable)
@@ -428,6 +437,16 @@ export interface DataStore {
   addUsageSeconds(userId: string, month: string, seconds: number): Promise<void>;
   /** Instance-wide compile seconds for a month, across every user. */
   totalUsageSeconds(month: string): Promise<number>;
+
+  // single sign-on identities connected to accounts (Sign-in methods)
+  /** Insert; false, writing nothing, when the subject is linked already or
+   *  the account has a link for that provider. */
+  createSignInLink(l: SignInLink): Promise<boolean>;
+  findSignInLink(subject: string): Promise<SignInLink | null>;
+  /** The account's links, oldest first. */
+  listSignInLinks(userId: string): Promise<SignInLink[]>;
+  /** False when the account had no link for the provider. */
+  deleteSignInLink(userId: string, provider: string): Promise<boolean>;
 
   // per-user external connections (e.g. a GitHub access token). Secrets — kept
   // in the secrets store, never in the compiler-visible projects dir.

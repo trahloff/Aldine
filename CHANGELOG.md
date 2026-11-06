@@ -83,6 +83,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   sees the name only.
 - With the PDF alone on screen, a typeset that stopped on errors says so,
   with a Show the errors button that brings the editor back.
+- Account settings has a Sign-in methods section. A password account can
+  connect ORCID, single sign-on, and Google or GitHub when the server offers
+  them, and then sign in either way into the same account. Connecting from a
+  session older than 10 minutes asks for the password first. An identity that
+  already belongs to another account is refused and the page says so.
+  Disconnect removes one again, unless it is the last way to sign in.
+- A password account that connected ORCID gets invitations sent to its ORCID
+  iD, also ones that were waiting before it connected. After Disconnect,
+  invitations and projects shared with the iD no longer reach it.
+- The Sign-in column on /admin lists every way an account signs in: the
+  password and each connected provider.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or

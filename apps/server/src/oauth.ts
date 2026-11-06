@@ -16,7 +16,8 @@ export interface OAuthProfile {
   /** A verified address, or null when the provider has none to share. */
   email: string | null;
   name: string;
-  /** Provider-scoped stable id (`orcid:0000-…`). Required when email is null. */
+  /** Provider-scoped stable id (`orcid:0000-…`, `google:<sub>`). Required
+   *  when email is null, and to connect the identity to a password account. */
   subject?: string;
 }
 
@@ -83,14 +84,16 @@ const github: OAuthProvider = {
     const tok = (await tokRes.json()) as { access_token?: string; error_description?: string };
     if (!tok.access_token) throw new Error(tok.error_description || 'no access token');
     const headers = { authorization: `Bearer ${tok.access_token}`, accept: 'application/vnd.github+json', 'user-agent': 'aldine' };
-    const ghUser = (await (await fetch('https://api.github.com/user', { headers })).json()) as { login?: string; name?: string; email?: string };
+    const ghUser = (await (await fetch('https://api.github.com/user', { headers })).json()) as { id?: number; login?: string; name?: string; email?: string };
     let email = ghUser.email;
     if (!email) {
       const emails = (await (await fetch('https://api.github.com/user/emails', { headers })).json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
       email = (emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified))?.email;
     }
     if (!email) throw new Error('no verified email on the GitHub account');
-    return { email, name: ghUser.name || ghUser.login || email.split('@')[0] };
+    // The numeric id survives a rename of the login, which can be reused.
+    const subject = Number.isSafeInteger(ghUser.id) ? `github:${ghUser.id}` : undefined;
+    return { email, name: ghUser.name || ghUser.login || email.split('@')[0], ...(subject ? { subject } : {}) };
   },
 };
 
@@ -126,10 +129,11 @@ const google: OAuthProvider = {
     if (!tok.access_token) throw new Error(tok.error_description || 'no access token');
     const info = (await (await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
       headers: { authorization: `Bearer ${tok.access_token}` },
-    })).json()) as { email?: string; email_verified?: boolean | string; name?: string };
+    })).json()) as { sub?: string; email?: string; email_verified?: boolean | string; name?: string };
     const verified = info.email_verified === true || info.email_verified === 'true';
     if (!info.email || !verified) throw new Error('no verified email on the Google account');
-    return { email: info.email, name: info.name || info.email.split('@')[0] };
+    const subject = typeof info.sub === 'string' && /^[\w-]{1,255}$/.test(info.sub) ? `google:${info.sub}` : undefined;
+    return { email: info.email, name: info.name || info.email.split('@')[0], ...(subject ? { subject } : {}) };
   },
 };
 

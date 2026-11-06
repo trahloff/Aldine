@@ -629,6 +629,33 @@ async function runSuite(store, label) {
   await store.deleteConnection(user.id, 'github');
   check((await store.getConnection(user.id, 'github')) === null, `${label}: deleteConnection`);
 
+  // ---- sign-in links: single sign-on identities connected to an account ----
+  const linkSub = `oidc:abc:${t}`;
+  eq(await store.listSignInLinks(user.id), [], `${label}: no sign-in links by default`);
+  check((await store.findSignInLink(linkSub)) === null, `${label}: findSignInLink missing → null`);
+  const oidcLink = { subject: linkSub, userId: user.id, provider: 'oidc', createdAt: '2026-11-06T10:00:00.000Z' };
+  eq(await store.createSignInLink(oidcLink), true, `${label}: createSignInLink inserts`);
+  eq(await store.findSignInLink(linkSub), oidcLink, `${label}: findSignInLink roundtrip`);
+  eq(await store.createSignInLink({ ...oidcLink, userId: signup.id }), false, `${label}: a subject links one account only`);
+  eq((await store.findSignInLink(linkSub)).userId, user.id, `${label}: a refused link changes nothing`);
+  eq(await store.createSignInLink({ ...oidcLink, subject: `oidc:abc:other-${t}` }), false, `${label}: one link per account and provider`);
+  check((await store.findSignInLink(`oidc:abc:other-${t}`)) === null, `${label}: and the refused one is not stored`);
+  const orcidLink = { subject: `orcid:${t}`, userId: user.id, provider: 'orcid', createdAt: '2026-11-06T09:00:00.000Z' };
+  eq(await store.createSignInLink(orcidLink), true, `${label}: another provider links the same account`);
+  eq(await store.listSignInLinks(user.id), [orcidLink, oidcLink], `${label}: listSignInLinks, oldest first`);
+  eq(await store.listSignInLinks(signup.id), [], `${label}: listSignInLinks is per account`);
+  const linkAlias = await store.findSignInLink(linkSub);
+  linkAlias.userId = 'TAMPERED';
+  eq((await store.findSignInLink(linkSub)).userId, user.id, `${label}: findSignInLink result is a copy`);
+  eq(await store.deleteSignInLink(user.id, 'oidc'), true, `${label}: deleteSignInLink removes the link`);
+  eq(await store.deleteSignInLink(user.id, 'oidc'), false, `${label}: deleteSignInLink of a missing link → false`);
+  eq(await store.deleteSignInLink(signup.id, 'orcid'), false, `${label}: deleteSignInLink only removes the account's own link`);
+  check((await store.findSignInLink(linkSub)) === null, `${label}: a removed link is not found`);
+  eq(await store.listSignInLinks(user.id), [orcidLink], `${label}: the other link stays`);
+  eq(await store.createSignInLink({ ...oidcLink, userId: signup.id }), true, `${label}: a removed subject can link again`);
+  await store.deleteSignInLink(signup.id, 'oidc');
+  await store.deleteSignInLink(user.id, 'orcid');
+
   // ---- deleteUser: the account and every row that exists only for it ----
   const gone = { id: `u10-${t}`, email: `g-${t}@example.com`, name: 'Gus', salt: 's', hash: 'h', createdAt: new Date().toISOString() };
   await store.createUser(gone);
@@ -646,6 +673,7 @@ async function runSuite(store, label) {
   await store.setProjectOpen({ userId: user.id, projectId: gp, at: '2026-10-01T00:00:00.000Z', branch: 'main', hidden: false });
   await store.setProjectVisit({ userId: gone.id, projectId: gp, branch: 'main', head: 'abc', at: '2026-10-01T00:00:00.000Z', promptedHead: null });
   await store.addUsageSeconds(gone.id, month, 7);
+  await store.createSignInLink({ subject: `orcid:gone-${t}`, userId: gone.id, provider: 'orcid', createdAt: '2026-11-06T10:00:00.000Z' });
   await store.deleteUser(gone.id);
   check((await store.getUser(gone.id)) === null, `${label}: deleteUser removes the account`);
   check((await store.findUserByEmail(gone.email)) === null, `${label}: deleteUser frees the address`);
@@ -658,6 +686,7 @@ async function runSuite(store, label) {
   eq(await store.listProjectOpens(gone.id), [], `${label}: deleteUser removes its project list rows`);
   check((await store.getProjectOpen(user.id, gp)) !== null, `${label}: deleteUser leaves another account's project list row`);
   check((await store.getProjectVisit(gone.id, gp, 'main')) === null, `${label}: deleteUser removes its review marks`);
+  check((await store.findSignInLink(`orcid:gone-${t}`)) === null, `${label}: deleteUser removes its sign-in links`);
   eq(await store.getUsageSeconds(gone.id, month), 7, `${label}: deleteUser keeps the usage seconds (instance totals)`);
   await store.updateUser(gone); // a password reset that finished after the delete
   check((await store.getUser(gone.id)) === null, `${label}: updateUser does not bring a deleted account back`);

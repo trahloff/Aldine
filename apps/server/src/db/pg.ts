@@ -1,6 +1,6 @@
 import { PROJECT_ID_RE } from '../util.js';
 import { PRE_RENEWAL_SESSION_MS } from './types.js';
-import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation, SignInLink } from './types.js';
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -139,6 +139,11 @@ export class PgStore implements DataStore {
       -- 1.9: the sign-in each session began with, for the cap on renewals.
       ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at bigint;
       UPDATE sessions SET created_at = exp - ${PRE_RENEWAL_SESSION_MS} WHERE created_at IS NULL;
+      -- Single sign-on identities connected to password accounts (Sign-in methods).
+      CREATE TABLE IF NOT EXISTS sign_in_links (
+        subject text PRIMARY KEY, user_id text NOT NULL, provider text NOT NULL, created_at text NOT NULL,
+        UNIQUE (user_id, provider)
+      );
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
@@ -188,7 +193,8 @@ export class PgStore implements DataStore {
             f AS (DELETE FROM refresh_tokens WHERE user_id=$1),
             c AS (DELETE FROM connections WHERE user_id=$1),
             o AS (DELETE FROM project_opens WHERE user_id=$1),
-            v AS (DELETE FROM project_visits WHERE user_id=$1)
+            v AS (DELETE FROM project_visits WHERE user_id=$1),
+            l AS (DELETE FROM sign_in_links WHERE user_id=$1)
        DELETE FROM users WHERE id=$1`,
       [id],
     );
@@ -577,6 +583,30 @@ export class PgStore implements DataStore {
   async deleteProjectInvitations(projectId: string): Promise<void> {
     if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
     await this.pool.query(`DELETE FROM invitations WHERE project_id=$1`, [projectId]);
+  }
+
+  // ---- sign-in links ----
+  private rowToLink(r: any): SignInLink {
+    return { subject: r.subject, userId: r.user_id, provider: r.provider, createdAt: r.created_at };
+  }
+  async createSignInLink(l: SignInLink) {
+    const { rows } = await this.pool.query(
+      `INSERT INTO sign_in_links(subject,user_id,provider,created_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING subject`,
+      [l.subject, l.userId, l.provider, l.createdAt],
+    );
+    return rows.length === 1;
+  }
+  async findSignInLink(subject: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM sign_in_links WHERE subject=$1`, [subject]);
+    return rows[0] ? this.rowToLink(rows[0]) : null;
+  }
+  async listSignInLinks(userId: string) {
+    const { rows } = await this.pool.query(`SELECT * FROM sign_in_links WHERE user_id=$1 ORDER BY created_at, provider`, [userId]);
+    return rows.map((r: any) => this.rowToLink(r));
+  }
+  async deleteSignInLink(userId: string, provider: string) {
+    const { rows } = await this.pool.query(`DELETE FROM sign_in_links WHERE user_id=$1 AND provider=$2 RETURNING subject`, [userId, provider]);
+    return rows.length === 1;
   }
 
   // ---- connections ----

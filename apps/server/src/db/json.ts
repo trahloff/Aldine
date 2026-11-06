@@ -3,10 +3,10 @@ import path from 'node:path';
 import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, replaceFileDurable, writeFileSynced } from '../durable.js';
 import { PRE_RENEWAL_SESSION_MS } from './types.js';
-import type { DataStore, User, EmailPending, SessionRow, ResetRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, ResetRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation, SignInLink } from './types.js';
 
 /** The top-level files, beside meta/ and comments/. */
-const FLAT_FILES = ['users.json', 'sessions.json', 'resets.json', 'tokens.json', 'usage.json', 'connections.json', 'oauth_clients.json', 'refresh_tokens.json', 'visits.json', 'opens.json', 'activity.json', 'invitations.json'];
+const FLAT_FILES = ['users.json', 'sessions.json', 'resets.json', 'tokens.json', 'usage.json', 'connections.json', 'oauth_clients.json', 'refresh_tokens.json', 'visits.json', 'opens.json', 'activity.json', 'invitations.json', 'sign_in_links.json'];
 
 /** Every record of a JSON datastore, in the DataStore's shapes. */
 export interface StoreDump {
@@ -24,6 +24,7 @@ export interface StoreDump {
   opens: ProjectOpen[];
   activity: ProjectActivity[];
   invitations: Invitation[];
+  signInLinks: SignInLink[];
 }
 
 /** sessions.json as written before `createdAt` existed, too. */
@@ -61,7 +62,7 @@ function isDeadOAuthToken(t: TokenRecord, cutoff: number): boolean {
  * historical on-disk layout so existing deployments keep working:
  *   <metaRoot>/users.json  sessions.json  resets.json  usage.json
  *   <metaRoot>/oauth_clients.json  refresh_tokens.json  visits.json
- *   <metaRoot>/opens.json  activity.json  invitations.json
+ *   <metaRoot>/opens.json  activity.json  invitations.json  sign_in_links.json
  *   <metaRoot>/meta/<id>.json          (project metadata)
  *   <metaRoot>/comments/<id>.json      (review comments)
  * Each file has a `<file>.bak` beside it: the version before the last write,
@@ -82,6 +83,7 @@ export class JsonStore implements DataStore {
   private opensPath: string;
   private activityPath: string;
   private invitationsPath: string;
+  private signInLinksPath: string;
   private metaDir: string;
   private commentsDir: string;
   private flat: Set<string>;
@@ -99,9 +101,10 @@ export class JsonStore implements DataStore {
     this.opensPath = path.join(metaRoot, 'opens.json');
     this.activityPath = path.join(metaRoot, 'activity.json');
     this.invitationsPath = path.join(metaRoot, 'invitations.json');
+    this.signInLinksPath = path.join(metaRoot, 'sign_in_links.json');
     this.metaDir = path.join(metaRoot, 'meta');
     this.commentsDir = path.join(metaRoot, 'comments');
-    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath, this.invitationsPath]);
+    this.flat = new Set([this.usersPath, this.sessionsPath, this.resetsPath, this.tokensPath, this.usagePath, this.connectionsPath, this.oauthClientsPath, this.refreshPath, this.visitsPath, this.opensPath, this.activityPath, this.invitationsPath, this.signInLinksPath]);
   }
 
   /** The newest modification time (ms) of a datastore file under
@@ -151,6 +154,7 @@ export class JsonStore implements DataStore {
       opens: Object.entries(this.opens()).flatMap(([userId, rows]) => Object.entries(rows).map(([projectId, r]) => this.openRow(userId, projectId, r))),
       activity: Object.entries(this.activity()).map(([projectId, r]) => ({ projectId, lastEdit: r.lastEdit ?? null, compile: r.compile ?? {} })),
       invitations: Object.values(this.invitations()),
+      signInLinks: Object.values(this.signInLinks()),
     };
     return this.clone(d);
   }
@@ -315,6 +319,7 @@ export class JsonStore implements DataStore {
     drop(this.connectionsPath, this.connections(), (k) => k === id);
     drop(this.opensPath, this.opens(), (k) => k === id);
     drop(this.visitsPath, this.visits(), (k) => k === id);
+    drop(this.signInLinksPath, this.signInLinks(), (_k, v) => v.userId === id);
     drop(this.usersPath, this.users(), (k) => k === id);
   }
   async listUsers() { return Object.values(this.users()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((u) => this.clone(u)); }
@@ -669,6 +674,29 @@ export class JsonStore implements DataStore {
     let changed = false;
     for (const [k, v] of Object.entries(m)) if (v.projectId === projectId) { delete m[k]; changed = true; }
     if (changed) this.write(this.invitationsPath, m);
+  }
+
+  // ---- sign-in links (keyed by subject) ----
+  private signInLinks() { return this.read<Record<string, SignInLink>>(this.signInLinksPath, {}); }
+  async createSignInLink(l: SignInLink) {
+    const m = this.signInLinks();
+    if (m[l.subject] || Object.values(m).some((x) => x.userId === l.userId && x.provider === l.provider)) return false;
+    m[l.subject] = this.clone(l);
+    this.write(this.signInLinksPath, m);
+    return true;
+  }
+  async findSignInLink(subject: string) { return this.clone(this.signInLinks()[subject] ?? null); }
+  async listSignInLinks(userId: string) {
+    return Object.values(this.signInLinks()).filter((l) => l.userId === userId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.provider.localeCompare(b.provider)).map((l) => this.clone(l));
+  }
+  async deleteSignInLink(userId: string, provider: string) {
+    const m = this.signInLinks();
+    const hit = Object.values(m).find((l) => l.userId === userId && l.provider === provider);
+    if (!hit) return false;
+    delete m[hit.subject];
+    this.write(this.signInLinksPath, m);
+    return true;
   }
 
   // ---- connections ----

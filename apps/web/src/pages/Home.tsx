@@ -134,7 +134,7 @@ export default function Home() {
   const dismissToast = useToastDismiss();
   const dialogs = useDialogs();
   const appearance = useAppearance();
-  const { authEnabled, user, admin, setUser } = useAuth();
+  const { authEnabled, user, admin, setUser, providers } = useAuth();
   const myId = user?.id ?? null;
   const compact = useMediaQuery(PHONE);
   const now = useMinuteTick();
@@ -188,6 +188,20 @@ export default function Home() {
   const [creating, setCreating] = useState<{ template?: string } | null>(null);
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const [showAccount, setShowAccount] = useState(false);
+  const [accountFocus, setAccountFocus] = useState<'sign-in' | undefined>();
+  // Back from connecting a sign-in method: …/?account=sign-in&connected=<provider>.
+  useEffect(() => {
+    if (params.get('account') !== 'sign-in' || !user) return;
+    const connected = params.get('connected');
+    const next = new URLSearchParams(params);
+    next.delete('account');
+    next.delete('connected');
+    setParams(next, { replace: true });
+    setAccountFocus('sign-in');
+    setShowAccount(true);
+    const label = connected ? providers.find((p) => p.id === connected)?.label : undefined;
+    if (label) toast(`${label} is connected. You can sign in with it from now on.`, 'ok');
+  }, [params, user]);
   const [importFrom, setImportFrom] = useState<RemoteProviderId | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -1133,7 +1147,7 @@ export default function Home() {
           }}
         />
       )}
-      {showAccount && user && <AccountSettings user={user} onClose={() => setShowAccount(false)} />}
+      {showAccount && user && <AccountSettings user={user} focus={accountFocus} onClose={() => { setShowAccount(false); setAccountFocus(undefined); }} />}
       {importFrom && (
         <RemoteImport key={importFrom} provider={importFrom} onClose={() => setImportFrom(null)} onImported={(id) => navigate(`/p/${id}`)} />
       )}

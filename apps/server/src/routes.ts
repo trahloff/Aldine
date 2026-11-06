@@ -508,12 +508,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const link = loggedConfirmations.get(String(req.query.email || '').trim().toLowerCase());
       return link ? { link } : reply.code(404).send({ error: 'No confirmation link was logged for that address' });
     });
-    // The caller's session and its cookie as if signed in `days` earlier.
-    app.post<{ Body: { days?: number } }>('/api/test/age-session', async (req, reply) => {
+    // The caller's session and its cookie as if signed in `days` (or
+    // `minutes`) earlier: what only an older session sees (renewals, the
+    // Sign-in methods password check).
+    app.post<{ Body: { days?: number; minutes?: number } }>('/api/test/age-session', async (req, reply) => {
       const sid = auth.sidFromRequest(req.headers.cookie);
       const s = sid ? await db().getSession(sid) : null;
-      const shift = Number(req.body?.days) * 864e5;
-      if (!sid || !s || !(shift > 0)) return reply.code(400).send({ error: 'Send a session cookie and a number of days' });
+      const shift = req.body?.minutes != null ? Number(req.body.minutes) * 60_000 : Number(req.body?.days) * 864e5;
+      if (!sid || !s || !(shift > 0)) return reply.code(400).send({ error: 'Send a session cookie and a number of days or minutes' });
       await db().deleteSession(sid);
       await db().createSession(sid, s.userId, s.exp - shift, s.createdAt - shift);
       reply.header('set-cookie', auth.sessionCookie(sid, Math.floor((s.exp - shift - Date.now()) / 1000)));
@@ -543,9 +545,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // These routes are browser navigations: a person who lands here from the
   // IdP gets a page with a way back, API clients keep the JSON body. No free
   // text from the request URL reaches the page (only an RFC 6749 error code).
-  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string, title = 'Sign-in failed') => {
+  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string, title = 'Sign-in failed', backTo = { href: '/', label: 'Back to sign-in' }) => {
     if (!/\btext\/html\b/.test(String(req.headers.accept || ''))) return reply.code(code).send({ error });
-    const back = `${config.basePath}/`;
+    const back = `${config.basePath}${backTo.href}`;
     return reply.code(code)
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-store')
@@ -556,7 +558,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:0 16px}
 main{max-width:30rem;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px 28px}
 h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);font-weight:600}
-</style></head><body><main><h1>${escapeHtml(title)}</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">Back to sign-in</a></main></body></html>`);
+</style></head><body><main><h1>${escapeHtml(title)}</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">${escapeHtml(backTo.label)}</a></main></body></html>`);
   };
 
   app.get<{ Params: { provider: string } }>('/api/auth/oauth/:provider', async (req, reply) => {
@@ -581,17 +583,46 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (!provider) return signInFailed(req, reply, 404, 'This sign-in provider is not configured');
       // The attempt names its provider, so a state minted for one provider's
       // sign-in cannot carry another provider's code through this callback.
-      const [cookieProvider, cookieState, secret] = (auth.parseCookies(req.headers.cookie)[STATE_COOKIE] || '').split('.');
+      // A connect (see /api/auth/sign-in-methods) adds `link` and the
+      // binding to the session that started it.
+      const [cookieProvider, cookieState, secret, purpose, binding, extra] = (auth.parseCookies(req.headers.cookie)[STATE_COOKIE] || '').split('.');
       const q = req.query;
-      if (typeof q.state !== 'string' || !q.state || !cookieState || !secret || q.state !== cookieState || cookieProvider !== provider.id) {
+      if (typeof q.state !== 'string' || !q.state || !cookieState || !secret || q.state !== cookieState || cookieProvider !== provider.id
+        || extra !== undefined || (purpose !== undefined && purpose !== 'link')) {
         return signInFailed(req, reply, 400, 'OAuth state mismatch — please try again');
+      }
+      const linking = purpose === 'link';
+      const connectFailed = (code: number, error: string) => signInFailed(req, reply, code, error, `Couldn’t connect ${provider.label}`, { href: '/?account=sign-in', label: 'Back to account settings' });
+      const sid = auth.sidFromRequest(req.headers.cookie);
+      // The session's own account, not a bearer token's: the binding is to the session.
+      const linkUser = linking && sid ? await auth.verifyToken(sid) : null;
+      if (linking && (!linkUser || !sid || !auth.linkBindingMatches(binding, sid, provider.id, cookieState))) {
+        reply.header('set-cookie', clearState);
+        return connectFailed(400, `You were signed out, or signed in to another account, while connecting ${provider.label}. Sign in again and connect it from Account settings.`);
       }
       // One callback per attempt: a replayed or second callback finds no cookie.
       reply.header('set-cookie', clearState);
       if (typeof q.error === 'string' && q.error) {
-        return signInFailed(req, reply, 400, `${signInName(provider.label)} was cancelled or refused (${/^[a-z_]{1,40}$/.test(q.error) ? q.error : 'error'}) — please try again`);
+        const why = /^[a-z_]{1,40}$/.test(q.error) ? q.error : 'error';
+        if (linking) return connectFailed(400, `${signInName(provider.label)} was cancelled or refused (${why}). Nothing was connected.`);
+        return signInFailed(req, reply, 400, `${signInName(provider.label)} was cancelled or refused (${why}) — please try again`);
       }
       if (typeof q.code !== 'string' || !q.code) return signInFailed(req, reply, 400, 'OAuth state mismatch — please try again');
+      if (linkUser) {
+        let profile: oauth.OAuthProfile;
+        try {
+          const callback = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string'));
+          profile = await provider.exchange(q.code, callbackUrl(req, provider.id), oauth.attemptFrom(secret), callback);
+        } catch (err: any) {
+          return connectFailed(400, `${signInName(provider.label)} failed: ${err.message}`);
+        }
+        try {
+          await auth.linkSignIn(linkUser.id, provider.id, profile);
+        } catch (err: any) {
+          return connectFailed(409, err.message);
+        }
+        return reply.redirect(`${config.basePath}/?account=sign-in&connected=${encodeURIComponent(provider.id)}`);
+      }
       try {
         const callback = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string'));
         const profile = await provider.exchange(q.code, callbackUrl(req, provider.id), oauth.attemptFrom(secret), callback);
@@ -603,6 +634,60 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         return signInFailed(req, reply, 400, `${signInName(provider.label)} failed: ${err.message}`);
       }
     });
+
+  // ---------- sign-in methods: connect single sign-on to a password account ----------
+  // Session-cookie only: the /api/auth guard below refuses bearer tokens here.
+  const methodsUser = (req: any, reply: any): auth.PublicUser | null => {
+    if (!auth.AUTH_ENABLED) { reply.code(404).send({ error: 'not found' }); return null; }
+    const user = reqUser(req);
+    if (!user) { reply.code(401).send({ error: 'Sign in required' }); return null; }
+    return user;
+  };
+
+  app.get('/api/auth/sign-in-methods', async (req, reply) => {
+    const user = methodsUser(req, reply);
+    if (!user) return;
+    return { ...(await auth.signInMethods(user.id, auth.sidFromRequest(req.headers.cookie))), providers: oauthProviders() };
+  });
+
+  // Starts the provider's flow for the signed-in account. The answer is the
+  // URL to go to; the state cookie it sets names the purpose and is bound to
+  // this session, so nothing in the callback's query decides that it links.
+  app.post<{ Params: { provider: string }; Body: { password?: string } }>('/api/auth/sign-in-methods/:provider', async (req, reply) => {
+    const user = methodsUser(req, reply);
+    if (!user) return;
+    const provider = oauth.getProvider(req.params.provider);
+    if (!provider) return reply.code(404).send({ error: 'This sign-in provider is not configured' });
+    if (!(await loginLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Too many attempts — wait a moment and try again' });
+    const sid = auth.sidFromRequest(req.headers.cookie)!;
+    try {
+      await auth.confirmForLink(user.id, sid, req.body?.password);
+    } catch (err: any) {
+      if (err instanceof auth.ReauthRequiredError) return reply.code(403).send({ error: err.message, code: err.code });
+      return reply.code(400).send({ error: err.message });
+    }
+    const state = crypto.randomBytes(12).toString('hex');
+    const secret = oauth.newAttemptSecret();
+    let url: string;
+    try {
+      url = await provider.authorizeUrl(state, callbackUrl(req, provider.id), oauth.attemptFrom(secret));
+    } catch (err: any) {
+      req.log.warn({ provider: provider.id, err: err?.message }, 'sign-in provider unavailable');
+      return reply.code(502).send({ error: `${signInName(provider.label)} is unavailable: ${err.message}` });
+    }
+    const value = `${provider.id}.${state}.${secret}.link.${auth.linkBinding(sid, provider.id, state)}`;
+    reply.header('set-cookie', `${STATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    return { url };
+  });
+
+  app.delete<{ Params: { provider: string } }>('/api/auth/sign-in-methods/:provider', async (req, reply) => {
+    const user = methodsUser(req, reply);
+    if (!user) return;
+    try {
+      await auth.unlinkSignIn(user.id, req.params.provider);
+      return { ok: true };
+    } catch (err: any) { return reply.code(400).send({ error: err.message }); }
+  });
 
   // Resolve the request's user once (awaiting the async datastore) and cache it,
   // so reqUser() is a synchronous read everywhere downstream.

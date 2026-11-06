@@ -125,7 +125,40 @@ changes at the IdP.
 - A single-sign-on login never takes over an account that already exists with
   the same address: not a password account ("sign in with your password
   instead"), not an account from another provider, and not another OIDC
-  identity that happens to share the address.
+  identity that happens to share the address. A password account can connect
+  its identity on purpose instead; see the next section.
+
+### Connecting single sign-on to a password account
+
+Someone who has a password account can add single sign-on to it: Account
+settings, Sign-in methods, Connect. The same works for ORCID, Google and
+GitHub login when they are configured. After that the person can sign in
+either way, and both open the same account with the same projects.
+
+- Connect goes through the IdP's normal sign-in, and the callback links the
+  identity (issuer and `sub`, as above) to the signed-in account, never the
+  address. The attempt is bound to the session that started it, so finishing
+  it in another session or after signing out connects nothing.
+- Connecting from a session older than 10 minutes asks for the account's
+  password first. Under `ALDINE_SSO_ONLY=1` it asks the person to sign in
+  again instead.
+- An identity that already has an account of its own, or is connected to
+  another account, is refused: "This Single sign-on account already signs in
+  to another account on this server, so it cannot be connected to yours." (the
+  provider's label replaces "Single sign-on"). An account connects one
+  identity per provider.
+- `OIDC_ALLOWED_GROUPS` applies to connecting and to every later sign-in, as
+  do disabled accounts and `ALDINE_SIGNUP=approval`: a connected identity
+  signs in only while the account itself may.
+- Disconnect removes the identity again. It is refused when it is the last
+  way to sign in, which happens only under `ALDINE_SSO_ONLY=1` (the password
+  does not count there) or when the other providers are no longer configured.
+- Accounts created by single sign-on cannot connect another provider; they
+  keep signing in with theirs alone.
+- A connected ORCID iD counts as the account's own: invitations to it reach
+  the account, including ones sent before it was connected, and so do
+  projects shared with it. Disconnecting ORCID ends both.
+- `/admin` lists every way an account signs in, in its Sign-in column.
 
 Choose `OIDC_EMAIL_VERIFIED=trust` only when users cannot set or change their
 own email address at the IdP (addresses come from a directory you control).
@@ -176,6 +209,12 @@ using the issuer exactly as the new discovery document reports it. Then:
 For an account that has a verified address, removing its `subject` (set it to
 `NULL`, or delete the field) is enough: the next sign-in with that address
 binds the new identity.
+
+An identity connected to a password account (see above) is in
+`sign_in_links` (`sign_in_links.json` for JSON files) under the same subject:
+change it there with `UPDATE sign_in_links SET subject = '<new subject>' WHERE
+subject = '<old subject>';`, or let the person disconnect and connect it again
+from Account settings.
 
 ## Access control
 
@@ -427,6 +466,8 @@ with it.
 | `OAuth state mismatch — please try again` | The sign-in took more than 10 minutes, cookies are blocked, or the callback was opened in another browser. |
 | `An account with this email already exists — sign in with your password instead.` | The address belongs to a password account; single sign-on never takes it over. |
 | `An account with this email already belongs to a different single sign-on identity — ask the administrator for help.` (with `OIDC_LABEL` set, the label replaces "single sign-on") | Usually `OIDC_ISSUER` changed. See [Changing `OIDC_ISSUER`](#changing-oidc_issuer) for how to move the account. |
+| `This Single sign-on account already signs in to another account on this server, so it cannot be connected to yours.` | Connect from Sign-in methods found an identity that has its own account, or is connected to another one. Sign in with it to find that account. |
+| `You were signed out, or signed in to another account, while connecting …` | The Connect callback arrived in a different session than the one that started it. Sign in again and connect from Account settings. |
 | `This account signs in with single sign-on, which manages its password.` | Someone tried to set a password on an OIDC account through the API. Single sign-on accounts have no password. |
 | `[aldine] OIDC sign-in is off: OIDC_CLIENT_ID is not set` in the boot log | Some `OIDC_*` variables are set but not both required ones. Check the spelling. |
 | The IdP reports `redirect_uri` mismatch | The redirect URI at the IdP differs from `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback` (check the path prefix and trailing slashes). |

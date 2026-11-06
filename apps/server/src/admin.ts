@@ -61,6 +61,9 @@ export interface AdminUserRow {
   provider?: string;
   /** How the account signs in: "Password", or the provider's name. */
   signIn: string;
+  /** Every way it signs in: signIn first, then the providers connected to a
+   *  password account from Sign-in methods. */
+  signInMethods: string[];
   /** A password account: the only kind a reset link serves. */
   password: boolean;
   createdAt: string;
@@ -105,6 +108,7 @@ export async function adminStats(now = Date.now()): Promise<AdminStats> {
 }
 
 const signInLabel = (u: User) => (u.provider ? providers.find((p) => p.id === u.provider)?.label ?? u.provider : 'Password');
+const providerName = (id: string) => providers.find((p) => p.id === id)?.label ?? id;
 
 async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
   const metas = await db().listMeta();
@@ -121,6 +125,7 @@ async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
     name: u.name,
     provider: u.provider,
     signIn: signInLabel(u),
+    signInMethods: [signInLabel(u), ...(await db().listSignInLinks(u.id)).map((l) => providerName(l.provider))],
     password: auth.hasPassword(u),
     createdAt: u.createdAt,
     lastSeenAt: u.lastSeenAt,
@@ -178,9 +183,8 @@ function endSockets(userId: string): void {
 /** Does this share-list entry name the account: its confirmed address or
  *  its ORCID iD? An invite to an address nobody confirmed is for whoever
  *  owns the address, and stays. */
-function namesAccount(u: User, entry: string): boolean {
+function namesAccount(u: User, orcid: string | undefined, entry: string): boolean {
   const address = u.emailPending ? undefined : u.email?.toLowerCase();
-  const orcid = auth.orcidOf(u);
   return (!!address && entry.toLowerCase() === address) || (!!orcid && entry === orcid);
 }
 
@@ -193,7 +197,8 @@ async function withdrawOpen(invitations: Invitation[]): Promise<void> {
 async function transferProject(meta: ProjectMeta, to: User): Promise<void> {
   meta.ownerId = to.id;
   const share = meta.share ?? { mode: 'private' as const, collaborators: [] };
-  meta.share = { ...share, collaborators: share.collaborators.filter((c) => !namesAccount(to, c)) };
+  const orcid = await auth.orcidFor(to);
+  meta.share = { ...share, collaborators: share.collaborators.filter((c) => !namesAccount(to, orcid, c)) };
   // The link carries the previous owner's Zotero key, and searching it reads
   // their whole personal library.
   delete meta.zotero;
@@ -204,15 +209,16 @@ async function transferProject(meta: ProjectMeta, to: User): Promise<void> {
 
 async function removeFromShares(u: User): Promise<number> {
   let removed = 0;
+  const orcid = await auth.orcidFor(u);
   for (const meta of await db().listMeta()) {
     const list = meta.share?.collaborators;
-    if (!meta.share || !list?.some((c) => namesAccount(u, c))) continue;
-    meta.share = { ...meta.share, collaborators: list.filter((c) => !namesAccount(u, c)) };
+    if (!meta.share || !list?.some((c) => namesAccount(u, orcid, c))) continue;
+    meta.share = { ...meta.share, collaborators: list.filter((c) => !namesAccount(u, orcid, c)) };
     await store.writeMeta(meta);
     removed++;
   }
   // Open invitations to the account go the same way as its share entries.
-  const keys = [...(u.email && !u.emailPending ? [u.email.toLowerCase()] : []), ...(auth.orcidOf(u) ? [auth.orcidOf(u)!] : [])];
+  const keys = [...(u.email && !u.emailPending ? [u.email.toLowerCase()] : []), ...(orcid ? [orcid] : [])];
   if (keys.length) await withdrawOpen(await store.listInvitationsTo(keys));
   return removed;
 }

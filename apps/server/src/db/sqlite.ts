@@ -6,7 +6,7 @@ import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, fsyncDir } from '../durable.js';
 import { DamagedStoreFileError, JsonStore, type StoreDump } from './json.js';
 import { PRE_RENEWAL_SESSION_MS } from './types.js';
-import type { DataStore, User, EmailPending, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+import type { DataStore, User, EmailPending, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation, SignInLink } from './types.js';
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -78,6 +78,11 @@ const MIGRATIONS = [
   // 1.9: the sign-in each session began with, for the cap on renewals.
   `ALTER TABLE sessions ADD COLUMN created_at integer;
    UPDATE sessions SET created_at = exp - ${PRE_RENEWAL_SESSION_MS};`,
+  // Single sign-on identities connected to password accounts (Sign-in methods).
+  `CREATE TABLE sign_in_links (
+    subject text PRIMARY KEY, user_id text NOT NULL, provider text NOT NULL, created_at text NOT NULL,
+    UNIQUE (user_id, provider)
+  );`,
 ];
 
 /** What `PRAGMA user_version` holds once every migration ran. A file with
@@ -248,6 +253,9 @@ export class SqliteStore implements DataStore {
         for (const [branch, mark] of Object.entries(a.compile)) await this.setCompileMark(a.projectId, branch, mark);
       });
       await copy(() => 'invitations.json', d.invitations, (i) => this.setInvitation(i));
+      await copy(() => 'sign_in_links.json', d.signInLinks, async (l) => {
+        if (!(await this.createSignInLink(l))) throw new Error(`a second link for ${l.subject}`);
+      });
       const count = (table: string) => Number(this.get(`SELECT count(*) AS n FROM ${table}`)!.n);
       if (count('users') !== d.users.length) throw new Error(`${d.users.length} accounts read, ${count('users')} written`);
       if (count('project_meta') !== d.meta.length) throw new Error(`${d.meta.length} projects read, ${count('project_meta')} written`);
@@ -324,7 +332,7 @@ export class SqliteStore implements DataStore {
   async setDisabled(id: string, disabledAt: string | null) { this.run(`UPDATE users SET disabled_at=?2 WHERE id=?1`, id, disabledAt); }
   async deleteUser(id: string) {
     this.tx(() => {
-      for (const table of ['sessions', 'resets', 'tokens', 'refresh_tokens', 'connections', 'project_opens', 'project_visits']) {
+      for (const table of ['sessions', 'resets', 'tokens', 'refresh_tokens', 'connections', 'project_opens', 'project_visits', 'sign_in_links']) {
         this.run(`DELETE FROM ${table} WHERE user_id=?1`, id);
       }
       this.run(`DELETE FROM users WHERE id=?1`, id);
@@ -655,6 +663,24 @@ export class SqliteStore implements DataStore {
   async deleteProjectInvitations(projectId: string): Promise<void> {
     if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
     this.run(`DELETE FROM invitations WHERE project_id=?1`, projectId);
+  }
+
+  // ---- sign-in links ----
+  private rowToLink(r: Row): SignInLink {
+    return { subject: r.subject, userId: r.user_id, provider: r.provider, createdAt: r.created_at };
+  }
+  async createSignInLink(l: SignInLink) {
+    return this.run(`INSERT INTO sign_in_links(subject,user_id,provider,created_at) VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING`, l.subject, l.userId, l.provider, l.createdAt) === 1;
+  }
+  async findSignInLink(subject: string) {
+    const r = this.get(`SELECT * FROM sign_in_links WHERE subject=?1`, subject);
+    return r ? this.rowToLink(r) : null;
+  }
+  async listSignInLinks(userId: string) {
+    return this.all(`SELECT * FROM sign_in_links WHERE user_id=?1 ORDER BY created_at, provider`, userId).map((r) => this.rowToLink(r));
+  }
+  async deleteSignInLink(userId: string, provider: string) {
+    return this.run(`DELETE FROM sign_in_links WHERE user_id=?1 AND provider=?2`, userId, provider) === 1;
   }
 
   // ---- connections ----
