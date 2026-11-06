@@ -343,7 +343,8 @@ test.describe('visual editor: tables, formulas and pastes (d-visual-content)', (
       await page.locator('.cm-line', { hasText: 'The angle' }).click();
       await page.keyboard.press(`${MOD}+z`);
       await expectStored(request, id, UNICODE_DOC);
-      await page.keyboard.press(`${MOD}+Shift+z`);
+      // a keyboard sends "Z" with Shift; lowercase reads as Mod-z (undo) on Linux
+      await page.keyboard.press(`${MOD}+Shift+Z`);
       await expectStored(request, id, WITH_FONT);
     } finally {
       await cleanup(request, id);
