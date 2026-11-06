@@ -222,6 +222,12 @@ export const IconChevronDown = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const IconChevronUp = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} width={10} height={10} strokeWidth={1.75}>
+    <path d="M3.5 10 8 5.5 12.5 10" />
+  </svg>
+);
+
 export const IconSun = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <circle cx="8" cy="8" r="2.75" />

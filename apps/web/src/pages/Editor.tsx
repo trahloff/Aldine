@@ -48,7 +48,7 @@ import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
 import { appearanceCommands } from '../components/Appearance';
 import { useDocumentTitle } from '../util/documentTitle';
-import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
+import { formatChord, matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { shortcut } from '../platform';
 import { MenuButton } from '../components/Menu';
 import ProjectSettings from '../components/ProjectSettings';
@@ -1314,6 +1314,7 @@ export default function Editor() {
       },
       { id: 'jump-pdf', group: 'Actions', title: 'Jump PDF to cursor', hint: keys.jump, run: () => jumpToPdf() },
       { id: 'jump-source', group: 'Actions', title: 'Jump to source: the middle of the PDF preview', run: jumpToSource },
+      { id: 'find-in-pdf', group: 'Actions', title: 'Find in the PDF…', keywords: 'search preview text', run: () => pdfRef.current?.openFind() },
       { id: 'comment', group: 'Actions', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
       { id: 'search', group: 'Actions', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
       { id: 'replace', group: 'Actions', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
@@ -2002,6 +2003,17 @@ export default function Editor() {
                 data-testid="jump-to-pdf"
               >
                 Jump<span className="jump__more"> to PDF</span> <span className="kbd">{keys.jump}</span>
+              </button>
+            )}
+            {hasPdf && (
+              <button
+                className="btn btn--ghost btn--small pdf-find-open"
+                onClick={() => pdfRef.current?.openFind()}
+                title={`Find in the PDF (${formatChord({ mod: true, shift: false, alt: false, key: 'f' })})`}
+                aria-label="Find in the PDF"
+                data-testid="pdf-find-open"
+              >
+                <IconSearch />
               </button>
             )}
             <PdfPageNav store={pdfPages} onGo={(page) => pdfRef.current?.goToPage(page)} />
