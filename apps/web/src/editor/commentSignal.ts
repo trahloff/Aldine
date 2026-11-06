@@ -10,11 +10,12 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
  * mutates comments bumps it, and every other client re-fetches — so review
  * threads appear live without polling.
  */
-export function useCommentSignal(projectId: string, branch: string, onRemoteChange: () => void) {
-  return useSignalDoc(projectId, branch, '.aldine/comments-signal', onRemoteChange);
+/** A new `session` (a sign-in since the socket was refused) opens it again. */
+export function useCommentSignal(projectId: string, branch: string, onRemoteChange: () => void, session = 0) {
+  return useSignalDoc(projectId, branch, '.aldine/comments-signal', onRemoteChange, session);
 }
 
-function useSignalDoc(projectId: string, branch: string, docPath: string, onRemoteChange: () => void) {
+function useSignalDoc(projectId: string, branch: string, docPath: string, onRemoteChange: () => void, session: number) {
   const bumpRef = useRef<() => void>(() => {});
   const cbRef = useRef(onRemoteChange);
   cbRef.current = onRemoteChange;
@@ -45,7 +46,7 @@ function useSignalDoc(projectId: string, branch: string, docPath: string, onRemo
       ydoc.destroy();
       bumpRef.current = () => {};
     };
-  }, [projectId, branch, docPath]);
+  }, [projectId, branch, docPath, session]);
 
   return () => bumpRef.current();
 }

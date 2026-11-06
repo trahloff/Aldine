@@ -6,6 +6,8 @@ export interface ConfirmOptions {
   body?: string;
   /** Names the action: "Delete branch", not "OK". */
   confirmLabel: string;
+  /** Names the way out, "Cancel" unless set. It has the focus, so Enter takes it too. */
+  cancelLabel?: string;
   /** The action destroys something: the button is red. */
   danger?: boolean;
 }
@@ -85,7 +87,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               />
             )}
             <div className="modal__row">
-              <button type="button" className="btn" onClick={cancel} data-testid="dialog-cancel">Cancel</button>
+              <button type="button" className="btn" onClick={cancel} data-testid="dialog-cancel">{(open.kind === 'confirm' && open.o.cancelLabel) || 'Cancel'}</button>
               <button
                 type="submit"
                 className={`btn ${open.kind === 'confirm' && open.o.danger ? 'btn--danger' : 'btn--primary'}`}

@@ -30,11 +30,13 @@ export interface BranchSignalHandle {
 
 type SignalKey = 'v' | 'a' | 'ts' | 'td' | 'c';
 
+/** A new `session` (a sign-in since the socket was refused) opens the channel again. */
 export function useBranchSignal(
   projectId: string,
   branch: string,
   handlers: BranchSignalHandlers,
   eligible: boolean,
+  session = 0,
 ): BranchSignalHandle {
   const cbRef = useRef(handlers);
   cbRef.current = handlers;
@@ -126,7 +128,7 @@ export function useBranchSignal(
       provider.destroy();
       ydoc.destroy();
     };
-  }, [projectId, branch]);
+  }, [projectId, branch, session]);
 
   // Eligibility changes (the auto toggle, the first .tex) without tearing the
   // socket down — the roster must reflect it before the next election.

@@ -57,6 +57,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   figures/" with an Undo that puts it back.
 - Rows in the file tree show a "⋯" button, on the open file and under the
   mouse, with the same actions as a right-click.
+- The editor says whether your edits are on the server: Saved beside the
+  file name, Saving… when the server is slow to confirm them, and Offline or
+  Reconnecting… when the connection is gone, with "Not saved" while edits
+  wait in the tab. Editing goes on offline; those edits are saved once the
+  connection is back, and coming back online reconnects at once.
+- A file takes no typing until it has loaded from the server. Before, keys
+  pressed in the empty editor ended up at the top of the file once its text
+  arrived. A file that takes a while to load says Connecting….
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -313,6 +321,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   from after the replace until you searched again.
 - Go to line (Cmd+Alt+G, Ctrl+Alt+G) opens at the top of the editor, like
   Find, instead of at the bottom.
+- Closing or reloading the tab while edits are not saved yet asks first.
+  So does leaving the editor for another page of the app, with Back to
+  projects or the browser's Back, which offers Stay and Leave. Before, the
+  edits were gone without a word.
+- When your session ends while a project is open, because it expired or you
+  signed out elsewhere, the sign-in comes up over the editor. The editor
+  keeps the edits made meanwhile and saves them once you have signed in
+  again. Before, it carried on as if nothing had happened. The project list
+  shows the sign-in form in that case too, instead of "Sign in required"
+  with a Try again that could not help.
 
 ## [1.8.0] — 2026-11-04
 

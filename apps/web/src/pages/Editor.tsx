@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity } from '../api';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, type AuthUser } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
@@ -55,6 +55,10 @@ import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
 import { safeStorage } from '../util/safeStorage';
 import { lastOpenFile, rememberOpenFile } from '../util/openFile';
+import SyncStatus from '../components/SyncStatus';
+import type { SyncState } from '../editor/syncStatus';
+import { documentTitle } from '../util/documentTitle';
+import { useLeaveGuard } from '../editor/leaveGuard';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
@@ -97,6 +101,9 @@ function inTextField(target: EventTarget | null): boolean {
 const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files']);
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
+
+/** The card over the editor when the session ends while it is open. */
+const SESSION_ENDED: ProjectLoadError = { reason: 'signed-out', message: 'Sign in required', status: 401 };
 
 /** A dialog is open; the command palette is one too. The copy a closing
  *  dialog leaves for its exit animation has no role. */
@@ -219,7 +226,7 @@ export default function Editor() {
   const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled, user } = useAuth();
+  const { authEnabled, user, setUser } = useAuth();
   // Who collaborators and comment threads see: the account when there is one;
   // the browser's anonymous "Writer N" is only right without accounts (the
   // server applies the same rule to commits).
@@ -264,6 +271,11 @@ export default function Editor() {
   const activeEntry = activeFile ? files.find((f) => f.path === activeFile) : undefined;
   // Images, PDFs and other binary files open as a preview, never a collab doc.
   const previewing = !!activeFile && previewKind(activeFile, activeEntry) !== null;
+  /** The open file's sync state, under the pane it came from (`paneKey`). */
+  const [sync, setSync] = useState<{ key: string; state: SyncState } | null>(null);
+  const paneKey = `${id}::${branch}::${activeFile}`;
+  // Switching files or branches stays in the editor and is not asked about.
+  const leaving = useLeaveGuard(() => !!(sync?.key === paneKey && sync.state.unsynced));
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoad, setCommentsLoad] = useState<'loading' | 'ok' | 'error'>('loading');
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
@@ -312,6 +324,11 @@ export default function Editor() {
   const [loadError, setLoadError] = useState<ProjectLoadError | null>(null);
   const [loadTry, setLoadTry] = useState(0);
   const openedRef = useRef<string | null>(null);
+  // The session ended while the project was open: the sign-in comes up over
+  // the editor, which keeps the edits it holds until it can send them.
+  const [sessionEnded, setSessionEnded] = useState(false);
+  /** Bumped by a sign-in over the editor: the branch's sockets open again. */
+  const [session, setSession] = useState(0);
   const loadProject = useCallback(async () => {
     // A sign-in that started here has come back: Home must not bring it here again.
     forgetProjectResume();
@@ -333,7 +350,8 @@ export default function Editor() {
       } else if (status === 403 && !open) {
         showInPlace('denied');
       } else if (status === 401) {
-        showInPlace('signed-out');
+        if (open) setSessionEnded(true);
+        else showInPlace('signed-out');
       } else {
         toast(status === 403 ? 'You no longer have access to this project' : 'Project not found', 'error');
         navigate('/');
@@ -349,11 +367,14 @@ export default function Editor() {
     try {
       await api.getProject(id);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { setSessionEnded(true); return; }
       if (!(err instanceof ApiError) || (err.status !== 403 && err.status !== 404)) return;
       toast(err.status === 403 ? `You no longer have access to “${project?.name ?? 'this project'}”` : 'Project not found', 'error');
       navigate('/');
     }
   }, [id, project?.name]);
+
+  useEffect(() => onSignedOut(() => { if (openedRef.current === id) setSessionEnded(true); }), [id]);
 
   // The project list's "opened" and, for a share-link visitor, its listing.
   useEffect(() => { api.markOpened(id, branch).catch(() => { /* the list is a convenience */ }); }, [id, branch]);
@@ -871,7 +892,7 @@ export default function Editor() {
   }, [id, branch]);
   useEffect(() => { setCommentsLoad('loading'); loadComments(); }, [id, branch]);
   // live-sync: re-fetch when any collaborator changes comments
-  const bumpComments = useCommentSignal(id, branch, loadComments);
+  const bumpComments = useCommentSignal(id, branch, loadComments, session);
   // The file list is a REST snapshot. The server bumps this signal whenever
   // the branch's files change on disk (another tab, a collaborator, the agent
   // API, a pull), and a tab coming back to the foreground refetches anyway.
@@ -927,6 +948,7 @@ export default function Editor() {
     id, branch,
     { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onCommitted: bumpHistory },
     auto && hasTex,
+    session,
   );
   signal.current = signalHandle;
   useEffect(() => {
@@ -1234,7 +1256,7 @@ export default function Editor() {
             // The copy is of the main branch, whichever branch is open here.
             const c = await api.copyProject(id);
             if (c.remoteError) toast(c.remoteError, 'error');
-            toast(branch === 'main' ? `Made a copy: “${c.name}”` : `Made a copy of the main branch: “${c.name}”`, 'ok', { label: 'Open', testId: 'copy-open', onClick: () => navigate(`/p/${c.id}`) });
+            toast(branch === 'main' ? `Made a copy: “${c.name}”` : `Made a copy of the main branch: “${c.name}”`, 'ok', { label: 'Open', testId: 'copy-open', onClick: () => leaving(() => navigate(`/p/${c.id}`)) });
           } catch (err: any) {
             toast(`Could not make a copy: ${err.message}`, 'error');
           }
@@ -1383,17 +1405,31 @@ export default function Editor() {
   };
   if (!project) return loadError ? <ProjectUnavailable projectId={id} error={loadError} onRetry={() => setLoadTry((n) => n + 1)} /> : <div className="editor-shell" />;
 
+  /** Signed in again over the editor: everything that was refused asks again. */
+  const resumeSession = (u: AuthUser) => {
+    setUser(u);
+    setSessionEnded(false);
+    setSession((n) => n + 1);
+    codeRef.current?.reconnect();
+    loadProject();
+    loadFiles();
+    loadComments();
+    document.title = documentTitle(project.name);
+    // once the editor is no longer inert
+    requestAnimationFrame(() => codeRef.current?.focus());
+  };
+
   // Without auth everyone is owner and member; with it, trust the server's word.
   const isProjectOwner = !authEnabled || !!project.isOwner;
   const canSync = !authEnabled || !!project.isMember;
   // Access exists only with sign-in, and only the owner may change it.
   const canManageSharing = authEnabled && !!project.isOwner;
 
-  return (
-    <div className="editor-shell" data-testid="editor-shell">
+  return (<>
+    <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
       <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} files={files} />
       <header className="toolbar" aria-label="Project toolbar">
-        <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
+        <button className="btn btn--ghost" onClick={() => leaving(() => navigate('/'))} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
           contentEditable={(canSync && !project.readOnly) || undefined}
@@ -1661,6 +1697,7 @@ export default function Editor() {
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {paneMode === 'visual' && <FormatToolbar target={codeRef} />}
+                {sync?.key === paneKey && <SyncStatus state={sync.state} readOnly={!!project.readOnly} />}
               </div>
               <CodePane
                 key={`${id}::${branch}::${activeFile}`}
@@ -1679,6 +1716,7 @@ export default function Editor() {
                 mode={paneMode}
                 identity={identity}
                 readOnly={!!project.readOnly}
+                onSync={(state) => setSync({ key: paneKey, state })}
               />
             </>
           ) : filesLoaded && !hasFiles ? (
@@ -1995,5 +2033,15 @@ export default function Editor() {
         </Modal>
       )}
     </div>
-  );
+    {sessionEnded && (
+      <div className="session-ended" role="dialog" aria-modal="true" aria-label="Your session has ended" data-testid="session-ended">
+        <ProjectUnavailable
+          projectId={id}
+          error={SESSION_ENDED}
+          onRetry={() => loadProject()}
+          inPlace={{ unsynced: !!(sync?.key === paneKey && sync.state.unsynced), onSignedIn: resumeSession }}
+        />
+      </div>
+    )}
+  </>);
 }

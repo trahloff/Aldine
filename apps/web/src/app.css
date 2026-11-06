@@ -213,6 +213,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* the reserved agent violet (theme.css --agent) — kept out of the human color palette */
 .dot--agent { background: var(--agent); }
 @keyframes pulse { 50% { opacity: 0.35; } }
+.dot--warn { background: var(--warn); }
 
 /* ---------- modal ---------- */
 
@@ -613,6 +614,18 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* A read-only showcase: the visitor's way to an editable copy */
 .showcase-note { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: var(--text-s); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); border-bottom: 1px solid var(--hairline); }
 .showcase-note__text { flex: 1; min-width: 0; }
+
+/* Whether the open file's edits are on the server (components/SyncStatus.tsx):
+   quiet text while they are, a warning pill when the connection is gone. */
+.sync-status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
+.sync-status--saving { color: var(--text-2); }
+.sync-status--offline { padding: 1px 8px; border-radius: 999px; color: var(--warn-text); background: var(--warn-soft); font-weight: 600; }
+
+/* The sign-in over an editor whose session ended: the editor stays mounted
+   underneath with the edits it holds. On the dialogs' layer: the editor's own
+   come before it in the page and stay under it, the app's questions
+   (Dialogs.tsx) come after it and show over it. */
+.session-ended { position: fixed; inset: 0; z-index: 200; overflow: auto; background: var(--scrim); }
 .conflict__list { margin: 8px 0; padding: 8px 10px; background: var(--bg-inset); border-radius: var(--radius-s); font-family: var(--font-mono); font-size: var(--text-s); max-height: 160px; overflow-y: auto; list-style: none; }
 .conflict__list li { padding: 2px 0; color: var(--error); }
 .btn--danger { background: var(--error); color: #fff; border-color: transparent; }

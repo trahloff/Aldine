@@ -8,6 +8,8 @@ import { DialogProvider } from './components/Dialogs';
 import { AuthProvider } from './components/Auth';
 import ErrorBoundary from './components/ErrorBoundary';
 import { startThemeSync } from './theme';
+// before the router: the editor's Back/Forward guard must hear a popstate first
+import './editor/leaveGuard';
 import { useDocumentTitle } from './util/documentTitle';
 import './theme.css';
 import './app.css';

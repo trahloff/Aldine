@@ -226,9 +226,11 @@ export default function Home() {
       .catch((err) => {
         if (seq !== loads.current) return;
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) safeSession.remove(cacheKey);
+        // The session ended while the page was open: Try again cannot help, signing in can.
+        if (authEnabled && err instanceof ApiError && err.status === 401) { setUser(null); return; }
         setLoadError(failureReason(err));
       });
-  }, [cacheKey, loadTrash]);
+  }, [cacheKey, loadTrash, authEnabled]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (projects) safeSession.setJSON(cacheKey, projects.map(forCache)); }, [projects, cacheKey]);
   /** Every local change to the list goes through here. */
