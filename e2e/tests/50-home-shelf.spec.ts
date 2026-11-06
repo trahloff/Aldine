@@ -79,6 +79,8 @@ test.describe('keyboard', () => {
       await page.keyboard.press('/');
       await expect(page.getByTestId('home-search')).toBeFocused();
       await page.keyboard.type(prefix);
+      // every keystroke stays, however fast the address follows
+      await expect(page.getByTestId('home-search')).toHaveValue(prefix);
       await expect(page.getByTestId('search-status')).toHaveText('3 projects match');
       // newest first: charlie, bravo, alpha
       await page.keyboard.press('ArrowDown');

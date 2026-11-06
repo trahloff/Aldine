@@ -146,15 +146,19 @@ export default function Home() {
   // drop keystrokes typed in between.
   const urlQuery = params.get('q') ?? '';
   const [query, setQueryText] = useState(urlQuery);
-  const sentQuery = useRef(urlQuery);
+  // Values the field sent that the address has not shown yet. The address
+  // catches up one keystroke at a time; only a value the field never sent
+  // (Back, a link) replaces what is typed.
+  const sentQueries = useRef<string[]>([]);
   useEffect(() => {
-    if (urlQuery === sentQuery.current) return;
-    sentQuery.current = urlQuery;
+    const i = sentQueries.current.indexOf(urlQuery);
+    if (i >= 0) { sentQueries.current = sentQueries.current.slice(i + 1); return; }
+    sentQueries.current = [];
     setQueryText(urlQuery);
   }, [urlQuery]);
   const setQuery = useCallback((q: string) => {
     setQueryText(q);
-    sentQuery.current = q;
+    sentQueries.current.push(q);
     setParams((cur) => {
       const next = new URLSearchParams(cur);
       if (q) next.set('q', q); else next.delete('q');
