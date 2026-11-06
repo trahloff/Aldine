@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Text in the PDF preview can be selected and copied, as plain text. Cmd+F
+  while the preview has the focus opens Find over the PDF: it searches every
+  page, without case or accents, says how many matches there are and
+  highlights them, and Enter and Shift+Enter step from one to the next. The
+  Find icon above the preview and "Find in the PDF…" in the command palette
+  open it too. In the editor, Cmd+F is still the editor's Find. Links in the
+  PDF still follow on a click, and a double-click on text still jumps to its
+  source.
+
 ### Changed
 - Merging a branch into main from the branch menu asks first and says how
   many checkpoints go in, because everyone working on main sees them. When

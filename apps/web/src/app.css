@@ -858,14 +858,15 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 
 /* A narrow preview drops the shortcut hint, then "to PDF", then the switch's
    "Auto" (its tooltip and label stay) before anything wraps; the query is on the pane, not the window, since the pane is
-   resizable. The page number (about 52px with its gap) and the Download
-   icon (28px) are counted in. */
+   resizable. The page number (about 52px with its gap), the Download icon
+   (28px) and the Find icon (32px) are counted in. */
 .pane--preview { container-type: inline-size; }
-@container (max-width: 632px) { .pane__header .kbd { display: none; } }
-@container (max-width: 582px) { .jump__more { display: none; } }
-@container (max-width: 552px) { .auto-toggle__label { display: none; } }
+@container (max-width: 664px) { .pane__header .kbd { display: none; } }
+@container (max-width: 614px) { .jump__more { display: none; } }
+@container (max-width: 584px) { .auto-toggle__label { display: none; } }
 .jump__source { width: 24px; padding: 0; justify-content: center; }
 .pdf-download { width: 24px; padding: 0; justify-content: center; }
+.pdf-find-open { width: 24px; padding: 0; justify-content: center; }
 
 .pane__header {
   display: flex;
@@ -1319,6 +1320,68 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   pointer-events: auto;
 }
 @media (hover: hover) and (pointer: fine) { .pdf-link:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); } }
+/* While text is being selected over a page, its links let the drag through. */
+.pdf-text-box:has(> .selecting) ~ .pdf-links .pdf-link { pointer-events: none; }
+
+/* A page's text (pdf.js's TextLayer, which places and sizes its spans from
+   --scale-factor): transparent over the glyphs, there to select, copy and
+   find. Its box is the page's cell; the layer is the unrotated page. */
+.pdf-text-box { position: relative; overflow: hidden; }
+.pdf-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+.pdf-text[data-main-rotation="90"] { transform: rotate(90deg) translateX(-100%); }
+.pdf-text[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.pdf-text[data-main-rotation="270"] { transform: rotate(270deg) translateY(-100%); }
+.pdf-text > span, .pdf-text > br { position: absolute; z-index: 1; color: transparent; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+/* the paper is white in both themes */
+.pdf-text ::selection { background: rgba(46, 98, 233, 0.3); }
+.pdf-text br::selection { background: transparent; }
+.pdf-text .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; -webkit-user-select: none; user-select: none; }
+.pdf-text.selecting .endOfContent { top: 0; }
+/* pdf.js measures glyphs on a canvas of its own in the body */
+.hiddenCanvasElement { position: absolute; top: 0; left: 0; width: 0; height: 0; display: none; }
+.pdf-hit { margin: -1px; padding: 1px; border-radius: 3px; color: transparent; background: rgba(255, 196, 0, 0.45); }
+.pdf-hit--current { background: rgba(255, 128, 0, 0.6); box-shadow: 0 0 0 1px #2e62e9; }
+
+/* The pages, and Find over their top right corner. */
+.pdf-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.pdf-find {
+  position: absolute;
+  right: 20px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  max-width: calc(100% - 40px);
+  padding: 4px;
+  background: var(--material-pop);
+  backdrop-filter: var(--material-blur);
+  -webkit-backdrop-filter: var(--material-blur);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: pop-in 140ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) { .pdf-find { animation-name: fade-only; } }
+.pdf-find__input { flex: 1 1 180px; width: 180px; min-width: 0; height: 26px; font-size: var(--text-s); }
+.pdf-find__count { min-width: 64px; padding: 0 6px; color: var(--text-2); font-size: var(--text-xs); font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+@media (pointer: coarse) {
+  .pdf-find__input { height: 36px; font-size: 16px; }
+  .pdf-find .btn--icon { width: 36px; height: 36px; }
+}
 
 /* errors panel */
 .errors {

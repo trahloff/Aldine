@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useImperativeHandle, forwardRef, useRef, useState } from 'react';
-import { useShortcutLabel } from '../util/shortcuts';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, forwardRef, useRef, useState } from 'react';
+import { matchesChord, useShortcutLabel, type Chord } from '../util/shortcuts';
 import { pagesAt, pagesOnScreen, scrollTopForPage, scrollToSpot, spotAt, type PageSpot, type PdfPagesStore } from '../util/pdfPages';
 import { cMapUrl, pdfjs } from '../util/pdfjs';
 import { pageLinks, resolveDest, toPage, type DestTarget, type PageBox } from '../util/pdfLinks';
+import { findCount, findMatches, findPattern, pageText, type Match, type PageText } from '../util/pdfFind';
+import { bindSelection, markHits, unbindSelection, type TextSpans } from '../util/pdfText';
 import { clampZoom, PDF_ZOOM_STEPS, wheelZoom } from '../util/filePreview';
 import { outputFileName } from '../util/outputFiles';
-import type { PageViewport, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import PdfFindBar from './PdfFindBar';
+import type { PageViewport, PDFDocumentProxy, RenderTask, TextLayer } from 'pdfjs-dist';
+import type { TextContent, TextItem } from 'pdfjs-dist/types/src/display/api';
 
 export interface PdfPaneHandle {
   /** Scroll to a page + PDF-space y and flash a highlight (forward SyncTeX). */
@@ -17,6 +21,8 @@ export interface PdfPaneHandle {
   goToPage(page: number): void;
   /** Inverse SyncTeX for the middle of the view; false while no page shows. */
   sourceAtView(): boolean;
+  /** Opens Find over the pages, its field focused. */
+  openFind(): void;
 }
 
 interface Props {
@@ -100,8 +106,65 @@ function linkElement(box: PageBox, target: LinkTarget): HTMLElement {
 /** A typeset PDF, held for as long as its link is the one shown: a zoom or a
  *  width change lays it out again without fetching it. /output can't be
  *  cached for this: a halted run rewrites the file behind the link it keeps.
- *  `views` are its pages at scale 1. */
-type LoadedPdf = { url: string; pdf: PDFDocumentProxy; views: PageViewport[] };
+ *  `views` are its pages at scale 1; `texts` their text, read once for the
+ *  text layers at every zoom and for Find (`find`, every page). */
+type LoadedPdf = {
+  url: string;
+  pdf: PDFDocumentProxy;
+  views: PageViewport[];
+  texts: Map<number, Promise<TextContent>>;
+  find?: Promise<FindPage[]>;
+};
+
+/** A page as Find reads it: its folded text, and its text items for where a
+ *  match sits on the page. */
+type FindPage = { text: PageText; items: TextItem[] };
+
+/** A match, and where it starts on its page as fractions of the page's box. */
+type FoundMatch = Match & { fx: number; fy: number; fh: number };
+
+function textOf(doc: LoadedPdf, page: number): Promise<TextContent> {
+  let text = doc.texts.get(page);
+  if (!text) {
+    text = doc.pdf.getPage(page).then((p) => p.getTextContent());
+    doc.texts.set(page, text);
+    text.catch(() => { if (doc.texts.get(page) === text) doc.texts.delete(page); });
+  }
+  return text;
+}
+
+// One page after the other: the worker draws pages between them.
+function findPages(doc: LoadedPdf): Promise<FindPage[]> {
+  doc.find ??= (async () => {
+    const pages: FindPage[] = [];
+    for (let i = 1; i <= doc.views.length; i++) {
+      const items = (await textOf(doc, i)).items.filter((it): it is TextItem => 'str' in it);
+      pages.push({ text: pageText(items), items });
+    }
+    return pages;
+  })();
+  return doc.find;
+}
+
+/** Where each match starts: its first item's baseline origin, moved along
+ *  the item to the match, up to the top of the font. */
+function locate(matches: Match[], pages: FindPage[], views: PageViewport[]): FoundMatch[] {
+  return matches.map((m) => {
+    const view = views[m.page - 1];
+    const { item, from } = m.ranges[0];
+    const it = pages[m.page - 1].items[item];
+    const [, , c, d, e, f] = it.transform as number[];
+    const size = Math.hypot(c, d) || it.height || 10;
+    const x = e + (it.str.length ? (it.width * from) / it.str.length : 0);
+    const [x1, y1] = toPage(view, x, f + size);
+    const [x2, y2] = toPage(view, x, f);
+    return { ...m, fx: Math.min(x1, x2) / view.width, fy: Math.min(y1, y2) / view.height, fh: Math.abs(y2 - y1) / view.height };
+  });
+}
+
+const FIND_KEYS: Chord = { mod: true, shift: false, alt: false, key: 'f' };
+const NEXT_KEYS: Chord = { mod: true, shift: false, alt: false, key: 'g' };
+const PREV_KEYS: Chord = { mod: true, shift: true, alt: false, key: 'g' };
 
 /** Pixels past the predicted view that are drawn before a layout shows, for
  *  the padding and banner the prediction leaves out. */
@@ -118,15 +181,26 @@ interface Layout {
   frag: DocumentFragment;
   draw(i: number): void;
   drawn(i: number): boolean;
-  /** Resolves once every page asked for so far is drawn or has failed. */
+  /** Lays a page's text layer over it. */
+  text(i: number): void;
+  /** The pages whose text layer is drawn, by page. */
+  spans: ReadonlyMap<number, TextSpans>;
+  /** Resolves once every page and text layer asked for so far is drawn or has failed. */
   settled(): Promise<void>;
-  /** Draws and links pages near the view of `scroller`, and frees far ones. */
+  /** Draws, links and lays text over pages near the view of `scroller`, and frees far ones. */
   watch(scroller: HTMLElement): void;
   /** Stops drawing and frees the canvases; the layout must be off screen. */
   stop(): void;
 }
 
-function createLayout(doc: LoadedPdf, width: number, zoom: number, dests: Map<string, Promise<DestTarget | null>>): Layout {
+/** CSS pixels per PDF point of a page as its canvas is sized, also off
+ *  screen: the text layer places its spans from it. */
+const textScale = (page: PageInfo) => page.scale * ((parseFloat(page.el.style.height) / Number(page.el.dataset.h)) || 1);
+
+function createLayout(
+  doc: LoadedPdf, width: number, zoom: number, dests: Map<string, Promise<DestTarget | null>>,
+  onText: (page: number, spans: TextSpans, pdf: PDFDocumentProxy) => void,
+): Layout {
   const { pdf } = doc;
   // Virtualized rendering: every page gets a correctly-sized canvas
   // immediately (layout only, no rasterization), so scroll geometry, SyncTeX
@@ -235,6 +309,59 @@ function createLayout(doc: LoadedPdf, width: number, zoom: number, dests: Map<st
     states.set(i, 'blank');
   };
 
+  // A page's text layer: pdf.js's transparent spans over its glyphs, for
+  // selecting, copying and Find. It sits between the page and its links, so
+  // the links stay on top, in a box of the page's size: the layer's own box
+  // is the unrotated page, which would otherwise widen the page's cell.
+  const texts = new Map<number, { box: HTMLElement; div: HTMLElement; layer: TextLayer | null }>();
+  const spans = new Map<number, TextSpans>();
+  const textJobs = new Set<Promise<void>>();
+  const text = (i: number) => {
+    const page = info[i - 1];
+    if (!page || texts.has(i) || !live) return;
+    const box = document.createElement('div');
+    box.className = 'pdf-text-box';
+    const div = document.createElement('div');
+    div.className = 'pdf-text';
+    div.dataset.testid = 'pdf-text';
+    box.appendChild(div);
+    page.el.after(box);
+    const entry = { box, div, layer: null as TextLayer | null };
+    texts.set(i, entry);
+    const job = (async () => {
+      try {
+        const content = await textOf(doc, i);
+        if (!live || texts.get(i) !== entry) return;
+        div.style.setProperty('--scale-factor', String(textScale(page)));
+        const layer = new pdfjs.TextLayer({ textContentSource: content, container: div, viewport: page.view.clone({ scale: page.scale }) });
+        entry.layer = layer;
+        await layer.render();
+        if (!live || texts.get(i) !== entry) return;
+        bindSelection(div);
+        const s: TextSpans = { divs: layer.textDivs, strs: layer.textContentItemsStr, marked: new Set() };
+        spans.set(i, s);
+        onText(i, s, pdf);
+      } catch (err) {
+        if (live && texts.get(i) === entry && (err as { name?: string })?.name !== 'AbortException') console.error('[pdf] page text failed', err);
+      }
+    })();
+    textJobs.add(job);
+    void job.then(() => textJobs.delete(job));
+  };
+
+  const untext = (i: number) => {
+    const entry = texts.get(i);
+    if (!entry) return;
+    // Freeing the text under a selection would drop the selection.
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed && sel.containsNode(entry.box, true)) return;
+    entry.layer?.cancel();
+    unbindSelection(entry.div);
+    entry.box.remove();
+    texts.delete(i);
+    spans.delete(i);
+  };
+
   return {
     pdf,
     zoom,
@@ -242,15 +369,17 @@ function createLayout(doc: LoadedPdf, width: number, zoom: number, dests: Map<st
     frag,
     draw,
     drawn: (i) => states.get(i) === 'done',
-    settled: () => chain,
+    text,
+    spans,
+    settled: () => Promise.all([chain, ...textJobs]).then(() => undefined),
     watch(scroller) {
       if (!live) return;
       observer = new IntersectionObserver((entries) => {
         for (const entry of entries) {
           const i = Number((entry.target as HTMLElement).dataset.page);
           if (!i) continue;
-          if (entry.isIntersecting) { draw(i); linkify(i); }
-          else release(i);
+          if (entry.isIntersecting) { draw(i); linkify(i); text(i); }
+          else { release(i); untext(i); }
         }
       }, { root: scroller, rootMargin: '150% 0px' });
       for (const { el } of info) observer.observe(el);
@@ -260,6 +389,7 @@ function createLayout(doc: LoadedPdf, width: number, zoom: number, dests: Map<st
       observer?.disconnect();
       for (const task of tasks) task.cancel();
       for (const { el } of info) { el.width = 0; el.height = 0; }
+      for (const { div, layer } of texts.values()) { layer?.cancel(); unbindSelection(div); }
     },
   };
 }
@@ -284,9 +414,11 @@ function scrollBackTo(scroller: HTMLElement, info: PageInfo[], spot: PageSpot, x
 /** Size the pages `ratio` times their laid-out size: the zoom shows at once,
  *  and the next layout draws them sharp. */
 function stretch(info: PageInfo[], ratio: number) {
-  for (const { el } of info) {
+  for (const page of info) {
+    const { el } = page;
     const w = Number(el.dataset.w), h = Number(el.dataset.h);
     if (w && h) { el.style.width = `${Math.floor(w * ratio)}px`; el.style.height = `${Math.floor(h * ratio)}px`; }
+    el.parentElement?.querySelector<HTMLElement>('.pdf-text')?.style.setProperty('--scale-factor', String(textScale(page)));
   }
 }
 
@@ -326,6 +458,25 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   const pageInfo = useRef<PageInfo[]>([]);
   /** Whether the first click of the current click run landed on a link. */
   const clickOnLink = useRef(false);
+
+  /** Find: whether its bar is open, what it holds, the matches in a
+   *  document, and the one it is on. */
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [found, setFound] = useState<{ doc: LoadedPdf; query: string; list: FoundMatch[] } | null>(null);
+  const [current, setCurrent] = useState(-1);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findBar = useRef<HTMLDivElement>(null);
+  /** The query the matches on hand were found for; null after a close, so
+   *  that the next search starts from the view again. */
+  const foundQuery = useRef<string | null>(null);
+  /** What the text layers mark, read by each one as it is drawn. */
+  const marks = useRef<{ pdf: PDFDocumentProxy; list: FoundMatch[]; byPage: Map<number, number[]>; current: number } | null>(null);
+  const markPage = useCallback((page: number, spans: TextSpans, pdf: PDFDocumentProxy) => {
+    const m = marks.current;
+    const on = m && m.pdf === pdf ? m.byPage.get(page) ?? [] : [];
+    markHits(spans, on.map((k) => ({ ranges: m!.list[k].ranges, current: k === m!.current })));
+  }, []);
 
   /** Flash a band across a page, `top` and `height` in PDF points. */
   const flash = (info: PageInfo, top: number, height: number) => {
@@ -396,6 +547,9 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       const py = Math.min(Math.max(y, bestRect.top), bestRect.bottom) - bestRect.top;
       inverse(best + 1, (px / bestRect.width) * pageView.width, (py / bestRect.height) * pageView.height);
       return true;
+    },
+    openFind() {
+      openFindRef.current();
     },
   }), []);
 
@@ -586,7 +740,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         if (!live || gen !== loads.current) return;
         kept = true;
         docs.current.add(pdf);
-        docRef.current = { url: pdfUrl, pdf, views };
+        docRef.current = { url: pdfUrl, pdf, views, texts: new Map() };
         setDoc(docRef.current);
         collect();
       } catch (err) {
@@ -614,7 +768,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     let map = dests.current.get(doc.pdf);
     if (!map) dests.current.set(doc.pdf, (map = new Map()));
     const width = Math.max(320, scroller.clientWidth - 36) * layoutZoom;
-    const layout = createLayout(doc, width, layoutZoom, map);
+    const layout = createLayout(doc, width, layoutZoom, map, markPage);
     const spotNow = () => {
       const on = shown.current;
       const at = viewMiddle(scroller);
@@ -633,7 +787,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
           const due = pagesAt(heights, gap, spot, scroller.clientHeight / 2, scroller.clientHeight, DRAW_MARGIN)
             .map((i) => i + 1).filter((i) => !layout.drawn(i));
           if (!due.length) break;
-          for (const i of due) layout.draw(i);
+          for (const i of due) { layout.draw(i); layout.text(i); }
           await layout.settled();
           if (!current()) return;
         }
@@ -647,6 +801,8 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
         shown.current = layout;
         prev?.stop();
         collect();
+        // Find's matches can have arrived while the layout drew its text.
+        for (const [i, s] of layout.spans) markPage(i, s, layout.pdf);
         setRendered(true);
         measurePage();
         layout.watch(scroller);
@@ -658,7 +814,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
       }
     })();
     return () => { if (shown.current !== layout) layout.stop(); };
-  }, [doc, layoutZoom, widthTick, refitTick, measurePage, collect, empty]);
+  }, [doc, layoutZoom, widthTick, refitTick, measurePage, collect, empty, markPage]);
 
   // Typesetting an unchanged document again keeps its PDF link: the new run
   // is the moment to retry the one that would not open, once a run, so a
@@ -668,6 +824,129 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     setFailedUrl(null);
     setLoadTick((n) => n + 1);
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Find reads the document on screen while its bar is open.
+  useEffect(() => {
+    if (!findOpen || !doc) { setFound(null); return; }
+    if (!findPattern(query)) { setFound({ doc, query, list: [] }); return; }
+    let live = true;
+    findPages(doc)
+      .then((pages) => { if (live) setFound({ doc, query, list: locate(findMatches(pages.map((p) => p.text), query), pages, doc.views) }); })
+      .catch((err) => {
+        if (!live) return;
+        console.error('[pdf] find failed', err);
+        setFound({ doc, query, list: [] });
+      });
+    return () => { live = false; };
+  }, [findOpen, doc, query]);
+
+  /** The first match at or below the top of the view, else the first of all. */
+  const firstFromView = (list: FoundMatch[]) => {
+    if (!list.length) return -1;
+    const info = pageInfo.current, scroller = scrollRef.current;
+    if (!info.length || !scroller) return 0;
+    const view = scroller.getBoundingClientRect();
+    const spot = spotAt(info.length, rectOf(info), view.left, view.top);
+    const k = spot ? list.findIndex((m) => m.page - 1 > spot.page || (m.page - 1 === spot.page && m.fy >= spot.fy)) : 0;
+    return Math.max(0, k);
+  };
+
+  /** Scrolls a match into the view, clear of the banner and the find bar,
+   *  unless it is in view already. */
+  const reveal = (m: FoundMatch) => {
+    const info = pageInfo.current[m.page - 1], scroller = scrollRef.current;
+    if (!info || !scroller) return;
+    const page = info.el.getBoundingClientRect(), view = scroller.getBoundingClientRect();
+    const top = page.top + m.fy * page.height, bottom = top + Math.max(m.fh * page.height, 12), left = page.left + m.fx * page.width;
+    const banner = scroller.querySelector('.pdf-stale')?.getBoundingClientRect().bottom ?? 0;
+    const clear = Math.max(view.top, banner, findBar.current?.getBoundingClientRect().bottom ?? 0) + 8;
+    if (top < clear || bottom > view.top + scroller.clientHeight - 8) scroller.scrollTop += top - (view.top + scroller.clientHeight / 3);
+    if (left < view.left + 8 || left > view.left + scroller.clientWidth - 48) scroller.scrollLeft += left - (view.left + scroller.clientWidth / 3);
+  };
+
+  // A new query goes to its first match from the top of the view; the same
+  // query over a new typeset stays on the match it was on.
+  useEffect(() => {
+    if (!found) return;
+    const { list } = found;
+    if (foundQuery.current === found.query) {
+      setCurrent((c) => (list.length ? Math.min(Math.max(c, 0), list.length - 1) : -1));
+      return;
+    }
+    foundQuery.current = found.query;
+    const k = firstFromView(list);
+    setCurrent(k);
+    if (k >= 0) reveal(list[k]);
+  }, [found]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (findOpen && found) {
+      const byPage = new Map<number, number[]>();
+      found.list.forEach((m, k) => {
+        let on = byPage.get(m.page);
+        if (!on) byPage.set(m.page, (on = []));
+        on.push(k);
+      });
+      marks.current = { pdf: found.doc.pdf, list: found.list, byPage, current };
+    } else {
+      marks.current = null;
+    }
+    const layout = shown.current;
+    if (layout) for (const [i, s] of layout.spans) markPage(i, s, layout.pdf);
+  }, [findOpen, found, current, markPage]);
+
+  const step = (dir: 1 | -1) => {
+    const list = found?.list;
+    if (!list?.length) return;
+    const k = current < 0 ? (dir > 0 ? 0 : list.length - 1) : (current + dir + list.length) % list.length;
+    setCurrent(k);
+    reveal(list[k]);
+  };
+
+  const openFind = () => {
+    // Text selected on one line of the PDF is what to look for, as in a browser.
+    const sel = document.getSelection();
+    const picked = sel && !sel.isCollapsed && innerRef.current?.contains(sel.anchorNode) ? sel.toString().trim() : '';
+    if (picked && !picked.includes('\n') && picked.length <= 200) setQuery(picked);
+    setFindOpen(true);
+    requestAnimationFrame(() => { findInput.current?.focus(); findInput.current?.select(); });
+  };
+  const openFindRef = useRef(openFind);
+  openFindRef.current = openFind;
+
+  const closeFind = () => {
+    setFindOpen(false);
+    foundQuery.current = null;
+    scrollRef.current?.focus({ preventScroll: true });
+  };
+
+  // The editor keeps its own Find: these keys are the PDF's only while the
+  // focus is in the preview.
+  const onFindKeys = (e: React.KeyboardEvent) => {
+    if (matchesChord(e.nativeEvent, FIND_KEYS)) {
+      e.preventDefault();
+      openFind();
+    } else if (findOpen && (matchesChord(e.nativeEvent, NEXT_KEYS) || matchesChord(e.nativeEvent, PREV_KEYS))) {
+      e.preventDefault();
+      step(e.shiftKey ? -1 : 1);
+    }
+  };
+
+  // Only the text goes to the clipboard: a rich copy would paste the text
+  // layer's transparent spans.
+  const copyText = (e: React.ClipboardEvent) => {
+    const sel = document.getSelection(), inner = innerRef.current;
+    if (!sel || sel.isCollapsed || !inner?.contains(sel.anchorNode) || !inner.contains(sel.focusNode)) return;
+    e.clipboardData.setData('text/plain', sel.toString().replace(/\0/g, ''));
+    e.preventDefault();
+  };
+
+  // The bar sits below the banner over stale pages.
+  const [barTop, setBarTop] = useState(8);
+  useLayoutEffect(() => {
+    if (!findOpen) return;
+    setBarTop((scrollRef.current?.querySelector<HTMLElement>('.pdf-stale')?.offsetHeight ?? 0) + 8);
+  }, [findOpen, stale, rendered, staleNote]);
 
   // A single click follows a link; the rest of a double-click on one does
   // nothing. Its second click would open a second tab, and after an internal
@@ -685,9 +964,9 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
 
   const handleDblClick = (e: React.MouseEvent) => {
     if (!onInverse || clickOnLink.current) return;
-    // closest() instead of an instanceof check: works whatever element ends up
-    // on top (canvas, flash overlay remnants, future wrappers).
-    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-page]');
+    // The page under whatever is on top of it: its text layer, a flash.
+    const hit = e.target as HTMLElement;
+    const target = hit.closest('.pdf-page-wrap')?.querySelector<HTMLElement>('canvas[data-page]') ?? hit.closest<HTMLElement>('[data-page]');
     if (!target?.dataset.page) return;
     const idx = Number(target.dataset.page) - 1;
     const info = pageInfo.current[idx];
@@ -698,38 +977,53 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   };
 
   return (
-    <div className="pdf-pane" ref={scrollRef} tabIndex={0} role="region" aria-label="Pages of the typeset PDF" data-testid="pdf-pane">
-      {stale && rendered && (
-        <div className="pdf-stale" data-testid="pdf-stale">{staleNote ?? 'Preview is from the last successful typeset'}</div>
-      )}
-      <div className="pdf-pane__inner" ref={innerRef} onClick={handleClick} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
-      {!rendered && (
-        <div className="pdf-empty">
-          {status === 'compiling' ? (
-            <><span className="spinner" /><p>Typesetting your document…</p></>
-          ) : pdfUrl && failedUrl === pdfUrl ? (
-            <>
-              <p data-testid="pdf-load-error">Could not open the typeset PDF. Download it to open it in another app, or typeset again.</p>
-              <a className="btn" href={pdfUrl} download={outputFileName(pdfUrl) ?? true} data-testid="pdf-load-error-download">Download the PDF</a>
-            </>
-          ) : pdfUrl ? (
-            <><span className="spinner" /><p>Opening the PDF…</p></>
-          ) : status === 'error' ? (
-            // Only blame the document when there are errors to fix — a failed
-            // run without parsed errors (missing root, server trouble) isn't
-            // the user's LaTeX.
-            notice && !hasErrors ? (
+    <div className="pdf-view" onKeyDown={onFindKeys} onCopy={copyText}>
+      <div className="pdf-pane" ref={scrollRef} tabIndex={0} role="region" aria-label="Pages of the typeset PDF" data-testid="pdf-pane">
+        {stale && rendered && (
+          <div className="pdf-stale" data-testid="pdf-stale">{staleNote ?? 'Preview is from the last successful typeset'}</div>
+        )}
+        <div className="pdf-pane__inner" ref={innerRef} onClick={handleClick} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
+        {!rendered && (
+          <div className="pdf-empty">
+            {status === 'compiling' ? (
+              <><span className="spinner" /><p>Typesetting your document…</p></>
+            ) : pdfUrl && failedUrl === pdfUrl ? (
               <>
-                <p data-testid="pdf-notice">{notice.text}</p>
-                {notice.action && <button className="btn" onClick={notice.action.onClick} data-testid={notice.action.testId}>{notice.action.label}</button>}
+                <p data-testid="pdf-load-error">Could not open the typeset PDF. Download it to open it in another app, or typeset again.</p>
+                <a className="btn" href={pdfUrl} download={outputFileName(pdfUrl) ?? true} data-testid="pdf-load-error-download">Download the PDF</a>
               </>
-            ) : <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
-          ) : ready && !hasTex ? (
-            <p data-testid="pdf-empty-no-tex">Create a .tex file to typeset and preview.</p>
-          ) : (
-            <p>Press <span className="kbd">{typesetKeys}</span> to typeset and preview.</p>
-          )}
-        </div>
+            ) : pdfUrl ? (
+              <><span className="spinner" /><p>Opening the PDF…</p></>
+            ) : status === 'error' ? (
+              // Only blame the document when there are errors to fix — a failed
+              // run without parsed errors (missing root, server trouble) isn't
+              // the user's LaTeX.
+              notice && !hasErrors ? (
+                <>
+                  <p data-testid="pdf-notice">{notice.text}</p>
+                  {notice.action && <button className="btn" onClick={notice.action.onClick} data-testid={notice.action.testId}>{notice.action.label}</button>}
+                </>
+              ) : <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
+            ) : ready && !hasTex ? (
+              <p data-testid="pdf-empty-no-tex">Create a .tex file to typeset and preview.</p>
+            ) : (
+              <p>Press <span className="kbd">{typesetKeys}</span> to typeset and preview.</p>
+            )}
+          </div>
+        )}
+      </div>
+      {findOpen && (
+        <PdfFindBar
+          query={query}
+          onQuery={setQuery}
+          count={findCount(query, found ? found.list.length : doc ? null : 0, current)}
+          canStep={!!found?.list.length}
+          onStep={step}
+          onClose={closeFind}
+          inputRef={findInput}
+          barRef={findBar}
+          style={{ top: barTop }}
+        />
       )}
     </div>
   );
