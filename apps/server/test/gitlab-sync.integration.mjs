@@ -49,11 +49,16 @@ const glMock = http.createServer(async (req, res) => {
   const segs = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
   if (segs[0] === 'user') return res.end(JSON.stringify({ username: 'tester', name: 'Tester' }));
   if (segs[0] === 'groups' && segs[1] === 'grp/sub') return res.end(JSON.stringify({ id: 42, full_path: 'grp/sub' }));
+  if (segs[0] === 'groups' && segs.length === 1 && req.method === 'GET') {
+    check(u.searchParams.get('min_access_level') === '30', 'owners asks for groups the account may create projects in: ' + req.url);
+    return res.end(JSON.stringify([{ id: 41, full_path: 'grp' }, { id: 42, full_path: 'grp/sub' }]));
+  }
   if (segs[0] === 'projects' && segs.length === 1) {
     if (req.method === 'POST') {
       const body = await readBody(req); recorded.created.push(body);
       const ns = body.namespace_id === 42 ? 'grp/sub' : 'tester';
       const fullName = `${ns}/${body.path}`;
+      if (glProjects.has(fullName)) { res.statusCode = 400; return res.end(JSON.stringify({ message: { name: ['has already been taken'], path: ['has already been taken'] } })); }
       const bare = path.join(tmp, 'created', `${body.path}.git`); fs.mkdirSync(path.dirname(bare), { recursive: true });
       execSync(`git init -q --bare -b main "${bare}"`);
       const json = glProject(fullName, bare, { name: body.name, visibility: body.visibility });
@@ -64,14 +69,21 @@ const glMock = http.createServer(async (req, res) => {
     const search = (u.searchParams.get('search') || '').toLowerCase();
     return res.end(JSON.stringify([...glProjects.entries()].filter(([name]) => !search || name.toLowerCase().includes(search)).map(([, p]) => p.json)));
   }
+  if (segs[0] === 'projects' && segs[1] === 'grp/sub/locked') { res.statusCode = 403; return res.end('{"message":"403 Forbidden"}'); }
   if (segs[0] === 'projects' && segs.length >= 2) {
     const p = glProjects.get(segs[1]);
     if (!p) { res.statusCode = 404; return res.end('{"message":"404 Project Not Found"}'); }
     if (segs.length === 2) return res.end(JSON.stringify(p.json));
     if (segs[2] === 'repository' && segs[3] === 'branches') return res.end(JSON.stringify(refs(p.bare).map((n) => ({ name: n }))));
     if (segs[2] === 'merge_requests' && req.method === 'POST') {
-      const body = await readBody(req); recorded.mr = body;
+      const body = await readBody(req);
+      if (recorded.mr?.source_branch === body.source_branch) { res.statusCode = 409; return res.end(JSON.stringify({ message: ['Another open merge request already exists for this source branch: !3'] })); }
+      recorded.mr = body;
       res.statusCode = 201; return res.end(JSON.stringify({ iid: 3, web_url: `https://gitlab.example.org/gl/${segs[1]}/-/merge_requests/3` }));
+    }
+    if (segs[2] === 'merge_requests' && req.method === 'GET') {
+      check(u.searchParams.get('state') === 'opened' && u.searchParams.get('source_branch') === recorded.mr?.source_branch && u.searchParams.get('target_branch') === 'main', 'the lookup names the branch: ' + req.url);
+      return res.end(JSON.stringify([{ iid: 3, web_url: `https://gitlab.example.org/gl/${segs[1]}/-/merge_requests/3` }]));
     }
   }
   console.error('gitlab mock: unhandled', req.method, req.url);
@@ -126,8 +138,8 @@ r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payloa
 check(r.statusCode === 400 && /https/.test(J(r).error), 'malformed baseUrl → 400: ' + r.body);
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payload: {token: 'good', baseUrl: 'https://gitlab.example.org/?x=1'}});
 check(r.statusCode === 400 && /query/.test(J(r).error), 'baseUrl with query → 400: ' + r.body);
-r = await app.inject({method: 'POST', url: '/api/remotes/github/connect', payload: {token: 'good', baseUrl: 'https://ghe.example.org'}});
-check(r.statusCode === 400 && /no configurable URL/.test(J(r).error), 'github rejects baseUrl: ' + r.body);
+r = await app.inject({method: 'POST', url: '/api/remotes/github/connect', payload: {token: 'good', baseUrl: 'not a url'}});
+check(r.statusCode === 400 && /GitHub Enterprise URL must be a full https/.test(J(r).error), 'github refuses a malformed Enterprise URL: ' + r.body);
 
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payload: {token: 'bad'}});
 check(r.statusCode === 400 && /rejected/.test(J(r).error), 'bad token → 400: ' + r.body);
@@ -153,7 +165,9 @@ check(Array.isArray(J(r)) && J(r).length === 0, 'no match is an empty list: ' + 
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload: {fullName: 'nope'}});
 check(r.statusCode === 400, 'import without a slash → 400');
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload: {fullName: 'grp/sub/missing'}});
-check(r.statusCode === 400 && /not found/.test(J(r).error), 'import of an unknown project → 400: ' + r.body);
+check(r.statusCode === 404 && J(r).code === 'repo-missing' && J(r).error === 'GitLab has no repository grp/sub/missing that this token can see. Check the name, or use a token with access to it.', 'import of an unknown project → a sentence: ' + r.body);
+r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload: {fullName: 'grp/sub/locked'}});
+check(r.statusCode === 403 && J(r).code === 'no-access' && J(r).error === 'This GitLab token cannot read grp/sub/locked. Use a token with access to it.', 'import without access → a sentence: ' + r.body);
 
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/import', payload: {fullName: 'grp/sub/paper'}});
 check(r.statusCode === 200, 'import status ' + r.body);
@@ -185,9 +199,12 @@ fs.writeFileSync(path.join(projectDir(pid), 'main.tex'), 'LOCAL VERSION\n');
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/pull`});
 check(r.statusCode === 409, 'pull conflicts with 409 (got ' + r.statusCode + ')');
 check(Array.isArray(J(r).conflicts) && J(r).conflicts.includes('main.tex'), 'conflict lists main.tex');
+const glKeep = J(r).keepAs;
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/reset-to-remote`});
-check(r.statusCode === 200, 'reset-to-remote ok ' + r.body);
+check(r.statusCode === 200 && J(r).kept === glKeep && /^my-version-/.test(glKeep), 'reset-to-remote keeps main first: ' + r.body);
 check(fs.readFileSync(path.join(projectDir(pid), 'main.tex'), 'utf8').trim() === 'REMOTE VERSION', 'took the remote version');
+check(sh(`git -C "${projectDir(pid)}" show ${glKeep}:main.tex`).trim() === 'LOCAL VERSION', 'the kept branch has the local version');
+check(!refs(gl.bare).some((b) => b.startsWith('my-version')), 'and stays off the host');
 
 // ---------- branches + merge request ----------
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-request`, payload: {title: 'Too early'}});
@@ -202,6 +219,9 @@ check(J(r).current === 'feature-y' && J(r).default === 'main' && J(r).branches.i
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-request`, payload: {title: 'My MR'}});
 check(r.statusCode === 200 && J(r).number === 3 && J(r).url.endsWith('/grp/sub/paper/-/merge_requests/3'), 'MR opened: ' + r.body);
 check(recorded.mr?.source_branch === 'feature-y' && recorded.mr?.target_branch === 'main' && recorded.mr?.title === 'My MR', 'MR body uses GitLab field names: ' + JSON.stringify(recorded.mr));
+r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-request`, payload: {title: 'Again'}});
+check(r.statusCode === 409 && J(r).code === 'change-request-open' && J(r).number === 3 && J(r).url.endsWith('/-/merge_requests/3'), 'an open MR is linked, not reported as JSON: ' + r.body);
+check(J(r).error === 'A merge request from feature-y into main is already open: #3.', 'in GitLab\'s word for it: ' + r.body);
 
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/switch-branch`, payload: {branch: 'main'}});
 check(r.statusCode === 200 && J(r).branch === 'main', 'switch back to main ' + r.body);
@@ -278,6 +298,14 @@ const freshBare = glProjects.get('grp/sub/new-paper').bare;
 check(refs(freshBare).includes('main') && sh(`git --git-dir="${freshBare}" show main:main.tex`).includes('documentclass'), 'first push landed in the created repo');
 r = await app.inject({method: 'POST', url: `/api/projects/${fresh}/remote/link`, payload: {provider: 'gitlab', name: 'Again'}});
 check(r.statusCode === 400 && /already linked/.test(J(r).error), 'link twice → 400: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitlab/linked'});
+check(J(r)[0]?.id === fresh && J(r).some((x) => x.id === pid) && J(r).every((x) => typeof x.name === 'string' && x.autopush === false), 'what a Disconnect stops: the projects this account linked, newest first: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitlab/owners'});
+check(JSON.stringify(J(r).owners) === JSON.stringify([{ path: 'tester', kind: 'user' }, { path: 'grp', kind: 'group' }, { path: 'grp/sub', kind: 'group' }]), 'owners: the account, then its groups: ' + r.body);
+r = await app.inject({method: 'POST', url: '/api/projects', payload: {name: 'Second Paper'}});
+const second = J(r).id;
+r = await app.inject({method: 'POST', url: `/api/projects/${second}/remote/link`, payload: {provider: 'gitlab', name: 'New Paper', namespace: 'grp/sub'}});
+check(r.statusCode === 409 && J(r).code === 'name-taken' && J(r).error === 'grp/sub already has a repository called New-Paper on GitLab. Pick another name.', 'a path in use in the group → a sentence: ' + r.body);
 r = await app.inject({url: `/api/projects/${fresh}/remote/status`});
 check(r.statusCode === 200 && J(r).provider === 'gitlab' && J(r).ahead === 0 && J(r).behind === 0, 'published project in sync: ' + r.body);
 r = await app.inject({url: '/api/remotes/gitlab/repos'});
@@ -289,7 +317,7 @@ check(r.statusCode === 200 && J(r).ok === true, 'disconnect');
 r = await app.inject({url: '/api/remotes/gitlab/status'});
 check(J(r).connected === false, 'disconnected');
 r = await app.inject({url: `/api/projects/${pid}/remote/status`});
-check(r.statusCode === 400 && /Connect GitLab/.test(J(r).error), 'sync without a gitlab connection → 400: ' + r.body);
+check(r.statusCode === 400 && /Connect GitLab/.test(J(r).error) && J(r).code === 'no-connection', 'sync without a gitlab connection → 400 no-connection: ' + r.body);
 
 r = await app.inject({method: 'POST', url: '/api/remotes/gitlab/connect', payload: {token: 'later-revoked'}});
 check(r.statusCode === 200 && J(r).baseUrl === undefined, 'connect without baseUrl (gitlab.com) ' + r.body);

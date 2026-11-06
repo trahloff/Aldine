@@ -817,11 +817,13 @@ export async function cloneRepo(id: string, tokenUrl: string): Promise<{ remoteB
   return { remoteBranch };
 }
 
-/** Push local `main` to the remote branch. Assumes commits already made. */
+/** Push local `main` to the remote branch. Assumes commits already made.
+ *  A refused push forgets the cached fetch too: the refusal is usually the
+ *  host having moved on, which the next status poll must see. */
 export async function pushToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<void> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
-  await scrubbed(() => git(repoDir(id)).raw(['push', tokenUrl, `refs/heads/main:refs/heads/${remoteBranch}`]));
-  forgetRemoteStatus(id);
+  try { await scrubbed(() => git(repoDir(id)).raw(['push', tokenUrl, `refs/heads/main:refs/heads/${remoteBranch}`])); }
+  finally { forgetRemoteStatus(id); }
 }
 
 /** Current HEAD commit hash of the project's main branch (cheap, local). */
@@ -864,6 +866,31 @@ export async function remoteStatus(id: string, remoteBranch: string, tokenUrl: s
 /** Resolves to whether the files of `main` changed: a new head, or tracked
  *  edits the hard reset threw away (untracked files survive it). */
 export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<boolean> {
+  return (await resetMain(id, remoteBranch, tokenUrl, null)).changed;
+}
+
+/**
+ * resetToRemote that first saves `main` as a local branch named `keepAs`
+ * (`keepAs-2`, `keepAs-3`… when taken), when main holds commits the remote
+ * branch lacks. The branch is never pushed: it stays on this server, where
+ * the branch menu lists it. `kept` is null when there was nothing to keep.
+ * Uncommitted edits are not kept: commit them first.
+ */
+export async function keepThenResetToRemote(id: string, remoteBranch: string, tokenUrl: string, keepAs: string): Promise<{ changed: boolean; kept: string | null }> {
+  if (!BRANCH_RE.test(keepAs) || keepAs.includes('..') || keepAs === 'main') throw new Error('bad branch name');
+  return resetMain(id, remoteBranch, tokenUrl, keepAs);
+}
+
+/** `base`, else `base-2`, `base-3`…: the first name neither a branch nor a
+ *  leftover worktree directory uses. Read-only. */
+export async function freeBranchName(id: string, base: string): Promise<string> {
+  const taken = new Set((await git(repoDir(id)).raw(['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).split('\n').map((l) => l.trim()));
+  let name = base;
+  for (let n = 2; taken.has(name) || fs.existsSync(branchDir(id, name)); n++) name = `${base}-${n}`;
+  return name;
+}
+
+async function resetMain(id: string, remoteBranch: string, tokenUrl: string, keepAs: string | null): Promise<{ changed: boolean; kept: string | null }> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
   forgetRemoteStatus(id);
   return withRepoLock(id, async () => {
@@ -871,9 +898,20 @@ export async function resetToRemote(id: string, remoteBranch: string, tokenUrl: 
     await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
     const head = () => g.raw(['rev-parse', '-q', '--verify', 'HEAD']).then((h) => h.trim(), () => '');
     const before = await head();
+    let kept: string | null = null;
+    if (keepAs && before) {
+      const own = Number((await g.raw(['rev-list', '--count', 'FETCH_HEAD..refs/heads/main'])).trim()) || 0;
+      if (own > 0) {
+        kept = await freeBranchName(id, keepAs);
+        // With its worktree, like createBranch: file routes read the worktree and never add one.
+        const dir = branchDir(id, kept);
+        fs.mkdirSync(path.dirname(dir), { recursive: true });
+        await g.raw(['worktree', 'add', '-b', kept, dir, 'refs/heads/main']);
+      }
+    }
     const dirty = (await g.raw(['status', '--porcelain', '--untracked-files=no'])).trim() !== '';
     await g.raw(['reset', '--hard', 'FETCH_HEAD']);
-    return dirty || (await head()) !== before;
+    return { changed: dirty || (await head()) !== before, kept };
   });
 }
 

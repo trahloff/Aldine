@@ -229,6 +229,28 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   move through it and open or close folders, Home and End go to the first
   and last row, typing a name jumps to it, F2 renames and Delete (⌘⌫ on a
   Mac) deletes. Screen readers hear it as a tree and which file is open.
+- A pull from GitHub, GitLab or Gitea that runs into a conflict offers the
+  owner Keep both instead of "Discard local & take GitHub's": everyone's
+  changes not yet on the host are saved as a branch named my-version-<date>,
+  which only this server has, and main takes the host's version. The branch
+  menu lists that branch under "Only on this server". Collaborators read who
+  can settle the conflict instead of a Discard button that failed for them.
+- The Push dialog says what it sends. When every edit is already in a saved
+  checkpoint, it asks for no message and says "Pushes 3 saved checkpoints to
+  GitHub"; otherwise it says the message names only the edits not yet saved.
+  It points to Commit changes: "When I commit" in project settings, which
+  makes each push one commit with your message.
+- Publish can create the repository in an organisation (GitHub, Gitea /
+  Forgejo) or a group (GitLab) you belong to: an Owner list appears when
+  there is more than your own account to choose from.
+- "Connect with GitHub" (or GitLab) started from Publish or Git access opens
+  that dialog again when the sign-in comes back, now connected.
+- GitHub Enterprise Server works like a self-hosted GitLab: the GitHub
+  connect form asks "Using GitHub Enterprise Server?" and takes the
+  instance URL, and import, publish, push, pull and pull requests then go to
+  that instance instead of github.com. Its token pages are linked on the
+  instance. `GITHUB_URL` points the server's GitHub OAuth app at an
+  Enterprise Server (#250).
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -404,6 +426,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The "publish it to a git host" hint on a new project has a Publish button,
   and the command palette has "Publish to a git host…" for the owner. It
   also answers to GitHub, GitLab, Gitea, Forgejo and Codeberg.
+- Failed pushes, pulls, publishes and pull requests say what happened and
+  what to do next, instead of git's output or the host's JSON: "GitHub has
+  newer commits on main. Pull first, then push." with a Pull button, a token
+  that can read but not push (with Git access), a repository name already in
+  use, a pull request that is already open (with a button that opens it), a
+  protected branch, a host that does not answer. After a refused push the
+  branch pill checks the host again, so it offers Pull instead of Push.
+- When no account can sync a linked project, for example after the account
+  that linked it disconnected, the branch menu says "Nobody's GitHub account
+  can sync this project" with a Git access button, and the pill shows
+  Connect. It used to say "Checking GitHub…" forever. When autopush cannot
+  push, the menu says "Autopush paused" and why, until a push lands; before,
+  it kept saying On. Disconnecting a git host account first names the
+  projects it linked and says their syncing and autopush stop.
 - Renaming or moving a file, or a folder that holds it, keeps its review
   comments with it: the highlights stay on its text, Review opens the file
   where it is now, and Accept edits it. Before, the comments stayed on the old

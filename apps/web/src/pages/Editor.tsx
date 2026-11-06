@@ -37,7 +37,7 @@ import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRA
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
 import RemotePendingBanner from '../components/RemotePendingBanner';
-import { remoteDescriptor } from '../remotes';
+import { isRemoteProviderId, remoteDescriptor, type RemoteProviderId } from '../remotes';
 import CommentComposer from '../components/CommentComposer';
 import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
@@ -237,6 +237,9 @@ export default function Editor() {
   }, [showLog]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  /** The host Publish selects first, and whether Git access opens once: a connect started there came back. */
+  const [publishProvider, setPublishProvider] = useState<RemoteProviderId | undefined>();
+  const [reopenAccess, setReopenAccess] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean | 'shortcuts'>(false);
   const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump'), search: useShortcutLabel('search') };
@@ -441,6 +444,29 @@ export default function Editor() {
   const deepLinkRef = useRef(params.has('file') || params.has('line')
     ? { file: params.get('file') || '', line: Math.floor(Number(params.get('line'))) || null }
     : null);
+  // Back from a host's OAuth connect (?remote=<host>&reopen=publish|access):
+  // the dialog it started from opens again once the project has loaded.
+  const reopenRef = useRef((() => {
+    const dialog = params.get('reopen');
+    const provider = params.get('remote');
+    return (dialog === 'publish' || dialog === 'access') && isRemoteProviderId(provider) ? { dialog, provider } : null;
+  })());
+  useEffect(() => {
+    if (!params.has('reopen') && !params.has('remote')) return;
+    const next = new URLSearchParams(params);
+    next.delete('reopen');
+    next.delete('remote');
+    setParams(next, { replace: true });
+  }, []);
+  const applyReopen = (p: ProjectDetail) => {
+    const r = reopenRef.current;
+    reopenRef.current = null;
+    if (!r) return;
+    if (r.dialog === 'publish' && !p.remote && (!authEnabled || p.isOwner)) { setPublishProvider(r.provider); setPublishOpen(true); }
+    else if (r.dialog === 'access' && p.remote?.provider === r.provider) setReopenAccess(true);
+    else return;
+    toast(`Connected your ${remoteDescriptor(r.provider).label} account`, 'ok');
+  };
   const applyDeepLink = (p: ProjectDetail, f: TreeEntry[]) => {
     const dl = deepLinkRef.current;
     if (!dl) return;
@@ -475,6 +501,8 @@ export default function Editor() {
     const next = new URLSearchParams(params);
     next.delete('file');
     next.delete('line');
+    next.delete('reopen');
+    next.delete('remote');
     setParams(next, { replace: true });
   };
 
@@ -503,6 +531,7 @@ export default function Editor() {
       setOpenFor(`${id}::${branch}`);
       if (!first && window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
       applyDeepLink(p, f);
+      applyReopen(p);
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
       // this server until it's published to a git host. Only the owner can
@@ -1659,11 +1688,14 @@ export default function Editor() {
             autopush={!!project.autopush}
             isOwner={isProjectOwner}
             current={branch}
+            manual={!!project.manualCommits}
+            reopenAccess={reopenAccess}
             onSwitch={switchBranch}
             onChanged={() => { loadProject(); loadFiles(); }}
             onPulled={() => { loadFiles(); loadProject(); }}
             onAutopushChange={() => loadProject()}
-            manual={!!project.manualCommits}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onReopened={() => setReopenAccess(false)}
           />
         ) : (
           <BranchMenu
@@ -2239,7 +2271,7 @@ export default function Editor() {
 
       {publishOpen && project && (
         <RemotePublish
-          projectId={id} projectName={project.name} onClose={() => setPublishOpen(false)} onLinked={() => loadProject()}
+          projectId={id} projectName={project.name} initialProvider={publishProvider} onClose={() => { setPublishOpen(false); setPublishProvider(undefined); }} onLinked={() => loadProject()}
           // Push lives in the branch menu of the linked project's pill: open it, then let it render.
           onPush={(p) => { document.querySelector<HTMLElement>('[data-testid="branch-menu"]')?.click(); setTimeout(() => document.querySelector<HTMLElement>(`[data-testid="${p}-push-btn"]`)?.click(), 0); }}
         />

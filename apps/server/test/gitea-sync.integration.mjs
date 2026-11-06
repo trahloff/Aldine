@@ -110,7 +110,14 @@ mock.flags.maxItems = 50;
 r = await app.inject({method: 'POST', url: '/api/remotes/gitea/import', payload: {fullName: 'nope'}});
 check(r.statusCode === 400 && /owner\/repo/.test(J(r).error), 'import without a slash → 400 asking for owner/repo: ' + r.body);
 r = await app.inject({method: 'POST', url: '/api/remotes/gitea/import', payload: {fullName: 'tester/missing'}});
-check(r.statusCode === 400 && /not found/.test(J(r).error), 'import of an unknown repo → 400: ' + r.body);
+check(r.statusCode === 404 && J(r).code === 'repo-missing' && J(r).error === 'Gitea / Forgejo has no repository tester/missing that this token can see. Check the name, or use a token with access to it.', 'import of an unknown repo → a sentence: ' + r.body);
+mock.flags.forbidden = 'tester/locked';
+r = await app.inject({method: 'POST', url: '/api/remotes/gitea/import', payload: {fullName: 'tester/locked'}});
+check(r.statusCode === 403 && J(r).code === 'no-access' && /^This Gitea \/ Forgejo token cannot read tester\/locked\./.test(J(r).error), 'import without access → a sentence: ' + r.body);
+mock.flags.down = true;
+r = await app.inject({method: 'POST', url: '/api/remotes/gitea/import', payload: {fullName: 'tester/paper'}});
+mock.flags.down = false;
+check(r.statusCode === 502 && J(r).code === 'unreachable' && J(r).error === 'Could not reach forge.example.org just now. Try again in a moment.', 'an instance that does not answer is named: ' + r.body);
 r = await app.inject({method: 'POST', url: '/api/remotes/gitea/import', payload: {fullName: 'a/b/c'}});
 check(r.statusCode === 400 && /owner\/repo/.test(J(r).error), 'a three-segment path never reaches the network: ' + r.body);
 
@@ -141,8 +148,11 @@ execSync(`cd "${gt.seed}" && git pull -q && printf 'REMOTE VERSION\\n' > main.te
 fs.writeFileSync(path.join(projectDir(pid), 'main.tex'), 'LOCAL VERSION\n');
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/pull`});
 check(r.statusCode === 409 && Array.isArray(J(r).conflicts) && J(r).conflicts.includes('main.tex'), 'pull conflicts with 409 listing main.tex: ' + r.body);
+const gtKeep = J(r).keepAs;
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/reset-to-remote`});
 check(r.statusCode === 200 && fs.readFileSync(path.join(projectDir(pid), 'main.tex'), 'utf8').trim() === 'REMOTE VERSION', 'reset-to-remote took the remote version');
+check(J(r).kept === gtKeep && execSync(`git -C "${projectDir(pid)}" show ${gtKeep}:main.tex`).toString().trim() === 'LOCAL VERSION', 'after keeping main as the branch the conflict named: ' + r.body);
+check(!refs(gt.bare).some((b) => b.startsWith('my-version')), 'which stays off the host');
 
 // ---------- branches + pull request ----------
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-request`, payload: {title: 'Too early'}});
@@ -158,6 +168,8 @@ r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-r
 check(r.statusCode === 200 && J(r).number === 1 && J(r).url === 'https://forge.example.org/tester/paper/pulls/1', 'PR opened: ' + r.body);
 const pull = mock.recorded.pulls.at(-1);
 check(pull?.head === 'feature-y' && pull?.base === 'main' && pull?.title === 'My PR' && pull?.body === '', 'PR body uses CreatePullRequestOption names: ' + JSON.stringify(pull));
+r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/change-request`, payload: {title: 'Again'}});
+check(r.statusCode === 409 && J(r).code === 'change-request-open' && J(r).number === 1 && J(r).url === 'https://forge.example.org/tester/paper/pulls/1', 'the open PR is found by head and base: ' + r.body);
 
 r = await app.inject({method: 'POST', url: `/api/projects/${pid}/remote/switch-branch`, payload: {branch: 'main'}});
 check(r.statusCode === 200 && J(r).branch === 'main', 'switch back to main ' + r.body);
@@ -176,6 +188,11 @@ let bare = mock.repos.get('tester/New-Paper').bare;
 check(refs(bare).includes('main') && show(bare, 'main:main.tex').includes('documentclass'), 'first push landed in the created repo');
 r = await app.inject({method: 'POST', url: `/api/projects/${fresh}/remote/link`, payload: {provider: 'gitea', name: 'Again'}});
 check(r.statusCode === 400 && /already linked/.test(J(r).error), 'link twice → 400: ' + r.body);
+r = await app.inject({url: '/api/remotes/gitea/owners'});
+check(JSON.stringify(J(r).owners) === JSON.stringify([{ path: 'tester', kind: 'user' }, { path: 'research', kind: 'org' }]), 'owners: the account, then its organisations: ' + r.body);
+r = await app.inject({method: 'POST', url: '/api/projects', payload: {name: 'Same Name'}});
+r = await app.inject({method: 'POST', url: `/api/projects/${J(r).id}/remote/link`, payload: {provider: 'gitea', name: 'New Paper'}});
+check(r.statusCode === 409 && J(r).code === 'name-taken' && J(r).error === 'tester already has a repository called New-Paper on Gitea / Forgejo. Pick another name.', 'a name in use → a sentence: ' + r.body);
 r = await app.inject({url: `/api/projects/${fresh}/remote/status`});
 check(r.statusCode === 200 && J(r).provider === 'gitea' && J(r).ahead === 0 && J(r).behind === 0, 'published project in sync: ' + r.body);
 
@@ -200,7 +217,7 @@ check(r.statusCode === 200 && J(r).ok === true, 'disconnect');
 r = await app.inject({url: '/api/remotes/gitea/status'});
 check(J(r).connected === false, 'disconnected');
 r = await app.inject({url: `/api/projects/${pid}/remote/status`});
-check(r.statusCode === 400 && /Connect Gitea \/ Forgejo/.test(J(r).error), 'sync without a gitea connection → 400: ' + r.body);
+check(r.statusCode === 400 && /Connect Gitea \/ Forgejo/.test(J(r).error) && J(r).code === 'no-connection', 'sync without a gitea connection → 400 no-connection: ' + r.body);
 
 // ---------- a connection to another instance never serves the link ----------
 r = await app.inject({method: 'POST', url: '/api/remotes/gitea/connect', payload: {token: 'elsewhere', baseUrl: 'https://codeberg.org'}});

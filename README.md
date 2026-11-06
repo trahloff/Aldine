@@ -415,7 +415,9 @@ OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
 OIDC_LABEL=
 OIDC_ALLOWED_GROUPS=
-# GitHub repo sync: a separate OAuth app with repo scope
+# GitHub repo sync: a separate OAuth app with repo scope; GITHUB_URL points
+# it at a GitHub Enterprise Server (PAT connect works without these)
+# GITHUB_URL=https://github.com
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 # GitLab sync (gitlab.com or self-hosted); PAT connect works without these

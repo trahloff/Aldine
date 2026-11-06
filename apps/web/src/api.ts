@@ -71,10 +71,20 @@ export interface RemoteAccess { provider: RemoteProviderId; source: RemoteSource
 export interface RemoteConnectionRow { provider: RemoteProviderId; login: string; baseUrl?: string }
 /** The code a sync route answers with when the host refused the token it used. */
 export const TOKEN_REJECTED = 'token-invalid';
-/** Switching the tracked branch was refused: the host has commits main lacks, and main has commits the host lacks. */
+/** A push or a branch switch was refused: the host has commits main lacks. */
 export const PULL_FIRST = 'pull-first';
 /** Publishing created and linked the repository, but its first push failed. */
 export const LINKED_PUSH_FAILED = 'linked-push-failed';
+/** No connection reaches the linked repository: nobody's token can sync it for this viewer. */
+export const NO_CONNECTION = 'no-connection';
+/** Codes whose remedy is in Git access: a token that may not push or read, or a repository it cannot see. */
+export const GIT_ACCESS_CODES = ['no-access', 'repo-missing'];
+/** Opening a pull or merge request found one already open; the error carries its `url` and `number`. */
+export const CHANGE_REQUEST_OPEN = 'change-request-open';
+/** Publish: the owner already has a repository with that name. */
+export const NAME_TAKEN = 'name-taken';
+/** Somewhere Publish can create the repository; `path` is what it sends as `namespace`. */
+export interface RemoteOwner { path: string; kind: 'user' | 'org' | 'group' }
 /** `instanceUrl`: the instance a token connect without a URL reaches (GitLab's configured one). */
 export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; instanceUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
 /** `createdByAldine` marks a repository Aldine provisioned (deleted with the
@@ -274,8 +284,9 @@ export interface ReplaceResult {
 /** `retryAfter`: seconds from a 429's Retry-After header, when it sent one. */
 /** `code` names a refusal a client handles apart from the rest
  *  (`awaiting-approval`: the account waits for an administrator). */
+/** `body`: the rest of the JSON answer, for refusals that carry more than a sentence (a link, a number). */
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string, public readonly body?: Record<string, unknown>) { super(message); }
 }
 
 /** OAuth routes answer in RFC 6749 shape (`error` is a code such as
@@ -326,9 +337,10 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     let msg = `HTTP ${res.status}`;
     let code: string | undefined;
     let reason: unknown;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = (await res.json()) as { error?: string; code?: unknown; reason?: unknown };
-      msg = body.error || msg;
+      body = (await res.json()) as { error?: string; code?: unknown; reason?: unknown };
+      msg = (typeof body.error === 'string' && body.error) || msg;
       if (typeof body.code === 'string') code = body.code;
       reason = body.reason;
     } catch { /* keep */ }
@@ -338,7 +350,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
       for (const fn of signedOutListeners) fn();
     }
     const retryAfter = Number(res.headers.get('retry-after'));
-    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code);
+    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code, body);
   }
   return res.json() as Promise<T>;
 }
@@ -589,6 +601,9 @@ export const api = {
   remoteConnect: (p: RemoteProviderId, token: string, baseUrl?: string) =>
     req<{ connected: boolean; login: string; baseUrl?: string }>(`/api/remotes/${p}/connect`, { method: 'POST', body: JSON.stringify({ token, baseUrl }) }),
   remoteDisconnect: (p: RemoteProviderId) => req<{ ok: boolean }>(`/api/remotes/${p}/disconnect`, { method: 'POST' }),
+  /** The projects this account linked to `p`, which a Disconnect stops syncing for people without their own connection. */
+  remoteLinkedProjects: (p: RemoteProviderId) => req<Array<{ id: string; name: string; autopush: boolean }>>(`/api/remotes/${p}/linked`),
+  remoteOwners: (p: RemoteProviderId) => req<{ owners: RemoteOwner[] }>(`/api/remotes/${p}/owners`),
   /** Without `q` the first page of the user's repositories; with it, the host's own search (an exact owner/repo is looked up directly). */
   remoteRepos: async (p: RemoteProviderId, q?: string): Promise<RemoteRepo[]> => {
     const res = await fetch(withBase(`/api/remotes/${p}/repos${q ? `?q=${encodeURIComponent(q)}` : ''}`));
@@ -605,22 +620,24 @@ export const api = {
   setProjectRemoteToken: (id: string, token: string) =>
     req<{ ok: boolean; login: string }>(`/api/projects/${id}/remote/access/token`, { method: 'POST', body: JSON.stringify({ token }) }),
   removeProjectRemoteToken: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/access/token/remove`, { method: 'POST' }),
-  projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number }>(`/api/projects/${id}/remote/status`),
+  projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number; autopushPaused?: { since: string; message: string } | null }>(`/api/projects/${id}/remote/status`),
   remoteLink: (id: string, provider: RemoteProviderId, name?: string, priv?: boolean, namespace?: string) =>
     req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv, namespace }) }),
   remotePush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean; skipped?: boolean }>(`/api/projects/${id}/remote/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing.
   // `checkpoint` on these four: the message for the edits waiting on main (manual commits).
-  remotePull: async (id: string, checkpoint?: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
+  /** On a conflict, `keepAs` names the branch "Keep both" would save main as. */
+  remotePull: async (id: string, checkpoint?: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[]; keepAs?: string | null }> => {
     const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), checkpoint
       ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkpoint }) }
       : { method: 'POST' });
     const body = await res.json().catch(() => ({}));
-    if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
-    if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined);
+    if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [], keepAs: typeof body.keepAs === 'string' ? body.keepAs : null };
+    if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined, body);
     return { ok: true };
   },
-  remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
+  /** `kept`: the branch, only on this server, that main was saved as first (null when main had nothing the host lacks). */
+  remoteResetToRemote: (id: string) => req<{ ok: boolean; kept: string | null }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
   remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),
   remoteSwitchBranch: (id: string, branch: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch, checkpoint }) }),
   remoteCreateBranch: (id: string, name: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name, checkpoint }) }),

@@ -13,6 +13,7 @@ import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
 import { pruneImages, restoreImage, saveImage } from './undoImages.js';
+import { explainGitFailure, explainCreateRepoFailure, explainChangeRequestFailure, explainRepoReadFailure, noAnswer } from './sync-errors.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, signalCommitted, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf, locateQuote, bumpCommentsSignal } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
@@ -136,7 +137,7 @@ const MAX_SHARE_ENTRIES = 50;
 export const ENGINES = ['pdf', 'xelatex', 'lualatex'] as const;
 
 async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null) {
-  const { zotero: z, ownerId, share, github: _legacy, remote: _remote, ...rest } = meta;
+  const { zotero: z, ownerId, share, github: _legacy, remote: _remote, autopushFailure: _autopushFailure, ...rest } = meta;
   // Older web bundles read `github`; emit it alongside `remote` for github links
   // until the next release, then it goes.
   const link = store.remoteLink(meta);
@@ -2587,6 +2588,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
    *  anything but `/p/<id>` is dropped, so the state cookie can never carry
    *  another origin or path the callback would redirect to. */
   const oauthReturnPath = (raw: unknown): string | null => typeof raw === 'string' && /^\/p\/[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : null;
+  /** The editor dialog the connect started from, reopened on the way back:
+   *  one of these names or nothing, never text from the request. */
+  const OAUTH_REOPEN = ['publish', 'access'];
+  const oauthReopen = (raw: unknown): string | null => typeof raw === 'string' && OAUTH_REOPEN.includes(raw) ? raw : null;
   /** Upstream failures: an expired or revoked token gets a reason the UI can act on (reconnect), the rest is a 502. */
   const upstreamError = (reply: any, err: any, label: string) => {
     if (err instanceof remotes.RemoteApiError && err.status === 401) {
@@ -2639,13 +2644,45 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return { ok: true };
   });
 
+  // What a Disconnect stops: the projects this account linked. They sync
+  // through its token for everyone without a connection of their own, and
+  // autopush through it alone. A project with its own token is unaffected.
+  providerRoute('get', 'linked', async (p, req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const me = remoteUserId(req);
+    const out: Array<{ id: string; name: string; autopush: boolean; createdAt: string }> = [];
+    for (const meta of await store.listProjects()) {
+      const link = store.remoteLink(meta);
+      if (meta.deletedAt || link?.provider !== p.id || link.connectedBy !== me || !isMember(meta, reqUser(req))) continue;
+      if (await remotes.getProjectConnection(meta.id, p.id)) continue;
+      out.push({ id: meta.id, name: meta.name, autopush: meta.autopush === true, createdAt: meta.createdAt });
+    }
+    // Newest first: the warning names the first few.
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(({ createdAt: _c, ...row }) => row);
+  });
+
+  // Where Publish may create the repository: the account, then its
+  // organisations or groups. A host that will not list them (a Gitea token
+  // without read:organization) leaves the account alone.
+  providerRoute('get', 'owners', async (p, req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const conn = await remotes.getConnection(remoteUserId(req), p.id);
+    if (!conn) return reply.code(400).send({ error: `${p.label} is not connected` });
+    try { return { owners: await p.listOwners(conn) }; }
+    catch (err: any) {
+      if (err instanceof remotes.RemoteApiError && err.status === 401) return upstreamError(reply, err, p.label);
+      return { owners: [{ path: conn.login, kind: 'user' }] };
+    }
+  });
+
   // OAuth "Connect with <provider>" — links the signed-in user's account.
   providerRoute('get', 'oauth', async (p, req, reply) => {
     if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
     const state = crypto.randomBytes(12).toString('hex');
     const back = oauthReturnPath(req.query?.return);
-    reply.header('set-cookie', `aldine_remote_state=${p.id}.${state}${back ? `.${encodeURIComponent(back)}` : ''}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
+    const reopen = back ? oauthReopen(req.query?.reopen) : null;
+    reply.header('set-cookie', `aldine_remote_state=${p.id}.${state}${back ? `.${encodeURIComponent(back)}${reopen ? `.${reopen}` : ''}` : ''}; HttpOnly; SameSite=Lax; Path=${auth.COOKIE_PATH}; Max-Age=600${auth.SECURE_COOKIES ? '; Secure' : ''}`);
     return reply.redirect(p.connectUrl(state, `${publicBase(req)}${oauthCallbackPath(p)}`));
   });
 
@@ -2653,17 +2690,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!p.oauthEnabled()) return reply.code(404).send({ error: `${p.label} OAuth is not configured` });
     const cookies = auth.parseCookies(req.headers.cookie);
     const q = req.query as { code?: string; state?: string };
-    const [cookieProvider, cookieState, ...cookieBack] = (cookies.aldine_remote_state || '').split('.');
+    // A valid return path has no dot, so a cookie with more parts than these four is not ours.
+    const [cookieProvider, cookieState, cookieBack = '', cookieReopen, ...extra] = (cookies.aldine_remote_state || '').split('.');
     if (!q.code || !q.state || cookieProvider !== p.id || cookieState !== q.state) {
       return reply.code(400).send({ error: 'OAuth state mismatch — please try again' });
     }
-    const back = oauthReturnPath(cookieBack.join('.'));
+    const back = extra.length ? null : oauthReturnPath(cookieBack);
+    const reopen = back ? oauthReopen(cookieReopen) : null;
     try {
       const token = await p.exchangeCode(q.code, `${publicBase(req)}${oauthCallbackPath(p)}`);
       const me = await p.whoami({ token, login: '' });
       await remotes.setConnection(remoteUserId(req), p.id, { token, login: me.login, name: me.name });
       reply.header('set-cookie', `aldine_remote_state=; Path=${auth.COOKIE_PATH}; Max-Age=0`);
-      return reply.redirect(back ? `${config.basePath}${back}` : `${config.basePath}/?remote=${p.id}`);
+      return reply.redirect(back ? `${config.basePath}${back}${reopen ? `?remote=${p.id}&reopen=${reopen}` : ''}` : `${config.basePath}/?remote=${p.id}`);
     } catch (err: any) {
       return reply.code(400).send({ error: `${p.label} connect failed: ${err.message}` });
     }
@@ -2695,6 +2734,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     } catch (err: any) { return upstreamError(reply, err, p.label); }
   });
 
+  /** The instance an import talks to, as its host name; the label when that is unknown. */
+  const importHost = (p: Provider, conn: remotes.RemoteConnection) => {
+    try { return new URL(p.instanceOrigin(conn)).host; } catch { return p.label; }
+  };
+
   // Import a repository as a new project (the primary create-project flow).
   // With `token` in the body the repository is cloned with that token instead
   // of the account's connection, and the token stays with the new project
@@ -2713,7 +2757,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (p.baseUrlRequired && !baseUrl) return reply.code(400).send({ error: `The ${p.label} instance URL is required${p.baseUrlExample ? `, ${p.baseUrlExample} for example` : ''}` });
       conn = { token: ownToken, login: '', ...(baseUrl ? { baseUrl } : {}) };
       try { const me = await p.whoami(conn); conn.login = me.login; conn.name = me.name; }
-      catch { return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${p.tokenScopeHint}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` }); }
+      catch (err) {
+        if (noAnswer(err)) return reply.code(502).send({ error: `Could not reach ${baseUrl ? importHost(p, conn) : p.label} just now. Try again in a moment.`, code: 'unreachable' });
+        return reply.code(400).send({ error: `That token was rejected by ${p.label}. Check it has ${p.tokenScopeHint}${baseUrl ? ` and that ${baseUrl} is the right instance` : ''}.` });
+      }
     } else {
       conn = await remotes.getConnection(remoteUserId(req), p.id);
       if (!conn) return reply.code(400).send({ error: `Connect ${p.label} first` });
@@ -2722,7 +2769,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!fullName.includes('/') || fullName.includes('..')) return reply.code(400).send({ error: p.pathHint });
     let info: remotes.RemoteRepo;
     try { info = await p.getRepo(conn, fullName); }
-    catch (err: any) { return reply.code(400).send({ error: `Repository not found or no access: ${err.message}` }); }
+    catch (err: any) {
+      const known = explainRepoReadFailure(err, { label: p.label, host: conn.baseUrl ? importHost(p, conn) : undefined, fullName });
+      if (known) return reply.code(known.status).send({ error: known.error, code: known.code, ...(known.code === 'token-invalid' ? { reason: 'token-invalid' } : {}) });
+      return reply.code(400).send({ error: `Repository not found or no access: ${err.message}` });
+    }
     try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
     const id = newId();
@@ -2741,6 +2792,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return publicMeta(meta, reqUser(req));
     } catch (err: any) {
       fs.rmSync(store.repoDir(id), { recursive: true, force: true });
+      const known = explainGitFailure(String(err?.message || err), { label: p.label, host: conn.baseUrl ? importHost(p, conn) : undefined, fullName: info.fullName, branch: info.defaultBranch, op: 'clone' });
+      if (known) return reply.code(known.status).send({ error: known.error, code: known.code });
       return reply.code(400).send({ error: `Import failed: ${err.message}` });
     }
   });
@@ -2761,7 +2814,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!resolved) {
       // A connection to another instance of the same host does not count, so the instance is named.
       const at = provider.selfHosted ? remotes.linkInstance(link) : null;
-      reply.code(400).send({ error: `Connect ${provider.label}${at ? ` on ${at}` : ''} to sync` });
+      reply.code(400).send({ error: `Connect ${provider.label}${at ? ` on ${at}` : ''} to sync`, code: 'no-connection' });
       return null;
     }
     const { conn, source } = resolved;
@@ -2782,9 +2835,27 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       : 'Reconnect to keep syncing.';
     return reply.code(401).send({ error: `${l.provider.label} rejected ${tokenOwnerPhrase(l)}. ${fix}`, reason: 'token-invalid', code: 'token-invalid', source: l.source });
   };
+  const gitContext = (l: Linked, op: 'push' | 'fetch', branch = l.remoteBranch) => {
+    const at = l.provider.selfHosted ? remotes.linkInstance(l.link) : null;
+    let host: string | undefined;
+    try { host = at ? new URL(at).host : undefined; } catch { /* the label alone */ }
+    return { label: l.provider.label, host, fullName: l.link.fullName, branch, op };
+  };
+  /** A failed git operation of a linked project: a refused token, else a
+   *  known failure as a sentence with its code, else `fallback`. */
+  const gitFailed = (reply: any, l: Linked, err: any, op: 'push' | 'fetch', fallback: () => unknown, branch?: string) =>
+    syncFailed(reply, l, err, () => {
+      const known = explainGitFailure(String(err?.message || err), gitContext(l, op, branch));
+      return known ? reply.code(known.status).send({ error: known.error, code: known.code }) : fallback();
+    });
   const projectRoute = (method: 'get' | 'post', tail: string, handler: (req: any, reply: any) => Promise<unknown>, legacyTail = tail) => {
     app[method](`/api/projects/:id/remote/${tail}`, handler);
     app[method](`/api/projects/:id/github/${legacyTail}`, handler);
+  };
+  /** What a reset to the remote saves main as first, by the server's date. */
+  const keepName = () => {
+    const d = new Date();
+    return `my-version-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
   /** Response shape of a link: `remote`, plus `github` for web bundles from before GitLab. */
   const linkBody = (link: store.RemoteLink) => ({ remote: link, ...(link.provider === 'github' ? { github: link } : {}) });
@@ -2815,7 +2886,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const namespace = typeof req.body?.namespace === 'string' && req.body.namespace.trim() ? req.body.namespace.trim() : undefined;
     let info: remotes.RemoteRepo;
     try { info = await p.createRepo(conn, name, { private: req.body?.private !== false, namespace }); }
-    catch (err: any) { return reply.code(400).send({ error: `Could not create the repository: ${err.message}` }); }
+    catch (err: any) {
+      const known = explainCreateRepoFailure(err, { label: p.label, owner: namespace ?? conn.login, name, scopeHint: p.tokenScopeHint });
+      if (known) return reply.code(known.status).send({ error: known.error, code: known.code });
+      return reply.code(400).send({ error: `Could not create the repository: ${err.message}` });
+    }
     try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
     flushBranchDocs(req.params.id, 'main');
@@ -2826,15 +2901,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { await gitops.pushToRemote(req.params.id, 'main', p.tokenUrl(info.cloneUrl, conn.token, conn.login)); }
     catch (err: any) {
       // repo exists and the link is stored — the user can retry the push from the sync UI
-      return reply.code(502).send({ error: `Repository created but the first push failed: ${err.message}. Use Push to retry.`, code: 'linked-push-failed', ...linkBody(link) });
+      const why = explainGitFailure(String(err?.message || err), { label: p.label, fullName: info.fullName, branch: 'main', op: 'push' })?.error ?? `${err.message}.`;
+      return reply.code(502).send({ error: `Repository created but the first push failed: ${why} Use Push to retry.`, code: 'linked-push-failed', ...linkBody(link) });
     }
     return { ok: true, ...linkBody(link) };
   });
 
+  // `autopushPaused`: why the last server-side pushes failed, until one lands.
   projectRoute('get', 'status', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
-    try { return { linked: true, ...l.link, ...(await gitops.remoteStatus(req.params.id, l.remoteBranch, l.url)) }; }
-    catch (err: any) { return syncFailed(reply, l, err, () => reply.code(502).send({ error: err.message })); }
+    const autopushPaused = l.meta.autopush === true ? l.meta.autopushFailure ?? null : null;
+    try { return { linked: true, ...l.link, ...(await gitops.remoteStatus(req.params.id, l.remoteBranch, l.url)), autopushPaused }; }
+    catch (err: any) { return gitFailed(reply, l, err, 'fetch', () => reply.code(502).send({ error: err.message })); }
   });
 
   projectRoute('post', 'push', async (req, reply) => {
@@ -2856,7 +2934,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       if (head) lastPushedHead.set(req.params.id, head);
       return { ok: true };
-    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Push failed: ${err.message}` })); }
+    } catch (err: any) { return gitFailed(reply, l, err, 'push', () => reply.code(400).send({ error: `Push failed: ${err.message}` })); }
   });
 
   projectRoute('post', 'pull', async (req, reply) => {
@@ -2866,24 +2944,29 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try {
       const before = await gitops.branchHead(req.params.id, 'main');
       const result = await gitops.pullFromRemote(req.params.id, l.remoteBranch, l.url);
-      if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts });
+      // `keepAs`: the branch "Keep both" would save main as, for the dialog to name.
+      if (!result.ok) return reply.code(409).send({ error: 'Merge conflict', conflicts: result.conflicts, keepAs: await gitops.freeBranchName(req.params.id, keepName()).catch(() => null) });
       refreshBranchDocsFromDisk(req.params.id, 'main'); // push the merged content into open editors
       if ((await gitops.branchHead(req.params.id, 'main')) !== before) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
-    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Pull failed: ${err.message}` })); }
+    } catch (err: any) { return gitFailed(reply, l, err, 'fetch', () => reply.code(400).send({ error: `Pull failed: ${err.message}` })); }
   });
 
-  // Conflict escape hatch: discard local changes and take the remote version.
-  // Destroys everyone's unpushed work, so it is the owner's call alone.
+  // Conflict escape hatch: main takes the remote version. Everyone's work the
+  // host lacks is kept first, on a branch `kept` that only this server has
+  // (my-version-<date>), but main changes for everyone: the owner's call alone.
   projectRoute('post', 'reset-to-remote', async (req, reply) => {
     if (!(await requireOwner(req, reply, 'discard local changes'))) return;
     const l = await linkedRemote(req, reply); if (!l) return;
+    flushBranchDocs(req.params.id, 'main');
+    await gitops.autoCommit(req.params.id, 'main', `Local changes before taking ${l.provider.label}'s version`, reqUser(req)?.name).catch(() => {});
     try {
-      const changed = await gitops.resetToRemote(req.params.id, l.remoteBranch, l.url);
+      const { changed, kept } = await gitops.keepThenResetToRemote(req.params.id, l.remoteBranch, l.url, keepName());
+      if (kept) markTreeChanged(req.params.id, kept);
       refreshBranchDocsFromDisk(req.params.id, 'main');
       if (changed) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
-      return { ok: true };
-    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Reset failed: ${err.message}` })); }
+      return { ok: true, kept };
+    } catch (err: any) { return gitFailed(reply, l, err, 'fetch', () => reply.code(400).send({ error: `Reset failed: ${err.message}` })); }
   });
 
   // ---------- remote branches + change requests ----------
@@ -2921,7 +3004,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         if (!s || s.ahead > 0) {
           return syncFailed(reply, l, err, () => reply.code(409).send(s?.behind
             ? { error: `${l.provider.label} has newer commits on ${l.remoteBranch}. Pull first, then switch.`, code: 'pull-first' }
-            : { error: `Could not push to ${l.provider.label} before switching, so nothing changed: ${err.message}`, code: 'push-failed' }));
+            : { error: `Could not push to ${l.provider.label} before switching, so nothing changed: ${explainGitFailure(String(err?.message || err), gitContext(l, 'push'))?.error ?? err.message}`, code: 'push-failed' }));
         }
       }
       const changed = await gitops.resetToRemote(req.params.id, target, l.url);
@@ -2947,18 +3030,22 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       await gitops.pushToRemote(req.params.id, name, l.url); // push creates the remote branch
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: name }); await store.writeMeta(l.meta);
       return { ok: true, branch: name };
-    } catch (err: any) { return syncFailed(reply, l, err, () => reply.code(400).send({ error: `Create branch failed: ${err.message}` })); }
+    } catch (err: any) { return gitFailed(reply, l, err, 'push', () => reply.code(400).send({ error: `Create branch failed: ${err.message}` }), name); }
   });
 
   // Open a pull/merge request from the current branch into the repo's default branch.
+  // A request already open for the branch is answered with its link (409
+  // `change-request-open`, `url`, `number`), not as an error of the host.
   projectRoute('post', 'change-request', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
     const noun = l.provider.changeRequestLabel;
+    let base = '';
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
       await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Update before ${noun}`), reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       const repo = await l.provider.getRepo(l.conn, l.link.fullName);
+      base = repo.defaultBranch;
       if (l.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });
       return await l.provider.createChangeRequest(l.conn, l.link.fullName, {
         title: String(req.body?.title || '').trim() || `Update ${l.remoteBranch}`,
@@ -2966,9 +3053,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         base: repo.defaultBranch,
       });
     } catch (err: any) {
-      return syncFailed(reply, l, err, () => err instanceof remotes.RemoteApiError
-        ? upstreamError(reply, err, l.provider.label)
-        : reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` }));
+      const known = base ? explainChangeRequestFailure(err, { label: l.provider.label, noun, head: l.remoteBranch, base }) : null;
+      if (known?.code === 'change-request-open') {
+        const open = await l.provider.findChangeRequest(l.conn, l.link.fullName, { head: l.remoteBranch, base }).catch(() => null);
+        return reply.code(known.status).send(open
+          ? { error: `A ${noun} from ${l.remoteBranch} into ${base} is already open: #${open.number}.`, code: known.code, url: open.url, number: open.number }
+          : { error: known.error, code: known.code });
+      }
+      if (known) return reply.code(known.status).send({ error: known.error, code: known.code });
+      return syncFailed(reply, l, err, () => {
+        if (err instanceof remotes.RemoteApiError) return upstreamError(reply, err, l.provider.label);
+        const pushed = explainGitFailure(String(err?.message || err), gitContext(l, 'push'));
+        return pushed ? reply.code(pushed.status).send({ error: pushed.error, code: pushed.code }) : reply.code(400).send({ error: `Could not open the ${noun}: ${err.message}` });
+      });
     }
   }, 'pr');
 
@@ -2979,6 +3076,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!store.remoteLink(meta)) return reply.code(400).send({ error: 'This project is not linked to a remote repository' });
     if (typeof req.body?.enabled !== 'boolean') return reply.code(400).send({ error: 'enabled must be true or false' });
     meta.autopush = req.body.enabled;
+    delete meta.autopushFailure;
     await store.writeMeta(meta);
     if (meta.autopush) scheduleAutopush(req.params.id); else cancelAutopush(req.params.id);
     return { ok: true, autopush: meta.autopush };

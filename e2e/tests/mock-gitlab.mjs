@@ -6,7 +6,11 @@
  * Any bearer token works except `bad` and the ones revoked through
  * /__revoke (401) — that is how a spec provokes the token-invalid path.
  * /__failpush?on=1 gives every project created from then on a pre-receive
- * hook that refuses pushes; ?on=0 takes the hook off every project again.
+ * hook that refuses pushes (with &project=<path>, that one project only);
+ * ?on=0 takes the hook off every project again. A second merge request from
+ * the same branch answers 409, as GitLab does. grp/sub/locked answers 403
+ * (a project the token cannot read), and /__down?on=1 closes every API
+ * connection unanswered until ?on=0.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -41,6 +45,7 @@ let failCreates = false;
 let failPushes = false;
 const REFUSE_PUSH = '#!/bin/sh\necho "push refused (test switch)" >&2\nexit 1\n';
 let delayedDeletion = true;
+let down = false;
 const deleted = [];
 /** Tokens /__revoke?token=… made expire; /__revoke?clear=1 brings them all back. */
 const revoked = new Set();
@@ -108,10 +113,19 @@ const server = http.createServer((req, res) => {
   // test-only switches, no auth
   if (url.pathname === '/__fail') { failCreates = url.searchParams.get('on') === '1'; return send(200, { failCreates }); }
   if (url.pathname === '/__failpush') {
+    const one = url.searchParams.get('project');
+    if (one && url.searchParams.get('on') === '1') {
+      const p = projects.get(one);
+      if (!p) return send(404, { message: 'no such project' });
+      fs.mkdirSync(path.join(p.bare, 'hooks'), { recursive: true });
+      fs.writeFileSync(path.join(p.bare, 'hooks', 'pre-receive'), REFUSE_PUSH, { mode: 0o755 });
+      return send(200, { failPushes, project: one });
+    }
     failPushes = url.searchParams.get('on') === '1';
     if (!failPushes) for (const p of projects.values()) fs.rmSync(path.join(p.bare, 'hooks', 'pre-receive'), { force: true });
     return send(200, { failPushes });
   }
+  if (url.pathname === '/__down') { down = url.searchParams.get('on') === '1'; return send(200, { down }); }
   if (url.pathname === '/__delayed') { delayedDeletion = url.searchParams.get('on') !== '0'; return send(200, { delayedDeletion }); }
   if (url.pathname === '/__deleted') return send(200, deleted);
   if (url.pathname === '/__projects') return send(200, [...projects.values()].map(projectJson));
@@ -120,6 +134,7 @@ const server = http.createServer((req, res) => {
     else revoked.add(url.searchParams.get('token'));
     return send(200, [...revoked]);
   }
+  if (down) return req.socket.destroy();
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token || token === 'bad' || revoked.has(token)) return send(401, { message: '401 Unauthorized' });
 
@@ -144,6 +159,8 @@ const server = http.createServer((req, res) => {
       if (projects.has(fullName)) return send(400, { message: { name: ['has already been taken'] } });
       return send(201, projectJson(createProject(fullName, body.visibility || 'private')));
     }
+    // every group, as if the account were a Developer in each (Publish's owner list)
+    if (url.pathname === '/groups' && req.method === 'GET') return send(200, [...groups.values()]);
     if (segs[0] === 'groups' && segs.length === 2 && req.method === 'GET') {
       const g = groups.get(decodeURIComponent(segs[1]));
       return g ? send(200, g) : send(404, { message: '404 Group Not Found' });
@@ -162,6 +179,7 @@ const server = http.createServer((req, res) => {
       groups.set(full_path, g);
       return send(201, g);
     }
+    if (segs[0] === 'projects' && segs.length >= 2 && decodeURIComponent(segs[1]) === 'grp/sub/locked') return send(403, { message: '403 Forbidden' });
     if (segs[0] === 'projects' && segs.length >= 2) {
       const p = findProject(segs[1]);
       if (!p) return send(404, { message: '404 Project Not Found' });
@@ -188,9 +206,18 @@ const server = http.createServer((req, res) => {
         return send(200, names.map((name) => ({ name, default: name === 'main' })));
       }
       if (segs[2] === 'merge_requests' && req.method === 'POST') {
+        const open = mergeRequests.find((m) => m.project === p.fullName && m.source_branch === body.source_branch);
+        if (open) return send(409, { message: [`Another open merge request already exists for this source branch: !${open.iid}`] });
         const iid = mergeRequests.length + 1;
         mergeRequests.push({ project: p.fullName, iid, ...body });
         return send(201, { iid, web_url: `http://localhost:${port}/${p.fullName}/-/merge_requests/${iid}`, title: body.title });
+      }
+      if (segs[2] === 'merge_requests' && req.method === 'GET') {
+        const q = url.searchParams;
+        const list = mergeRequests.filter((m) => m.project === p.fullName
+          && (!q.get('source_branch') || m.source_branch === q.get('source_branch'))
+          && (!q.get('target_branch') || m.target_branch === q.get('target_branch')));
+        return send(200, list.map((m) => ({ iid: m.iid, web_url: `http://localhost:${port}/${p.fullName}/-/merge_requests/${m.iid}`, title: m.title })));
       }
     }
     // test-only inspection: what merge requests were opened

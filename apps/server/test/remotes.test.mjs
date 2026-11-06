@@ -111,9 +111,9 @@ eq(gitlab.gitlab.tokenUrl('file:///bare.git', 'glpat-x'), 'file:///bare.git', 'G
 eq(github.tokenUrl('file:///bare.git', 'ghp_x'), 'file:///bare.git', 'GitHub tokenUrl leaves file:// alone');
 
 // ---------- provider descriptors ----------
-eq([github.id, github.label, github.changeRequestLabel, github.selfHosted], ['github', 'GitHub', 'pull request', false], 'github descriptor');
+eq([github.id, github.label, github.changeRequestLabel, github.selfHosted], ['github', 'GitHub', 'pull request', true], 'github descriptor: Enterprise Server makes it self-hostable');
 eq([gitlab.gitlab.id, gitlab.gitlab.label, gitlab.gitlab.changeRequestLabel, gitlab.gitlab.selfHosted], ['gitlab', 'GitLab', 'merge request', true], 'gitlab descriptor');
-check(typeof gitlab.gitlab.normalizeBaseUrl === 'function' && github.normalizeBaseUrl === undefined, 'GitLab has a configurable base URL, GitHub has none');
+check(typeof gitlab.gitlab.normalizeBaseUrl === 'function' && typeof github.normalizeBaseUrl === 'function', 'GitLab and GitHub (Enterprise Server) take a base URL');
 // the copy the generic routes interpolate lives on the provider, never in routes.ts
 eq([github.tokenScopeHint, github.pathHint, github.baseUrlExample], ['repo scope', 'Expected "owner/repo"', undefined], 'github hints');
 eq([gitlab.gitlab.tokenScopeHint, gitlab.gitlab.pathHint, gitlab.gitlab.baseUrlExample], ['the api scope', 'Expected a project path like "group/project"', undefined], 'gitlab hints');

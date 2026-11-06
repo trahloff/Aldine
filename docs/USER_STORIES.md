@@ -139,10 +139,13 @@ and reconnect behaviour in the `e2e/c2-shutdown.mjs` and
 - **GH-1** — I import a GitHub repo as a project (OAuth or PAT).
 - **GH-2** — I push commits to GitHub with a message; ahead/behind indicators
   update.
-- **GH-3** — I pull remote changes; conflicts are surfaced.
+- **GH-3** — I pull remote changes; conflicts are surfaced. As the owner I
+  keep both versions: main is saved as `my-version-<date>`, a branch only
+  the server has, and takes the host's version. A collaborator is told the
+  owner settles it.
 - **GH-4** — I open a pull request from the editor.
 - **GH-5** — I switch the synced remote branch.
-- **GH-6** — Owner-controlled autopush pushes each autosave from the server; manual push always pushes.
+- **GH-6** — Owner-controlled autopush pushes each autosave from the server; manual push always pushes. When autopush cannot push, the branch menu says why.
 - **GH-7** — Auth tokens never land in the compiler-visible project dir.
 
 ## GitLab sync (GL)
@@ -156,7 +159,8 @@ and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`; provisioning
   https instance, sub-path installs included) or with OAuth.
 - **GL-2** — I import a project from a nested group path
   (`group/subgroup/project`).
-- **GL-3** — I publish a local project to GitLab, optionally into a group.
+- **GL-3** — I publish a local project to GitLab, optionally into a group I
+  pick from the Owner list (an organisation on GitHub and Gitea / Forgejo).
 - **GL-4** — I push, pull and switch branches exactly as with GitHub.
 - **GL-5** — I open a merge request from the editor.
 - **GL-6** — As an operator I hide a provider with `REMOTE_PROVIDERS`;

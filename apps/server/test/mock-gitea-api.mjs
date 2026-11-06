@@ -12,7 +12,11 @@
  *  - `revoked` tokens answer 401 like an expired token; a `Bearer` header is
  *    refused too, since that is the GitLab/GitHub shape and not Gitea's;
  *  - orgs are a fixed set (`research`), `POST /orgs/{org}/repos` 404s for
- *    anything else; there is no `GET /user/orgs` because nothing calls it.
+ *    anything else, and `GET /user/orgs` lists them;
+ *  - a second pull request with the same head and base answers 409, as
+ *    Gitea does, and `GET /repos/{owner}/{repo}/pulls` lists the open ones;
+ *  - `flags.forbidden` names a repository that answers 403, and `flags.down`
+ *    closes every connection unanswered, for the import failures.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,7 +45,8 @@ export async function startGiteaMock({ tmp, login = 'tester' }) {
     return r;
   };
 
-  const flags = { maxItems: 50, failNextCreate: false, totalCount: true };
+  // `forbidden`: a repository path that answers 403; `down`: every call gets its socket closed, no answer.
+  const flags = { maxItems: 50, failNextCreate: false, totalCount: true, forbidden: '', down: false };
   const recorded = { created: [], pulls: [], requests: [] };
   const revoked = new Set();
   const readBody = (req) => new Promise((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b ? JSON.parse(b) : {})); });
@@ -57,12 +62,14 @@ export async function startGiteaMock({ tmp, login = 'tester' }) {
     const send = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     const u = new URL(req.url, 'http://mock');
     recorded.requests.push(`${req.method} ${u.pathname}${u.search}`);
+    if (flags.down) return req.socket.destroy();
     const m = /^token (\S+)$/.exec(req.headers.authorization || '');
     const token = m?.[1];
     if (!token || revoked.has(token)) return send(401, { message: 'token is required', url: 'https://forge.example.org/api/swagger' });
     const segs = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
 
     if (segs[0] === 'user' && segs.length === 1) return send(200, userJson(login));
+    if (segs[0] === 'user' && segs[1] === 'orgs' && req.method === 'GET') return send(200, paginate(res, [...orgs].map((name, i) => ({ id: 50 + i, name, username: name })), u));
     if (segs[0] === 'user' && segs[1] === 'repos') {
       if (req.method === 'POST') return create(login, await readBody(req));
       return send(200, paginate(res, [...repos.values()].map(repoJson), u));
@@ -72,12 +79,19 @@ export async function startGiteaMock({ tmp, login = 'tester' }) {
       return create(segs[1], await readBody(req));
     }
     if (segs[0] === 'repos' && segs.length >= 3) {
+      if (flags.forbidden === `${segs[1]}/${segs[2]}`) return send(403, { message: 'user should have read access to this repository' });
       const r = repos.get(`${segs[1]}/${segs[2]}`);
       if (!r) return send(404, { message: 'The target couldn\'t be found.' });
       if (segs.length === 3 && req.method === 'GET') return send(200, repoJson(r));
       if (segs[3] === 'branches' && req.method === 'GET') return send(200, paginate(res, refs(r.bare).map((name) => ({ name })), u));
+      if (segs[3] === 'pulls' && req.method === 'GET') {
+        const open = recorded.pulls.filter((p) => p.repo === r.fullName).map((p) => ({ number: p.number, html_url: `https://forge.example.org/${r.fullName}/pulls/${p.number}`, head: { ref: p.head }, base: { ref: p.base } }));
+        return send(200, paginate(res, open, u));
+      }
       if (segs[3] === 'pulls' && req.method === 'POST') {
         const body = await readBody(req);
+        const dup = recorded.pulls.find((p) => p.repo === r.fullName && p.head === body.head && p.base === body.base);
+        if (dup) return send(409, { message: `pull request already exists for these targets [id: ${dup.number}, issue_id: ${dup.number}, head_repo_id: ${r.id}, base_repo_id: ${r.id}, head_branch: ${body.head}, base_branch: ${body.base}]` });
         const number = recorded.pulls.length + 1;
         recorded.pulls.push({ repo: r.fullName, number, ...body });
         return send(201, { id: number, number, html_url: `https://forge.example.org/${r.fullName}/pulls/${number}`, title: body.title });

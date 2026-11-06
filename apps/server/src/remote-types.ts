@@ -20,6 +20,9 @@ export interface RemoteRepo {
   updatedAt: string;
 }
 
+/** Somewhere Publish can create a repository: the account itself, or an organisation (GitHub, Gitea) or group (GitLab) it belongs to. */
+export interface RemoteOwner { path: string; kind: 'user' | 'org' | 'group' }
+
 /** Per-user token, kept in the secrets DataStore. `baseUrl` is set for a self-hosted GitLab and for every Gitea/Forgejo instance. */
 export interface RemoteConnection { token: string; login: string; name?: string; baseUrl?: string }
 
@@ -62,6 +65,10 @@ export interface RemoteProvider {
   /** `visibility` refines `private` for hosts with more than two levels (GitLab `internal`). */
   createRepo(conn: RemoteConnection, name: string, opts: { private: boolean; namespace?: string; visibility?: 'private' | 'internal' | 'public' }): Promise<RemoteRepo>;
   createChangeRequest(conn: RemoteConnection, fullName: string, opts: { title: string; head: string; base: string; body?: string }): Promise<{ url: string; number: number }>;
+  /** The open change request from `head` into `base`, or null: what a refused duplicate links to. */
+  findChangeRequest(conn: RemoteConnection, fullName: string, opts: { head: string; base: string }): Promise<{ url: string; number: number } | null>;
+  /** The account first, then the organisations or groups it may create repositories in. */
+  listOwners(conn: RemoteConnection): Promise<RemoteOwner[]>;
   /** `login` is the connection's account name, for hosts that take the token as a basic-auth password. */
   tokenUrl(cloneUrl: string, token: string, login?: string): string;
 }

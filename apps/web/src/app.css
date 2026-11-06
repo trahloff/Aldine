@@ -630,6 +630,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .session-ended { position: fixed; inset: 0; z-index: 200; overflow: auto; background: var(--scrim); }
 .conflict__list { margin: 8px 0; padding: 8px 10px; background: var(--bg-inset); border-radius: var(--radius-s); font-family: var(--font-mono); font-size: var(--text-s); max-height: 160px; overflow-y: auto; list-style: none; }
 .conflict__list li { padding: 2px 0; color: var(--error); }
+.conflict__note, .push-dialog__note { margin: 8px 0 0; font-size: var(--text-s); color: var(--text-2); line-height: 1.5; }
+.push-dialog__note + .push-dialog__note { color: var(--text-3); }
+.push-dialog__link { display: flex; width: fit-content; margin: 4px 0 0 -8px; }
 .btn--danger { background: var(--error); color: #fff; border-color: transparent; }
 @media (hover: hover) and (pointer: fine) { .btn--danger:hover { filter: brightness(1.08); } }
 .btn--danger:active, .btn--danger:disabled:active { background: var(--error); }

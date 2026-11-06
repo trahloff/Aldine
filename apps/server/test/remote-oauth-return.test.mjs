@@ -4,7 +4,9 @@
  * the callback redirects there. Anything else (another origin, a scheme, a
  * path outside /p/<id>, traversal) is dropped on the way in and again on the
  * way out, so the cookie can never become an open redirect; such a connect
- * falls back to Home's import dialog as before. The status route names the
+ * falls back to Home's import dialog as before. A `reopen` naming the dialog
+ * the connect started from (publish or access, nothing else) rides along and
+ * comes back as `?remote=<host>&reopen=<dialog>`. The status route names the
  * instance a token connect without a URL reaches, for the token-page link.
  *
  * GitLab OAuth against a loopback stub (GITLAB_URL for authorize and token,
@@ -68,6 +70,32 @@ const callback = (state, value) => app.inject({ method: 'GET', url: `/api/remote
   eq(r.headers.location, '/p/abc123', 'to the project the connect started in');
 }
 
+// ---- started in a dialog: back to the project, which reopens it ----
+for (const dialog of ['publish', 'access']) {
+  const s = await start(`/api/remotes/gitlab/oauth?return=%2Fp%2Fabc123&reopen=${dialog}`);
+  eq(s.value, `gitlab.${s.state}.${encodeURIComponent('/p/abc123')}.${dialog}`, `the cookie carries the dialog (${dialog})`);
+  const r = await callback(s.state, s.value);
+  eq(r.headers.location, `/p/abc123?remote=gitlab&reopen=${dialog}`, `the callback names host and dialog (${dialog})`);
+}
+
+// ---- a dialog name outside the list, or without a project, is dropped ----
+for (const bad of ['settings', 'publish.access', 'PUBLISH', '"><script>', '']) {
+  const s = await start(`/api/remotes/gitlab/oauth?return=%2Fp%2Fabc123&reopen=${encodeURIComponent(bad)}`);
+  eq(s.value, `gitlab.${s.state}.${encodeURIComponent('/p/abc123')}`, `reopen ${JSON.stringify(bad)} is not stored`);
+  eq((await callback(s.state, s.value)).headers.location, '/p/abc123', `and the project opens without it (${JSON.stringify(bad)})`);
+}
+{
+  const s = await start('/api/remotes/gitlab/oauth?reopen=publish');
+  eq(s.value, `gitlab.${s.state}`, 'a dialog without a project to open it in is not stored');
+  eq((await callback(s.state, s.value)).headers.location, '/?remote=gitlab', 'Home, as before');
+}
+// a forged cookie can name a listed dialog at most, and nothing past it
+for (const [forged, location] of [['/p/abc.settings', '/p/abc'], ['/p/abc.publish.x', '/?remote=gitlab'], ['/p/abc.access', '/p/abc?remote=gitlab&reopen=access']]) {
+  const s = await start('/api/remotes/gitlab/oauth');
+  const r = await callback(s.state, `gitlab.${s.state}.${encodeURIComponent(forged)}`);
+  eq(r.headers.location, location, `forged ${JSON.stringify(forged)}`);
+}
+
 // ---- no return: Home's import dialog, as before ----
 {
   const s = await start('/api/remotes/gitlab/oauth');
@@ -110,7 +138,7 @@ for (const url of ['/api/remotes/github/oauth?return=%2Fp%2Fgh1', '/api/github/o
 {
   const r = await app.inject({ method: 'GET', url: '/api/remotes/gitlab/status' });
   eq(r.json().instanceUrl, GITLAB, 'GitLab: the configured instance');
-  eq((await app.inject({ method: 'GET', url: '/api/remotes/github/status' })).json().instanceUrl, undefined, 'GitHub: none');
+  eq((await app.inject({ method: 'GET', url: '/api/remotes/github/status' })).json().instanceUrl, 'https://github.com', 'GitHub: github.com (GITHUB_URL unset)');
 }
 
 await app.close();

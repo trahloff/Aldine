@@ -1,17 +1,38 @@
 import { injectToken } from './gitops.js';
-import { jsonRequest, type RemoteConnection, type RemoteProvider, type RemoteRepo } from './remote-types.js';
+import { jsonRequest, normalizeInstanceUrl, type RemoteConnection, type RemoteOwner, type RemoteProvider, type RemoteRepo } from './remote-types.js';
 
 /**
- * GitHub as a remote provider. The token comes from either an OAuth "connect"
- * with repo scope or a pasted PAT; GITHUB_API_BASE points the client at a mock
- * in tests.
+ * GitHub, github.com or a GitHub Enterprise Server, as a remote provider.
+ * The token comes from either an OAuth "connect" with repo scope or a pasted
+ * PAT.
+ *
+ * Which instance: a PAT connection may carry its own `baseUrl` (an Enterprise
+ * Server, `https://<host>`); OAuth connections and the rest use GITHUB_URL
+ * (default github.com), where the server's OAuth app is registered. The REST
+ * API is api.github.com for github.com and `<instance>/api/v3` elsewhere; git
+ * goes to the clone URL the API returns, which checkCloneUrl holds to the
+ * instance. GITHUB_API_BASE replaces the whole API prefix and exists for
+ * tests only.
  */
 
-const API = () => process.env.GITHUB_API_BASE || 'https://api.github.com';
-const ORIGIN = 'https://github.com';
+const DEFAULT_URL = 'https://github.com';
+
+export function normalizeBaseUrl(raw: string | undefined): string | undefined {
+  return normalizeInstanceUrl(raw, 'GitHub Enterprise', !!process.env.GITHUB_API_BASE, '/api/v3');
+}
+
+function instanceUrl(): string {
+  return normalizeBaseUrl(process.env.GITHUB_URL) || DEFAULT_URL;
+}
+
+export function apiBase(conn: RemoteConnection): string {
+  if (process.env.GITHUB_API_BASE) return process.env.GITHUB_API_BASE.replace(/\/+$/, '');
+  const at = conn.baseUrl || instanceUrl();
+  return new URL(at).host === 'github.com' ? 'https://api.github.com' : `${at}/api/v3`;
+}
 
 async function api(conn: RemoteConnection, path: string, init: RequestInit = {}): Promise<any> {
-  return jsonRequest(`${API()}${path}`, {
+  return jsonRequest(`${apiBase(conn)}${path}`, {
     ...init,
     headers: {
       authorization: `Bearer ${conn.token}`,
@@ -47,10 +68,12 @@ export const github: RemoteProvider = {
   id: 'github',
   label: 'GitHub',
   changeRequestLabel: 'pull request',
-  selfHosted: false,
+  selfHosted: true,
   tokenScopeHint: 'repo scope',
   pathHint: 'Expected "owner/repo"',
-  instanceOrigin() { return ORIGIN; },
+  normalizeBaseUrl,
+  instanceOrigin(conn) { return new URL(conn.baseUrl || instanceUrl()).origin; },
+  defaultInstanceUrl() { return instanceUrl(); },
   apiOverridden() { return !!process.env.GITHUB_API_BASE; },
 
   /** Whether "Connect with GitHub" (OAuth, repo scope) is configured. PAT connect always works. */
@@ -60,11 +83,11 @@ export const github: RemoteProvider = {
 
   connectUrl(state, redirectUri) {
     const p = new URLSearchParams({ client_id: process.env.GITHUB_CLIENT_ID!, scope: 'repo', state, redirect_uri: redirectUri });
-    return `${ORIGIN}/login/oauth/authorize?${p}`;
+    return `${instanceUrl()}/login/oauth/authorize?${p}`;
   },
 
   async exchangeCode(code, redirectUri) {
-    const res = await fetch(`${ORIGIN}/login/oauth/access_token`, {
+    const res = await fetch(`${instanceUrl()}/login/oauth/access_token`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -126,6 +149,18 @@ export const github: RemoteProvider = {
   async createChangeRequest(conn, fullName, opts) {
     const pr = await api(conn, `${repoPath(fullName)}/pulls`, { method: 'POST', body: JSON.stringify(opts) });
     return { url: pr.html_url, number: pr.number };
+  },
+
+  async findChangeRequest(conn, fullName, opts) {
+    const owner = fullName.split('/')[0];
+    const q = new URLSearchParams({ state: 'open', head: `${owner}:${opts.head}`, base: opts.base });
+    const list = (await api(conn, `${repoPath(fullName)}/pulls?${q}`)) as Array<{ html_url: string; number: number }>;
+    return list?.[0] ? { url: list[0].html_url, number: list[0].number } : null;
+  },
+
+  async listOwners(conn) {
+    const orgs = (await api(conn, '/user/orgs?per_page=100')) as Array<{ login: string }>;
+    return [{ path: conn.login, kind: 'user' }, ...(orgs || []).map((o): RemoteOwner => ({ path: o.login, kind: 'org' }))];
   },
 
   tokenUrl(cloneUrl, token) {

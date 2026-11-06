@@ -5,7 +5,7 @@
  * shapes of https://gitea.com/swagger.v1.json. Seeded with e2e-user/paper.
  * Any `Authorization: token …` works except `bad` (401) — that is how a spec
  * provokes the token-invalid path; a Bearer header is refused because that is
- * not Gitea's shape.
+ * not Gitea's shape. The account belongs to one organisation, e2e-org.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -97,6 +97,7 @@ const server = http.createServer((req, res) => {
     const segs = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
 
     if (req.method === 'GET' && url.pathname === '/user') return send(200, userJson(LOGIN));
+    if (req.method === 'GET' && url.pathname === '/user/orgs') return send(200, paginate([...orgs].map((name, i) => ({ id: 50 + i, name, username: name })), url));
     if (segs[0] === 'user' && segs[1] === 'repos' && req.method === 'GET') return send(200, paginate([...repos.values()].filter((r) => r.listed).map(repoJson), url));
     if (segs[0] === 'user' && segs[1] === 'repos' && req.method === 'POST') return create(LOGIN, body);
     if (segs[0] === 'orgs' && segs[2] === 'repos' && req.method === 'POST') {
@@ -111,7 +112,13 @@ const server = http.createServer((req, res) => {
         const names = git(`--git-dir="${r.bare}" for-each-ref --format="%(refname:short)" refs/heads`).split('\n').filter(Boolean);
         return send(200, paginate(names.map((name) => ({ name })), url));
       }
+      if (segs[3] === 'pulls' && req.method === 'GET') {
+        const open = pulls.filter((p) => p.repo === r.fullName).map((p) => ({ number: p.number, html_url: `http://localhost:${port}/${r.fullName}/pulls/${p.number}`, head: { ref: p.head }, base: { ref: p.base } }));
+        return send(200, paginate(open, url));
+      }
       if (segs[3] === 'pulls' && req.method === 'POST') {
+        const dup = pulls.find((p) => p.repo === r.fullName && p.head === body.head && p.base === body.base);
+        if (dup) return send(409, { message: `pull request already exists for these targets [id: ${dup.number}, head_branch: ${body.head}, base_branch: ${body.base}]` });
         const number = pulls.length + 1;
         pulls.push({ repo: r.fullName, number, ...body });
         return send(201, { id: number, number, html_url: `http://localhost:${port}/${r.fullName}/pulls/${number}`, title: body.title });

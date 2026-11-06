@@ -225,6 +225,35 @@ test.describe('GitLab auto-provisioning', () => {
     await expect.poll(() => bareMainTex(teamPaperRepo), { timeout: 4_000 }).toContain(second);
   });
 
+  test('autopush that cannot push says why in the branch menu, until a push lands', async ({ page, request }) => {
+    await page.addInitScript(() => localStorage.setItem('aldine.remotePollMs', '500'));
+    await page.goto(`/p/${teamPaperId}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    await openFile(page, 'main.tex');
+    const menu = page.getByTestId('branch-menu');
+    const paused = page.getByTestId('gitlab-autopush-paused');
+    await mock(`/__failpush?on=1&project=${encodeURIComponent(teamPaperRepo)}`);
+    try {
+      const refused = `E2E-REFUSED-${Date.now()}`;
+      await typeAndFlush(page, request, teamPaperId, refused);
+      expect((await (await request.post(`/api/projects/${teamPaperId}/commit`, { data: { branch: 'main', message: 'e2e refused' } })).json()).committed).toBe(true);
+      await menu.click();
+      await expect(page.getByTestId('gitlab-autopush')).toHaveText('On');
+      await expect(paused).toHaveText('Autopush paused. GitLab refused the push, saying "push refused (test switch)".', { timeout: 10_000 });
+      expect(bareMainTex(teamPaperRepo)).not.toContain(refused);
+      await page.keyboard.press('Escape');
+    } finally {
+      await mock('/__failpush?on=0');
+    }
+    // the next commit pushes, and the note goes
+    const landed = `E2E-LANDED-${Date.now()}`;
+    await typeAndFlush(page, request, teamPaperId, landed);
+    expect((await (await request.post(`/api/projects/${teamPaperId}/commit`, { data: { branch: 'main', message: 'e2e landed' } })).json()).committed).toBe(true);
+    await expect.poll(() => bareMainTex(teamPaperRepo), { timeout: 10_000 }).toContain(landed);
+    await menu.click();
+    await expect(paused).toHaveCount(0, { timeout: 10_000 });
+  });
+
   test('GitLab down at create time: the project exists, the banner retries the remote', async ({ page, request }) => {
     await mock('/__fail?on=1');
     try {
