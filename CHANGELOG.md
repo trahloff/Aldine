@@ -65,6 +65,29 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - A file takes no typing until it has loaded from the server. Before, keys
   pressed in the empty editor ended up at the top of the file once its text
   arrived. A file that takes a while to load says Connecting….
+- The PDF preview's header has a Download button again, beside the zoom. It
+  saves the PDF on screen, and is greyed out until there is one.
+- An error that auto-typeset finds while you type folds the errors list to
+  its header line, "1 error", instead of opening it under the editor. The
+  list opens when you press Typeset, or when the same error is still there
+  on the next run. Click the header to open or fold it.
+- Overfull and underfull boxes, text that runs into the margin or is spread
+  too thin, are listed in a folded "Layout (N)" group under the warnings.
+  Each row names its line and opens it.
+- On servers with `ALDINE_AI_AUTOFIX=1`, the AI fix diagnoses only a typeset
+  you ask for, not each half-typed command auto-typeset finds, and selects
+  its tab without showing a hidden sidebar. The errors list has a "Diagnose
+  with AI" button. A server without an AI key shows no Fix tab.
+- Opening a project shows the last PDF of its branch at once, marked "Out
+  of date" until a typeset brings it up to date, also with auto-typeset off.
+  The project and its files load side by side.
+- With auto-typeset on, the preview follows a co-author's typesets: when
+  someone else typesets the branch, your PDF updates too, without a typeset
+  of your own.
+- Plugins can add a button to the errors list with
+  `aldine.ui.registerErrorsAction`, tell a typeset someone asked for from
+  auto-typeset with `lastCompile().explicit`, and select their panel without
+  showing a hidden sidebar with `aldine.ui.showPanel(id, { reveal: false })`.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -348,6 +371,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   again. Before, it carried on as if nothing had happened. The project list
   shows the sign-in form in that case too, instead of "Sign in required"
   with a Try again that could not help.
+- A typeset that runs too long, such as a macro that calls itself, can be
+  stopped: a Stop button appears above the preview after a second, and the
+  status then says "Stopped". It stops only that branch's typeset, and the
+  ones you had waiting behind it. A stopped or timed-out run no longer
+  replaces the PDF on screen with the part it got to.
+- When the typesetting service is down, the preview says "The typesetting
+  service isn't answering" with Try again, instead of "fetch failed". A
+  failing auto-typeset shows one message, not one more on every pause. A run
+  that left no PDF and names no error offers its log in the preview.
+- Warnings and bad boxes in a file that the main document inputs, such as
+  an undefined citation in chapters/intro.tex, name that file and open it
+  at their line. Before, they could not be clicked in a project with more
+  than one .tex file.
 
 ## [1.8.0] — 2026-11-04
 

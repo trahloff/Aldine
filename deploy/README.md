@@ -91,8 +91,8 @@ OPENROUTER_API_KEY=sk-or-...
 #ANTHROPIC_API_KEY=
 #OPENAI_API_KEY=
 #ALDINE_AI_MODEL=
-# 1 = a failed typeset opens the Fix tab and diagnoses on its own, once per
-# new error (each one is a model call)
+# 1 = a failed typeset someone asked for (not auto-typeset) is diagnosed on
+# its own, once per new error (each one is a model call)
 #ALDINE_AI_AUTOFIX=1
 
 # email for sign-up confirmation, password-reset links and share invitations: SMTP (any provider)
@@ -623,7 +623,7 @@ override file.
 | `SES_FROM` + `AWS_REGION` | Sign-up confirmation and password-reset email via AWS SES (instead of SMTP); `AWS_DEFAULT_REGION` is read when `AWS_REGION` is unset |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `OPENAI_API_KEY` | AI error-fix; precedence OpenRouter > OpenAI > Anthropic |
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
-| `ALDINE_AI_AUTOFIX` | `1` = a failed typeset opens the Fix tab and diagnoses without a click (default off) |
+| `ALDINE_AI_AUTOFIX` | `1` = a failed typeset someone asked for is diagnosed in the Fix tab without a click; auto-typeset runs are not (default off) |
 | `ALDINE_COMPILE_QUOTA_MIN` | Per-user compile minutes per month (blank = uncapped) |
 | `ALDINE_DATASTORE` | `sqlite` (default): accounts, sessions, project settings and comments in `META_DIR/aldine.db`, filled from the JSON files of an earlier release on its first start. `json`: the JSON files instead. Leave it unset with `DATABASE_URL`: the server refuses to start with both |
 | `DATABASE_URL` | Postgres datastore (blank = `ALDINE_DATASTORE`) |

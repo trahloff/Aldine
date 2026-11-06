@@ -62,6 +62,8 @@ try {
     refused(await app.inject({ method: 'PATCH', url: base, payload: { name: 'Renamed' } }), `PATCH project, id ${how}`);
     refused(await app.inject({ method: 'DELETE', url: base }), `DELETE project, id ${how}`);
     refused(await app.inject({ method: 'POST', url: `${base}/comments`, payload: { file: 'main.tex', anchor: { from: 0, to: 4, quote: '\\doc' }, body: 'x' } }), `comment, id ${how}`);
+    // One visitor must not end the typesets the others started.
+    refused(await app.inject({ method: 'POST', url: `${base}/compile/stop`, payload: { branch: 'main' } }), `stop a typeset, id ${how}`);
 
     const read = await app.inject({ method: 'GET', url: `${base}/file?path=main.tex` });
     eq(read.statusCode, 200, `reading, id ${how} → 200`);

@@ -600,7 +600,7 @@ function signalStamp(): number {
  *  identifier like FILES_SIGNAL. */
 export const COMMENTS_SIGNAL = '.aldine/comments-signal';
 
-function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td' | 'c', signal = FILES_SIGNAL): void {
+function setSignal(projectId: string, branch: string, key: 'v' | 'a' | 'ts' | 'td' | 'c' | 'r', signal = FILES_SIGNAL): void {
   const doc = hocuspocus.documents.get(docName(projectId, branch, signal)) as Y.Doc | undefined;
   if (!doc) return;
   try { doc.getMap<number>('signal').set(key, signalStamp()); } catch { /* best effort */ }
@@ -635,6 +635,12 @@ export function signalAgentWrite(projectId: string, branch: string): void {
  *  finished ('done'). */
 export function signalAgentTypeset(projectId: string, branch: string, phase: 'start' | 'done'): void {
   setSignal(projectId, branch, phase === 'start' ? 'ts' : 'td');
+}
+
+/** A typeset that no agent caused finished: the branch's clients with
+ *  auto-typeset on show it, whoever asked for it. */
+export function signalTypesetFinished(projectId: string, branch: string): void {
+  setSignal(projectId, branch, 'r');
 }
 
 

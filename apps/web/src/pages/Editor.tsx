@@ -24,9 +24,9 @@ import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
-import { PluginHost, PluginPanel } from '../plugins/host';
+import { PluginHost, PluginPanel, type PluginErrorsAction } from '../plugins/host';
 import { hintFor } from '../editor/errorHints';
-import { IconChevronLeft, IconChevronRight, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconDownload, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -60,8 +60,15 @@ import SyncStatus from '../components/SyncStatus';
 import type { SyncState } from '../editor/syncStatus';
 import { documentTitle } from '../util/documentTitle';
 import { useLeaveGuard } from '../editor/leaveGuard';
+import { errorsFoldAfter, fileLabel, NO_ERRORS, projectFileFor, runErrorKeys, strongerTrigger, toggleErrors, type ErrorsFold, type TypesetTrigger } from '../util/problems';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
+/** `outdated`: the branch's last run, shown on open until a typeset brings
+ *  it up to date. `requestError`: the typeset request itself failed, so
+ *  there is no run to show. */
+type CompileState = { status: CompileStatus; result: CompileResult | null; wallMs?: number; trigger?: TypesetTrigger; outdated?: boolean; requestError?: string };
+/** A typeset this long gets a Stop button; a quicker one would only flash it. */
+const STOP_AFTER_MS = 1000;
 
 /** Commits the review dialog will render: one diff request each, so a branch
  *  Claude wrote hundreds of commits into shows a count, not a wall. */
@@ -136,7 +143,7 @@ export default function Editor() {
   const [commitFocusRequest, setCommitFocusRequest] = useState(0);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [tab, setTab] = useState<'files' | 'history' | string>('files');
-  const [compile, setCompile] = useState<{ status: CompileStatus; result: CompileResult | null; wallMs?: number }>({ status: 'idle', result: null });
+  const [compile, setCompile] = useState<CompileState>({ status: 'idle', result: null });
   const [pdfWidth, setPdfWidth] = useState(() => {
     const w = Number(safeStorage.get(PDF_WIDTH));
     return w >= 280 ? w : pdfDefault();
@@ -185,6 +192,7 @@ export default function Editor() {
   }, []);
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
+  const [pluginActions, setPluginActions] = useState<PluginErrorsAction[]>([]);
   const [auto, setAuto] = useState(() => safeStorage.get('aldine.autoTypeset') !== '0');
   // Auto-typeset runs one engine pass while you type; Typeset and Mod-s run the full cycle.
   const [draftTypeset, setDraftTypeset] = useState(() => safeStorage.get('aldine.draftTypeset') !== '0');
@@ -203,10 +211,16 @@ export default function Editor() {
     });
   }, []);
   const [showLog, setShowLog] = useState(false);
-  // Warnings alone fold to the panel's header line; errors always open it.
+  // Warnings alone fold to the panel's header line; errors open it (see errorsFoldAfter).
   const [problemsOpen, setProblemsOpen] = useState(() => safeStorage.get('aldine.problemsOpen') === '1');
   const toggleProblems = useCallback(() => setProblemsOpen((o) => {
     safeStorage.set('aldine.problemsOpen', o ? '0' : '1');
+    return !o;
+  }), []);
+  // Overfull and underfull boxes, folded to one line until opened.
+  const [layoutOpen, setLayoutOpen] = useState(() => safeStorage.get('aldine.layoutOpen') === '1');
+  const toggleLayout = useCallback(() => setLayoutOpen((o) => {
+    safeStorage.set('aldine.layoutOpen', o ? '0' : '1');
     return !o;
   }), []);
   const [ignored, setIgnoredState] = useState<string[]>(() => loadIgnored(id));
@@ -287,6 +301,10 @@ export default function Editor() {
   const pendingRef = useRef(false);
   /** A queued typeset owes a full run (someone asked for one while a draft ran). */
   const pendingFullRef = useRef(false);
+  /** Who the queued typeset is for. */
+  const pendingTriggerRef = useRef<TypesetTrigger | null>(null);
+  /** A capacity retry waiting to run. */
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The full typeset a draft owes, armed when it reports needsFullRun. */
   const fullTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalEditAt = useRef(0);
@@ -390,11 +408,12 @@ export default function Editor() {
   }, [id, branch]);
   useEffect(() => { refreshDocWords(); }, [refreshDocWords]);
 
-  const loadFiles = useCallback(async () => {
+  /** `pending`: a listing already asked for (the open asks for it beside the project). */
+  const loadFiles = useCallback(async (pending?: Promise<TreeEntry[]>) => {
     // Several call sites invoke this fire-and-forget (onChanged, tree callbacks);
     // swallow transient failures with a toast instead of an unhandled rejection.
     try {
-      const f = await api.listFiles(id, branch);
+      const f = await (pending ?? api.listFiles(id, branch));
       setFiles(f);
       setFilesFor(`${id}::${branch}`);
       // files changed (rename/delete/upload/Zotero import) → bib & label indexes are stale
@@ -456,10 +475,21 @@ export default function Editor() {
    *  until it has, the file on screen belongs to the branch before. */
   const [openFor, setOpenFor] = useState('');
   useEffect(() => {
+    // The branch's last PDF goes on screen as soon as the pane is there, marked
+    // out of date: reading it is often why someone opens the project. The
+    // listing is asked for beside the project, and used once the project
+    // has opened.
+    api.compileStatus(id, branch).then(({ result: run }) => {
+      if (branchRef.current !== branch || !run?.pdfUrl || !shouldAdoptRun(shownRunIdRef.current, run.runId, false)) return;
+      shownRunIdRef.current = run.runId;
+      setCompile((c) => (c.result || c.requestError ? c : { ...c, result: run, trigger: 'adopted', outdated: true }));
+    }).catch(() => { /* the on-open typeset, or ⌘S, brings the PDF instead */ });
+    const listing = api.listFiles(id, branch);
+    listing.catch(() => { /* loadFiles reports it */ });
     (async () => {
       const p = await loadProject();
       if (!p) return;
-      const f = await loadFiles();
+      const f = await loadFiles(listing);
       const last = lastOpenFile(id, branch);
       const first = (last && f.find((e) => e.type === 'file' && e.path === last)) || f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
@@ -481,13 +511,16 @@ export default function Editor() {
     if (activeFile && openFor === `${id}::${branch}`) rememberOpenFile(id, branch, activeFile);
   }, [id, branch, activeFile, openFor]);
 
-  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean }) => {
+  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean; trigger?: TypesetTrigger }) => {
     const draft = !!opts?.draft;
+    const trigger = opts?.trigger ?? 'user';
     if (compilingRef.current) {
       pendingRef.current = true;
       if (!draft) pendingFullRef.current = true;
+      pendingTriggerRef.current = strongerTrigger(pendingTriggerRef.current, trigger);
       return;
     }
+    retryTimer.current = null;
     compilingRef.current = true;
     // The server flushes every edit it has when this run starts, so a local
     // auto-typeset still armed for them would only queue a second, no-op run.
@@ -510,9 +543,10 @@ export default function Editor() {
       // to the branch it was asked for, not to whatever is on screen now.
       if (branchRef.current !== branch) return;
       shownRunIdRef.current = result.runId;
-      setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0 });
+      setCompile({ status: result.ok ? 'ok' : 'error', result, wallMs: Date.now() - t0, trigger });
+      dismissToast('typeset-failed');
       if (result.needsFullRun) {
-        fullTimer.current = setTimeout(() => { fullTimer.current = null; doCompile(); }, FULL_AFTER_DRAFT_MS);
+        fullTimer.current = setTimeout(() => { fullTimer.current = null; doCompile(0, { trigger: 'auto' }); }, FULL_AFTER_DRAFT_MS);
       }
     } catch (err: any) {
       if (branchRef.current !== branch) return;
@@ -520,38 +554,65 @@ export default function Editor() {
       // keep the busy state and retry with backoff instead of showing "Failed".
       if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
         pendingRef.current = false; // the retry below also serves any queued request
-        setTimeout(() => doCompile(attempt + 1, opts), 1500 * (attempt + 1));
+        retryTimer.current = setTimeout(() => doCompile(attempt + 1, opts), 1500 * (attempt + 1));
         return;
       }
-      setCompile({ status: 'error', result: null });
-      toast(`Typesetting failed: ${err.message}`, 'error');
+      // The server words "the compiler is down" itself (503); anything else
+      // gets said what it was about.
+      const message = err instanceof ApiError && err.status === 503 ? err.message : `Typesetting failed: ${err.message}`;
+      setCompile({ status: 'error', result: null, requestError: message });
+      // One at a time: every pause while typing would add another.
+      toast(message, 'error', { label: 'Try again', testId: 'typeset-retry', key: 'typeset-failed', onClick: () => doCompileRef.current() });
     } finally {
       compilingRef.current = false;
       if (pendingRef.current) {
         pendingRef.current = false;
         const full = pendingFullRef.current;
         pendingFullRef.current = false;
+        const queued = pendingTriggerRef.current ?? 'auto';
+        pendingTriggerRef.current = null;
         // Through the ref: after a branch switch the queued request (often the
         // new branch's on-open typeset) belongs to the branch now on screen.
-        setTimeout(() => doCompileRef.current(0, full ? undefined : { draft: draftRef.current }), 400);
+        setTimeout(() => doCompileRef.current(0, full ? { trigger: queued } : { draft: draftRef.current, trigger: queued }), 400);
       }
     }
   }, [id, branch]);
   const doCompileRef = useRef(doCompile);
   doCompileRef.current = doCompile;
 
-  /** The typeset a branch opens with: the branch's last run on screen at once
-   *  when this node remembers one with a PDF, and a fresh run to bring it up
-   *  to date. */
+  /** Stop the branch's typeset, and the ones this tab has waiting behind it:
+   *  a runaway macro would otherwise come straight back. */
+  const stopTypeset = useCallback(async () => {
+    pendingRef.current = false;
+    pendingFullRef.current = false;
+    pendingTriggerRef.current = null;
+    if (autoTimer.current) { clearTimeout(autoTimer.current); autoTimer.current = null; pendingSource.current = null; }
+    if (fullTimer.current) { clearTimeout(fullTimer.current); fullTimer.current = null; }
+    if (retryTimer.current) {
+      // Waiting for a free slot, nothing running yet: the wait is the typeset.
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+      setCompile((c) => ({ ...c, status: c.result ? (c.result.ok ? 'ok' : 'error') : 'idle' }));
+      return;
+    }
+    try {
+      await api.stopCompile(id, branch);
+    } catch (err: any) {
+      toast(`Could not stop the typeset: ${err.message}`, 'error');
+    }
+  }, [id, branch, toast]);
+  const [stoppable, setStoppable] = useState(false);
+  useEffect(() => {
+    if (compile.status !== 'compiling') { setStoppable(false); return; }
+    const t = setTimeout(() => setStoppable(true), STOP_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [compile.status]);
+
+  /** The typeset a branch opens with, which brings the last run that the
+   *  open put on screen up to date. */
   const openTypeset = useCallback(() => {
-    api.compileStatus(id, branch).then(({ result: run }) => {
-      if (branchRef.current !== branch || !run?.pdfUrl || !shouldAdoptRun(shownRunIdRef.current, run.runId, false)) return;
-      shownRunIdRef.current = run.runId;
-      // The fresh run is under way: the status keeps saying so.
-      setCompile((c) => (c.result || c.status === 'error' ? c : { ...c, status: c.status === 'compiling' ? 'compiling' : run.ok ? 'ok' : 'error', result: run }));
-    }).catch(() => { /* the fresh run brings the PDF instead */ });
-    doCompile();
-  }, [id, branch, doCompile]);
+    doCompile(0, { trigger: 'open' });
+  }, [doCompile]);
 
   const clearAgentWatchdog = useCallback(() => {
     if (agentWatchdog.current) { clearTimeout(agentWatchdog.current); agentWatchdog.current = null; }
@@ -577,7 +638,7 @@ export default function Editor() {
       // the edit must not keep the branch's typeset to itself.
       if (src === 'agent' && signal.current && !signal.current.electedTypesetter()) return;
       if (src === 'agent') ownAgentRun.current = true;
-      doCompile(0, src === 'agent' ? { reason: 'agent' } : { draft: draftRef.current });
+      doCompile(0, src === 'agent' ? { reason: 'agent', trigger: 'auto' } : { draft: draftRef.current, trigger: 'auto' });
     }, delay);
   }, [doCompile, clearAgentWatchdog]);
 
@@ -873,14 +934,7 @@ export default function Editor() {
 
   const jumpToLine = (line: number | null, file?: string) => {
     if (line == null || !project) return;
-    // Older compilers report error paths relative to the compile dir (the root
-    // file's dir), so fall back to a suffix match before giving up on the file.
-    const norm = (file || '').replace(/\/(?:\.\/)+/g, '/');
-    const target = (norm && (
-      files.find((f) => f.path === norm)
-      ?? files.find((f) => norm.endsWith('/' + f.path))
-      ?? files.find((f) => f.path.endsWith('/' + norm))
-    )?.path) || project.rootFile;
+    const target = projectFileFor(files, file) || project.rootFile;
     if (activeFile !== target) setActiveFile(target);
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 60));
   };
@@ -915,8 +969,19 @@ export default function Editor() {
     if (!shouldAdoptRun(shownRunIdRef.current, st.result.runId, compilingRef.current)) return;
     shownRunIdRef.current = st.result.runId;
     // No wallMs: the status line falls back to the run's own durationMs.
-    setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result });
+    setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result, trigger: 'adopted' });
   }, [id, branch, armAutoTypeset]);
+  /** A co-author's typeset finished: with auto-typeset on, the preview follows
+   *  the text this tab already shows them typing, without a run of its own. */
+  const onTypesetFinished = useCallback(async () => {
+    if (!autoRef.current || compilingRef.current) return; // our own run is the newer one
+    let st;
+    try { st = await api.compileStatus(id, branch); } catch { return; }
+    if (branchRef.current !== branch || !st.result) return;
+    if (!shouldAdoptRun(shownRunIdRef.current, st.result.runId, compilingRef.current)) return;
+    shownRunIdRef.current = st.result.runId;
+    setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result, trigger: 'adopted' });
+  }, [id, branch]);
   const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
   const onAgentTypesetStarted = useCallback(() => {
     // Auto-typeset off means the preview moves only when this person asks:
@@ -947,7 +1012,7 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onCommitted: bumpHistory },
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted: bumpHistory },
     auto && hasTex,
     session,
   );
@@ -1225,18 +1290,18 @@ export default function Editor() {
     projectId: id,
     branch,
     getActiveFile: () => activeFile,
-    getCompileResult: () => (compile.result ? { ok: compile.result.ok, errors: compile.result.errors || [], log: compile.result.log || '' } : null),
+    getCompileResult: () => (compile.result ? { ok: compile.result.ok, errors: compile.result.errors || [], log: compile.result.log || '', explicit: compile.trigger === 'user' } : null),
     insertAtCursor,
     refreshFiles: loadFiles,
     refreshProject: loadProject,
     compile: doCompile,
     toast,
     // unfolded for this visit only; a phone's sidebar is an overlay over the code
-    showPanel: (panelId: string) => {
+    showPanel: (panelId: string, reveal = true) => {
       setTab(panelId);
-      if (!window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
+      if (reveal && !window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
     },
-  }), [id, branch, activeFile, compile.result, insertAtCursor, loadFiles, loadProject, doCompile, toast]);
+  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, loadFiles, loadProject, doCompile, toast]);
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
@@ -1389,9 +1454,17 @@ export default function Editor() {
   const ignoredHere = allProblems.length - errors.length;
   const errCount = errors.filter((e) => e.type === 'error').length;
   const warnCount = errors.length - errCount;
-  const showErrors = compile.result != null && (errors.length > 0 || !compile.result.ok);
+  /** Overfull and underfull boxes: text in the margin, or spread too thin. */
+  const layout = compile.result?.errors?.filter((e) => e.type === 'typesetting') || [];
+  // A stopped run has nothing to fix; the status line says it stopped.
+  const showErrors = compile.result != null && !compile.result.stopped && (errors.length > 0 || !compile.result.ok || layout.length > 0);
   const problemsFoldable = errCount === 0 && compile.result?.ok === true;
-  const problemsExpanded = !problemsFoldable || problemsOpen;
+  // Bad boxes and nothing else: the panel's header is the Layout group's.
+  const layoutOnly = problemsFoldable && warnCount === 0 && layout.length > 0;
+  // Errors from a run auto-typeset made while you type fold to the header.
+  const [fold, setFold] = useState<ErrorsFold & { result: CompileResult | null }>({ ...NO_ERRORS, result: null });
+  if (fold.result !== compile.result) setFold({ ...errorsFoldAfter(fold, compile.trigger ?? 'user', runErrorKeys(compile.result)), result: compile.result });
+  const problemsExpanded = problemsFoldable ? (layoutOnly ? layoutOpen : problemsOpen) : fold.open;
   const ignoreWarning = (message: string) => {
     const key = warningKey(message);
     const before = ignored;
@@ -1439,7 +1512,7 @@ export default function Editor() {
 
   return (<>
     <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
-      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} files={files} />
+      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} onErrorsActions={setPluginActions} files={files} />
       <header className="toolbar" aria-label="Project toolbar">
         <button className="btn btn--ghost" onClick={() => leaving(() => navigate('/'))} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
@@ -1745,89 +1818,113 @@ export default function Editor() {
           ) : (
             <div className="pdf-empty"><p>Select a file to start writing.</p></div>
           )}
-          {showErrors && (
-            <div className={`errors${problemsExpanded ? '' : ' errors--folded'}`} data-testid="errors-panel" data-open={problemsExpanded ? 'true' : 'false'}>
-              <div className="errors__head">
-                {(() => {
-                  const label = errCount > 0
-                    ? `${errCount} error${errCount === 1 ? '' : 's'}`
-                    : warnCount > 0 ? `${warnCount} warning${warnCount === 1 ? '' : 's'}` : 'Problems';
-                  return problemsFoldable && warnCount > 0 ? (
-                    <button className="errors__toggle" onClick={toggleProblems} aria-expanded={problemsExpanded} data-testid="problems-toggle">
-                      <span className={`errors__chev${problemsExpanded ? ' errors__chev--open' : ''}`} aria-hidden><IconChevronRight /></span>{label}
+          {showErrors && (() => {
+            const failed = !compile.result!.ok;
+            const label = errCount > 0
+              ? `${errCount} error${errCount === 1 ? '' : 's'}`
+              : warnCount > 0 ? `${warnCount} warning${warnCount === 1 ? '' : 's'}` : layoutOnly ? `Layout (${layout.length})` : 'Problems';
+            const chev = (open: boolean) => <span className={`errors__chev${open ? ' errors__chev--open' : ''}`} aria-hidden><IconChevronRight /></span>;
+            // A row links to its line in the file it names, in the only .tex
+            // there is, or (for an error TeX gave no file) in the main document.
+            // A file that is not the project's (an installed .sty) has no line
+            // here to go to.
+            const row = (e: (typeof errors)[number], i: number, testId?: string) => {
+              const hint = hintFor(e.message);
+              const file = e.file;
+              const target = file ? projectFileFor(files, file) ?? undefined : texFiles.length === 1 ? texFiles[0].path : undefined;
+              const clickable = e.line != null && (target != null || (e.type === 'error' && !file));
+              const badge = e.type === 'error' ? 'Error' : e.type === 'warning' ? 'Warning' : 'Layout';
+              const body = (
+                <>
+                  <span className={`errors__badge errors__badge--${e.type === 'typesetting' ? 'layout' : e.type}`}>{badge}</span>
+                  {e.line != null && <span className="errors__line">{file ? `${fileLabel(file)} · ` : ''}line {e.line}</span>}
+                  <span className="errors__msgwrap">
+                    <span className="errors__msg" title={e.message}>{e.message}</span>
+                    {hint && <span className="errors__hint">{hint}</span>}
+                  </span>
+                </>
+              );
+              if (e.type === 'warning') {
+                return (
+                  <div key={i} className="errors__row errors__row--warning" data-testid="problem-warning">
+                    {clickable
+                      ? <button className="errors__jump" onClick={() => jumpToLine(e.line, target)}>{body}</button>
+                      : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
+                    <button className="btn btn--ghost btn--small errors__ignore" onClick={() => ignoreWarning(e.message)} title="Hide warnings like this one in this project" data-testid="problem-ignore">Ignore</button>
+                  </div>
+                );
+              }
+              return clickable ? (
+                <button key={i} className="errors__row" onClick={() => jumpToLine(e.line, target)} data-testid={testId}>{body}</button>
+              ) : (
+                <div key={i} className="errors__row" style={{ cursor: 'default' }} data-testid={testId}>{body}</div>
+              );
+            };
+            const capped = (list: typeof errors, testId?: string) => {
+              const shown = list.slice(0, 50);
+              return (
+                <>
+                  {shown.map((e, i) => row(e, i, testId))}
+                  {list.length > shown.length && (
+                    <div className="errors__row" style={{ cursor: 'default' }}>
+                      <span className="errors__msg">… {list.length - shown.length} more — open the log for the full list.</span>
+                    </div>
+                  )}
+                </>
+              );
+            };
+            return (
+              <div className={`errors${problemsExpanded ? '' : ' errors--folded'}`} data-testid="errors-panel" data-open={problemsExpanded ? 'true' : 'false'}>
+                <div className="errors__head">
+                  {problemsFoldable ? (warnCount > 0 || layoutOnly ? (
+                    <button className="errors__toggle" onClick={layoutOnly ? toggleLayout : toggleProblems} aria-expanded={problemsExpanded} data-testid="problems-toggle">
+                      {chev(problemsExpanded)}{label}
                     </button>
-                  ) : <span>{label}</span>;
-                })()}
-                <span className="errors__actions">
-                  {ignoredHere > 0 && (
-                    <button className="btn btn--ghost btn--small" onClick={() => setIgnored([])} title="Show the warnings you ignored in this project again" data-testid="problems-unignore">
-                      {ignoredHere} ignored · Show
+                  ) : <span>{label}</span>) : (
+                    <button className="errors__toggle" onClick={() => setFold((f) => ({ ...toggleErrors(f), result: f.result }))} aria-expanded={problemsExpanded} data-testid="errors-toggle">
+                      {chev(problemsExpanded)}{label}
                     </button>
                   )}
-                  <button className="btn btn--ghost btn--small" onClick={() => setShowLog(true)} data-testid="view-log">View log</button>
-                </span>
-              </div>
-              {problemsExpanded && (() => {
-                // Errors render before warnings: a failing biblatex run emits
-                // 100+ citation warnings and the one actionable error must
-                // never sit past the row cap.
-                const ordered = [...errors].sort((a, b) => (a.type === 'error' ? 0 : 1) - (b.type === 'error' ? 0 : 1));
-                const shown = ordered.slice(0, 50);
-                return (
+                  <span className="errors__actions">
+                    {ignoredHere > 0 && (
+                      <button className="btn btn--ghost btn--small" onClick={() => setIgnored([])} title="Show the warnings you ignored in this project again" data-testid="problems-unignore">
+                        {ignoredHere} ignored · Show
+                      </button>
+                    )}
+                    {failed && pluginActions.map((a) => (
+                      <button key={a.id} className="btn btn--ghost btn--small" onClick={a.run} title={a.title} data-testid={`errors-action-${a.id}`}>{a.label}</button>
+                    ))}
+                    <button className="btn btn--ghost btn--small" onClick={() => setShowLog(true)} data-testid="view-log">View log</button>
+                  </span>
+                </div>
+                {problemsExpanded && (layoutOnly ? capped(layout, 'problem-layout') : (
                   <>
-                    {shown.map((e, i) => {
-                      const hint = hintFor(e.message);
-                      const file = (e as { file?: string }).file;
-                      // Warnings carry no file attribution — jumping would land at
-                      // a meaningless line in the root file, so they don't jump,
-                      // unless the project has only the one .tex they can be in.
-                      const target = file ?? (texFiles.length === 1 ? texFiles[0].path : undefined);
-                      const clickable = e.line != null && (target != null || e.type === 'error');
-                      const body = (
-                        <>
-                          <span className={`errors__badge errors__badge--${e.type}`}>{e.type === 'error' ? 'Error' : 'Warning'}</span>
-                          {e.line != null && <span className="errors__line">{file ? `${file} · ` : ''}line {e.line}</span>}
-                          <span className="errors__msgwrap">
-                            <span className="errors__msg" title={e.message}>{e.message}</span>
-                            {hint && <span className="errors__hint">{hint}</span>}
-                          </span>
-                        </>
-                      );
-                      if (e.type === 'warning') {
-                        return (
-                          <div key={i} className="errors__row errors__row--warning" data-testid="problem-warning">
-                            {clickable
-                              ? <button className="errors__jump" onClick={() => jumpToLine(e.line, target)}>{body}</button>
-                              : <span className="errors__jump" style={{ cursor: 'default' }}>{body}</span>}
-                            <button className="btn btn--ghost btn--small errors__ignore" onClick={() => ignoreWarning(e.message)} title="Hide warnings like this one in this project" data-testid="problem-ignore">Ignore</button>
-                          </div>
-                        );
-                      }
-                      return clickable ? (
-                        <button key={i} className="errors__row" onClick={() => jumpToLine(e.line, file)}>{body}</button>
-                      ) : (
-                        <div key={i} className="errors__row" style={{ cursor: 'default' }}>{body}</div>
-                      );
-                    })}
-                    {ordered.length > shown.length && (
+                    {/* Errors render before warnings: a failing biblatex run emits
+                        100+ citation warnings and the one actionable error must
+                        never sit past the row cap. */}
+                    {capped([...errors].sort((a, b) => (a.type === 'error' ? 0 : 1) - (b.type === 'error' ? 0 : 1)))}
+                    {layout.length > 0 && (
+                      <>
+                        <button className="errors__group" onClick={toggleLayout} aria-expanded={layoutOpen} data-testid="layout-toggle">
+                          {chev(layoutOpen)}Layout ({layout.length})
+                        </button>
+                        {layoutOpen && capped(layout, 'problem-layout')}
+                      </>
+                    )}
+                    {failed && errors.length === 0 && (
                       <div className="errors__row" style={{ cursor: 'default' }}>
-                        <span className="errors__msg">… {ordered.length - shown.length} more — open the log for the full list.</span>
+                        <span className="errors__msg">
+                          {compile.result?.timedOut
+                            ? 'Typesetting timed out — the document took too long (a possible infinite loop, or it needs a bigger compile budget). Open the log for details.'
+                            : 'Typesetting failed — open the log for details.'}
+                        </span>
                       </div>
                     )}
                   </>
-                );
-              })()}
-              {errors.length === 0 && (
-                <div className="errors__row" style={{ cursor: 'default' }}>
-                  <span className="errors__msg">
-                    {compile.result?.timedOut
-                      ? 'Typesetting timed out — the document took too long (a possible infinite loop, or it needs a bigger compile budget). Open the log for details.'
-                      : 'Typesetting failed — open the log for details.'}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
         </main>
 
         <Splitter
@@ -1848,19 +1945,25 @@ export default function Editor() {
             <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
-              ) : (compile.status === 'ok' || compile.status === 'error') && compile.result ? (
+              ) : (compile.status === 'ok' || compile.status === 'error' || (compile.status === 'idle' && compile.outdated)) && compile.result ? (
                 // The run's outcome opens its log: after a clean run there is no
                 // problems panel to hold the button.
                 <button className="pdf-status__log" onClick={() => setShowLog(true)} title="View the typesetting log" data-testid="pdf-status-log">
+                  {compile.status === 'idle' && <><span className="dot dot--warn" /> Out of date</>}
                   {compile.status === 'ok' && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
                     <span className="pdf-status__draft" data-testid="draft-pending" title="A quick single pass while you type. References and the bibliography settle in a full typeset a few seconds after you stop, or when you press Typeset."> · draft, references next</span>
                   )}</>}
-                  {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
+                  {compile.status === 'error' && (compile.result.stopped
+                    ? <><span className="dot dot--warn" /> Stopped</>
+                    : <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>)}
                 </button>
               ) : (<>
                 {compile.status === 'compiling' && hasPdf && <><span className="dot dot--busy" /> Typesetting…</>}
                 {compile.status === 'error' && <><span className="dot dot--error" /> {errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed'}</>}
               </>)}
+              {compile.status === 'compiling' && stoppable && !project.readOnly && (
+                <button className="btn btn--ghost btn--small" onClick={stopTypeset} title="Stop this typeset" data-testid="typeset-stop">Stop</button>
+              )}
             </span>
             {activeFile && !previewing && (() => {
               // document total with the open file's count kept live; a file
@@ -1907,6 +2010,11 @@ export default function Editor() {
               <button className="zoom__label" onClick={() => zoomPdf(0)} title="Reset to fit width (0)" aria-label={`PDF zoom ${Math.round(zoom * 100)}%, click to reset`}>{Math.round(zoom * 100)}%</button>
               <button className="btn btn--ghost btn--small" onClick={() => zoomPdf(1)} title="Zoom in (+)" aria-label="Zoom in">+</button>
             </div>
+            {compile.result?.pdfUrl ? (
+              <a className="btn btn--ghost btn--small pdf-download" href={compile.result.pdfUrl} download={`${(project.name || 'document').replace(/[\\/:*?"<>|]/g, '-')}.pdf`} title="Download the PDF" aria-label="Download the PDF" data-testid="pdf-download"><IconDownload /></a>
+            ) : (
+              <button className="btn btn--ghost btn--small pdf-download" disabled title="Typeset the document first to download its PDF" aria-label="Download the PDF" data-testid="pdf-download"><IconDownload /></button>
+            )}
             <button
               className={`auto-toggle ${auto ? 'auto-toggle--on' : ''}`}
               onClick={toggleAuto}
@@ -1925,7 +2033,15 @@ export default function Editor() {
             status={compile.status}
             zoom={zoom}
             hasErrors={errCount > 0}
-            stale={pdfStale}
+            stale={pdfStale || !!compile.outdated}
+            staleNote={compile.outdated
+              ? (compile.status === 'compiling' || auto ? 'Out of date: this is the last typeset PDF. Typesetting it again…' : `Out of date: this is the last typeset PDF. Press ${keys.typeset} to typeset it again.`)
+              : undefined}
+            notice={compile.requestError
+              ? { text: compile.requestError, action: { label: 'Try again', onClick: () => doCompile(), testId: 'pdf-retry' } }
+              : compile.result?.stopped
+                ? { text: 'Typesetting was stopped.', action: { label: 'Typeset again', onClick: () => doCompile(), testId: 'pdf-retry' } }
+                : compile.result ? { text: 'Typesetting didn’t finish — open the log for details.', action: { label: 'View log', onClick: () => setShowLog(true), testId: 'pdf-view-log' } } : undefined}
             // The on-open typeset is auto-typeset's job — a user who turned the
             // toggle off gets the "Press ⌘S" empty state, not a surprise compile.
             // A project without a .tex has nothing to typeset.

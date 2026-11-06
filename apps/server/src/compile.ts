@@ -4,7 +4,7 @@ import { config } from './config.js';
 import { branchDir, readMeta, writeMeta } from './store.js';
 import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
-import { flushBranchDocs, signalAgentTypeset } from './collab.js';
+import { flushBranchDocs, signalAgentTypeset, signalTypesetFinished } from './collab.js';
 import { noteCompile } from './activity.js';
 
 /** `context`: the source line TeX was reading when it failed (the compiler's
@@ -15,6 +15,8 @@ export interface CompileError { type: 'error' | 'warning' | 'typesetting'; line:
 export interface CompileResult {
   ok: boolean;
   timedOut?: boolean;
+  /** Someone stopped this run (POST …/compile/stop) before it finished. */
+  stopped?: boolean;
   exitCode?: number;
   pdf: string | null;      // path relative to branch dir (.aldine-out/main.pdf)
   pdfUrl: string | null;   // URL the client can fetch
@@ -113,6 +115,28 @@ function relProjectDir(projectId: string, branch: string): string {
   return path.relative(config.dataDir, branchDir(projectId, branch));
 }
 
+/** The compile service did not answer, or answered with something that is not
+ *  its JSON (a proxy's error page): no fault of the document. */
+export class CompilerUnavailableError extends Error {
+  constructor() {
+    super('The typesetting service isn’t answering. Try again in a moment; if it keeps happening, ask whoever runs this server to check the compiler.');
+  }
+}
+
+/** POST to the compiler, mapping "no answer" to CompilerUnavailableError. */
+async function compilerPost<T>(route: string, body: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${config.compilerUrl}${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new CompilerUnavailableError();
+  }
+  // The compiler answers its own refusals as 400 JSON; a 5xx is whatever
+  // stands in front of it.
+  if (res.status >= 500) throw new CompilerUnavailableError();
+  try { return (await res.json()) as T; } catch { throw new CompilerUnavailableError(); }
+}
+
 /**
  * Serialize compiles per project::branch so two clients can't run latexmk in
  * the same .aldine-out dir concurrently (which corrupts aux files / the PDF).
@@ -140,6 +164,11 @@ const lastSynctexId = new Map<string, number>();
 const lastRun = new Map<string, { result: CompileResult; finishedAt: number; agent: boolean }>();
 const running = new Map<string, number>();
 
+/** Typeset requests are numbered as they arrive; a stop ends every request
+ *  of its branch numbered up to the one it records, queued ones included. */
+let lastRequest = 0;
+const stoppedUpTo = new Map<string, number>();
+
 let lastCompileId = 0;
 /** Strictly increasing even within one millisecond, so two quick runs never share a URL. */
 function nextCompileId(): number {
@@ -156,13 +185,14 @@ function nextCompileId(): number {
 export function forgetPdfUrls(projectId: string, branch?: string): void {
   if (branch !== undefined) {
     const key = `${projectId}::${branch}`;
-    lastGoodPdfUrl.delete(key); lastSynctexId.delete(key); lastRun.delete(key); running.delete(key);
+    lastGoodPdfUrl.delete(key); lastSynctexId.delete(key); lastRun.delete(key); running.delete(key); stoppedUpTo.delete(key);
     return;
   }
   for (const key of lastGoodPdfUrl.keys()) if (key.startsWith(`${projectId}::`)) lastGoodPdfUrl.delete(key);
   for (const key of lastSynctexId.keys()) if (key.startsWith(`${projectId}::`)) lastSynctexId.delete(key);
   for (const key of lastRun.keys()) if (key.startsWith(`${projectId}::`)) lastRun.delete(key);
   for (const key of running.keys()) if (key.startsWith(`${projectId}::`)) running.delete(key);
+  for (const key of stoppedUpTo.keys()) if (key.startsWith(`${projectId}::`)) stoppedUpTo.delete(key);
 }
 
 export interface CompilerInfo {
@@ -208,7 +238,8 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
   // is deleted would bring its directory back or block `branch -D`.
   if (closedBranches.has(key)) return Promise.reject(new Error('This branch is being deleted'));
   const prev = compileChain.get(key) || Promise.resolve();
-  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft));
+  const request = ++lastRequest;
+  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft, request));
   // The chain tail must never reject (would surface as an unhandled rejection);
   // the caller gets `result` (which may reject and is awaited/handled by the route).
   const tail = result.catch(() => undefined).then(() => {
@@ -216,6 +247,16 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
   });
   compileChain.set(key, tail);
   return result;
+}
+
+/**
+ * Stop the branch's typesets: the one the compiler is running, and every one
+ * asked for so far that has not reached the compiler yet. Typesets of other
+ * branches and projects go on; a typeset asked for after this runs normally.
+ */
+export async function stopTypeset(projectId: string, branch: string): Promise<void> {
+  stoppedUpTo.set(`${projectId}::${branch}`, lastRequest);
+  await compilerPost('/stop', { projectDir: relProjectDir(projectId, branch) });
 }
 
 /** Whether typesets of the branch are refused because it is being deleted. */
@@ -272,9 +313,9 @@ export interface CompileStatus {
 }
 
 /** The branch's last run as this node remembers it. A pure memory read: it is
- *  reached once per agent-caused run per client and once each time a client
- *  opens a branch with auto-typeset on, never polled, and must never grow a
- *  disk stat, a git call or a compiler round trip. */
+ *  reached once per finished run per client and once each time a client
+ *  opens a branch, never polled, and must never grow a disk stat, a git call
+ *  or a compiler round trip. */
 export function compileStatus(projectId: string, branch: string): CompileStatus {
   const key = `${projectId}::${branch}`;
   const last = lastRun.get(key) ?? null;
@@ -286,13 +327,15 @@ export function compileStatus(projectId: string, branch: string): CompileStatus 
   };
 }
 
-async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean): Promise<CompileResult> {
+async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   running.set(key, (running.get(key) ?? 0) + 1);
+  let finished = false;
   try {
-    const result = await runCompileInner(projectId, branch, agent, draft);
+    const result = await runCompileInner(projectId, branch, agent, draft, request);
     lastRun.set(key, { result, finishedAt: Date.now(), agent });
     noteCompile(projectId, branch, result);
+    finished = true;
     return result;
   } finally {
     const n = (running.get(key) ?? 1) - 1;
@@ -300,10 +343,13 @@ async function runCompile(projectId: string, branch: string, agent: boolean, dra
     // In the finally: a run that throws must still release the clients that
     // cancelled their own typeset when it started.
     if (agent) signalAgentTypeset(projectId, branch, 'done');
+    // The branch's other clients adopt the run instead of typesetting again;
+    // an agent run is announced by 'done' above.
+    else if (finished) signalTypesetFinished(projectId, branch);
   }
 }
 
-async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean): Promise<CompileResult> {
+async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
@@ -321,23 +367,24 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
     await writeMeta(meta);
   }
 
-  const res = await fetch(`${config.compilerUrl}/compile`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
+  type Raw = Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
+  const stopped = () => (stoppedUpTo.get(`${projectId}::${branch}`) ?? 0) >= request;
+  // A stop that came while this run waited for the one before ends it here.
+  const raw: Raw = stopped()
+    ? { ok: false, stopped: true, log: '', errors: [], durationMs: 0 }
+    : await compilerPost<Raw>('/compile', {
       projectDir: relProjectDir(projectId, branch),
       rootFile: meta.rootFile,
       engine: meta.engine,
       haltOnError: !!meta.stopOnFirstError,
       ...(draft ? { draft: true } : {}),
-    }),
-  });
-  const raw = (await res.json()) as Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
+    });
   // Normalize: the compiler may return a bare {ok:false,error} on a 4xx — always
   // hand the client a well-formed CompileResult so the UI never sees undefined fields.
   const body: Omit<CompileResult, 'pdfUrl' | 'pdfStale' | 'runId'> = {
     ok: !!raw.ok,
     timedOut: raw.timedOut,
+    ...(raw.stopped ? { stopped: true } : {}),
     exitCode: raw.exitCode,
     pdf: raw.pdf ?? null,
     synctex: raw.synctex ?? null,
@@ -361,7 +408,8 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
   // A run that wrote a PDF is shown even when it logged errors: TeX ran to the
   // end, so the document is complete and the errors sit in the list beside
   // it. With stopOnFirstError the PDF on disk is truncated at the first error,
-  // so only an error-free run is shown and the previous one stays on screen.
+  // and a run that was stopped or timed out was killed wherever it was, so
+  // only an error-free run is shown then and the previous one stays on screen.
   // The remembered URL names a PDF path. It stands for this run only when
   // that path is the one this root produces: switching the main document and
   // back would otherwise serve the other document as a clean success.
@@ -381,7 +429,8 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
     const pages = pagesFromLog(body.log);
     return { ...body, pdfUrl: url, compileId: id, runId, ...(pages !== null ? { pages } : {}), ...(writtenAt !== undefined ? { pdfWrittenAt: writtenAt } : {}) };
   };
-  if (body.pdf && pdfFresh && (body.ok || !meta.stopOnFirstError)) return shown(mintUrl(compileId), compileId);
+  const cutShort = !!meta.stopOnFirstError || !!body.timedOut || !!body.stopped;
+  if (body.pdf && pdfFresh && (body.ok || !cutShort)) return shown(mintUrl(compileId), compileId);
   // latexmk found nothing to redo: the PDF on disk is this run's result even
   // though nothing was rewritten. It keeps its URL and compileId — a fresh
   // cache-buster would refetch identical bytes and unbind SyncTeX, and
@@ -428,14 +477,9 @@ export async function synctexLookup(projectId: string, branch: string, payload: 
   // the server's to set, and a body that carried its own would read another
   // project's SyncTeX records.
   const { direction, file, line, column, page, x, y } = rest;
-  const res = await fetch(`${config.compilerUrl}/synctex`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      projectDir: relProjectDir(projectId, branch),
-      rootFile: meta.rootFile,
-      direction, file, line, column, page, x, y,
-    }),
+  return compilerPost('/synctex', {
+    projectDir: relProjectDir(projectId, branch),
+    rootFile: meta.rootFile,
+    direction, file, line, column, page, x, y,
   });
-  return res.json();
 }

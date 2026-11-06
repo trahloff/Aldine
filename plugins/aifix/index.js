@@ -18,6 +18,16 @@ const h = (tag, attrs = {}, ...kids) => {
 
 export default {
   activate(aldine) {
+    // The panel and the errors list's "Diagnose with AI" share one diagnosis.
+    let diagnose = async () => {};
+
+    aldine.ui.registerErrorsAction({
+      id: 'aifix-diagnose',
+      label: 'Diagnose with AI',
+      title: 'Explain the errors and propose fixes in the Fix tab',
+      run: () => { aldine.ui.showPanel('aifix'); diagnose(); },
+    });
+
     aldine.ui.registerSidebarPanel({
       id: 'aifix',
       title: 'Fix',
@@ -29,8 +39,8 @@ export default {
         let error = '';
         let diagnosed = new Set(); // the errors the result answers
 
-        // warnings stay after a fix, so only errors say whether a result still applies
-        const errorKeys = (c) => (c && !c.ok ? c.errors.filter((e) => e.type !== 'warning').map((e) => `${e.file ?? ''}\n${e.message}`) : []);
+        // warnings and bad boxes stay after a fix, so only errors say whether a result still applies
+        const errorKeys = (c) => (c && !c.ok ? c.errors.filter((e) => e.type === 'error').map((e) => `${e.file ?? ''}\n${e.message}`) : []);
 
         const jfetch = async (url, init) => {
           const res = await aldine.fetch(url, init ? { headers: { 'content-type': 'application/json' }, ...init } : undefined);
@@ -48,7 +58,8 @@ export default {
           draw();
         };
 
-        const diagnose = async () => {
+        diagnose = async () => {
+          if (busy) return;
           const compile = aldine.project.lastCompile();
           if (!compile) { aldine.toast('Typeset the document first to check for errors.', 'info'); return; }
           if (compile.ok) { aldine.toast('Your document compiles cleanly — no errors to fix.', 'ok'); return; }
@@ -89,11 +100,13 @@ export default {
         function draw() {
           const wrap = h('div', { class: 'panel-list', dataset: { testid: 'aifix-panel' }, style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' } });
 
+          // The tab is hidden on a server without a key; this is a status
+          // request that failed.
           if (configured === false) {
             wrap.append(
               h('div', { class: 'menu__label', style: { padding: '0 2px' } }, 'AI fix'),
               h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: 0 } },
-                'AI error-fix is off. Set ', h('code', {}, 'ANTHROPIC_API_KEY'), ' on the Aldine server (BYO key) and restart to enable one-click LaTeX fixes.'),
+                'AI fixes aren’t available right now. If this keeps happening, ask whoever runs this server whether an AI key is set up.'),
             );
             root.replaceChildren(wrap);
             return;
@@ -119,7 +132,7 @@ export default {
           );
 
           if (autoFix) wrap.append(h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: 0 }, dataset: { testid: 'aifix-auto' } },
-            'A failed typeset opens this tab and runs the diagnosis on its own.'));
+            'When a typeset you ask for fails, the diagnosis runs on its own.'));
 
           if (error) wrap.append(h('p', { style: { color: 'var(--error)', fontSize: '12px' } }, error));
 
@@ -165,10 +178,12 @@ export default {
           const keys = errorKeys(c);
           const stale = (result || error) && (!has || (diagnosed.size > 0 && !keys.some((k) => diagnosed.has(k))));
           if (stale) { result = null; error = ''; diagnosed = new Set(); }
-          // once per new error, so auto-typeset re-running the same failure costs nothing
-          if (autoFix && configured && keys.some((k) => !diagnosed.has(k))) {
+          // Once per new error of a typeset someone asked for: auto-typeset
+          // fails on every half-typed command, and each diagnosis is a model
+          // call. The tab is selected only in a sidebar already showing.
+          if (autoFix && configured && c && c.explicit && keys.some((k) => !diagnosed.has(k))) {
             lastHadErrors = has;
-            aldine.ui.showPanel('aifix');
+            aldine.ui.showPanel('aifix', { reveal: false });
             diagnose();
             return;
           }

@@ -29,6 +29,11 @@ interface Props {
   hasErrors?: boolean;
   /** The last run failed: whatever is on screen is from the last successful typeset. */
   stale?: boolean;
+  /** What the banner over stale pages says instead of the default. */
+  staleNote?: string;
+  /** What the pane says, and offers, when a run left no page to show and
+   *  there are no errors to point at: a failed request, a stopped run. */
+  notice?: { text: string; action?: { label: string; onClick(): void; testId: string } };
   /** onFirstOpen waits for this: the parent knows what the project holds only
    *  after its file listing arrives. */
   ready?: boolean;
@@ -288,7 +293,7 @@ function stretch(info: PageInfo[], ratio: number) {
 /** CSS pixels per PDF point of a page as it is sized now, stretched or not. */
 const shownScale = (info: PageInfo) => info.el.offsetHeight / info.view.height;
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, ready = true, hasTex = true, onFirstOpen, onInverse, pages, onZoom }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, staleNote, notice, ready = true, hasTex = true, onFirstOpen, onInverse, pages, onZoom }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
@@ -421,10 +426,11 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     };
   }, [measurePage]);
 
-  // auto-typeset once per branch when the pane opens on it with no pdf
+  // auto-typeset once per branch when the pane opens on it, unless a typeset
+  // has already started; the branch's last PDF may be on screen already
   useEffect(() => {
     const on = branch ?? '';
-    if (openedFor.current !== on && ready && !pdfUrl && status === 'idle') {
+    if (openedFor.current !== on && ready && status === 'idle') {
       openedFor.current = on;
       onFirstOpen();
     }
@@ -694,7 +700,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   return (
     <div className="pdf-pane" ref={scrollRef} tabIndex={0} role="region" aria-label="Pages of the typeset PDF" data-testid="pdf-pane">
       {stale && rendered && (
-        <div className="pdf-stale" data-testid="pdf-stale">Preview is from the last successful typeset</div>
+        <div className="pdf-stale" data-testid="pdf-stale">{staleNote ?? 'Preview is from the last successful typeset'}</div>
       )}
       <div className="pdf-pane__inner" ref={innerRef} onClick={handleClick} onDoubleClick={handleDblClick} title={onInverse ? 'Double-click to jump to source' : undefined} />
       {!rendered && (
@@ -706,11 +712,18 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
               <p data-testid="pdf-load-error">Could not open the typeset PDF. Download it to open it in another app, or typeset again.</p>
               <a className="btn" href={pdfUrl} download={outputFileName(pdfUrl) ?? true} data-testid="pdf-load-error-download">Download the PDF</a>
             </>
+          ) : pdfUrl ? (
+            <><span className="spinner" /><p>Opening the PDF…</p></>
           ) : status === 'error' ? (
             // Only blame the document when there are errors to fix — a failed
             // run without parsed errors (missing root, server trouble) isn't
             // the user's LaTeX.
-            <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
+            notice && !hasErrors ? (
+              <>
+                <p data-testid="pdf-notice">{notice.text}</p>
+                {notice.action && <button className="btn" onClick={notice.action.onClick} data-testid={notice.action.testId}>{notice.action.label}</button>}
+              </>
+            ) : <p>{hasErrors ? 'Fix the errors on the left, then typeset again.' : 'Typesetting didn’t finish — open the log for details.'}</p>
           ) : ready && !hasTex ? (
             <p data-testid="pdf-empty-no-tex">Create a .tex file to typeset and preview.</p>
           ) : (

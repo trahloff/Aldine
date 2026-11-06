@@ -4,7 +4,9 @@
  *
  * Contract:
  *   POST /compile  { projectDir, rootFile, engine? }  ->
- *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs }
+ *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs, stopped? }
+ *   POST /stop     { projectDir }  -> { ok: true, stopped: <typesets of that directory ended> }
+ *     ends that directory's running or waiting typesets, which answer stopped: true
  *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' },
  *                        thumbnails: 'gs' | 'pdftoppm' | 'none' }
  *   GET  /catalog  -> { ok, generatedAt, classes: [{ id, cls, kind, license, sample }] }
@@ -83,15 +85,73 @@ function errorContext(lines, i) {
   return { line: null, context: null, token: null };
 }
 
+/** A name TeX printed after "(" when it opened a file: a path, or a name with
+ *  an extension that starts with a letter ("(12.3pt too wide)" is no file). */
+const looksLikeFile = (name) => /^(?:\.{0,2}\/|[A-Za-z]:[\\/])/.test(name) || /\.[A-Za-z][A-Za-z0-9]*$/.test(name);
+
+/**
+ * The files TeX has open, from the "(name" it prints on opening one and the
+ * ")" on closing it. A "(" that opens no file is pushed as null so that its
+ * ")" pops it again. TeX names files as it opened them: relative to the
+ * compile directory, or absolute for installed ones.
+ */
+function fileStack() {
+  const stack = [];
+  return {
+    /** The innermost open file, or null. */
+    current() {
+      for (let k = stack.length - 1; k >= 0; k--) if (stack[k]) return stack[k];
+      return null;
+    },
+    scan(line) {
+      for (let c = 0; c < line.length; c++) {
+        const ch = line[c];
+        if (ch === ')') { stack.pop(); continue; }
+        if (ch !== '(') continue;
+        let name;
+        // TeX quotes a name with spaces in it: ("./my file.tex"
+        if (line[c + 1] === '"') {
+          const end = line.indexOf('"', c + 2);
+          name = end > 0 ? line.slice(c + 2, end) : '';
+          if (end > 0) c = end;
+        } else {
+          name = (line.slice(c + 1).match(/^[^\s()"]+/) || [''])[0];
+          c += name.length;
+        }
+        stack.push(name && looksLikeFile(name) ? name : null);
+      }
+    },
+  };
+}
+
 /** Parse LaTeX log for errors/warnings with file/line where possible. */
 function parseLog(log) {
   const errors = [];
   const lines = log.split('\n');
+  const files = fileStack();
+  // Lines holding document text, whose parentheses say nothing about files:
+  // an error's context up to its "l.<n>" pair, and a bad box's contents.
+  let quoted = 0;
+  let boxDump = false;
+  const fileLineError = (line) => {
+    const m = line.match(/^(?:\.\/)?([^:\s][^:]*\.\w+):(\d+):\s*(.*)$/);
+    return m && !/^\d+$/.test(m[1]) && !m[3].startsWith('==>') ? m : null;
+  };
+  const errorLine = (line) => line.startsWith('!') || !!fileLineError(line);
+  const quoteContext = (i) => {
+    for (let j = i + 1; j < Math.min(i + 12, lines.length); j++) {
+      if (errorLine(lines[j])) return;
+      if (/^l\.\d+/.test(lines[j])) { quoted = j + 1 - i; return; }
+    }
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (quoted > 0) { quoted--; if (!errorLine(line)) continue; quoted = 0; }
+    if (boxDump) { if (line.trim() === '') boxDump = false; continue; }
+    const file = files.current();
     // -file-line-error format: ./main.tex:31: Undefined control sequence.
-    const fle = line.match(/^(?:\.\/)?([^:\s][^:]*\.\w+):(\d+):\s*(.*)$/);
-    if (fle && !/^\d+$/.test(fle[1]) && !fle[3].startsWith('==>')) {
+    const fle = fileLineError(line);
+    if (fle) {
       let message = fle[3] || 'LaTeX error';
       // the offending token often follows on the next lines (e.g. "\thisisnotacommand")
       const next = (lines[i + 1] || '').trim();
@@ -99,6 +159,7 @@ function parseLog(log) {
       const ctx = errorContext(lines, i);
       if (ctx.token && /^Undefined control sequence/.test(message) && !message.includes(' — ')) message += ` — ${ctx.token}`;
       errors.push({ type: 'error', file: fle[1], line: Number(fle[2]), message, ...(ctx.context ? { context: ctx.context } : {}) });
+      quoteContext(i);
       continue;
     }
     // ! LaTeX Error / ! Undefined control sequence, followed by l.<n>
@@ -106,15 +167,21 @@ function parseLog(log) {
       let message = line.replace(/^!\s*/, '');
       const ctx = errorContext(lines, i);
       if (ctx.token && /^Undefined control sequence/.test(message)) message += ` — ${ctx.token}`;
-      errors.push({ type: 'error', line: ctx.line, message, ...(ctx.context ? { context: ctx.context } : {}) });
+      errors.push({ type: 'error', ...(file && ctx.line != null ? { file } : {}), line: ctx.line, message, ...(ctx.context ? { context: ctx.context } : {}) });
+      quoteContext(i);
+      continue;
     } else if (/^(LaTeX|Package|Class) .*Warning/.test(line)) {
       let message = line;
       const m = line.match(/on input line (\d+)/) || (lines[i + 1] || '').match(/on input line (\d+)/);
-      errors.push({ type: 'warning', line: m ? Number(m[1]) : null, message: message.trim() });
+      errors.push({ type: 'warning', ...(file && m ? { file } : {}), line: m ? Number(m[1]) : null, message: message.trim() });
     } else if (/^Underfull|^Overfull/.test(line)) {
-      const m = line.match(/at lines (\d+)/);
-      errors.push({ type: 'typesetting', line: m ? Number(m[1]) : null, message: line.trim() });
+      // "in paragraph at lines 57--58", "in alignment at lines …", "detected at line 4"
+      const m = line.match(/at lines? (\d+)/);
+      errors.push({ type: 'typesetting', ...(file && m ? { file } : {}), line: m ? Number(m[1]) : null, message: line.trim() });
+      // An \hbox's contents follow, up to a blank line.
+      if (/\\hbox/.test(line)) boxDump = true;
     }
+    files.scan(line);
   }
   return errors;
 }
@@ -184,9 +251,20 @@ function latexmkFailure(out) {
   return items.map((message) => ({ type: 'error', line: null, message: `Typesetting failed: ${message}` }));
 }
 
-function run(cmd, args, opts, timeoutMs) {
+/** End a child and everything it started (it leads its own process group). */
+function killGroup(child) {
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+}
+
+/**
+ * `job`: the typeset this command belongs to. A stopped job starts nothing,
+ * and stopping it ends the command it is running.
+ */
+function run(cmd, args, opts, timeoutMs, job) {
   return new Promise((resolve) => {
+    if (job && job.stopped) { resolve({ code: -1, out: '', timedOut: false }); return; }
     const child = spawn(cmd, args, { ...opts });
+    if (job) job.child = child;
     // Decode via StringDecoder so a multibyte UTF-8 char split across two chunk
     // boundaries (accented names, UTF-8 paths in biber output) isn't mangled.
     const decoder = new (require('string_decoder').StringDecoder)('utf8');
@@ -194,20 +272,55 @@ function run(cmd, args, opts, timeoutMs) {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+      killGroup(child);
     }, timeoutMs);
+    const done = () => { clearTimeout(timer); if (job && job.child === child) job.child = null; };
     child.stdout.on('data', (d) => { out += decoder.write(d); });
     child.stderr.on('data', (d) => { out += decoder.write(d); });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      done();
       out += decoder.end();
-      resolve({ code: timedOut ? -1 : code, out, timedOut });
+      resolve({ code: timedOut || (job && job.stopped) ? -1 : code, out, timedOut });
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
+      done();
       resolve({ code: -2, out: String(err), timedOut: false });
     });
   });
+}
+
+/** Typesets in progress or waiting for a slot, per absolute project directory. */
+const jobs = new Map();
+function startJob(absDir) {
+  const job = { absDir, stopped: false, child: null, leaveQueue: null };
+  if (!jobs.has(absDir)) jobs.set(absDir, new Set());
+  jobs.get(absDir).add(job);
+  return job;
+}
+function endJob(job) {
+  const set = jobs.get(job.absDir);
+  if (!set) return;
+  set.delete(job);
+  if (!set.size) jobs.delete(job.absDir);
+}
+/** Stop every typeset of one project directory, and nothing else. */
+function stopJobs(absDir) {
+  const set = jobs.get(absDir);
+  if (!set) return 0;
+  for (const job of set) {
+    job.stopped = true;
+    if (job.child) killGroup(job.child);
+    if (job.leaveQueue) job.leaveQueue();
+  }
+  return set.size;
+}
+
+/** DATA_DIR/<projectDir>, refused when it would leave DATA_DIR. */
+function projectRoot(projectDir) {
+  if (typeof projectDir !== 'string' || !projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
+  const absDir = path.resolve(DATA_DIR, projectDir);
+  if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
+  return absDir;
 }
 
 /**
@@ -236,22 +349,41 @@ async function probeTexLive() {
 let running = 0;
 const waiters = [];
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_COMPILES || 2);
-async function acquire() {
-  if (running >= MAX_CONCURRENT) await new Promise((r) => waiters.push(r));
-  running++;
+/** Resolves true with a slot, or false when the job was stopped while it waited. */
+function acquire(job) {
+  if (running < MAX_CONCURRENT) { running++; return Promise.resolve(true); }
+  return new Promise((resolve) => {
+    const waiter = () => { job.leaveQueue = null; resolve(true); };
+    waiters.push(waiter);
+    job.leaveQueue = () => {
+      job.leaveQueue = null;
+      const i = waiters.indexOf(waiter);
+      if (i >= 0) { waiters.splice(i, 1); resolve(false); }
+    };
+  });
 }
+/** A waiter takes the slot over; only a slot nobody waits for is freed. */
 function release() {
-  running--;
   const next = waiters.shift();
   if (next) next();
+  else running--;
 }
 
+/** What a typeset stopped before it ran reports. */
+const stoppedBeforeStart = () => ({ ok: false, stopped: true, timedOut: false, exitCode: -1, pdf: null, pdfFresh: false, synctex: null, synctexFresh: false, log: '', errors: [], durationMs: 0 });
+
 async function compile(body) {
-  await acquire();
+  const job = startJob(projectRoot(body.projectDir));
   try {
-    return await compileInner(body);
+    if (!(await acquire(job))) return stoppedBeforeStart();
+    try {
+      if (job.stopped) return stoppedBeforeStart();
+      return await compileInner(body, job);
+    } finally {
+      release();
+    }
   } finally {
-    release();
+    endJob(job);
   }
 }
 
@@ -299,12 +431,10 @@ function linkOutOfProject(absDir) {
   return walk(root);
 }
 
-async function compileInner(body) {
+async function compileInner(body, job) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false, draft = false } = body;
-  if (!projectDir || projectDir.includes('..')) throw new Error('invalid projectDir');
+  const absDir = projectRoot(projectDir);
   if (invalidRootFile(rootFile)) throw new Error('invalid rootFile');
-  const absDir = path.resolve(DATA_DIR, projectDir);
-  if (!absDir.startsWith(path.resolve(DATA_DIR))) throw new Error('projectDir escapes DATA_DIR');
   if (!fs.existsSync(path.join(absDir, rootFile))) throw new Error(`root file not found: ${rootFile}`);
   // Before anything is written: the output directory itself may be a link.
   const outside = linkOutOfProject(absDir);
@@ -381,11 +511,11 @@ async function compileInner(body) {
   // The previous run's thumbnail render reads the PDF this run rewrites.
   await thumbnail.cancel(outAbs);
   const t0 = Date.now();
-  let { code, out, timedOut } = await run('latexmk', mkArgs(afterDraft), runOpts, TIMEOUT_MS);
+  let { code, out, timedOut } = await run('latexmk', mkArgs(afterDraft), runOpts, TIMEOUT_MS, job);
   if (code === 0 && !timedOut && !fs.existsSync(pdfPath)) {
     // latexmk believed everything was current but the PDF is gone (cleaned
     // output dir / stale state) — force a real rebuild.
-    ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS));
+    ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS, job));
   }
   // Stale-aux recovery: if the package set changed (e.g. dropping biblatex),
   // leftover .aux/.bcf artifacts make an otherwise-valid document fail with an
@@ -397,11 +527,11 @@ async function compileInner(body) {
   // pay a second full -g build (each invocation is a complete multi-pass run
   // under -f).
   const staleAux = (l) => /\.(aux|bcf):\d+:/i.test(l) && /(\\abx@aux@|\\bibcite|\\@writefile)/.test(l);
-  if (code !== 0 && !timedOut && staleAux(readLog(out))) {
+  if (code !== 0 && !timedOut && !job.stopped && staleAux(readLog(out))) {
     for (const ext of ['aux', 'bcf', 'bbl', 'blg', 'run.xml', 'toc', 'out', 'fls', 'fdb_latexmk']) {
       try { fs.rmSync(path.join(outAbs, `${base}.${ext}`), { force: true }); } catch { /* best effort */ }
     }
-    ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS));
+    ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS, job));
   }
   // A run on a format nobody has vouched for yet that fails gets the plain
   // run: if that one succeeds, the format is what broke the document.
@@ -409,10 +539,10 @@ async function compileInner(body) {
   let preambleCache = pre.status;
   if (usingFormat) {
     const formatOk = code === 0 || capped(out);
-    if (!formatOk && !timedOut && !pre.manifest.verified) {
+    if (!formatOk && !timedOut && !job.stopped && !pre.manifest.verified) {
       usingFormat = false;
       runOpts = optsFor(false);
-      ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS));
+      ({ code, out, timedOut } = await run('latexmk', mkArgs(true), runOpts, TIMEOUT_MS, job));
       const plainOk = code === 0 || capped(out);
       preamble.settle(pre, { formatOk, plainOk });
       preambleCache = 'fallback';
@@ -427,6 +557,8 @@ async function compileInner(body) {
   // run: mtime at or after the sentinel's (same clock, second granularity at
   // worst, and a write in the sentinel's own second still counts).
   const isFresh = (f) => { try { return fs.statSync(f).mtimeMs >= freshSince; } catch { return false; } };
+  // Stopped before TeX wrote a line: the log on disk is the previous run's.
+  if (job.stopped && !isFresh(logPath)) log = out;
   const bibLogPath = path.join(outAbs, `${base}.blg`);
   const errors = parseLog(log);
   // This run's .blg, or an older one that latexmk still holds against the
@@ -474,23 +606,26 @@ async function compileInner(body) {
   // although TeX itself succeeded; that is the draft working, not an error.
   const draftCapped = draft && /Maximum runs of \S+ reached/i.test(out) && !errors.some((e) => e.type === 'error');
   const ok = (code === 0 || draftCapped) && fs.existsSync(pdfPath);
+  // A stop that came as the run finished cost nothing; the run stands.
+  const stopped = job.stopped && !ok;
   const needsFullRun = draft && ok && (draftCapped || (isFresh(logPath) && DRAFT_RERUN_HINT.test(log)));
   if (needsFullRun) fs.writeFileSync(draftMark, '');
   else if (!draft && ok) fs.rmSync(draftMark, { force: true });
   // Never report a failure the user cannot read: a run that fails with nothing
   // in either log falls back to latexmk's own summary.
-  if (!ok && !timedOut && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
-  if (!usingFormat && pre.status === 'miss' && !timedOut && documentBodyReached(log)) preamble.scheduleBuild(pre);
+  if (!ok && !timedOut && !stopped && !errors.some((e) => e.type === 'error')) errors.push(...latexmkFailure(out));
+  if (!usingFormat && pre.status === 'miss' && !timedOut && !stopped && documentBodyReached(log)) preamble.scheduleBuild(pre);
   // The thumbnail follows the PDF pane: a run that went to the end of the
   // document and wrote a fresh PDF is shown even when it logged errors, so it
   // is rendered too. A run that halted, timed out or wrote nothing keeps the
   // previous image.
-  const complete = ok || (!haltOnError && !timedOut && isFresh(pdfPath) && !/no output PDF file produced|No pages of output/i.test(log));
+  const complete = ok || (!haltOnError && !timedOut && !stopped && isFresh(pdfPath) && !/no output PDF file produced|No pages of output/i.test(log));
   if (complete) thumbnail.schedule(outAbs, base);
   const synctexPath = path.join(absDir, rootDir, OUT_SUBDIR, `${base}.synctex.gz`);
   return {
     ok,
     timedOut,
+    ...(stopped ? { stopped: true } : {}),
     exitCode: code,
     // paths relative to the project dir; the app server serves them
     pdf: fs.existsSync(pdfPath) ? rel(`${base}.pdf`) : null,
@@ -557,13 +692,15 @@ const server = http.createServer(async (req, res) => {
     return getCatalog().then((c) => json(res, 200, c), (err) => json(res, 500, { ok: false, error: String(err && err.message || err) }));
   }
 
-  if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex')) {
+  if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex' || req.url === '/stop')) {
     let raw = '';
     req.on('data', (d) => { raw += d; });
     req.on('end', async () => {
       try {
         const body = JSON.parse(raw || '{}');
-        const result = req.url === '/compile' ? await compile(body) : await synctex(body);
+        const result = req.url === '/compile' ? await compile(body)
+          : req.url === '/stop' ? { ok: true, stopped: stopJobs(projectRoot(body.projectDir)) }
+          : await synctex(body);
         json(res, 200, result);
       } catch (err) {
         json(res, 400, { ok: false, error: String(err && err.message || err) });
