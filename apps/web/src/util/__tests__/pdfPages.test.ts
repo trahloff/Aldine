@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPdfPagesStore, pageInView, pagesOnScreen, parsePageInput, scrollTopForPage } from '../pdfPages';
+import { createPdfPagesStore, pageInView, pagesAt, pagesOnScreen, parsePageInput, scrollTopForPage, scrollToSpot, spotAt } from '../pdfPages';
 
 // Ten 1000px pages, 14px apart, starting 18px down (the pane's padding).
 const pages = Array.from({ length: 10 }, (_, i) => ({ top: 18 + i * 1014, height: 1000 }));
@@ -93,5 +93,72 @@ describe('createPdfPagesStore', () => {
     off();
     store.set({ current: 1, total: 1 });
     expect(listener).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('spotAt', () => {
+  // the pages on screen, 600px wide from x = 100, the view scrolled 2000px down
+  const rect = (i: number) => ({ left: 100, top: pages[i].top - 2000, width: 600, height: pages[i].height });
+  it('names the page under the point and where on it', () => {
+    // page 3 spans 46..1046 on screen
+    expect(spotAt(10, rect, 400, 546)).toEqual({ page: 2, fx: 0.5, fy: 0.5 });
+  });
+  it('gives a point in the gap to the page below', () => {
+    const spot = spotAt(10, rect, 400, 1050)!;
+    expect(spot.page).toBe(3);
+    expect(spot.fy).toBeLessThan(0);
+  });
+  it('holds a point past the last page on the last page', () => {
+    expect(spotAt(10, rect, 400, 50_000)!.page).toBe(9);
+  });
+  it('reads only the pages near the point', () => {
+    const spy = vi.fn(rect);
+    spotAt(10, spy, 400, 546);
+    expect(spy.mock.calls.length).toBeLessThan(6);
+  });
+  it('is null without pages', () => {
+    expect(spotAt(0, rect, 0, 0)).toBeNull();
+  });
+});
+
+describe('scrollToSpot', () => {
+  it('scrolls a spot on a page twice the size back under the point', () => {
+    // zoomed to 200%: page 3 now starts 3000px lower on screen and is 2000px tall
+    const zoomed = (i: number) => ({ left: 0, top: 46 + 3000 + (i - 2) * 2014, width: 1200, height: 2000 });
+    const by = scrollToSpot(10, zoomed, { page: 2, fx: 0.5, fy: 0.5 }, 400, 546);
+    expect(by).toEqual({ left: 200, top: 46 + 3000 + 1000 - 546 });
+  });
+  it('holds the spot on the last page of a shorter document', () => {
+    const three = (i: number) => ({ left: 0, top: i * 1014, width: 600, height: 1000 });
+    expect(scrollToSpot(3, three, { page: 7, fx: 0, fy: 0.25 }, 0, 0).top).toBe(2 * 1014 + 250);
+  });
+});
+
+describe('pagesAt', () => {
+  const heights = Array.from({ length: 10 }, () => 1000);
+  it('is the pages at the top without a spot', () => {
+    expect(pagesAt(heights, 14, null, 400, 800)).toEqual([0]);
+    expect(pagesAt(heights, 14, null, 400, 1200)).toEqual([0, 1]);
+  });
+  it('is the pages around the spot, the spot refY below the top of the view', () => {
+    // the middle of page 5 at the middle of an 800px view: 600px to 1400px into page 5's run
+    expect(pagesAt(heights, 14, { page: 4, fx: 0.5, fy: 0.5 }, 400, 800)).toEqual([4]);
+    // the bottom of page 5 at the middle: page 6 shows below it
+    expect(pagesAt(heights, 14, { page: 4, fx: 0.5, fy: 0.95 }, 400, 800)).toEqual([4, 5]);
+  });
+  it('counts a margin past the view as on screen', () => {
+    expect(pagesAt(heights, 14, { page: 4, fx: 0.5, fy: 0.5 }, 400, 800, 120)).toEqual([3, 4, 5]);
+  });
+  it('keeps the view inside the pages', () => {
+    expect(pagesAt(heights, 14, { page: 0, fx: 0.5, fy: 0 }, 400, 800)).toEqual([0]);
+    expect(pagesAt(heights, 14, { page: 9, fx: 0.5, fy: 1 }, 400, 800)).toEqual([9]);
+    // a spot past the end of a document that got shorter
+    expect(pagesAt([1000, 1000], 14, { page: 7, fx: 0.5, fy: 0.5 }, 400, 800)).toEqual([1]);
+  });
+  it('is every page of a document shorter than the view', () => {
+    expect(pagesAt([300, 300], 14, { page: 1, fx: 0, fy: 0.5 }, 400, 800)).toEqual([0, 1]);
+  });
+  it('is nothing for no pages', () => {
+    expect(pagesAt([], 14, null, 400, 800)).toEqual([]);
   });
 });

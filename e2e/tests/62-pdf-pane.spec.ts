@@ -18,6 +18,51 @@ const PAGES = [
 
 const zoomLabel = (page: import('@playwright/test').Page) => page.getByTestId('zoom-controls').locator('.zoom__label');
 
+/** In the page: the pages on screen that show no ink, a page drawn white or
+ *  not drawn at all. */
+function blankOnScreen(pane: HTMLElement): string[] {
+  const view = pane.getBoundingClientRect();
+  const blank: string[] = [];
+  for (const c of pane.querySelectorAll<HTMLCanvasElement>('canvas.pdf-page')) {
+    const r = c.getBoundingClientRect();
+    if (r.bottom <= view.top || r.top >= view.bottom) continue;
+    let ink = false;
+    if (c.width && c.height) {
+      const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      for (let k = 0; k < d.length && !ink; k += 4) ink = d[k + 3] > 128 && d[k] < 128;
+    }
+    if (!ink) blank.push(c.dataset.page!);
+  }
+  return blank;
+}
+
+/** In the page: records into window.__blank every page on screen without ink,
+ *  checked each frame and the moment the pages are replaced. */
+function watchForBlankPages(pane: HTMLElement) {
+  const seen: string[] = [];
+  (window as unknown as { __blank: string[] }).__blank = seen;
+  const inked = new WeakMap<HTMLCanvasElement, number>();
+  const view = () => pane.getBoundingClientRect();
+  const check = (when: string) => {
+    const v = view();
+    for (const c of pane.querySelectorAll<HTMLCanvasElement>('canvas.pdf-page')) {
+      const r = c.getBoundingClientRect();
+      if (r.bottom <= v.top || r.top >= v.bottom) continue;
+      if (c.width && inked.get(c) === c.width) continue;
+      let ink = false;
+      if (c.width && c.height) {
+        const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+        for (let k = 0; k < d.length && !ink; k += 4) ink = d[k + 3] > 128 && d[k] < 128;
+      }
+      if (ink) inked.set(c, c.width);
+      else if (seen.length < 20) seen.push(`${when}: page ${c.dataset.page}`);
+    }
+  };
+  new MutationObserver(() => check('replaced')).observe(pane.querySelector('.pdf-pane__inner')!, { childList: true });
+  const frame = () => { check('frame'); requestAnimationFrame(frame); };
+  requestAnimationFrame(frame);
+}
+
 /** The compiled-PDF pane: zoom, reach, focus, width, branches, the log, the jumps and the downloads. */
 test.describe('PDF preview', () => {
   test('a zoomed page scrolls to both edges; keys and Ctrl+wheel zoom the pages, not the app', async ({ page, request }) => {
@@ -287,6 +332,129 @@ test.describe('PDF preview', () => {
       const pdf = await page.getByTestId('preview').getAttribute('data-pdf');
       await expect(page.getByTestId('pdf-load-error-download')).toHaveAttribute('href', pdf!);
       await expect(page.getByTestId('pdf-pane')).not.toContainText('to typeset and preview');
+    } finally { await cleanup(request, id); }
+  });
+
+  test('zooming and a wider preview keep the page being read, and never fetch the PDF again', async ({ page, request }) => {
+    const id = await createProject(request, 'Pane Zoom Hold');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: PAGES } });
+      let fetches = 0;
+      page.on('request', (r) => {
+        const u = new URL(r.url());
+        if (u.pathname.endsWith('/output') && u.searchParams.get('path')?.endsWith('.pdf')) fetches++;
+      });
+      await openProject(page, id);
+      await expectTypesetOk(page);
+      await expect(page.locator('canvas.pdf-page')).toHaveCount(6);
+      const indicator = page.getByTestId('pdf-page-indicator');
+      await indicator.click();
+      await page.getByTestId('pdf-page-input').fill('3');
+      await page.keyboard.press('Enter');
+      await expect(indicator).toHaveText('3 / 6');
+      const fetched = fetches;
+      expect(fetched).toBeGreaterThan(0);
+
+      const pane = page.getByTestId('pdf-pane');
+      const page3 = page.locator('canvas[data-page="3"]');
+      // drawn at the size it shows: the zoom has settled into a layout
+      const sharp = () => page3.evaluate((c: HTMLCanvasElement) => Math.abs(c.width / (c.clientWidth * Math.min(devicePixelRatio || 1, 2)) - 1) < 0.02);
+      const inMiddle = () => pane.evaluate((el) => {
+        const y = el.getBoundingClientRect().top + el.clientHeight / 2;
+        const r = el.querySelector('canvas[data-page="3"]')!.getBoundingClientRect();
+        return r.top <= y && r.bottom >= y;
+      });
+
+      await pane.focus();
+      for (const [key, label] of [['+', '125%'], ['+', '150%'], ['+', '200%'], ['0', '100%'], ['-', '75%'], ['-', '50%'], ['0', '100%']]) {
+        await page.keyboard.press(key);
+        await expect(zoomLabel(page)).toHaveText(label);
+        await expect.poll(sharp).toBe(true);
+        await expect(indicator).toHaveText('3 / 6');
+        expect(await inMiddle()).toBe(true);
+      }
+
+      // a wider preview lays the pages out again around the same spot
+      await page3.evaluate((el) => { el.dataset.before = '1'; });
+      const divider = page.getByTestId('pane-resizer');
+      const b = (await divider.boundingBox())!;
+      await page.mouse.move(b.x + b.width / 2, b.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2 - 200, b.y + 100, { steps: 6 });
+      await page.mouse.up();
+      await expect(page.locator('canvas.pdf-page[data-before]')).toHaveCount(0);
+      await expect(indicator).toHaveText('3 / 6');
+      expect(await inMiddle()).toBe(true);
+
+      expect(fetches).toBe(fetched);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('an auto-typeset after an edit stays on the page being read, and its pages never show blank', async ({ page, request }) => {
+    const id = await createProject(request, 'Pane Swap');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: PAGES } });
+      await openProject(page, id);
+      await expectTypesetOk(page);
+      await expect(page.locator('canvas.pdf-page')).toHaveCount(6);
+      const indicator = page.getByTestId('pdf-page-indicator');
+      await indicator.click();
+      await page.getByTestId('pdf-page-input').fill('4');
+      await page.keyboard.press('Enter');
+      await expect(indicator).toHaveText('4 / 6');
+
+      const pane = page.getByTestId('pdf-pane');
+      await expect.poll(() => pane.evaluate(blankOnScreen)).toEqual([]);
+      const offset = () => pane.evaluate((el) => el.querySelector('canvas[data-page="4"]')!.getBoundingClientRect().top - el.getBoundingClientRect().top);
+      const before = await offset();
+      const pdf = (await page.getByTestId('preview').getAttribute('data-pdf'))!;
+      await page.locator('canvas.pdf-page').evaluateAll((els) => { for (const el of els) (el as HTMLElement).dataset.before = '1'; });
+      await pane.evaluate(watchForBlankPages);
+
+      await page.locator('.cm-line', { hasText: '\\section*{Page 1}' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.type(' revised');
+      await expect(page.getByTestId('preview')).not.toHaveAttribute('data-pdf', pdf, { timeout: 60_000 });
+      await expect(page.locator('canvas.pdf-page[data-before]')).toHaveCount(0, { timeout: 20_000 });
+      await expect(page.locator('canvas.pdf-page')).toHaveCount(6);
+      await expect(indicator).toHaveText('4 / 6');
+      expect(Math.abs((await offset()) - before)).toBeLessThan(3);
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => (window as unknown as { __blank: string[] }).__blank)).toEqual([]);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('after a run that stopped at an error, the last good pages still draw as they come on screen', async ({ page, request }) => {
+    const id = await createProject(request, 'Pane Halted');
+    try {
+      await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+      await request.patch(`/api/projects/${id}`, { data: { stopOnFirstError: true } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: PAGES } });
+      await openProject(page, id);
+      await page.getByTestId('typeset-button').click();
+      await expectTypesetOk(page);
+      await expect(page.locator('canvas.pdf-page')).toHaveCount(6);
+
+      // an error after pages have shipped out: pdfTeX deletes the PDF, the run has none
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: PAGES.replace('Words on page 4, line 1,', '\\nosuchmacro Words on page 4, line 1,') } });
+      const halted = page.waitForResponse((r) => r.url().includes('/compile') && r.request().method() === 'POST');
+      await page.getByTestId('typeset-button').click();
+      expect((await (await halted).json()).pdfUrl).toBeNull();
+      await expect(page.getByTestId('pdf-stale')).toBeVisible();
+      await expect(page.locator('canvas.pdf-page')).toHaveCount(6);
+
+      // a zoom lays the pages out again, and the last page draws once it is on screen
+      const pane = page.getByTestId('pdf-pane');
+      await pane.focus();
+      await page.keyboard.press('+');
+      await expect(zoomLabel(page)).toHaveText('125%');
+      await expect.poll(() => page.locator('canvas[data-page="1"]').evaluate((c: HTMLCanvasElement) => c.width / c.clientWidth)).toBeGreaterThan(0.95);
+      const indicator = page.getByTestId('pdf-page-indicator');
+      await indicator.click();
+      await page.getByTestId('pdf-page-input').fill('6');
+      await page.keyboard.press('Enter');
+      await expect(indicator).toHaveText('6 / 6');
+      await expect.poll(() => pane.evaluate(blankOnScreen)).toEqual([]);
     } finally { await cleanup(request, id); }
   });
 });
