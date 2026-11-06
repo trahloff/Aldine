@@ -5,6 +5,7 @@ import { vi } from 'vitest';
  * one: elements, text, attributes, inline styles and tag-name selectors.
  * Markup is taken as written, so fixtures close every tag they open (no
  * implied end tags, no foster parenting); void elements need no end tag.
+ * Tag names may carry a namespace prefix, as Word's `<o:p>` does.
  */
 const VOID = new Set(['area', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'wbr']);
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -70,7 +71,7 @@ class MiniElement {
 function parse(html: string): MiniElement {
   const body = new MiniElement('body');
   const stack = [body];
-  const token = /<!--[\s\S]*?-->|<!doctype[^>]*>|<\/([a-z][\w-]*)\s*>|<([a-z][\w-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>|[^<]+|</gi;
+  const token = /<!--[\s\S]*?-->|<!doctype[^>]*>|<\/([a-z][\w:-]*)\s*>|<([a-z][\w:-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>|[^<]+|</gi;
   for (const m of html.matchAll(token)) {
     const top = stack[stack.length - 1];
     const [whole, close, open, attrText] = m;

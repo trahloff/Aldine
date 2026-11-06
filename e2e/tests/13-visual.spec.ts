@@ -1550,6 +1550,30 @@ test.describe('visual editor: pastes, escapes, keys and formulas', () => {
     }
   });
 
+  test('a Google Docs paste with a \\cite in it keeps the cite and still converts and escapes the rest (vis-8)', async ({ page, request }) => {
+    const doc = 'prose here\nplain end\n';
+    const id = await seedDoc(request, 'Visual Paste Docs Cite', doc);
+    const run = (text: string, weight = 400) =>
+      `<span style="font-size:11pt;font-family:Arial,sans-serif;color:#000000;background-color:transparent;font-weight:${weight};font-style:normal;text-decoration:none;vertical-align:baseline;white-space:pre;white-space:pre-wrap;">${text}</span>`;
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Shift+End');
+      await pasteAtEnd(page, {
+        'text/html': `<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-0c1d2e3f-7fff-4a5b-8c9d-0e1f2a3b4c5d"><p dir="ltr" style="line-height:1.38;margin-top:0pt;margin-bottom:0pt;">${run('As shown by \\cite{knuth84}, ')}${run('half', 700)}${run(' of the 50% R&amp;D budget goes to $x_1$ (Fig.~3).')}</p></b>`,
+        'text/plain': 'As shown by \\cite{knuth84}, half of the 50% R&D budget goes to $x_1$ (Fig.~3).',
+      });
+      await expectStored(request, id, 'prose here\nAs shown by \\cite{knuth84}, \\textbf{half} of the 50\\% R\\&D budget goes to $x_1$ (Fig.~3).\n');
+      await page.locator('.cm-line', { hasText: 'prose here' }).click();
+      await expect(page.getByTestId('vis-chip-cite')).toContainText('knuth84');
+      await expect(page.locator('.cm-vis-b')).toHaveText('half');
+      expect(await shownText(page)).toContain('of the 50% R&D budget goes to');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('escapes, \\ldots and \\url render as what they typeset, \\centering and a heading\'s \\label hide, and no byte changes (#150)', async ({ page, request }) => {
     const doc = [
       '\\section{Costs} \\label{sec:costs}',

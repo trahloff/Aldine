@@ -50,6 +50,109 @@ describe('plain-text paste in Visual (#149)', () => {
     expect(pasteText('', '3~5 days', '')).toBe('3\\textasciitilde{}5 days');
     expect(pasteText('', 'see ~/notes and example.org/~me', '')).toBe('see \\textasciitilde{}/notes and example.org/\\textasciitilde{}me');
   });
+
+  it('takes \\(…\\), \\[…\\], $$…$$, thin spaces and line breaks as LaTeX', () => {
+    expect(pasteText('', 'inline \\(x^2\\) here', '')).toBeNull();
+    expect(pasteText('', '\\[\n  a_1 + b\n\\]', '')).toBeNull();
+    expect(pasteText('', '$$ x^2 $$', '')).toBeNull();
+    expect(pasteText('', 'it is 5\\,km', '')).toBeNull();
+    expect(pasteText('', 'first line\\\\ second', '')).toBeNull();
+    expect(pasteText('', 'share \\\\server\\files 50%', '')).toBe('share \\textbackslash{}\\textbackslash{}server\\textbackslash{}files 50\\%');
+  });
+});
+
+describe('a Google Docs or Word paste with LaTeX in it (vis-8)', () => {
+  const run = (text: string, style = 'font-weight:400;font-style:normal;') =>
+    `<span style="font-size:11pt;font-family:Arial,sans-serif;color:#000000;background-color:transparent;${style}font-variant:normal;text-decoration:none;vertical-align:baseline;white-space:pre;white-space:pre-wrap;">${text}</span>`;
+  const para = (...runs: string[]) => `<p dir="ltr" style="line-height:1.38;margin-top:0pt;margin-bottom:0pt;">${runs.join('')}</p>`;
+  const docs = (...blocks: string[]) =>
+    `<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-6a1b2c3d-7fff-4e21-9c0d-1f2e3d4c5b6a">${blocks.join('')}</b><br class="Apple-interchange-newline">`;
+
+  it('keeps a \\cite and escapes the percent in the same paragraph', () => {
+    const html = docs(para(run('As shown by \\cite{knuth84}, 50% of the R&amp;D budget_total goes to #3.')));
+    const text = 'As shown by \\cite{knuth84}, 50% of the R&D budget_total goes to #3.';
+    expect(pasteText(html, text, '')).toBe('As shown by \\cite{knuth84}, 50\\% of the R\\&D budget\\_total goes to \\#3.');
+  });
+
+  it('keeps formulas, ties, escapes and references, and still converts headings, bold and lists', () => {
+    const html = docs(
+      `<h1 dir="ltr" style="line-height:1.38;margin-top:20pt;margin-bottom:6pt;">${run('Results &amp; costs')}</h1>`,
+      para(run('We see '), run('fast', 'font-weight:700;font-style:normal;'), run(' growth of $x_1 + y^2$ (Fig.~3, Table~\\ref{tab:a}) for 30\\% and 40% of users, $2n$ steps, and \\(a^b\\).')),
+      `<ul style="margin-top:0;margin-bottom:0;padding-inline-start:48px;"><li dir="ltr" aria-level="1" style="list-style-type:disc;"><p dir="ltr" role="presentation">${run('One in $5 \\cite[p.~3]{lamport}')}</p></li></ul>`,
+      para(run('Prices run from $5 to $10, and C:\\Users\\me holds the data.')),
+    );
+    const text = 'Results & costs\nWe see fast growth of $x_1 + y^2$ (Fig.~3, Table~\\ref{tab:a}) for 30\\% and 40% of users, $2n$ steps, and \\(a^b\\).\nOne in $5 \\cite[p.~3]{lamport}\nPrices run from $5 to $10, and C:\\Users\\me holds the data.';
+    expect(pasteText(html, text, '')).toBe([
+      '\\section{Results \\& costs}',
+      'We see \\textbf{fast} growth of $x_1 + y^2$ (Fig.~3, Table~\\ref{tab:a}) for 30\\% and 40\\% of users, $2n$ steps, and \\(a^b\\).',
+      '',
+      '\\begin{itemize}',
+      '\\item One in \\$5 \\cite[p.~3]{lamport}',
+      '\\end{itemize}',
+      'Prices run from \\$5 to \\$10, and C:\\textbackslash{}Users\\textbackslash{}me holds the data.',
+    ].join('\n'));
+  });
+
+  it('keeps LaTeX whole when Docs splits it across runs, as it does for a link inside \\url{…}', () => {
+    const link = `<a href="https://example.org/a_b" style="text-decoration:none;">${run('https://example.org/a_b', 'font-weight:400;font-style:normal;color:#1155cc;text-decoration:underline;')}</a>`;
+    const html = docs(para(run('Data at \\url{'), link, run('} for 50% more.')));
+    const text = 'Data at \\url{https://example.org/a_b} for 50% more.';
+    expect(pasteText(html, text, '')).toBe('Data at \\url{https://example.org/a_b} for 50\\% more.');
+    expect(pasteText(html, text, '\\usepackage{url}\n\\begin{document}\n')).toBe('Data at \\url{https://example.org/a_b} for 50\\% more.');
+    // bold inside a command keeps its braces balanced
+    expect(htmlToLatex(docs(para(run('\\emph{very '), run('bold', 'font-weight:700;'), run('} 5%'))))).toBe('\\emph{very \\textbf{bold}} 5\\%');
+  });
+
+  it('reads a % inside a one-line command or formula as a percent sign, except in an address', () => {
+    expect(htmlToLatex(docs(para(run('Most\\footnote{About 50% of cases.} agree, and $x = 5%$.'))))).toBe('Most\\footnote{About 50\\% of cases.} agree, and $x = 5\\%$.');
+    expect(htmlToLatex(docs(para(run('See \\url{https://example.org/a%20b} or 30\\%.'))))).toBe('See \\url{https://example.org/a%20b} or 30\\%.');
+  });
+
+  it('keeps a math environment or display math over several paragraphs, a line each', () => {
+    const html = docs(
+      para(run('Energy is')),
+      para(run('\\begin{equation}')),
+      para(run('E = mc^2 \\label{eq:e} % famous')),
+      para(run('\\end{equation}')),
+      para(run('and')),
+      para(run('$$')),
+      para(run('a_1 + b_2')),
+      para(run('$$')),
+      para(run('holds for 99% of it.')),
+    );
+    expect(htmlToLatex(html)).toBe([
+      'Energy is',
+      '',
+      '\\begin{equation}',
+      'E = mc^2 \\label{eq:e} % famous',
+      '\\end{equation}',
+      '',
+      'and',
+      '',
+      '$$',
+      'a_1 + b_2',
+      '$$',
+      '',
+      'holds for 99\\% of it.',
+    ].join('\n'));
+    // an environment that never ends is a command like any other
+    expect(htmlToLatex(docs(para(run('\\begin{equation}')), para(run('x^2 at 5%'))))).toBe('\\begin{equation}\n\nx\\textasciicircum{}2 at 5\\%');
+  });
+
+  it('converts a Word paste the same way', () => {
+    const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta name=Generator content="Microsoft Word 15"><style><!-- p.MsoNormal {margin:0cm; font-family:"Calibri",sans-serif;} --></style></head><body lang=EN-GB style=\'tab-interval:36.0pt;word-wrap:break-word\'><!--StartFragment--><p class=MsoNormal>Costs rose by 30% (see\r\n\\cite{smith}) and <b>R&amp;D</b> grew by $\\Delta$.<o:p></o:p></p><!--EndFragment--></body></html>';
+    expect(pasteText(html, 'Costs rose by 30% (see \\cite{smith}) and R&D grew by $\\Delta$.', '')).toBe('Costs rose by 30\\% (see \\cite{smith}) and \\textbf{R\\&D} grew by $\\Delta$.');
+  });
+
+  it('pastes LaTeX copied from a code editor with its colours as it is', () => {
+    const vscode = '<meta charset=\'utf-8\'><div style="color: #cccccc;background-color: #1f1f1f;font-family: Menlo, Monaco, \'Courier New\', monospace;font-weight: normal;font-size: 12px;line-height: 18px;white-space: pre;"><div><span style="color: #569cd6;">\\section</span><span style="color: #cccccc;">{Intro} </span><span style="color: #6a9955;">% 50% done</span></div><div><span style="color: #cccccc;">See </span><span style="color: #569cd6;">\\cite</span><span style="color: #cccccc;">{knuth}.</span></div></div>';
+    expect(pasteText(vscode, '\\section{Intro} % 50% done\nSee \\cite{knuth}.', '')).toBeNull();
+    const jetbrains = '<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><pre style="background-color:#1e1f22;color:#bcbec4;font-family:\'JetBrains Mono\',monospace;font-size:9.8pt;"><span style="color:#cf8e6d;">\\item </span>50% done</pre></body></html>';
+    expect(pasteText(jetbrains, '\\item 50% done', '')).toBeNull();
+    // one run set in Courier New does not make a document code
+    const mixed = docs(para(run('Call '), run('\\cite{x}', 'font-weight:400;font-family:\'Courier New\',monospace;'), run(' at 5%.')));
+    expect(pasteText(mixed, 'Call \\cite{x} at 5%.', '')).toBe('Call \\cite{x} at 5\\%.');
+  });
 });
 
 describe('rich-text paste', () => {
