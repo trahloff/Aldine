@@ -43,6 +43,8 @@ function useSignalDoc(projectId: string, branch: string, docPath: string, onRemo
     return () => {
       map.unobserve(observer);
       provider.destroy();
+      // A provider built from a url leaves its socket open on destroy.
+      provider.configuration.websocketProvider.destroy();
       ydoc.destroy();
       bumpRef.current = () => {};
     };

@@ -87,7 +87,8 @@ const settle = (p: Promise<unknown> | void) => { if (p) p.catch(() => { /* the s
  * time this sees it.
  */
 export function watchSync(provider: ProviderLike, doc: DocLike, onChange: (s: SyncState) => void, win: WindowLike = window): { current(): SyncState; dispose(): void } {
-  let loaded = false;
+  // A doc kept from an earlier visit to the file (editor/docCache) is synced already.
+  let loaded = provider.isSynced;
   let connected = provider.status === 'connected' && provider.isSynced;
   let unsynced = false;
   let stale = false;
@@ -160,6 +161,8 @@ export function watchSync(provider: ProviderLike, doc: DocLike, onChange: (s: Sy
   doc.on('update', onUpdate);
   win.addEventListener('online', onNetwork);
   win.addEventListener('offline', onNetwork);
+  // A kept doc may still wait for the server to confirm edits made before the switch.
+  if (loaded && provider.unsyncedChanges > 0) setUnsynced(true);
   emit();
 
   return {

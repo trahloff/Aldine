@@ -833,6 +833,19 @@ export function flushBranchDocs(projectId: string, branch: string): number {
 }
 
 /**
+ * Whether an editor shows this doc: an editor pane says who it is in
+ * awareness while the file is open, and leaves awareness when it moves to
+ * another file. The agent's presence is the server's own state, not a pane.
+ */
+function shownInEditor(doc: Y.Doc): boolean {
+  const awareness = (doc as Y.Doc & { awareness?: { getStates(): Map<number, { user?: { isAgent?: boolean } } | null> } }).awareness;
+  for (const state of awareness?.getStates().values() ?? []) {
+    if (state?.user && !state.user.isAgent) return true;
+  }
+  return false;
+}
+
+/**
  * After files changed on disk behind the docs (a REST/tool write, git
  * merge/revert/pull), push new content into loaded docs so connected editors
  * update in place. `changed` = the paths the caller rewrote; omitted means
@@ -851,9 +864,16 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
     let raw: string | null = null;
     try { raw = fs.readFileSync(abs, 'utf8'); } catch { raw = null; }
     if (raw === null) {
-      // File deleted on disk (merge/reset). Drop the hash so the next store
-      // re-materializes the still-open doc's content instead of wrongly skipping
-      // (which would leave the editor showing content that never persists).
+      // File deleted on disk (merge/reset). A doc no editor shows goes with
+      // it: a tab keeps the files it left loaded for a quick switch back,
+      // and the next flush would write each of them back.
+      if (!isSignalDoc(parsed.filePath) && !shownInEditor(doc)) {
+        dropDoc(name);
+        return;
+      }
+      // Drop the hash so the next store re-materializes the still-open doc's
+      // content instead of wrongly skipping (which would leave the editor
+      // showing content that never persists).
       lastWritten.delete(name);
       return;
     }
