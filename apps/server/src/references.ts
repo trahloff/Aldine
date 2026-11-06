@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { ensureWorktree, checkpointPathsHeld, withRepoLock } from './gitops.js';
+import { ensureWorktree, checkpointPathsHeld, withRepoLock, agentCommitMessage } from './gitops.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, scheduleCommit, commitAgentWrite } from './collab.js';
 import { bibKeys } from './bib.js';
 
@@ -379,12 +379,13 @@ export interface AddedReference { key: string; bibFile: string; duplicate: boole
  * rate-limit token. Returns null when nothing resolves; upstream failures
  * throw with a user-readable message. With `author` set the write is
  * checkpointed and committed at once like every other agent mutation, so
- * the attributed commit carries only the new entry. `beforeWrite` runs
- * right before the file is written — and not at all when nothing is.
+ * the attributed commit carries only the new entry, with `requester` (whose
+ * token the agent used) as its trailer. `beforeWrite` runs right before the
+ * file is written — and not at all when nothing is.
  * `alsoIn`: other .bib files the paper reads; a paper already in one of them
  * is reported there (duplicate, that file) and nothing is written.
  */
-export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void, alsoIn: string[] = []): Promise<AddedReference | null> {
+export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void, alsoIn: string[] = [], requester?: string | null): Promise<AddedReference | null> {
   const entry = await fetchBibEntry(query.trim());
   if (!entry) return null;
   await ensureWorktree(projectId, branch);
@@ -411,7 +412,7 @@ export async function addReference(projectId: string, branch: string, query: str
     const after = (existing ?? '').trimEnd() + '\n\n' + entry.trim() + '\n';
     beforeWrite?.();
     store.writeFile(projectId, branch, bibFile, after);
-    refreshBranchDocsFromDisk(projectId, branch, [bibFile]);
+    refreshBranchDocsFromDisk(projectId, branch, [bibFile], author ? { agent: new Map([[bibFile, before]]) } : {});
     if (!author) scheduleCommit(projectId, branch);
     return { key, bibFile, duplicate: false, created: existing === null, before, after };
   };
@@ -427,7 +428,7 @@ export async function addReference(projectId: string, branch: string, query: str
     await checkpointPathsHeld(projectId, branch, [bibFile]);
     flushBranchDocs(projectId, branch);
     const { key, bibFile: file, duplicate, created, before, after } = append();
-    if (!duplicate) await commitAgentWrite(projectId, branch, [{ path: bibFile, before, after }], `Add reference ${key || bibFile}`);
+    if (!duplicate) await commitAgentWrite(projectId, branch, [{ path: bibFile, before, after }], agentCommitMessage(`Add reference ${key || bibFile}`, requester));
     return { key, bibFile: file, duplicate, created };
   });
 }

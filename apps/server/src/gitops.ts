@@ -502,6 +502,8 @@ export interface LogEntry {
    *  parent), at most LOG_FILES_MAX of them; `fileCount` is the full count. */
   files?: string[];
   fileCount?: number;
+  /** For an agent commit, whose token it was made with. */
+  onBehalfOf?: string;
 }
 
 const LOG_FILES_MAX = 20;
@@ -523,27 +525,30 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
     // --name-only prints the paths after the header. quotePath off keeps a
     // non-ASCII name readable instead of octal-escaped.
     const raw = await git(repoDir(id)).raw(['-c', 'core.quotePath=false', 'log', branch, ...paging,
-      '--format=%x00%H%x00%aI%x00%an%x00%P%x00%s', '--name-only', '--diff-merges=first-parent', '--']);
+      `--format=%x00%H%x00%aI%x00%an%x00%P%x00${REQUESTER_FORMAT}%x00%s`, '--name-only', '--diff-merges=first-parent', '--']);
     const f = raw.split('\0');
-    for (let i = 1; i + 4 < f.length; i += 5) {
+    for (let i = 1; i + 5 < f.length; i += 6) {
       const hash = f[i].trim();
       if (!/^[0-9a-f]{40}$/.test(hash)) continue;
-      const lines = f[i + 4].split('\n');
+      const lines = f[i + 5].split('\n');
       const files = lines.slice(1).map((l) => l.trim()).filter(Boolean);
+      const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
       out.push({
         hash, date: f[i + 1], author: f[i + 2], message: lines[0] ?? '',
         parents: f[i + 3].split(' ').filter(Boolean).length,
         files: files.slice(0, LOG_FILES_MAX), fileCount: files.length,
+        ...(onBehalfOf ? { onBehalfOf } : {}),
       });
     }
     return out;
   }
-  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, '--format=%H%x00%aI%x00%an%x00%s%x00', '--']);
+  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, `--format=%H%x00%aI%x00%an%x00%s%x00${REQUESTER_FORMAT}%x00`, '--']);
   const f = raw.split('\0');
-  for (let i = 0; i + 3 < f.length; i += 4) {
+  for (let i = 0; i + 4 < f.length; i += 5) {
     const hash = f[i].trim(); // the newline git prints after each record leads the next hash
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
-    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3] });
+    const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
+    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}) });
   }
   return out;
 }
@@ -560,13 +565,31 @@ export async function branchHead(id: string, branch: string): Promise<string> {
 /** Author string every agent write commits under; the History dot, the
  *  session review and this answer all key on it. */
 export const AGENT_COMMIT_AUTHOR = 'Claude';
+
+/** Trailer naming whose access token an agent commit was made with: the
+ *  author stays AGENT_COMMIT_AUTHOR, which everything that tells Claude's
+ *  commits apart keys on. */
+export const AGENT_REQUESTER_TRAILER = 'On-behalf-of';
+const REQUESTER_LINE = new RegExp(`^${AGENT_REQUESTER_TRAILER}:.*$`, 'gim');
+
+/** An agent commit message: the intent, then the token owner as a trailer.
+ *  A requester line already in the intent is dropped, so a message cannot
+ *  name somebody else. */
+export function agentCommitMessage(intent: string, requester: string | null | undefined): string {
+  const who = (requester ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 200);
+  const text = intent.replace(REQUESTER_LINE, '').replace(/\n{3,}/g, '\n\n').trim() || 'aldine: agent edit';
+  return who ? `${text}\n\n${AGENT_REQUESTER_TRAILER}: ${who}` : text;
+}
+
+/** The %(trailers) placeholder that reads the requester back, '' when absent. */
+const REQUESTER_FORMAT = `%(trailers:key=${AGENT_REQUESTER_TRAILER},valueonly,separator=%x2C )`;
 /** Commits walked per answer. Past this the counts are a floor
  *  (`truncated`), which is the honest reading of "Claude wrote 300 commits". */
 const AGENT_SCAN_LIMIT = 500;
 /** Commits handed back with a hash — the reviewer pays one diff request each. */
 const AGENT_REVIEW_LIMIT = 20;
 
-export interface AgentCommit { hash: string; date: string; message: string; files: string[] }
+export interface AgentCommit { hash: string; date: string; message: string; files: string[]; onBehalfOf?: string }
 export interface AgentActivity {
   since: { head: string; at: string } | null;
   head: string;
@@ -576,6 +599,8 @@ export interface AgentActivity {
   commitCount: number;
   /** Distinct paths across those commits. */
   fileCount: number;
+  /** Those paths, over the whole scan: the files the editor marks as changed by Claude. */
+  paths: string[];
   /** The scan hit its ceiling: the counts are a floor, not a total. */
   truncated: boolean;
 }
@@ -589,7 +614,7 @@ export interface AgentActivity {
 export async function agentActivitySince(id: string, branch: string, mark: { head: string; at: string } | null): Promise<AgentActivity> {
   if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
   const head = await branchHead(id, branch);
-  if (!head) return { since: mark, head: '', commits: [], commitCount: 0, fileCount: 0, truncated: false };
+  if (!head) return { since: mark, head: '', commits: [], commitCount: 0, fileCount: 0, paths: [], truncated: false };
   const g = git(repoDir(id));
 
   // A mark whose commit is no longer on the branch (a reset to the remote, a
@@ -608,7 +633,7 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   // committed .mailmap must not be able to rename the agent.
   const args = ['log', usable ? `${mark!.head}..${branch}` : branch,
                 `--max-count=${AGENT_SCAN_LIMIT}`,
-                '--format=%x00%H%x00%aI%x00%an%x00%s', '--name-only'];
+                `--format=%x00%H%x00%aI%x00%an%x00${REQUESTER_FORMAT}%x00%s`, '--name-only'];
   if (!usable && mark?.at) {
     const t = Date.parse(mark.at);
     if (!Number.isNaN(t)) args.push(`--since=${new Date(t - 1000).toISOString()}`);
@@ -621,20 +646,20 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   const commits: AgentCommit[] = [];
   let records = 0;
   let commitCount = 0;
-  for (let i = 1; i + 3 < f.length; i += 4) {
+  for (let i = 1; i + 4 < f.length; i += 5) {
     const hash = f[i].trim();
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
     records++;
-    const [date, author, rest] = [f[i + 1], f[i + 2], f[i + 3]];
+    const [date, author, onBehalfOf, rest] = [f[i + 1], f[i + 2], f[i + 3].trim(), f[i + 4]];
     if (author !== AGENT_COMMIT_AUTHOR) continue;
     const lines = rest.split('\n');
     const message = lines[0] ?? '';
     const touched = lines.slice(1).map((l) => l.trim()).filter(Boolean);
     for (const f of touched) files.add(f);
-    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched });
+    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched, ...(onBehalfOf ? { onBehalfOf } : {}) });
     commitCount++;
   }
-  return { since: mark, head, commits, commitCount, fileCount: files.size, truncated: records >= AGENT_SCAN_LIMIT };
+  return { since: mark, head, commits, commitCount, fileCount: files.size, paths: [...files], truncated: records >= AGENT_SCAN_LIMIT };
 }
 
 export interface MergeResult { ok: boolean; conflicts?: string[]; message?: string }

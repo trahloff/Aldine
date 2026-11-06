@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { ApiError, TreeEntry, api } from '../api';
-import { fileIcon, IconChevronRight, IconEllipsis, IconFilePlus, IconFilter, IconFolderPlus, IconFolderUpload, IconUpload } from './Icons';
+import { fileIcon, IconChevronRight, IconEllipsis, IconFilePlus, IconFilter, IconFolderPlus, IconFolderUpload, IconSpark, IconUpload } from './Icons';
 import { useDialogs } from './Dialogs';
 import { MenuButton, useContextMenu, type MenuEntry } from './Menu';
 import { useToast } from './Toast';
@@ -37,6 +37,32 @@ interface Props {
   hidden?: boolean;
   /** A read-only showcase: the tree opens files and changes its view, and nothing else. */
   readOnly?: boolean;
+  /** Per path: Claude is writing this file now ('live'), or changed it since
+   *  this person's last review ('changed'). */
+  agentMarks?: ReadonlyMap<string, AgentTreeMark>;
+}
+
+export type AgentTreeMark = 'live' | 'changed';
+
+/** A folder shows its files' marks while it is closed; 'live' wins. */
+function folderMark(marks: ReadonlyMap<string, AgentTreeMark> | undefined, dir: string): AgentTreeMark | undefined {
+  let found: AgentTreeMark | undefined;
+  for (const [path, kind] of marks ?? []) {
+    if (!within(path, dir)) continue;
+    if (kind === 'live') return 'live';
+    found = kind;
+  }
+  return found;
+}
+
+function AgentMark({ kind }: { kind: AgentTreeMark | undefined }) {
+  if (!kind) return null;
+  const label = kind === 'live' ? 'Claude is editing this file' : 'Changed by Claude since your last review';
+  return (
+    <span className={`tree__agent tree__agent--${kind}`} title={label} aria-label={label} role="img" data-testid={`tree-agent-${kind}`}>
+      {kind === 'live' && <IconSpark />}
+    </span>
+  );
 }
 
 const MAX_UPLOAD = 10 * 1024 * 1024;
@@ -119,7 +145,7 @@ type Sent = { kind: 'ok' } | { kind: 'exists' } | { kind: 'unreadable' } | { kin
 /** What the progress row shows, summed over every upload under way. */
 interface Progress { done: number; total: number; fraction: number; name: string }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false, readOnly = false }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false, readOnly = false, agentMarks }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const errorId = useId();
@@ -671,6 +697,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
               <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
               <span className="tree__icon"><FolderIcon /></span>
               {node.name}
+              {!open && <AgentMark kind={folderMark(agentMarks, node.path)} />}
             </button>
             {!readOnly && rowMenu(node)}
           </div>
@@ -704,6 +731,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           <span className="tree__icon">{fileIcon(node.path, node.path === rootFile)}</span>
           {node.name}
           {node.path === rootFile && <span className="tree__root-tag">root</span>}
+          <AgentMark kind={agentMarks?.get(node.path)} />
         </button>
         {!readOnly && rowMenu(node)}
       </div>

@@ -33,7 +33,7 @@ import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { presenceRows } from '../util/presence';
-import { useBranchSignal, type BranchPeer, type BranchSignalHandle } from '../editor/branchSignal';
+import { useBranchSignal, type BranchPeer, type BranchSignalHandle, type BranchAgent } from '../editor/branchSignal';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
@@ -44,8 +44,10 @@ import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
-import { mergeAgentBatches, revertSummary, type AgentBatch } from '../util/agentReview';
+import { mergeAgentBatches, revertSummary, agentName, type AgentBatch } from '../util/agentReview';
 import { askWaitingCommit } from '../util/waitingCommit';
+import { useAgentUnseen } from '../editor/agentUnseen';
+import type { AgentTreeMark } from '../components/FileTree';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
@@ -754,7 +756,18 @@ export default function Editor() {
   }, []);
 
   // ---- agent session review (UX.md "Audit and undo") ----
-  const agentPresent = users.some((u) => u.isAgent);
+  /** The agent's session on the branch, whichever file is open (the branch signal's awareness). */
+  const [branchAgent, setBranchAgent] = useState<{ key: string; agent: BranchAgent } | null>(null);
+  const liveAgent = branchAgent?.key === `${id}::${branch}` ? branchAgent.agent : null;
+  const agentPresent = !!liveAgent || users.some((u) => u.isAgent);
+  const unseen = useAgentUnseen(id, branch, authEnabled);
+  const refreshUnseen = unseen.refresh;
+  const agentTreeMarks = useMemo(() => {
+    const marks = new Map<string, AgentTreeMark>();
+    for (const p of unseen.paths) marks.set(p, 'changed');
+    for (const f of liveAgent?.files ?? []) marks.set(f, 'live');
+    return marks;
+  }, [unseen.paths, liveAgent]);
   const agentPresentRef = useRef(agentPresent);
   agentPresentRef.current = agentPresent;
   const agentSessionStart = useRef<number | null>(null);
@@ -782,12 +795,14 @@ export default function Editor() {
     if (!head) return;
     if (!authEnabled) {
       if (kind === 'acknowledged') markAcknowledged(id, branch, head); else markPrompted(id, branch, head);
+      refreshUnseen();
       return;
     }
     // A failed write just means the prompt returns on the next open — the
     // audit surface fails open, never closed.
     await api.markAgentActivitySeen(id, branch, head, kind).catch(() => {});
-  }, [id, branch, authEnabled]);
+    refreshUnseen();
+  }, [id, branch, authEnabled, refreshUnseen]);
 
   /** One dialog for both prompts: the live session and the away check. */
   const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string; date?: string }>, total: number, onBranch: string): Promise<boolean> => {
@@ -807,7 +822,7 @@ export default function Editor() {
 
   // The server's start time, when awareness carries one: after a reload
   // mid-session the toast must still cover the commits made before it.
-  const agentStartedAt = users.find((u) => u.isAgent)?.startedAt;
+  const agentStartedAt = liveAgent?.startedAt ?? users.find((u) => u.isAgent)?.startedAt;
   useEffect(() => {
     if (agentPresent) {
       if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
@@ -815,8 +830,8 @@ export default function Editor() {
       return;
     }
     if (agentSessionStart.current == null) return;
-    // Awareness rides the open file's doc, so a file switch or reconnect blips
-    // the agent out momentarily — only a sustained absence ends the session.
+    // The session rides the branch's channel, whichever file is open; a
+    // reconnect blips it out momentarily — only a sustained absence ends it.
     agentEndTimer.current = setTimeout(async () => {
       agentEndTimer.current = null;
       if (agentPresentRef.current || agentSessionStart.current == null) return;
@@ -834,7 +849,7 @@ export default function Editor() {
         const n = batch.fileCount;
         const scope = batch.commitCount > batch.commits.length ? ` in ${batch.commitCount}${batch.truncated ? '+' : ''} commits` : '';
         reviewShown.current = batch;
-        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
+        toast(`${agentName(batch.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
           key: 'agent-review',
@@ -888,7 +903,7 @@ export default function Editor() {
         const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
         const when = res.since ? 'while you were away' : 'in this project';
         reviewShown.current = res;
-        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
+        toast(`${agentName(res.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
           // One review prompt at a time: a session ending replaces this one.
@@ -1147,6 +1162,8 @@ export default function Editor() {
     setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result, trigger: 'adopted' });
   }, [id, branch]);
   const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
+  const onCommitted = useCallback(() => { bumpHistory(); refreshUnseen(); }, [bumpHistory, refreshUnseen]);
+  const onAgent = useCallback((agent: BranchAgent | null) => setBranchAgent(agent ? { key: `${id}::${branch}`, agent } : null), [id, branch]);
   const onAgentTypesetStarted = useCallback(() => {
     // Auto-typeset off means the preview moves only when this person asks:
     // no status line, no adoption of Claude's run.
@@ -1176,7 +1193,7 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted: bumpHistory, onRoster: setPeers },
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted, onRoster: setPeers, onAgent },
     auto && hasTex,
     session,
     { name: identity.name, color: identity.color, file: activeFile },
@@ -2116,6 +2133,7 @@ export default function Editor() {
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
                 hidden={tab !== 'files'}
                 readOnly={locked}
+                agentMarks={agentTreeMarks}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -2293,6 +2311,7 @@ export default function Editor() {
                 identity={identity}
                 readOnly={locked || zoteroBib}
                 onSync={(state) => setSync({ key: paneKey, state })}
+                agentSeenAt={unseen.seenAt}
               />
             </>
           ) : filesLoaded && !hasFiles ? (

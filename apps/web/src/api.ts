@@ -186,15 +186,19 @@ export interface LogEntry {
   /** The paths it changed (a merge's against its first parent), at most 20; `fileCount` is the full count. */
   files?: string[];
   fileCount?: number;
+  /** On an agent commit, the person whose token it was made with. */
+  onBehalfOf?: string;
 }
 /** Claude's commits on a branch past the caller's review mark. `commitCount`
  *  and `fileCount` are a floor when `truncated`; `commits` is capped. */
 export interface AgentActivity {
   since: { head: string; at: string } | null;
   head: string;
-  commits: Array<{ hash: string; date: string; message: string; files: string[] }>;
+  commits: Array<{ hash: string; date: string; message: string; files: string[]; onBehalfOf?: string }>;
   commitCount: number;
   fileCount: number;
+  /** Every path those commits touched, over the whole scan (an older server leaves it out). */
+  paths?: string[];
   truncated: boolean;
   /** An agent session is live on the branch right now (server-side, so a fresh page knows before awareness syncs). */
   sessionActive: boolean;

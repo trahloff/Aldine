@@ -599,6 +599,59 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
   const bstat = (await gitops.commitDiff(pd.id, (await gitops.log(pd.id, 'main'))[0].hash)).stat;
   check(bstat.includes('main.tex') && bstat.includes('sections/new.tex'), `the batch commit holds both paths (got ${JSON.stringify(bstat)})`);
   ytext.unobserve(observer);
+
+  // whose Claude: the token owner rides along as a trailer, the author stays
+  // Claude (what History and the review prompts key on), and the presence
+  // says it too
+  check(agentState.user.name === 'Claude (for Ada)', `the presence names the token owner (got ${JSON.stringify(agentState.user.name)})`);
+  dlog = await gitops.log(pd.id, 'main');
+  check(dlog[0].author === 'Claude' && dlog[0].message === 'Batch into an open document' && dlog[0].onBehalfOf === 'Ada', `an agent commit keeps author Claude and its title, and names Ada (got ${JSON.stringify(dlog[0])})`);
+  const fullMessage = execFileSync('git', ['log', '-1', '--format=%B', dlog[0].hash], { cwd: store.branchDir(pd.id, 'main') }).toString();
+  check(/\n\nOn-behalf-of: Ada\n*$/.test(fullMessage), `the trailer is the message's last paragraph (got ${JSON.stringify(fullMessage)})`);
+  check(dlog.filter((c) => c.author !== 'Claude').every((c) => c.onBehalfOf === undefined), 'nobody else\'s commit claims a requester');
+  const activity = await gitops.agentActivitySince(pd.id, 'main', null);
+  check(activity.commits.length >= 3 && activity.commits.every((c) => c.onBehalfOf === 'Ada'), `the review answer still finds every Claude commit, each naming Ada (got ${JSON.stringify(activity.commits)})`);
+  check(activity.paths.includes('main.tex') && activity.paths.includes('sections/new.tex'), `and lists every path they touched (got ${JSON.stringify(activity.paths)})`);
+  ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised', replacement: 'agent sentence, revised once more' }], message: 'Reword\n\nOn-behalf-of: Mallory' }));
+  check(typeof body.commit === 'string', 'an edit whose message carries a requester line lands');
+  dlog = await gitops.log(pd.id, 'main');
+  check(dlog[0].onBehalfOf === 'Ada' && dlog[0].message === 'Reword', `a message cannot name somebody else (got ${JSON.stringify(dlog[0])})`);
+
+  // a person's cursor inside the quote: the edit is refused, nothing applied
+  {
+    const Y = await import('yjs');
+    const { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } = await import('y-protocols/awareness');
+    const pane = new Awareness(new Y.Doc());
+    const rel = (i) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(ytext, i));
+    const caret = ytext.toString().indexOf('human paragraph two') + 6;
+    const showPane = (cursor) => {
+      pane.setLocalState({ user: { name: 'Ben', color: '#e8554d' }, cursor });
+      applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
+    };
+    showPane({ anchor: rel(caret), head: rel(caret) });
+    const held = ytext.toString();
+    const headBefore = (await gitops.log(pd.id, 'main'))[0].hash;
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'X sentence' }, { quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }));
+    check(body.error === 'user_editing' && body.edit_index === 1 && JSON.stringify(body.editors) === '["Ben"]', `an edit under a person's cursor is refused as user_editing, naming them and the edit (got ${JSON.stringify(body)})`);
+    check(/Ben is editing that text/.test(body.reason) && /hold off/.test(body.reason), `the reason says who and what to do (got ${JSON.stringify(body.reason)})`);
+    check(body.path === 'main.tex' && body.branch === 'main' && typeof body.head === 'string' && typeof body.contentVersion === 'number', 'the refusal echoes like every error body');
+    check(ytext.toString() === held && (await gitops.log(pd.id, 'main'))[0].hash === headBefore, 'nothing was applied and nothing committed');
+    ({ body } = await call('batch_write', { project: pd.id, files: [{ path: 'main.tex', edits: [{ quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }], message: 'Under the cursor' }));
+    check(body.error === 'user_editing' && body.path === 'main.tex' && ytext.toString() === held, `batch_write refuses the same edit the same way (got ${JSON.stringify(body)})`);
+    // a selection that only touches the quote's end counts too
+    const end = ytext.toString().indexOf('agent sentence, revised once more') + 'agent sentence, revised once more'.length;
+    showPane({ anchor: rel(end), head: rel(end + 1) });
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'agent sentence' }] }));
+    check(body.error === 'user_editing', 'a selection starting at the end of the quote counts as inside it');
+    // elsewhere in the file, or once the person moved on, the edit lands
+    showPane({ anchor: rel(0), head: rel(0) });
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }));
+    check(body.applied === 1 && ytext.toString().includes('Claude paragraph two'), `with the cursor elsewhere the edit applies (got ${JSON.stringify(body)})`);
+    pane.setLocalState({ user: { name: 'Ben', color: '#e8554d' } });
+    applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'human paragraph one, batched', replacement: 'human paragraph one' }] }));
+    check(body.applied === 1, 'a pane with no cursor (another file open, or never focused) blocks nothing');
+  }
   await conn.disconnect();
 }
 

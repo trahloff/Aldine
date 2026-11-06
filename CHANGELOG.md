@@ -320,6 +320,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   The ones that cannot be taken back are red and keep Enter on the way out:
   claiming a project, Replace all across the project, declining an
   invitation, discarding typed invitations and leaving with unsaved edits.
+- What Claude changed stays marked until you have reviewed it: a violet bar
+  in the gutter beside each line it wrote, a notch where it only removed
+  text, and a violet dot on each file it changed in the file tree. The marks
+  survive reloads and show in files nobody had open when Claude wrote them.
+  Reviewing or dismissing the "Claude edited N files" prompt clears them,
+  for you only.
+- The file tree shows a violet spark on the file Claude is writing, also
+  when you have another file open.
+- Claude no longer edits the sentence you are typing. An `edit_file` or
+  `batch_write` edit whose quote holds someone's cursor or selection is
+  refused with `user_editing`, naming them, and Claude is told to wait or to
+  ask whether it should hold off.
+- With accounts, Claude says whose access token it works with: "Claude (for
+  Ada)" in the presence chip, in History and in the review prompt. Each
+  Claude commit names that person in an `On-behalf-of` trailer; the author
+  stays Claude.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -720,6 +736,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the name as a "Project name" text field and whether Auto-typeset is on.
 - While a finished typeset's PDF is still opening, the preview says it is
   typesetting instead of "Press ⌘S to typeset and preview".
+- Switching files while Claude works no longer ends its session early, and
+  neither does a typeset of Claude's that runs past a minute. The "Claude
+  edited N files" prompt comes once, when it has finished, and work in a file
+  you did not have open raises it too. Before, the prompt came up mid-session
+  and invited a Revert of work still in progress.
+- When Claude rewrites a whole file, or a Revert, merge or pull changes a
+  file someone has open, only the lines that differ are replaced. Before,
+  the whole text was swapped, which moved every co-author's cursor to the
+  top of the file and could drop what they were typing.
+- The experimental agent edit highlight tints only text Claude wrote. Before,
+  a co-author's typing was tinted too while Claude was at work.
 
 ## [1.8.0] — 2026-11-04
 

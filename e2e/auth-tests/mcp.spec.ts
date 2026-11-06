@@ -111,6 +111,37 @@ test.describe('MCP over PAT auth', () => {
     }
   });
 
+  test('Claude says whose token it works for: the presence chip and History read "Claude (for <name>)"', async ({ page, baseURL }) => {
+    const reg = await page.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ada Lovelace' } });
+    expect(reg.ok()).toBeTruthy();
+    const project = await (await page.request.post('/api/projects', { data: { name: 'Claude for Ada' } })).json();
+    await page.request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\n' } });
+    const minted = await (await page.request.post('/api/tokens', { data: { name: 'MCP for Ada' } })).json();
+    await page.goto(`/p/${project.id}`);
+    await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    const client = await connect(baseURL!, minted.token);
+    try {
+      const edit = await call(client, 'edit_file', {
+        project: project.id, path: 'main.tex',
+        edits: [{ quote: 'Original line.', replacement: 'Original line, reworded for Ada.' }],
+        message: 'Reword the opening line',
+      });
+      expect(edit.isError).toBeFalsy();
+      await expect(page.getByTestId('presence-agent')).toHaveAttribute('title', /^Claude \(for Ada Lovelace\), agent session started \d\d:\d\d, in this file$/, { timeout: 10_000 });
+      // the author stays Claude, which the review prompts key on; the owner is a trailer
+      const log = await (await page.request.get(`/api/projects/${project.id}/log?branch=main`)).json();
+      expect(log[0]).toMatchObject({ author: 'Claude', message: 'Reword the opening line', onBehalfOf: 'Ada Lovelace' });
+      const activity = await (await page.request.get(`/api/projects/${project.id}/agent-activity?branch=main`)).json();
+      expect(activity.commits[0]).toMatchObject({ message: 'Reword the opening line', onBehalfOf: 'Ada Lovelace' });
+      // History sits in the sidebar's More menu at this width
+      if (!(await page.getByTestId('tab-history').isVisible())) await page.getByTestId('tab-more').click();
+      await page.getByTestId('tab-history').click();
+      await expect(page.getByTestId(`commit-${log[0].hash.slice(0, 7)}`)).toContainText('Claude (for Ada Lovelace)');
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
+
   test('the away-review mark is per user: acknowledging it for one account leaves the other still prompted, and someone new starts from their first open', async ({ request, baseURL }) => {
     const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ada Away' } });
     expect(reg.ok()).toBeTruthy();

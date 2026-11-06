@@ -47,3 +47,10 @@ export function revertSummary(r: { commits: number; files: number; branch: strin
   return `This undoes ${plural(r.commits, 'commit')} Claude made on ${r.branch}${when}, in ${plural(r.files, 'file')}. `
     + `It adds a new commit ${by}; the history keeps both, and Undo brings the changes back.`;
 }
+
+/** "Claude (for Ada)": who asked, from the commits' requester trailers; the
+ *  server names the presence the same way (collab.ts agentDisplayName). */
+export function agentName(requesters: Iterable<string | undefined>): string {
+  const names = [...new Set([...requesters].filter((n): n is string => !!n))];
+  return names.length ? `Claude (for ${names.join(', ')})` : 'Claude';
+}

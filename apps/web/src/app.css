@@ -971,6 +971,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 }
 @media (hover: hover) and (pointer: fine) { .tree__item:hover { background: var(--bg-hover); } }
 .tree__item:active { background: var(--bg-active); }
+/* Claude in the file now (the spark), or its unreviewed changes there (a dot) */
+.tree__agent { flex: none; display: inline-flex; align-items: center; color: var(--agent); }
+.tree__agent--changed { width: 6px; height: 6px; border-radius: 50%; background: var(--agent); }
 .tree__item--active:active { background: var(--accent-soft); }
 .tree__item--active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tree__item--dir { color: var(--text-2); font-weight: 600; cursor: default; }
@@ -1675,6 +1678,12 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   from { background: rgba(167, 139, 250, 0.32); }
   to { background: rgba(167, 139, 250, 0); }
 }
+/* Claude's unreviewed changes: a bar beside each line it wrote, a notch
+   where it only removed text. */
+.cm-agent-gutter .cm-gutterElement { padding: 0 2px 0 0; display: flex; align-items: stretch; }
+.cm-agent-mark { display: block; width: 3px; border-radius: 1px; }
+.cm-agent-mark--ins { background: var(--agent); }
+.cm-agent-mark--del { align-self: center; width: 0; height: 0; border-left: 4px solid var(--agent); border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-radius: 0; }
 
 /* Deep-link flash (?file=&line=): the line decoration is removed after ~1.6 s,
    the animation fades the accent tint out before that. */

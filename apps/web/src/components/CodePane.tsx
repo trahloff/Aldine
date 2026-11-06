@@ -19,6 +19,7 @@ import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, publishEditorFocus, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
+import { agentMarks, setAgentSeen } from '../editor/agentMarks';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
 import { commentTips } from '../editor/commentTips';
@@ -188,6 +189,9 @@ interface Props {
   onOpenComment?(id: string): void;
   /** The comment the caret is in, whenever that changes (null: none). */
   onCommentCaret?(id: string | null): void;
+  /** This person's agent review mark (server ms): Claude's changes after it
+   *  are marked in the gutter. Null while unknown. */
+  agentSeenAt?: number | null;
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -250,7 +254,7 @@ function headingAt(entries: OutlineEntry[], line: number): number {
 const sameOutline = (a: OutlineEntry[], b: OutlineEntry[]) =>
   a.length === b.length && a.every((h, i) => h.line === b[i].line && h.level === b[i].level && h.title === b[i].title && h.pos === b[i].pos);
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret });
@@ -263,6 +267,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; deps: VisualDeps } | null>(null);
   const readOnlyRef = useRef<{ comp: Compartment; ydoc: Y.Doc; on: boolean } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
+  const agentSeenRef = useRef(agentSeenAt);
+  agentSeenRef.current = agentSeenAt;
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
     | { kind: 'line'; line: number; flash: boolean; onClamped?: (lines: number) => void }
@@ -562,9 +568,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, awareness, { undoManager }),
           publishEditorFocus(awareness),
-          // after yCollab on purpose — see agentHighlight's ordering contract
+          agentMarks(ydoc, ytext, agentSeenRef.current),
           ...(safeStorage.get('aldine.experimental.agentPresence') === '1'
-            ? [agentHighlight(ytext, awareness)]
+            ? [agentHighlight(ydoc, ytext, () => provider.isSynced)]
             : []),
         ],
       }),
@@ -677,6 +683,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       readOnlyRef.current = null;
     };
   }, [projectId, branch, filePath]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setAgentSeen.of(agentSeenAt) });
+  }, [agentSeenAt]);
 
   // Mode and spellcheck are presentation-only: swap them at runtime through
   // compartments so the Yjs doc, collab socket, scroll, and cursor survive.

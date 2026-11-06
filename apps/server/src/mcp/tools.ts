@@ -13,7 +13,7 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings, protectedProjects,
+  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
@@ -248,6 +248,17 @@ function commitFields(commit: { hash: string | null; unchanged: boolean }, head:
   return { commit: commit.hash ? head : null, ...(commit.unchanged ? { unchanged: true as const } : {}) };
 }
 
+/** The user_editing body: nothing was applied because people's cursors are in edit `index`'s text. */
+function userEditing(busy: { index: number; names: string[] }): { error: 'user_editing'; edit_index: number; editors: string[]; reason: string } {
+  const who = busy.names.join(' and ');
+  return {
+    error: 'user_editing',
+    edit_index: busy.index,
+    editors: busy.names,
+    reason: `${who} ${busy.names.length === 1 ? 'is' : 'are'} editing that text right now (their cursor is inside edit ${busy.index + 1}'s quote) — nothing was applied. Edit other parts first or wait a moment and retry, at most twice; then ask the user whether you should hold off on that passage.`,
+  };
+}
+
 function snippetAround(content: string, offset: number): string {
   const lines = content.split('\n');
   const li = lineOfOffset(content, offset) - 1;
@@ -434,6 +445,9 @@ const READ: ToolHints = { readOnlyHint: true, openWorldHint: false };
 export function registerTools(server: McpServer, identity: McpIdentity, ctx: ToolContext = { publicBase: config.publicUrl }): void {
   const base = ctx.publicBase.replace(/\/$/, '');
   const csp = viewerCsp(base);
+  /** Whose token the calls run under: named beside Claude in presence and in each commit. */
+  const owner = identity.user ? (identity.user.name || identity.user.email || null) : null;
+  const intent = (message: string) => gitops.agentCommitMessage(message, owner);
   const resourceMeta = csp ? { ui: { csp } } : undefined;
 
   // The resource is always listed so the contract is stable; the tools point
@@ -580,7 +594,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('edit_file', {
     ...annotate('Edit a file', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
-    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
+    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"user_editing"}: a person\'s cursor is inside that edit\'s quote (editors names them) — they are typing there; edit other parts first or wait a moment and retry, at most twice, then ask the user whether you should hold off. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -629,9 +643,10 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
             return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          // Presence first: the tint keys on the agent being in awareness when
-          // the change arrives, so the first edit must not outrun it.
-          markAgentPresence(meta.id, branch, rel);
+          const busy = peopleEditingRanges(meta.id, branch, rel, res.ranges);
+          if (busy) return failed(userEditing(busy));
+          // Presence first, so the chip is up when the change arrives.
+          markAgentPresence(meta.id, branch, rel, owner);
           // Back-to-front, same tick: earlier offsets stay valid, and no human
           // keystroke can interleave. 'stale' from the CRDT apply is impossible
           // here by construction but handled defensively anyway.
@@ -659,18 +674,18 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           }
           before = raw;
           newContent = spliceEdits(current, edits, res.ranges);
-          markAgentPresence(meta.id, branch, rel);
+          markAgentPresence(meta.id, branch, rel, owner);
           store.writeFile(meta.id, branch, rel, newContent);
           // Reseed rather than mark: a doc of this file that the registry
           // holds under another name would otherwise write the old text back
           // over the edit on its next store.
-          refreshBranchDocsFromDisk(meta.id, branch, [rel]);
+          refreshBranchDocsFromDisk(meta.id, branch, [rel], { agent: new Map([[rel, raw]]) });
           signalAgentWrite(meta.id, branch);
           applied = edits.length;
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         }
         const after = live !== null ? inFileLineEndings(meta.id, branch, rel, newContent) : newContent;
-        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], cleanCommitMessage(message, `Edit ${rel}`));
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], intent(cleanCommitMessage(message, `Edit ${rel}`)));
         const e = await echo(meta.id, branch);
         return ok({ applied, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...commitFields(commit, e.head), ...e });
       });
@@ -679,7 +694,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('write_file', {
     ...annotate('Write a whole file', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }),
-    description: 'Create a new file, or replace a whole file. For an existing file prefer edit_file — a whole-file write on an open document teleports collaborators\' viewports and can drop their in-flight typing. Pass base_version (contentVersion from a prior read of this file) to get {error:"version_conflict"} instead of overwriting newer content — only a change to this file conflicts, never one to another file; on conflict re-read and re-write once, then ask. Folders come into being with the first file written inside them. The first .tex written into a project with no main document becomes the main document (newRoot in the result). Committed as author Claude before the tool answers, under message (the intent, imperative); without one the commit is titled "Update <path>". The result\'s commit and head are that commit; content identical to the file makes no commit and answers commit:null with unchanged:true (nothing is pending).',
+    description: 'Create a new file, or replace a whole file. For an existing file prefer edit_file — a whole-file write on an open document puts back every line a collaborator changed since your read, their in-flight typing included. Pass base_version (contentVersion from a prior read of this file) to get {error:"version_conflict"} instead of overwriting newer content — only a change to this file conflicts, never one to another file; on conflict re-read and re-write once, then ask. Folders come into being with the first file written inside them. The first .tex written into a project with no main document becomes the main document (newRoot in the result). Committed as author Claude before the tool answers, under message (the intent, imperative); without one the commit is titled "Update <path>". The result\'s commit and head are that commit; content identical to the file makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -707,11 +722,11 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         }
         const open = openDocContent(meta.id, branch, rel);
         const before = open !== null ? inFileLineEndings(meta.id, branch, rel, open) : diskContent(meta.id, branch, rel);
-        markAgentPresence(meta.id, branch, rel);
+        markAgentPresence(meta.id, branch, rel, owner);
         store.writeFile(meta.id, branch, rel, content);
-        refreshBranchDocsFromDisk(meta.id, branch, [rel]);
+        refreshBranchDocsFromDisk(meta.id, branch, [rel], { agent: new Map([[rel, before]]) });
         signalAgentWrite(meta.id, branch);
-        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after: content }], cleanCommitMessage(message, `Update ${rel}`));
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after: content }], intent(cleanCommitMessage(message, `Update ${rel}`)));
         // Like PUT /file: a rootless project adopts its first .tex here, not
         // only at compile time — wordcount and project_structure answer for a
         // real root right after the write.
@@ -724,7 +739,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('batch_write', {
     ...annotate('Change several files in one commit', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
-    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor or ambiguous_anchor writes nothing (the error names the entry as path); fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
+    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor, ambiguous_anchor or user_editing (a person\'s cursor is inside that edit\'s quote; see edit_file) writes nothing (the error names the entry as path); fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -801,27 +816,29 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`"${f.path}", edit ${res.editIndex + 1}: ${res.reason}`);
             return failed(f.path, { error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
+          const busy = open !== null ? peopleEditingRanges(meta.id, branch, f.path, res.ranges) : null;
+          if (busy) return failed(f.path, userEditing(busy));
           const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: edits[i] })).sort((a, b) => b.from - a.from) : null;
           writes.push({ path: f.path, before: raw ?? inFileLineEndings(meta.id, branch, f.path, current), next: spliceEdits(current, edits, res.ranges), live });
         }
-        for (const w of writes) markAgentPresence(meta.id, branch, w.path);
-        const reseed: string[] = [];
+        for (const w of writes) markAgentPresence(meta.id, branch, w.path, owner);
+        const reseed = new Map<string, string | Buffer | null>();
         for (const w of writes) {
-          if (!w.live) { store.writeFile(meta.id, branch, w.path, w.next); reseed.push(w.path); continue; }
+          if (!w.live) { store.writeFile(meta.id, branch, w.path, w.next); reseed.set(w.path, w.before); continue; }
           for (const e of w.live) {
             const st = applySuggestionToDoc(meta.id, branch, w.path, { from: e.from, to: e.to, quote: e.edit.quote }, e.edit.replacement, AGENT_ORIGIN);
             if (st !== 'applied') return failed(w.path, { error: 'stale_anchor', edit_index: w.live.findIndex((x) => x.from === e.from), reason: 'the document changed while applying — re-read it and resend the batch', candidates: [] });
           }
           w.next = openDocContent(meta.id, branch, w.path) ?? w.next;
         }
-        if (reseed.length) refreshBranchDocsFromDisk(meta.id, branch, reseed);
+        if (reseed.size) refreshBranchDocsFromDisk(meta.id, branch, [...reseed.keys()], { agent: reseed });
         signalAgentWrite(meta.id, branch);
         // Only the batch's own paths, from the snapshots above: the flush put
         // collaborators' live edits in OTHER files on disk too, and a
         // whole-tree commit would sign them as Claude (and expose them to the
         // session toast's revert). They reach history through the normal
         // autosave debounce instead.
-        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.live ? inFileLineEndings(meta.id, branch, w.path, w.next) : w.next })), cleanCommitMessage(message, 'Update files'));
+        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.live ? inFileLineEndings(meta.id, branch, w.path, w.next) : w.next })), intent(cleanCommitMessage(message, 'Update files')));
         // See write_file: the first .tex of a rootless project becomes the root.
         const firstTex = writes.find((w) => /\.tex$/i.test(w.path))?.path;
         const newRoot = firstTex ? await adoptRootIfUnset(meta.id, branch, firstTex) : undefined;
@@ -846,6 +863,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     let sharedSlot = false;
     const progress = extra._meta?.progressToken;
     let timer: NodeJS.Timeout | undefined;
+    let releaseSession = () => {};
     try {
       const meta = await resolveProject(identity, project);
       const user = identity.user;
@@ -868,6 +886,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         return fail('Too many typesets in flight — let the current ones finish');
       }
       sharedSlot = true;
+      // A typeset can outlast the session's idle timeout; the edits it
+      // follows are one session with the ones after it.
+      releaseSession = holdAgentSession(meta.id, branch);
       const started = Date.now();
       if (progress !== undefined) {
         // ~10 s cadence: keeps client tool-timeouts and the ALB 60 s idle
@@ -937,6 +958,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       }
       return toolError(err, { project, branch });
     } finally {
+      releaseSession();
       if (timer) clearInterval(timer);
       if (key) {
         if (sharedSlot) compileGate.release(key);
@@ -981,7 +1003,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       // `aldine: autosave` (no Claude commit, no review coverage).
       return await gitops.withRepoLock(meta.id, async () => {
         flushBranchDocs(meta.id, branch);
-        const res = await gitops.commitAttributedHeld(meta.id, branch, cleanCommitMessage(message, 'Checkpoint'));
+        const res = await gitops.commitAttributedHeld(meta.id, branch, intent(cleanCommitMessage(message, 'Checkpoint')));
         const e = await echo(meta.id, branch);
         // Where the edits went when nothing was waiting: the model can name
         // the commit that holds them instead of guessing.
@@ -1032,10 +1054,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (!(await refLimiter.take(key))) return fail('Reference lookup budget reached — wait a few seconds before the next lookup');
       let added: Awaited<ReturnType<typeof addReference>>;
       try {
-        // Right before the write, like every write tool: the tint on the
-        // appended entry needs the agent in awareness first, and a lookup
-        // that finds nothing or a duplicate must not show Claude in the .bib.
-        added = await addReference(meta.id, branch, query, target, 'Claude', () => markAgentPresence(meta.id, branch, target));
+        // Right before the write, like every write tool: a lookup that
+        // finds nothing or a duplicate must not show Claude in the .bib.
+        added = await addReference(meta.id, branch, query, target, 'Claude', () => markAgentPresence(meta.id, branch, target, owner), [], owner);
       } catch (err) {
         // references.ts messages name the upstream and its HTTP status — the
         // user can act on them; a bare network failure (undici's TypeError,
