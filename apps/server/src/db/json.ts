@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, replaceFileDurable, writeFileSynced } from '../durable.js';
-import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+import { PRE_RENEWAL_SESSION_MS } from './types.js';
+import type { DataStore, User, EmailPending, SessionRow, ResetRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
 
 /** The top-level files, beside meta/ and comments/. */
 const FLAT_FILES = ['users.json', 'sessions.json', 'resets.json', 'tokens.json', 'usage.json', 'connections.json', 'oauth_clients.json', 'refresh_tokens.json', 'visits.json', 'opens.json', 'activity.json', 'invitations.json'];
@@ -11,7 +12,7 @@ const FLAT_FILES = ['users.json', 'sessions.json', 'resets.json', 'tokens.json',
 export interface StoreDump {
   users: User[];
   sessions: Array<{ sid: string } & SessionRow>;
-  resets: Array<{ token: string } & SessionRow>;
+  resets: Array<{ token: string } & ResetRow>;
   tokens: TokenRecord[];
   oauthClients: OAuthClient[];
   refreshTokens: RefreshTokenRecord[];
@@ -24,6 +25,10 @@ export interface StoreDump {
   activity: ProjectActivity[];
   invitations: Invitation[];
 }
+
+/** sessions.json as written before `createdAt` existed, too. */
+type StoredSession = Omit<SessionRow, 'createdAt'> & { createdAt?: number };
+const sessionRow = (r: StoredSession): SessionRow => ({ userId: r.userId, exp: r.exp, createdAt: r.createdAt ?? r.exp - PRE_RENEWAL_SESSION_MS });
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 const byCreated = (a: Invitation, b: Invitation) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
@@ -130,7 +135,7 @@ export class JsonStore implements DataStore {
     };
     const d: StoreDump = {
       users: Object.values(this.users()),
-      sessions: Object.entries(this.sessions()).map(([sid, r]) => ({ sid, ...r })),
+      sessions: Object.entries(this.sessions()).map(([sid, r]) => ({ sid, ...sessionRow(r) })),
       resets: Object.entries(this.resets()).map(([token, r]) => ({ token, ...r })),
       tokens: Object.values(this.tokens()).map((t) => ({ ...t, clientName: t.clientName ?? null, family: t.family ?? null })),
       oauthClients: Object.values(this.oauthClients()),
@@ -331,15 +336,23 @@ export class JsonStore implements DataStore {
   async findUserBySubject(subject: string) { return this.clone(Object.values(this.users()).find((u) => u.subject === subject) || null); }
 
   // ---- sessions ----
-  private sessions() { return this.read<Record<string, SessionRow>>(this.sessionsPath, {}); }
-  async createSession(sid: string, userId: string, exp: number) {
+  private sessions() { return this.read<Record<string, StoredSession>>(this.sessionsPath, {}); }
+  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
     const s = this.sessions();
     const now = Date.now();
     for (const [k, v] of Object.entries(s)) if (v.exp < now) delete s[k]; // opportunistic prune
-    s[sid] = { userId, exp };
+    s[sid] = { userId, exp, createdAt };
     this.write(this.sessionsPath, s);
   }
-  async getSession(sid: string) { return this.clone(this.sessions()[sid] || null); }
+  async getSession(sid: string) { const r = this.sessions()[sid]; return r ? sessionRow(r) : null; }
+  async renewSession(sid: string, exp: number) {
+    const s = this.sessions();
+    const r = s[sid];
+    if (!r || r.exp >= exp) return false;
+    s[sid] = { ...sessionRow(r), exp };
+    this.write(this.sessionsPath, s);
+    return true;
+  }
   async deleteSession(sid: string) { const s = this.sessions(); if (s[sid]) { delete s[sid]; this.write(this.sessionsPath, s); } }
   async deleteSessionsForUser(userId: string) {
     const s = this.sessions(); let changed = false;
@@ -348,7 +361,7 @@ export class JsonStore implements DataStore {
   }
 
   // ---- resets ----
-  private resets() { return this.read<Record<string, SessionRow>>(this.resetsPath, {}); }
+  private resets() { return this.read<Record<string, ResetRow>>(this.resetsPath, {}); }
   async createReset(token: string, userId: string, exp: number) {
     const r = this.resets();
     const now = Date.now();

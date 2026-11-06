@@ -54,9 +54,10 @@ you in the fix's release notes unless you prefer otherwise.
   only where users cannot edit their address at the IdP (docs/OIDC.md).
 - Single-sign-on accounts have no password and cannot be given one, so a
   person the IdP disables (or `OIDC_ALLOWED_GROUPS` stops admitting) cannot
-  sign in again. Existing sessions end at their expiry (30 days) unless an
-  administrator disables the account on `/admin` or an operator removes
-  them; docs/OIDC.md shows how.
+  sign in again. Existing sessions end at their expiry (30 days after their
+  last use, 90 days after the sign-in at most) unless an administrator
+  disables the account on `/admin` or an operator removes them; docs/OIDC.md
+  shows how.
 - An administrator (`ALDINE_ADMIN_EMAILS`) can disable or delete an account
   on `/admin`. A disabled account is refused on every path: its sessions end
   at once, password and single sign-on are refused, its access tokens,

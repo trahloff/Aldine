@@ -134,7 +134,13 @@ export interface RemoteLink {
   createdByAldine?: boolean;
 }
 
-export interface SessionRow { userId: string; exp: number }
+export interface ResetRow { userId: string; exp: number }
+/** `createdAt` (ms) is the sign-in the session began with; renewing it
+ *  moves `exp` alone (sessions.ts). */
+export interface SessionRow extends ResetRow { createdAt: number }
+/** A session stored before `createdAt` existed began exactly this long
+ *  before its `exp`: nothing renewed sessions then. */
+export const PRE_RENEWAL_SESSION_MS = 30 * 864e5;
 
 /**
  * Personal access token (headless agent credential). `hash` is the SHA-256
@@ -302,14 +308,19 @@ export interface DataStore {
   deleteUser(id: string): Promise<void>;
 
   // sessions (revocable)
-  createSession(sid: string, userId: string, exp: number): Promise<void>;
+  createSession(sid: string, userId: string, exp: number, createdAt: number): Promise<void>;
   getSession(sid: string): Promise<SessionRow | null>;
+  /** Move the session's expiry to `exp`, writing that field alone, and
+   *  report whether it did. A session deleted meanwhile (sign-out, a
+   *  password change, an administrator's disable) stays deleted, and an
+   *  `exp` no later than the stored one changes nothing. */
+  renewSession(sid: string, exp: number): Promise<boolean>;
   deleteSession(sid: string): Promise<void>;
   deleteSessionsForUser(userId: string): Promise<void>;
 
   // password-reset tokens
   createReset(token: string, userId: string, exp: number): Promise<void>;
-  getReset(token: string): Promise<SessionRow | null>;
+  getReset(token: string): Promise<ResetRow | null>;
   deleteReset(token: string): Promise<void>;
 
   // personal access tokens (looked up by SHA-256 digest on every bearer request)

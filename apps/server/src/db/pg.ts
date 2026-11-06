@@ -1,4 +1,5 @@
 import { PROJECT_ID_RE } from '../util.js';
+import { PRE_RENEWAL_SESSION_MS } from './types.js';
 import type { DataStore, User, EmailPending, SessionRow, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
@@ -135,6 +136,9 @@ export class PgStore implements DataStore {
       );
       CREATE INDEX IF NOT EXISTS invitations_project_idx ON invitations(project_id);
       CREATE INDEX IF NOT EXISTS invitations_recipient_idx ON invitations(recipient);
+      -- 1.9: the sign-in each session began with, for the cap on renewals.
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at bigint;
+      UPDATE sessions SET created_at = exp - ${PRE_RENEWAL_SESSION_MS} WHERE created_at IS NULL;
     `);
   }
   async close(): Promise<void> { await this.pool?.end(); }
@@ -206,13 +210,21 @@ export class PgStore implements DataStore {
   }
 
   // ---- sessions ----
-  async createSession(sid: string, userId: string, exp: number) {
+  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
     await this.pool.query(`DELETE FROM sessions WHERE exp < $1`, [Date.now()]);
-    await this.pool.query(`INSERT INTO sessions(sid,user_id,exp) VALUES($1,$2,$3)`, [sid, userId, exp]);
+    await this.pool.query(`INSERT INTO sessions(sid,user_id,exp,created_at) VALUES($1,$2,$3,$4)`, [sid, userId, exp, createdAt]);
   }
-  async getSession(sid: string) {
-    const { rows } = await this.pool.query(`SELECT user_id, exp FROM sessions WHERE sid=$1`, [sid]);
-    return rows[0] ? { userId: rows[0].user_id, exp: Number(rows[0].exp) } : null;
+  // A node still on an earlier release inserts rows without created_at.
+  async getSession(sid: string): Promise<SessionRow | null> {
+    const { rows } = await this.pool.query(`SELECT user_id, exp, COALESCE(created_at, exp - ${PRE_RENEWAL_SESSION_MS}) AS created_at FROM sessions WHERE sid=$1`, [sid]);
+    return rows[0] ? { userId: rows[0].user_id, exp: Number(rows[0].exp), createdAt: Number(rows[0].created_at) } : null;
+  }
+  async renewSession(sid: string, exp: number) {
+    const { rows } = await this.pool.query(
+      `UPDATE sessions SET exp=$2, created_at=COALESCE(created_at, exp - ${PRE_RENEWAL_SESSION_MS}) WHERE sid=$1 AND exp < $2 RETURNING sid`,
+      [sid, exp],
+    );
+    return rows.length > 0;
   }
   async deleteSession(sid: string) { await this.pool.query(`DELETE FROM sessions WHERE sid=$1`, [sid]); }
   async deleteSessionsForUser(userId: string) { await this.pool.query(`DELETE FROM sessions WHERE user_id=$1`, [userId]); }

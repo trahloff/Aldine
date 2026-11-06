@@ -508,6 +508,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const link = loggedConfirmations.get(String(req.query.email || '').trim().toLowerCase());
       return link ? { link } : reply.code(404).send({ error: 'No confirmation link was logged for that address' });
     });
+    // The caller's session and its cookie as if signed in `days` earlier.
+    app.post<{ Body: { days?: number } }>('/api/test/age-session', async (req, reply) => {
+      const sid = auth.sidFromRequest(req.headers.cookie);
+      const s = sid ? await db().getSession(sid) : null;
+      const shift = Number(req.body?.days) * 864e5;
+      if (!sid || !s || !(shift > 0)) return reply.code(400).send({ error: 'Send a session cookie and a number of days' });
+      await db().deleteSession(sid);
+      await db().createSession(sid, s.userId, s.exp - shift, s.createdAt - shift);
+      reply.header('set-cookie', auth.sessionCookie(sid, Math.floor((s.exp - shift - Date.now()) / 1000)));
+      return { ok: true };
+    });
   }
 
   app.post<{ Body: { token: string; newPassword: string } }>('/api/auth/reset', async (req, reply) => {
@@ -595,7 +606,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   // Resolve the request's user once (awaiting the async datastore) and cache it,
   // so reqUser() is a synchronous read everywhere downstream.
-  app.addHook('onRequest', async (req) => {
+  app.addHook('onRequest', async (req, reply) => {
     const header = req.headers.authorization;
     if (auth.AUTH_ENABLED && typeof header === 'string' && header.startsWith(`Bearer ${auth.TOKEN_PREFIX}`)) {
       // A presented bearer token is authoritative: when it doesn't resolve the
@@ -607,8 +618,14 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (t?.user) noteActivity(t.user.id);
       return;
     }
-    const user = auth.AUTH_ENABLED ? await auth.userFromRequest(req.headers.cookie) : null;
+    // Renewed on API requests only: a shared cache may store the public
+    // response of a static file, Set-Cookie and all.
+    const session = auth.AUTH_ENABLED ? await auth.resumeSession(req.headers.cookie, req.url.startsWith('/api/')) : null;
+    const user = session?.user ?? null;
     (req as any)._user = user;
+    // A route that sets the session cookie itself (sign-in, sign-out, a
+    // password change) sets it after this, and the browser keeps the last.
+    if (session?.cookie) reply.header('set-cookie', session.cookie);
     if (user) noteActivity(user.id);
   });
   await registerAdminRoutes(app, reqUser);

@@ -1030,6 +1030,27 @@ test.describe('auth depth', () => {
     await s1.close(); await s2.close();
   });
 
+  test('a session used again after a day lasts 30 days from then, and its cookie with it', async ({ browser }) => {
+    const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.91' } });
+    expect((await ctx.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } })).ok()).toBeTruthy();
+    const daysLeft = async () => {
+      const session = (await ctx.cookies()).find((c) => c.name === 'aldine_session');
+      return (session!.expires - Date.now() / 1000) / 86400;
+    };
+    expect(await daysLeft()).toBeGreaterThan(29.9);
+    // The session and its cookie as if signed in ten days ago.
+    expect((await ctx.request.post('/api/test/age-session', { data: { days: 10 } })).ok()).toBeTruthy();
+    expect(await daysLeft()).toBeLessThan(20.1);
+    const used = await ctx.request.get('/api/auth/me');
+    expect((await used.json()).user).toBeTruthy();
+    expect(used.headers()['set-cookie']).toContain('aldine_session=');
+    expect(await daysLeft()).toBeGreaterThan(29.9);
+    // Renewed once a day: the next request leaves the cookie as it is.
+    const again = await ctx.request.get('/api/auth/me');
+    expect(again.headers()['set-cookie']).toBeUndefined();
+    await ctx.close();
+  });
+
   test('forgot-password → reset flow works from the login screen and revokes agent access', async ({ page, request }) => {
     const email = uniq();
     // register, mint an agent token, then sign out

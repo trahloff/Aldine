@@ -8,6 +8,7 @@ import { providers, type OAuthProfile } from './oauth.js';
 import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
 import { discardCodesForUser } from './oauth/codes.js';
 import { subkey } from './output-signing.js';
+import { SESSION_DAYS, firstExpiry, renewIfDue } from './sessions.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -80,7 +81,6 @@ export const awaitingApproval = (u: { createdAt: string; disabledAt?: string }) 
 export const COOKIE = 'aldine_session';
 // Scoped to the base path so a neighbouring app on the same host never sees it.
 export const COOKIE_PATH = config.basePath || '/';
-const SESSION_DAYS = 30;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const CONFIRM_TTL_DAYS = 7;
 
@@ -413,7 +413,8 @@ export async function resetPassword(token: string, next: string): Promise<number
 // ---------- sessions (revocable) ----------
 export async function createSession(userId: string): Promise<string> {
   const sid = crypto.randomBytes(24).toString('base64url');
-  await db().createSession(sid, userId, Date.now() + SESSION_DAYS * 864e5);
+  const now = Date.now();
+  await db().createSession(sid, userId, firstExpiry(now), now);
   return sid;
 }
 
@@ -439,11 +440,19 @@ export async function revokeAgentAccess(userId: string): Promise<number> {
 }
 
 export async function verifyToken(sid: string | undefined): Promise<PublicUser | null> {
+  return (await signedIn(sid, false))?.user ?? null;
+}
+
+/** The account of a session, renewing the session when `renew` and it is
+ *  due (sessions.ts). `renewedExp`: the expiry this call stored, if any. */
+async function signedIn(sid: string | undefined, renew: boolean): Promise<{ user: PublicUser; renewedExp: number | null } | null> {
   if (!sid) return null;
+  const now = Date.now();
   const s = await db().getSession(sid);
-  if (!s || s.exp < Date.now()) return null;
+  if (!s || s.exp < now) return null;
   const user = await db().getUser(s.userId);
-  return user && !user.disabledAt ? pub(user) : null;
+  if (!user || user.disabledAt) return null;
+  return { user: pub(user), renewedExp: renew ? await renewIfDue(db(), sid, s, now) : null };
 }
 
 // ---------- account administration (admin.ts decides who may) ----------
@@ -618,8 +627,8 @@ function decodeCookieValue(raw: string): string {
     return raw;
   }
 }
-export function sessionCookie(sid: string): string {
-  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
+export function sessionCookie(sid: string, maxAgeSeconds = SESSION_DAYS * 86400): string {
+  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${maxAgeSeconds}${SECURE_COOKIES ? '; Secure' : ''}`;
 }
 export function clearCookie(): string {
   return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=0${SECURE_COOKIES ? '; Secure' : ''}`;
@@ -685,4 +694,16 @@ export function sidFromRequest(cookieHeader: string | undefined): string | undef
 export function userFromRequest(cookieHeader: string | undefined): Promise<PublicUser | null> {
   if (!AUTH_ENABLED) return Promise.resolve(null);
   return verifyToken(sidFromRequest(cookieHeader));
+}
+/** userFromRequest for an HTTP request, which renews the session when it is
+ *  due and `renew`. `cookie`: the Set-Cookie its response carries then, so
+ *  the browser keeps the cookie as long as the server keeps the session. A
+ *  collab socket has no response to carry one and uses userFromRequest. */
+export async function resumeSession(cookieHeader: string | undefined, renew = true): Promise<{ user: PublicUser; cookie: string | null } | null> {
+  if (!AUTH_ENABLED) return null;
+  const sid = sidFromRequest(cookieHeader);
+  const r = await signedIn(sid, renew);
+  if (!r) return null;
+  const left = r.renewedExp === null ? 0 : Math.floor((r.renewedExp - Date.now()) / 1000);
+  return { user: r.user, cookie: left > 0 ? sessionCookie(sid!, left) : null };
 }

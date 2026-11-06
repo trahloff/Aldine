@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { check, eq, throws } from './assert.mjs';
+import { firstExpiry, renewIfDue } from '../src/sessions.ts';
 
 const uniq = () => crypto.randomBytes(6).toString('hex');
 
@@ -143,15 +144,78 @@ async function runSuite(store, label) {
 
   // ---- sessions ----
   const sid = `sid-${t}`;
-  const exp = Date.now() + 60_000;
-  await store.createSession(sid, user.id, exp);
-  eq(await store.getSession(sid), { userId: user.id, exp }, `${label}: getSession`);
-  await store.createSession(`sid2-${t}`, user.id, exp);
+  const signedIn = Date.now();
+  const exp = signedIn + 60_000;
+  await store.createSession(sid, user.id, exp, signedIn);
+  eq(await store.getSession(sid), { userId: user.id, exp, createdAt: signedIn }, `${label}: getSession`);
+  await store.createSession(`sid2-${t}`, user.id, exp, signedIn);
   await store.deleteSessionsForUser(user.id);
   check((await store.getSession(sid)) === null, `${label}: deleteSessionsForUser`);
-  await store.createSession(sid, user.id, exp);
+  await store.createSession(sid, user.id, exp, signedIn);
   await store.deleteSession(sid);
   check((await store.getSession(sid)) === null, `${label}: deleteSession`);
+
+  // renewSession writes exp alone, only forward, and never into an ended session.
+  await store.createSession(sid, user.id, exp, signedIn);
+  check(await store.renewSession(sid, exp + 1000), `${label}: renewSession reports the move`);
+  eq(await store.getSession(sid), { userId: user.id, exp: exp + 1000, createdAt: signedIn }, `${label}: renewSession moves exp and keeps the sign-in time`);
+  check(!(await store.renewSession(sid, exp + 1000)), `${label}: renewSession to the same exp writes nothing`);
+  check(!(await store.renewSession(sid, exp)), `${label}: renewSession never moves exp back`);
+  eq((await store.getSession(sid)).exp, exp + 1000, `${label}: an earlier exp is kept out`);
+  await store.deleteSession(sid);
+  check(!(await store.renewSession(sid, exp + 5000)), `${label}: renewSession of a deleted session reports nothing`);
+  check((await store.getSession(sid)) === null, `${label}: and does not bring it back`);
+  check(!(await store.renewSession(`missing-${t}`, exp)), `${label}: renewSession of an unknown session reports nothing`);
+
+  // ---- renewal with use (sessions.ts), on a fake clock ----
+  {
+    const DAY = 864e5;
+    const t0 = Date.now();
+    const rid = `renew-${t}`;
+    let writes = 0;
+    const counting = new Proxy(store, {
+      get(target, key) {
+        const v = target[key];
+        if (key === 'renewSession') return (...a) => { writes++; return v.apply(target, a); };
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    /** A request on `id` at `at`, as auth.ts serves it: the session's expiry after it, null when signed out. */
+    const use = async (at, id = rid) => {
+      const s = await store.getSession(id);
+      if (!s || s.exp < at) return null;
+      return (await renewIfDue(counting, id, s, at)) ?? s.exp;
+    };
+    await store.createSession(rid, user.id, firstExpiry(t0), t0);
+    eq(await use(t0 + DAY / 2), t0 + 30 * DAY, `${label}: a session used within its first day keeps its expiry`);
+    eq(writes, 0, `${label}: and is not written`);
+    // Uses a day and a minute apart.
+    const at = (k) => t0 + k * (DAY + 60_000);
+    eq(await use(at(1)), at(1) + 30 * DAY, `${label}: used more than a day after the sign-in, it lasts 30 days from then`);
+    eq(writes, 1, `${label}: one write`);
+    for (let m = 1; m <= 100; m++) await use(at(1) + m * 10 * 60_000);
+    eq(writes, 1, `${label}: a hundred more uses that day write nothing`);
+    eq((await store.getSession(rid)).exp, at(1) + 30 * DAY, `${label}: and leave the expiry`);
+    for (let k = 2; k <= 89; k++) await use(at(k));
+    eq(writes, 60, `${label}: used daily, it is renewed daily until the cap`);
+    const capped = await store.getSession(rid);
+    eq([capped.exp, capped.createdAt], [t0 + 90 * DAY, t0], `${label}: the cap is 90 days from the sign-in, which renewals keep`);
+    eq(await use(t0 + 90 * DAY - 1), t0 + 90 * DAY, `${label}: in use until the cap`);
+    eq(await use(t0 + 90 * DAY + 1), null, `${label}: and signed out after it`);
+    eq(writes, 60, `${label}: nothing written at the cap`);
+
+    // A sign-out, password change or disable that lands while a request
+    // holds the session it read: the renewal writes nothing, the session stays ended.
+    for (const [why, end] of [['signed out', (id) => store.deleteSession(id)], ['revoked', () => store.deleteSessionsForUser(user.id)]]) {
+      const vid = `${why}-${t}`;
+      await store.createSession(vid, user.id, firstExpiry(t0), t0);
+      const read = await store.getSession(vid);
+      await end(vid);
+      eq(await renewIfDue(counting, vid, read, t0 + 2 * DAY), null, `${label}: a renewal of a session ${why} meanwhile writes nothing`);
+      check((await store.getSession(vid)) === null, `${label}: and it stays ${why}`);
+      eq(await use(t0 + 2 * DAY, vid), null, `${label}: its next request is signed out`);
+    }
+  }
 
   // ---- resets ----
   const token = `tok-${t}`;
@@ -570,8 +634,8 @@ async function runSuite(store, label) {
   await store.createUser(gone);
   const gp = `pg${t}`;
   const later = Date.now() + 60_000;
-  await store.createSession(`gs-${t}`, gone.id, later);
-  await store.createSession(`ks-${t}`, user.id, later);
+  await store.createSession(`gs-${t}`, gone.id, later, Date.now());
+  await store.createSession(`ks-${t}`, user.id, later, Date.now());
   await store.createReset(`gr-${t}`, gone.id, later);
   const gTok = { ...tok, id: `gpat-${t}`, hash: `digest-gpat-${t}`, userId: gone.id };
   await store.createToken(gTok);

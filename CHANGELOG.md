@@ -336,6 +336,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Ada)" in the presence chip, in History and in the review prompt. Each
   Claude commit names that person in an `On-behalf-of` trailer; the author
   stays Claude.
+- You stay signed in while you use Aldine: each day you use it, your sign-in
+  lasts another 30 days from then, up to 90 days after you signed in. Before,
+  it ended 30 days after signing in, however much you used it. Signing out, a
+  password change and an administrator's disable still end it at once. On
+  SQLite the first start updates `aldine.db`, which 1.8 then refuses to open;
+  to go back, restore the backup taken before the upgrade.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they

@@ -191,8 +191,9 @@ binds the new identity.
   ([deploy/README.md](../deploy/README.md#approving-new-accounts)).
 - Group membership and the IdP account are checked at sign-in. Removing
   someone from the group, or disabling them at the IdP, takes effect at their
-  next sign-in. Until then their Aldine session (up to 30 days) and any access
-  tokens they created keep working. To cut access at once, disable the
+  next sign-in. Until then their Aldine session (30 days from its last use,
+  90 days from the sign-in at most) and any access tokens they created keep
+  working. To cut access at once, disable the
   account on `/admin` (Manage, then Disable account): that ends its sessions
   and refuses its tokens, here and on every app node (deploy/README.md,
   "Managing accounts"). Without an administrator account, remove the

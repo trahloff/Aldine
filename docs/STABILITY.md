@@ -76,7 +76,11 @@ two paths stay as they are within 1.x.
   for an administrator's approval (`ALDINE_SIGNUP=approval`); no column is
   added for it, and an account disabled on `/admin` never has that value, so
   turning approval on changes no existing account.
-- **SQLite.** The schema version is the file's `user_version` (1 in 1.7). A
+  A session without `createdAt` (`created_at`), the time of its sign-in,
+  began 30 days before its expiry, as every session did before sessions
+  were extended with use (1.9).
+- **SQLite.** The schema version is the file's `user_version` (1 in 1.7, 2
+  from 1.9, which adds `sessions.created_at`). A
   later release that changes the tables migrates the file at start; a file
   with a higher version than the running release knows is refused, naming
   it. The first start without `aldine.db` copies a JSON datastore in
