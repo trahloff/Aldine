@@ -114,6 +114,20 @@ describe('watchSync', () => {
     expect(win.wouldAsk()).toBe(false);
   });
 
+  it('starts loaded on a doc kept synced from an earlier visit, with its edits still unconfirmed', () => {
+    const doc = new Y.Doc();
+    const provider = new FakeProvider(doc);
+    provider.link(); provider.ack();
+    doc.getText('content').insert(0, 'typed before the switch');
+    const win = new FakeWindow();
+    const w = watchSync(provider, doc, () => {}, win as never);
+    expect(w.current()).toMatchObject({ loaded: true, connected: true, unsynced: true });
+    expect(win.wouldAsk()).toBe(true);
+    provider.ack();
+    expect(w.current().unsynced).toBe(false);
+    w.dispose();
+  });
+
   it('asks before the tab closes while an edit is unconfirmed, and no longer once it is', () => {
     const { provider, w, win, text } = setup();
     provider.link(); provider.ack();

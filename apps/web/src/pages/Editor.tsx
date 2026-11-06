@@ -13,6 +13,7 @@ import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
 import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
 import { setVisualFiles } from '../editor/visual/context';
+import { closeParkedDocs } from '../editor/docCache';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
 import FilePreview from '../components/FilePreview';
 import { nextZoom, PDF_ZOOM_STEPS, previewKind, zoomKeys } from '../util/filePreview';
@@ -975,6 +976,17 @@ export default function Editor() {
   useEffect(() => {
     setVisualFiles(id, branch, files.filter((f) => f.type === 'file'));
   }, [id, branch, files]);
+
+  // The docs kept for files left earlier (editor/docCache) are this branch's
+  // files only: a kept doc of a file the branch no longer has goes to disk
+  // again with the next flush, and another branch's deletions never reach
+  // this tab.
+  useEffect(() => {
+    if (filesFor !== `${id}::${branch}`) return;
+    const here = new Set(files.filter((f) => f.type === 'file').map((f) => `${id}::${branch}::${f.path}`));
+    closeParkedDocs((name) => here.has(name));
+  }, [id, branch, files, filesFor, activeFile]);
+  useEffect(() => () => closeParkedDocs(() => false), []);
 
   // push this file's comment ranges into the editor as highlight decorations
   useEffect(() => {

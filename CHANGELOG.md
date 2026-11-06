@@ -200,6 +200,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Reopening or reloading a project opens the file you last had open on that
   branch, not the main document. If that file is gone, the main document
   opens.
+- Switching back to one of the last five files you left shows it at once,
+  with the caret and scroll where you left them, and Undo still reaches the
+  edits you made before switching. Any other file, and the open file after a
+  reload or a branch switch, opens at the place you left it once it has
+  loaded.
+- Switching files no longer leaves an idle connection to the server open
+  for every switch until the tab is closed.
 - On a read-only showcase project the editor takes no typing. A note under
   the toolbar says the project is read-only, and its Make a copy button opens
   your own copy to edit. Comments, project settings, checkpoints, reverts,

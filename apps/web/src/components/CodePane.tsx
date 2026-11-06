@@ -1,5 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { wsUrl } from '../basePath';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Compartment, Prec } from '@codemirror/state';
 import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
@@ -8,9 +7,9 @@ import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { latex, latexCompletionSource } from 'codemirror-lang-latex';
-import * as Y from 'yjs';
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import type * as Y from 'yjs';
+import { yCollab, yUndoManagerKeymap, ySyncFacet, YRange } from 'y-codemirror.next';
+import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { findKeymap, findPanel, restoreFind } from '../editor/findPanel';
@@ -28,6 +27,8 @@ import type { Text } from '@codemirror/state';
 import { safeStorage } from '../util/safeStorage';
 import { loadVim, vimIfLoaded, vimWrite } from '../editor/vim';
 import { readOnlyDoc } from '../editor/readOnly';
+import { openDoc, parkDoc } from '../editor/docCache';
+import { captureSpot, clampSpot, fileSpots, spotScroll, spotSelection } from '../editor/fileSpots';
 import { watchSync, reconnectProvider, type SyncState } from '../editor/syncStatus';
 
 export type EditorMode = 'source' | 'visual';
@@ -336,24 +337,18 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     },
   }), []);
 
-  useEffect(() => {
+  // A layout effect: the view is in place before the browser paints the
+  // switch, and the cleanup reads the scroll position while the pane is
+  // still in the document.
+  useLayoutEffect(() => {
     if (!hostRef.current) return;
     let statsTimer: ReturnType<typeof setTimeout> | null = null;
     warmBib(projectId, branch); // so \cite hover tooltips have data immediately
     const docName = `${projectId}::${branch}::${filePath}`;
-    const ydoc = new Y.Doc();
-    const provider = new HocuspocusProvider({
-      url: wsUrl('/collab'),
-      name: docName,
-      document: ydoc,
-      // When auth is enabled the server defines onAuthenticate, which makes
-      // Hocuspocus require a token before it loads the doc. The real credential
-      // is the HttpOnly session cookie (sent with the WS handshake and validated
-      // server-side); this token is just the non-empty trigger. Harmless when
-      // auth is off (no hook → ignored).
-      token: 'aldine-session',
-    });
-    const ytext = ydoc.getText('content');
+    // A file left recently comes back from editor/docCache already synced,
+    // with its undo history; any other loads empty until 'synced'.
+    const doc = openDoc(docName);
+    const { ydoc, ytext, provider, undoManager } = doc;
     // Doc-change notifications come from the Y level, not the CM update
     // listener: tr.local distinguishes this client's edits from applied remote
     // updates, so auto-typeset can react to typing without every collaborator
@@ -392,10 +387,16 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     awareness.on('change', reportUsers);
     reportUsers();
 
+    // A kept doc opens where its pane left it; a loading one once it syncs.
+    const spot = fileSpots.get(docName);
+    const start = provider.isSynced && spot ? clampSpot(spot, ytext.length) : null;
+    let restore = provider.isSynced ? null : spot;
     const view = new EditorView({
       parent: hostRef.current,
+      scrollTo: start ? spotScroll(start) : undefined,
       state: EditorState.create({
         doc: ytext.toString(),
+        selection: start ? spotSelection(start) : undefined,
         extensions: [
           // first, though its own precedence already puts it ahead of every keymap
           vimComp.of((vim && vimIfLoaded()) || []),
@@ -475,9 +476,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           spellComp.of(spellcheckAttrs(spellcheck, filePath)),
           EditorView.contentAttributes.of({ 'aria-label': `Text of ${filePath}` }),
           readOnlyComp.of(readOnly ? readOnlyDoc(ydoc) : []),
-          loadGate.of(readOnlyDoc(ydoc)),
+          loadGate.of(provider.isSynced ? [] : readOnlyDoc(ydoc)),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
-          yCollab(ytext, provider.awareness),
+          yCollab(ytext, awareness, { undoManager }),
           // after yCollab on purpose — see agentHighlight's ordering contract
           ...(safeStorage.get('aldine.experimental.agentPresence') === '1'
             ? [agentHighlight(ytext, awareness)]
@@ -490,13 +491,36 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     restoreFind(view);
     readOnlyRef.current = { comp: readOnlyComp, ydoc, on: readOnly };
 
-    syncedRef.current = false;
+    // Undo steps from an earlier pane on this doc keep their selection under
+    // that pane's binding, which this one cannot read: the caret is put
+    // where the step was here.
+    const earlier = new WeakSet<object>([...undoManager.undoStack, ...undoManager.redoStack]);
+    const onPopped = ({ stackItem }: { stackItem: { meta: Map<unknown, unknown> } }) => {
+      if (!earlier.has(stackItem)) return;
+      const range = [...stackItem.meta.values()].find((v): v is YRange => v instanceof YRange);
+      if (!range) return;
+      try {
+        const sel = view.state.facet(ySyncFacet).fromYRange(range);
+        view.dispatch({ selection: sel, effects: EditorView.scrollIntoView(sel) });
+      } catch { /* a position from before the server replaced the text */ }
+    };
+    undoManager.on('stack-item-popped', onPopped);
+
+    syncedRef.current = provider.isSynced;
     const initialStats = () => {
+      // 'synced' also fires when the connection drops, with nothing loaded yet.
+      if (!provider.isSynced) return;
       syncedRef.current = true;
       const goto = pendingGoto.current;
       pendingGoto.current = null;
+      const back = restore;
+      restore = null;
       if (goto?.kind === 'line') applyGoto(view, goto.line, goto.flash, goto.onClamped);
       else if (goto?.kind === 'range') applyRange(view, goto.from, goto.to, goto.quote, goto.focus, goto.context);
+      else if (back) {
+        const s = clampSpot(back, view.state.doc.length);
+        view.dispatch({ selection: spotSelection(s), effects: spotScroll(s) });
+      }
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.
@@ -504,10 +528,22 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         view.dispatch({ effects: setComments.of(lastCommentRanges.current.map((r) => reanchor(view.state.doc, r))) });
       }
     };
+    if (provider.isSynced) initialStats();
     provider.on('synced', initialStats);
-    provider.on('authenticationFailed', () => cbRef.current.onAccessDenied?.());
+    const onDenied = () => cbRef.current.onAccessDenied?.();
+    provider.on('authenticationFailed', onDenied);
+    // The open file's spot, for a reload or the next visit; the others were
+    // kept when their panes let go of them.
+    const keepSpot = () => {
+      if (document.visibilityState !== 'hidden' || !provider.isSynced) return;
+      const s = captureSpot(view);
+      if (s) fileSpots.set(docName, s);
+    };
+    document.addEventListener('visibilitychange', keepSpot);
     providerRef.current = provider;
-    let gated = true;
+    // A kept doc is synced already: it opens without the load gate.
+    let gated = !provider.isSynced;
+    if (!gated) view.dom.parentElement?.setAttribute('data-loaded', 'true');
     const sync = watchSync(provider, ydoc, (s) => {
       if (gated && s.loaded) {
         gated = false;
@@ -521,16 +557,25 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       if (statsTimer) clearTimeout(statsTimer);
       if (flashTimer.current) { clearTimeout(flashTimer.current); flashTimer.current = null; }
       pendingGoto.current = null;
+      document.removeEventListener('visibilitychange', keepSpot);
+      undoManager.off('stack-item-popped', onPopped);
       ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
+      provider.off('authenticationFailed', onDenied);
       sync.dispose();
       providerRef.current = null;
       awareness.off('change', reportUsers);
       // The roster is this file's: a preview, or no open file, has nobody in it.
       onUsers([]);
+      if (provider.isSynced) {
+        const s = captureSpot(view);
+        if (s) fileSpots.set(docName, s);
+      }
+      // yCollab gives each binding an UndoManager of its own that nothing
+      // uses; on a doc that outlives the pane it would stay subscribed.
+      view.state.facet(ySyncFacet).undoManager.destroy();
       view.destroy();
-      provider.destroy();
-      ydoc.destroy();
+      parkDoc(doc);
       viewRef.current = null;
       reconfRef.current = null;
       readOnlyRef.current = null;

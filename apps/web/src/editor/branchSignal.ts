@@ -126,6 +126,8 @@ export function useBranchSignal(
       providerRef.current = null;
       bumpRef.current = () => {};
       provider.destroy();
+      // A provider built from a url leaves its socket open on destroy.
+      provider.configuration.websocketProvider.destroy();
       ydoc.destroy();
     };
   }, [projectId, branch, session]);

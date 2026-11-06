@@ -1,6 +1,22 @@
 import { EditorState, type Extension } from '@codemirror/state';
 import type * as Y from 'yjs';
 
+/** One gate per doc: a doc kept across file switches gets a new editor, and
+ *  this extension, on every visit. */
+const gates = new WeakMap<Y.Doc, { remote: boolean }>();
+
+function gateOf(ydoc: Y.Doc): { remote: boolean } {
+  let gate = gates.get(ydoc);
+  if (!gate) {
+    const g = { remote: false };
+    ydoc.on('beforeObserverCalls', (tr: Y.Transaction) => { g.remote = !tr.local; });
+    ydoc.on('afterTransaction', () => { g.remote = false; });
+    gates.set(ydoc, g);
+    gate = g;
+  }
+  return gate;
+}
+
 /**
  * A document this editor may not change (a read-only showcase): no typing,
  * paste or command, and no programmatic insert either (a palette snippet,
@@ -11,11 +27,9 @@ import type * as Y from 'yjs';
  * Listens on `ydoc` for as long as the doc lives.
  */
 export function readOnlyDoc(ydoc: Y.Doc): Extension {
-  let remote = false;
-  ydoc.on('beforeObserverCalls', (tr: Y.Transaction) => { remote = !tr.local; });
-  ydoc.on('afterTransaction', () => { remote = false; });
+  const gate = gateOf(ydoc);
   return [
     EditorState.readOnly.of(true),
-    EditorState.changeFilter.of(() => remote),
+    EditorState.changeFilter.of(() => gate.remote),
   ];
 }

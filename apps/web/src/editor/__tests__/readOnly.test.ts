@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import * as Y from 'yjs';
 import { readOnlyDoc } from '../readOnly';
@@ -36,5 +36,22 @@ describe('readOnlyDoc', () => {
     // and a transaction of this client's own never opens it
     ytext.insert(0, 'Local ');
     expect(state.doc.toString()).toBe('From the server');
+  });
+
+  it('listens on a doc once, however many editors it is opened in', () => {
+    const ydoc = new Y.Doc();
+    const on = vi.spyOn(ydoc, 'on');
+    readOnlyDoc(ydoc);
+    const again = readOnlyDoc(ydoc);
+    expect(on).toHaveBeenCalledTimes(2); // beforeObserverCalls and afterTransaction
+    let state = EditorState.create({ doc: '', extensions: again });
+    ydoc.getText('content').observe((e) => {
+      const insert = e.delta.find((d) => typeof d.insert === 'string')?.insert as string | undefined;
+      if (insert) state = state.update({ changes: { from: 0, insert } }).state;
+    });
+    const server = new Y.Doc();
+    server.getText('content').insert(0, 'Shared');
+    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(server));
+    expect(state.doc.toString()).toBe('Shared');
   });
 });
