@@ -73,7 +73,7 @@ export function signupConfigWarnings(env: NodeJS.ProcessEnv = process.env): stri
  * The account waits for an administrator's approval: it was created disabled
  * under ALDINE_SIGNUP=approval and nobody has enabled it since. No column of
  * its own: such an account has disabledAt equal to createdAt, which Disable
- * on /admin never writes (it stamps the moment it runs). Both datastores keep
+ * on /admin never writes (disableAccount stamps a later moment). Both datastores keep
  * the two as the same ISO string.
  */
 export const awaitingApproval = (u: { createdAt: string; disabledAt?: string }) => !!u.disabledAt && u.disabledAt === u.createdAt;
@@ -601,7 +601,10 @@ export const hasPassword = (u: User) => !u.provider && !!u.email;
  * good. Collab sockets are the caller's to close.
  */
 export async function disableAccount(userId: string, revokeAgents: boolean): Promise<void> {
-  await db().setDisabled(userId, new Date().toISOString());
+  // A stamp equal to createdAt means "awaiting approval" (awaitingApproval),
+  // and an account disabled in the millisecond it was created would get one.
+  const createdAt = Date.parse((await db().getUser(userId))?.createdAt ?? '');
+  await db().setDisabled(userId, new Date(Math.max(Date.now(), createdAt + 1 || 0)).toISOString());
   await revokeUser(userId);
   discardCodesForUser(userId);
   if (revokeAgents) await revokeAgentAccess(userId);

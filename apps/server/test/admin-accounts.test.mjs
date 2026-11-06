@@ -194,6 +194,21 @@ try {
   eq(again.json().disabledAt, off.json().disabledAt, 'disabling again changes nothing');
   eq(logs.filter((l) => l.includes(`disabled bob@example.org [${bob.id}]`)).length, 1, 'and logs nothing');
 
+  // Disabled in the millisecond it was created: still disabled, not waiting for approval.
+  {
+    const quick = await auth.findOrCreateOAuth({ email: 'quick@example.org', name: 'Quick' }, 'google');
+    const created = Date.parse((await db().getUser(quick.id)).createdAt);
+    const RealDate = Date;
+    globalThis.Date = class extends RealDate {
+      constructor(...a) { super(...(a.length ? a : [created])); }
+      static now() { return created; }
+    };
+    try { await auth.disableAccount(quick.id, false); } finally { globalThis.Date = RealDate; }
+    const stored = await db().getUser(quick.id);
+    check(stored.disabledAt && !auth.awaitingApproval(stored), 'an account disabled as it is created reads as disabled');
+    await throws(() => auth.findOrCreateOAuth({ email: 'quick@example.org', name: 'Quick' }, 'google'), auth.ACCOUNT_DISABLED, 'and its sign-in says so');
+  }
+
   // Provider sign-in: by subject (ORCID) and by address (a provider without subjects).
   const orla = await auth.findOrCreateOAuth({ subject: 'orcid:0000-0002-1825-0097', email: null, name: 'Orla' }, 'orcid');
   const ollie = await auth.findOrCreateOAuth({ email: 'ollie@example.org', name: 'Ollie' }, 'google');

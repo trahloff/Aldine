@@ -764,6 +764,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   top of the file and could drop what they were typing.
 - The experimental agent edit highlight tints only text Claude wrote. Before,
   a co-author's typing was tinted too while Claude was at work.
+- An account an administrator disabled in the same millisecond it was
+  created no longer reads as waiting for approval: its sign-in says it is
+  disabled.
 
 ## [1.8.0] — 2026-11-04
 
