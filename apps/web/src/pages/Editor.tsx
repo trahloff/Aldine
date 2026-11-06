@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
-import { useToast } from '../components/Toast';
+import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
@@ -41,6 +41,7 @@ import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
+import { mergeAgentBatches, type AgentBatch } from '../util/agentReview';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
@@ -578,12 +579,18 @@ export default function Editor() {
   const agentSessionStart = useRef<number | null>(null);
   const agentEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [agentReview, setAgentReview] = useState<{
+    branch: string;
     files: string[];
     hashes: string[];
     commits: Array<{ hash: string; message: string; patch: string }>;
     total: number;
     truncated: boolean;
   } | null>(null);
+  /** The batch behind the review prompt on screen: a newer prompt replaces it
+   *  (one key) and must take it along. */
+  const reviewShown = useRef<AgentBatch | null>(null);
+  /** Bumped when the page or the branch goes: a prompt still in flight for it is dropped. */
+  const reviewGen = useRef(0);
 
   /** Records that this person has been shown Claude's work up to `head`.
    *  Without accounts there is no user to key a server row on, so the mark
@@ -600,14 +607,14 @@ export default function Editor() {
   }, [id, branch, authEnabled]);
 
   /** One dialog for both prompts: the live session and the away check. */
-  const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string }>, total: number): Promise<boolean> => {
+  const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string }>, total: number, onBranch: string): Promise<boolean> => {
     const shown = entries.slice(0, AGENT_REVIEW_MAX_COMMITS); // newest first
     try {
       const diffs = await Promise.all(shown.map((c) => api.commitDiff(id, c.hash)));
       // Read oldest first (the log is newest first): the story of the session.
       const commits = shown.map((c, i) => ({ hash: c.hash, message: c.message, patch: diffs[i].patch })).reverse();
       const files = [...new Set(commits.flatMap((c) => filesInPatch(c.patch)))];
-      setAgentReview({ files, hashes: shown.map((c) => c.hash), commits, total, truncated: total > shown.length });
+      setAgentReview({ branch: onBranch, files, hashes: shown.map((c) => c.hash), commits, total, truncated: total > shown.length });
       return true;
     } catch (err: any) {
       toast(`Could not load Claude’s changes: ${err.message}`, 'error');
@@ -630,31 +637,44 @@ export default function Editor() {
     agentEndTimer.current = setTimeout(async () => {
       agentEndTimer.current = null;
       if (agentPresentRef.current || agentSessionStart.current == null) return;
-      const startedAt = agentSessionStart.current;
       agentSessionStart.current = null;
+      const gen = reviewGen.current;
       try {
-        const log = await api.log(id, branch);
-        // git dates carry second precision — allow slack around the session start
-        const session = log.filter((c) => c.author === 'Claude' && new Date(c.date).getTime() >= startedAt - 10_000);
-        if (!session.length) return;
+        // From the person's mark, not the session start: acknowledging this
+        // prompt moves the mark past everything before it, so Claude work they
+        // have not reviewed yet must be in it too.
+        const mark = authEnabled ? null : readSeen(id, branch);
+        const res = await api.agentActivity(id, branch, mark && mark.head ? { head: mark.head, at: mark.at } : null);
+        if (gen !== reviewGen.current || !res.commitCount) return;
         bumpHistory();
-        const shown = session.slice(0, AGENT_REVIEW_MAX_COMMITS);
-        const diffs = await Promise.all(shown.map((c) => api.commitDiff(id, c.hash)));
-        const files = [...new Set(diffs.flatMap((d) => filesInPatch(d.patch)))];
-        toast(`Claude edited ${files.length} file${files.length === 1 ? '' : 's'}`, 'info', {
+        const batch = reviewShown.current ? mergeAgentBatches(reviewShown.current, res, AGENT_REVIEW_MAX_COMMITS) : res;
+        const n = batch.fileCount;
+        const scope = batch.commitCount > batch.commits.length ? ` in ${batch.commitCount}${batch.truncated ? '+' : ''} commits` : '';
+        reviewShown.current = batch;
+        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
           key: 'agent-review',
           // Arrives a minute after the last edit, when the person has usually
           // looked away — it must wait for them.
           sticky: true,
-          onClick: () => { void (async () => { if (await openAgentReview(shown, session.length)) await recordSeen(session[0].hash, 'acknowledged'); })(); },
-          onDismiss: () => { void recordSeen(session[0].hash, 'acknowledged'); },
+          onClick: () => { void (async () => { if (await openAgentReview(batch.commits, batch.commitCount, branch)) await recordSeen(batch.head, 'acknowledged'); })(); },
+          onDismiss: () => { void recordSeen(batch.head, 'acknowledged'); },
+          onExpire: () => { if (reviewShown.current === batch) reviewShown.current = null; },
         });
       } catch { /* history unavailable — nothing to review */ }
     }, 4000);
-  }, [agentPresent, agentStartedAt, id, branch, toast, bumpHistory, openAgentReview, recordSeen]);
-  useEffect(() => () => { if (agentEndTimer.current) clearTimeout(agentEndTimer.current); }, []);
+  }, [agentPresent, agentStartedAt, id, branch, authEnabled, toast, bumpHistory, openAgentReview, recordSeen]);
+  // The prompt and the dialog describe one branch's commits: neither may
+  // outlive the page or the branch, or Review and Revert act on another.
+  const dismissToast = useToastDismiss();
+  useEffect(() => () => {
+    reviewGen.current++;
+    if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
+    agentSessionStart.current = null;
+    dismissToast('agent-review');
+    setAgentReview(null);
+  }, [id, branch, dismissToast]);
 
   // The same prompt for whoever was not watching: Claude commits newer than
   // this person's last acknowledged visit, asked once per project+branch open.
@@ -684,14 +704,16 @@ export default function Editor() {
         // says so here, and a scan that hit its ceiling reports a floor.
         const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
         const when = res.since ? 'while you were away' : 'in this project';
+        reviewShown.current = res;
         toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
           // One review prompt at a time: a session ending replaces this one.
           key: 'agent-review',
           sticky: true,
-          onClick: () => { void (async () => { if (await openAgentReview(res.commits, res.commitCount)) await recordSeen(res.head, 'acknowledged'); })(); },
+          onClick: () => { void (async () => { if (await openAgentReview(res.commits, res.commitCount, branch)) await recordSeen(res.head, 'acknowledged'); })(); },
           onDismiss: () => { void recordSeen(res.head, 'acknowledged'); },
+          onExpire: () => { if (reviewShown.current === res) reviewShown.current = null; },
         });
         // The mark advances to the head the answer was computed against, never
         // to a fresh HEAD: commits landing while the toast sits on screen stay unseen.
@@ -705,7 +727,7 @@ export default function Editor() {
     if (!agentReview) return;
     try {
       // log order is newest-first — exactly what the revert endpoint expects.
-      const res = await api.revertCommits(id, branch, agentReview.hashes, 'Revert Claude’s edits', identity.name);
+      const res = await api.revertCommits(id, agentReview.branch, agentReview.hashes, 'Revert Claude’s edits', identity.name);
       setAgentReview(null);
       toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
       bumpHistory();
@@ -1844,7 +1866,7 @@ export default function Editor() {
           <div>
             <h2>Claude’s edits</h2>
             <p className="modal__sub">
-              {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {branch}
+              {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {agentReview.branch}
             </p>
             {agentReview.truncated && (
               <p className="modal__sub" data-testid="agent-review-truncated">

@@ -552,9 +552,11 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   // recreated branch) cannot bound a range; the date bound below is one
   // second early on purpose — re-showing a commit is a smaller failure than
   // hiding one.
+  // Counted rather than `merge-base --is-ancestor`, whose "no" (exit 1, empty
+  // stderr) simple-git resolves like a "yes".
   let usable = false;
   if (mark?.head && /^[0-9a-f]{4,40}$/.test(mark.head)) {
-    usable = await g.raw(['merge-base', '--is-ancestor', mark.head, branch]).then(() => true, () => false);
+    usable = await g.raw(['rev-list', '--count', mark.head, `^refs/heads/${branch}`, '--']).then((s) => Number(s.trim()) === 0, () => false);
   }
   // NUL-separated like log(), but the record separator LEADS the format here:
   // --name-only prints the file list after the header, so a trailing one
@@ -626,6 +628,10 @@ export async function merge(id: string, from: string, into: string, author?: str
   });
 }
 
+/** A revert refused before anything ran: the request named commits that are
+ *  not in the branch's history. The message is a sentence for the person. */
+export class RevertRefusedError extends Error {}
+
 /**
  * Revert the given commits as ONE new commit — session "undo" is additive
  * history, never a rewrite. Hashes must arrive newest-first so each revert
@@ -637,6 +643,22 @@ export async function revertCommits(id: string, branch: string, hashes: string[]
   return withRepoLock(id, async () => {
     const dir = await ensureWorktree(id, branch);
     const g = git(dir);
+    // Only the branch's own history: reverting another branch's commit here
+    // applies the inverse of changes this branch never had. Counted rather
+    // than `merge-base --is-ancestor`, whose "no" (exit 1, empty stderr)
+    // simple-git resolves like a "yes".
+    const foreign: string[] = [];
+    for (const h of hashes) {
+      const outside = await g.raw(['rev-list', '--count', h, '^HEAD', '--']).then((s) => Number(s.trim()) !== 0, () => true);
+      if (outside) foreign.push(h);
+    }
+    if (foreign.length) {
+      const title = await g.raw(['show', '-s', '--format=%s', foreign[0]]).then((s) => s.trim(), () => '');
+      const named = `${title ? `"${title}" ` : ''}(${foreign[0].slice(0, 7)})`;
+      throw new RevertRefusedError(foreign.length === 1
+        ? `Could not revert ${named} — it is not on ${branch}. Open the branch it was made on and revert it there`
+        : `Could not revert ${named} and ${foreign.length - 1} more — they are not on ${branch}. Open the branch they were made on and revert them there`);
+    }
     try {
       await g.raw(['revert', '--no-commit', ...hashes]);
     } catch {

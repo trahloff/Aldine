@@ -188,6 +188,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The command palette, comment and jump shortcuts do nothing while a dialog
   is open, in the editor and on the project list. Before, ⌘K in Settings
   opened the palette on top, and Escape then closed Settings behind it.
+- When a Claude session ends while an earlier "Claude edited …" prompt is
+  still on screen, the new prompt covers both batches. Before, it replaced
+  the earlier prompt with one for the session alone, and reviewing it marked
+  the earlier batch as seen without anyone looking at it.
+- The "Claude edited …" prompt and its review dialog belong to the branch
+  they describe. Switching branch or going back to the project list takes
+  them down, where before Review and Revert acted on whichever branch was
+  open. The server also refuses a revert of commits that are not on the
+  branch, and the message names the commit and what to do.
+- A new branch starts with the review you did on the branch it was made
+  from. Before, its first open prompted for every edit Claude had ever made
+  in the project.
 
 ## [1.8.0] — 2026-11-04
 

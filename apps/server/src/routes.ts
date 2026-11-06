@@ -1905,6 +1905,15 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // a base_version read before the delete would otherwise pass the
       // per-file conflict check against a tree it never saw.
       markTreeChanged(req.params.id, name);
+      // The branch starts at `from`'s head, so the Claude work this person
+      // reviewed there is reviewed here too; with no row the first open would
+      // prompt for every Claude commit in the history. The browser copies its
+      // own mark without accounts (agentSeen.ts).
+      const user = reqUser(req);
+      if (auth.AUTH_ENABLED && user) {
+        const mark = await store.getProjectVisit(user.id, req.params.id, from).catch(() => null);
+        if (mark) await store.setProjectVisit({ ...mark, branch: name }).catch(() => {});
+      }
       return { ok: true };
     });
 
@@ -1972,7 +1981,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         }
         return { ...result, author: author ?? null };
       } catch (err) {
-        return reply.code(409).send({ error: (err as Error).message });
+        return reply.code(err instanceof gitops.RevertRefusedError ? 400 : 409).send({ error: (err as Error).message });
       }
     });
 
