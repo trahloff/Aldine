@@ -53,7 +53,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const toast = useToast();
   const dialogs = useDialogs();
   const leave = useExitGhost();
-  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: () => pop.setOpen(false) });
+  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close });
 
   const onMain = current === 'main';
   const tracked = branchInfo?.current ?? link.remoteBranch;
@@ -96,7 +96,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     };
   }, [refresh]);
 
-  const openPush = () => { pop.setOpen(false); setMessage('Update from Aldine'); setShowPush(true); };
+  const openPush = () => { pop.close(); setMessage('Update from Aldine'); setShowPush(true); };
   const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
     try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
@@ -114,7 +114,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     setAutopushBusy(false);
   };
   const pull = async () => {
-    pop.setOpen(false);
+    pop.close();
     setBusy('pull');
     try {
       const r = await api.remotePull(projectId);
@@ -132,7 +132,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   // A host branch is always opened through main, the branch that tracks it.
   // Switching repoints main for everyone, so it is asked first.
   const switchTo = async (branch: string) => {
-    pop.setOpen(false);
+    pop.close();
     if (branch === tracked) { if (!onMain) onSwitch('main'); return; }
     if (!(await dialogs.confirm({ title: `Switch the whole project to ${branch}?`, body: "Everyone's open files will change.", confirmLabel: 'Switch branch' }))) return;
     setBusy('branch');
@@ -150,7 +150,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     setBusy('');
   };
   const createOnHost = async (name: string) => {
-    pop.setOpen(false);
+    pop.close();
     setBusy('branch');
     try {
       await api.remoteCreateBranch(projectId, name);
@@ -195,12 +195,12 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   return (
     <div ref={pop.ref} className="branch" data-testid={`${p}-sync`}>
       <button
+        ref={pop.trigger}
         className="branch-pill"
         onClick={() => pop.setOpen(!pop.open)}
         disabled={busy === 'branch'}
         data-testid="branch-menu"
         title={`Branches · synced with ${link.fullName} on ${d.label}`}
-        aria-haspopup="menu"
         aria-expanded={pop.open}
       >
         <BranchIcon />
@@ -283,7 +283,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
                   key={b.name}
                   name={b.name}
                   current={b.name === current}
-                  onOpen={() => { pop.setOpen(false); onSwitch(b.name); }}
+                  onOpen={() => { pop.close(); onSwitch(b.name); }}
                   onMerge={() => local.mergeIntoMain(b.name)}
                   onDelete={() => local.remove(b.name)}
                 />
@@ -297,11 +297,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
             blocked={onMain && !isOwner ? `Only the project owner can start a branch on ${d.label}, because it becomes the branch this project tracks for everyone.` : undefined}
           />
           {onMain && branchInfo && tracked !== branchInfo.default && (
-            <button className="menu__item" onClick={() => { pop.setOpen(false); setCrTitle(`Update ${tracked}`); setShowCr(true); }} data-testid={`${p}-open-pr`}>
+            <button className="menu__item" onClick={() => { pop.close(); setCrTitle(`Update ${tracked}`); setShowCr(true); }} data-testid={`${p}-open-pr`}>
               <span className="branch-menu__check" />Open {d.changeRequest}…
             </button>
           )}
-          <button className="menu__item" onClick={() => { pop.setOpen(false); setShowAccess(true); }} data-testid={`${p}-access`}>
+          <button className="menu__item" onClick={() => { pop.close(); setShowAccess(true); }} data-testid={`${p}-access`}>
             <span className="branch-menu__check" />Git access…
           </button>
         </div>

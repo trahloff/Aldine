@@ -807,6 +807,13 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .branch-pill { max-width: 220px; min-width: 0; white-space: nowrap; }
 .branch-pill__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .branch-pill__counts { display: flex; gap: 5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+/* A phone has no room for a 300px panel hanging from the pill: it spans the
+   screen under the toolbar, above the sidebar overlay and its scrim. */
+@media (max-width: 640px) {
+  .toolbar { position: relative; z-index: 31; }
+  .branch { position: static; }
+  .branch-menu { top: calc(100% + 4px); left: 8px; right: 8px; width: auto; max-height: 70dvh; overflow-y: auto; }
+}
 
 .presence { display: flex; align-items: center; }
 .presence__avatar {
@@ -898,8 +905,15 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .sidebar-rail { flex: none; display: flex; flex-direction: column; align-items: center; width: 38px; padding-top: 6px; background: var(--bg-inset); }
 .sidebar-rail__btn { width: 26px; height: 26px; padding: 0; justify-content: center; color: var(--text-3); }
 @media (hover: hover) and (pointer: fine) { .sidebar-rail__btn:hover { color: var(--text); } }
-.sidebar__menu { top: 30px; right: 0; min-width: 170px; transform-origin: top right; }
 .sidebar__body { flex: 1; overflow: auto; padding: 6px; }
+/* On a phone the sidebar is an overlay over the code: a tap on the strip of
+   editor beside it folds it, and it is as tall as the workspace under the
+   toolbar, not the window. */
+.sidebar-scrim { display: none; }
+@media (max-width: 640px) {
+  .workspace { position: relative; }
+  .sidebar-scrim { display: block; position: absolute; inset: 0; z-index: 29; background: var(--scrim); }
+}
 
 /* file tree */
 .tree__item {
@@ -1370,6 +1384,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .workspace--resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 .workspace--resizing .pane { pointer-events: none; }
 @media (pointer: coarse) { .resizer { width: 21px; margin: 0 -10px; } .resizer::after { inset: 0 9px; opacity: 0.25; } }
+/* a phone shows one pane at a time (the preview is hidden, the sidebar an overlay): nothing to divide */
+@media (max-width: 640px) { .editor-shell .resizer { display: none; } }
 /* the divider stands between the sidebar and the editor, so the editor's
    hairline is no longer drawn by .pane + .pane */
 .resizer--sidebar + .pane { border-left: 1px solid var(--hairline); }
@@ -1402,6 +1418,22 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 @media (max-width: 900px) {
   .palette-trigger { width: auto; min-width: 0; padding: 0 8px; }
   .palette-trigger__label, .palette-trigger__kbd { display: none; }
+}
+/* thumbs: the shell's rows, tabs and pane controls at touch size, like every
+   .btn. `.zoom .btn--small` outranks the plain .btn--small rule, so it is
+   restated here. */
+@media (pointer: coarse) {
+  .tree__item { height: 40px; }
+  .sidebar__tab { height: 40px; }
+  .sidebar__tab--icon { width: 40px; }
+  .sidebar__collapse { width: 40px; height: 40px; }
+  .sidebar-rail { width: 48px; }
+  .sidebar-rail__btn { width: 40px; height: 40px; }
+  .branch-pill { height: var(--control-h); }
+  .branch-menu .menu__item { min-height: 44px; }
+  .palette-trigger { height: var(--control-h); }
+  .zoom .btn--small { width: 36px; height: 36px; }
+  .pdf-pages__label { height: 36px; }
 }
 
 .palette {
@@ -1474,6 +1506,12 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .toast__body .dot { margin-top: calc((1lh - 7px) / 2); }
 .toast__text { min-width: 0; }
 .toast__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.toast--dismiss-only { flex-wrap: nowrap; }
+/* A phone's dialog is a sheet with its buttons at the bottom edge, where the
+   toasts are: while one is open they show at the top instead. */
+@media (max-width: 640px) {
+  html:has(.modal-backdrop:not(.is-leaving) > .modal) .toasts { top: calc(12px + env(safe-area-inset-top)); bottom: auto; }
+}
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* comment highlights in the editor */
@@ -1673,10 +1711,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
    clipped the last tabs on wider system fonts and at browser zoom, with no
    hint that more existed (#59). Each tab stretches to fill its row. */
 
-/* responsive: below 900px let the editor stack usably; hide the fixed PDF pane
-   split and let panes flow, and allow the sidebar to collapse */
+/* responsive: below 900px the toolbar wraps instead of pushing its buttons
+   off the edge; the dividers stay, so the panes can still be resized */
 @media (max-width: 900px) {
-  .editor-shell .resizer { display: none; }
   .toolbar { flex-wrap: wrap; height: auto; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .toolbar__name { max-width: 40vw; }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, ReactNode, type MouseEvent, type PointerEvent, type RefObject } from 'react';
 import { useExitGhost } from '../exitGhost';
 
 interface Props {
@@ -25,6 +25,25 @@ interface Props {
  *  so a confirmation opened from inside a dialog does not close both. */
 const openStack: symbol[] = [];
 
+/**
+ * A dialog backdrop's handlers: `onClose` runs only for a press that starts
+ * and ends on the backdrop itself. A text selection dragged out of the panel
+ * and released over the backdrop ends in a click on the backdrop too, and
+ * must not close the dialog with what was typed in it.
+ */
+export function useBackdropDismiss(onClose: () => void) {
+  const down = useRef(false);
+  return {
+    onPointerDown: (e: PointerEvent<HTMLElement>) => { down.current = e.target === e.currentTarget; },
+    onPointerUp: (e: PointerEvent<HTMLElement>) => { if (e.target !== e.currentTarget) down.current = false; },
+    onClick: (e: MouseEvent<HTMLElement>) => {
+      const outside = down.current && e.target === e.currentTarget;
+      down.current = false;
+      if (outside) onClose();
+    },
+  };
+}
+
 export default function Modal({ onClose, children, label, wide, width, testId, className, initialFocus = 'first' }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const leave = useExitGhost();
@@ -36,6 +55,7 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
   // update) and yank focus back to the first control mid-typing.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const backdrop = useBackdropDismiss(() => closeRef.current());
 
   useEffect(() => {
     const id = self.current;
@@ -74,7 +94,7 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
   }, []);
 
   return (
-    <div ref={leave} className="modal-backdrop" onClick={onClose}>
+    <div ref={leave} className="modal-backdrop" {...backdrop}>
       <div
         ref={panelRef}
         className={`modal${wide ? ' modal--wide' : ''}${className ? ` ${className}` : ''}`}

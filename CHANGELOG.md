@@ -43,6 +43,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The project list reloads when you come back to its tab after half a
   minute or more, so new invitations, shared projects and edits show up
   without reloading the page.
+- On a phone, a project opens on its file with the file list folded away.
+  Files in the toolbar brings it back. A project with no file to show still
+  opens on the file list.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -245,6 +248,25 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The New project tile at the end of a short project list says "Blank or
   from a template", which is what it opens.
 - Moving a project to the trash says until when it can be restored.
+- Between 641 and 900 px wide, such as a tablet held upright or a laptop
+  window at half the screen, the dividers beside the sidebar and the PDF are
+  there again, so the editor can be given more room.
+- A dialog stays open when a text selection started inside it is released
+  over the page around it, so what was typed in it and a token shown only
+  once are kept. A click on the page around a dialog still closes it.
+- On a phone, a file opened from the file list, the Review tab or the
+  command palette is shown with the file list folded away, and a tap on the
+  strip of editor beside the file list folds it. The file list ends at the
+  bottom of the screen instead of running past it.
+- On a touch screen, file list rows, the sidebar tabs, the branch pill, the
+  search field and the PDF's zoom and page buttons are big enough to tap.
+- On a phone, the branch menu fits the screen, so Merge, Delete, Pull, Push
+  and the Autopush switch are in reach.
+- Error notifications have a × to close them. On a phone they show at the
+  top of the screen while a dialog is open, instead of over its buttons.
+- The More tab's menu works from the keyboard: the arrow keys move through
+  it and Escape goes back to the tab. Escape in the branch menu puts focus
+  back on the branch pill instead of the top of the page.
 
 ## [1.8.0] — 2026-11-04
 

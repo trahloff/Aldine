@@ -4,6 +4,7 @@ import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { rankCommands } from '../util/paletteRank';
 import { lastInputWasKeyboard } from '../util/modality';
 import { IconSearch } from './Icons';
+import { useBackdropDismiss } from './Modal';
 
 export interface Command {
   id: string;
@@ -68,6 +69,7 @@ export default function CommandPalette({ open, commands, onClose, placeholder = 
   const listRef = useRef<HTMLDivElement>(null);
   const returnTo = useRef<HTMLElement | null>(null);
   const leave = useExitGhost();
+  const backdrop = useBackdropDismiss(onClose);
   const listId = useId();
   const optionId = (i: number) => `${listId}-option-${i}`;
 
@@ -122,7 +124,7 @@ export default function CommandPalette({ open, commands, onClose, placeholder = 
     <div
       ref={instant ? undefined : leave}
       className={`modal-backdrop${instant ? ' modal-backdrop--instant' : ''}`}
-      onClick={onClose}
+      {...backdrop}
       data-testid="command-palette"
     >
       <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(e) => e.stopPropagation()}>

@@ -49,7 +49,7 @@ import { appearanceCommands } from '../components/Appearance';
 import { useDocumentTitle } from '../util/documentTitle';
 import { matchesShortcut, useShortcutLabel } from '../util/shortcuts';
 import { shortcut } from '../platform';
-import { usePopover } from '../util/usePopover';
+import { MenuButton } from '../components/Menu';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
@@ -210,8 +210,6 @@ export default function Editor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  // more than one plugin panel folds them all into a "More" tab
-  const morePanels = usePopover();
   const [settingsOpen, setSettingsOpen] = useState<boolean | 'shortcuts'>(false);
   const keys = { typeset: useShortcutLabel('typeset'), comment: useShortcutLabel('comment'), jump: useShortcutLabel('jump'), search: useShortcutLabel('search') };
   const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
@@ -226,15 +224,20 @@ export default function Editor() {
   // revert, an agent session ending) so an open History panel refetches.
   const [historyVersion, setHistoryVersion] = useState(0);
   const bumpHistory = useCallback(() => setHistoryVersion((v) => v + 1), []);
-  // Phones show the sidebar as an overlay; a deep link to a line collapses
-  // it so the flagged line is on screen, and the toolbar button restores it.
+  // Phones show the sidebar as an overlay over the code: it starts folded
+  // unless there is no file to show, opening a file or a deep link to a line
+  // folds it, and the toolbar button restores it.
   // Wider screens collapse it to a rail by choice, remembered per browser.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
-    try { return !window.matchMedia('(max-width: 640px)').matches && safeStorage.get(SIDEBAR_HIDDEN) === '1'; } catch { return false; }
+    try { return window.matchMedia('(max-width: 640px)').matches || safeStorage.get(SIDEBAR_HIDDEN) === '1'; } catch { return false; }
   });
   const setSidebar = useCallback((hidden: boolean) => {
     setSidebarHidden(hidden);
     try { if (!window.matchMedia('(max-width: 640px)').matches) safeStorage.set(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* no matchMedia: this visit only */ }
+  }, []);
+  const openFile = useCallback((path: string) => {
+    setActiveFile(path);
+    if (window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
   }, []);
   const [spellcheck, setSpellcheck] = useState(() => safeStorage.get('aldine.spellcheck') === '1');
   const [vim, setVim] = useState(() => safeStorage.get(VIM) === '1');
@@ -435,6 +438,7 @@ export default function Editor() {
       const first = (last && f.find((e) => e.type === 'file' && e.path === last)) || f.find((e) => e.path === p.rootFile) || f.find((e) => e.type === 'file' && e.path.endsWith('.tex')) || f.find((e) => isUserFile(e) && !e.binary);
       setActiveFile((cur) => (cur && f.some((e) => e.path === cur) ? cur : first?.path || null));
       setOpenFor(`${id}::${branch}`);
+      if (!first && window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
       applyDeepLink(p, f);
       setFilesLoaded(true);
       // One-time nudge per project: work on an unlinked project exists only on
@@ -976,11 +980,11 @@ export default function Editor() {
   }, [composing, id, branch, activeFile, identity, loadComments, bumpComments, toast]);
 
   const revealComment = useCallback((c: Comment) => {
-    if (c.file !== activeFile) setActiveFile(c.file);
+    openFile(c.file);
     // The quote finds the text after edits moved it; selectRange waits for a
     // freshly opened file's doc to sync. The delay lets codeRef reach the new pane.
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
-  }, [activeFile]);
+  }, [openFile]);
 
   // ---- project search ----
   /** The Search tab, with its query (or replace) field focused and selected;
@@ -1327,7 +1331,7 @@ export default function Editor() {
       cmds.push({ id: `snippet-${s.id}`, group: 'Insert', title: s.title, run: () => insertAtCursor(s.text) });
     }
     for (const f of files.filter(isUserFile)) {
-      cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => setActiveFile(f.path) });
+      cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => openFile(f.path) });
     }
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
@@ -1460,6 +1464,7 @@ export default function Editor() {
       )}
 
       <div className={`workspace${resizing ? ' workspace--resizing' : ''}`}>
+        {!sidebarHidden && <div className="sidebar-scrim" onClick={() => setSidebarHidden(true)} aria-hidden="true" data-testid="sidebar-scrim" />}
         {sidebarHidden && (
           <div className="sidebar-rail">
             <button className="btn btn--ghost sidebar-rail__btn" onClick={() => setSidebar(false)} title="Show the sidebar" aria-label="Show the sidebar" data-testid="sidebar-expand"><IconSidebar /></button>
@@ -1496,27 +1501,19 @@ export default function Editor() {
               const more = [{ id: 'history', title: 'History' }, ...pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id))];
               const shown = more.find((p) => p.id === tab);
               return (
-                <div ref={morePanels.ref} className="sidebar__more">
-                  <button
+                <div className="sidebar__more">
+                  <MenuButton
                     className={`sidebar__tab ${shown ? 'sidebar__tab--active' : ''}`}
-                    onClick={() => morePanels.setOpen(!morePanels.open)}
                     role="tab"
-                    aria-selected={!!shown}
-                    aria-haspopup="menu"
-                    aria-expanded={morePanels.open}
-                    data-testid="tab-more"
+                    selected={!!shown}
+                    label="More panels"
+                    placement="bottom-end"
+                    testId="tab-more"
+                    menuTestId="tab-more-menu"
+                    items={more.map((p) => ({ id: p.id, label: p.title, checked: tab === p.id, role: 'radio' as const, testId: `tab-${p.id}`, onSelect: () => setTab(p.id) }))}
                   >
                     <span className="sidebar__more-label">{shown ? shown.title : 'More'}</span><span className="sidebar__chev" aria-hidden="true"><IconChevronRight /></span>
-                  </button>
-                  {morePanels.open && (
-                    <div className="menu sidebar__menu" role="menu" data-testid="tab-more-menu">
-                      {more.map((p) => (
-                        <button key={p.id} className="menu__item" role="menuitem" onClick={() => { morePanels.setOpen(false); setTab(p.id); }} data-testid={`tab-${p.id}`}>
-                          <span className="branch-menu__check">{tab === p.id ? '✓' : ''}</span>{p.title}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  </MenuButton>
                 </div>
               );
             })()}
@@ -1530,7 +1527,7 @@ export default function Editor() {
                 rootFile={project.rootFile}
                 projectId={id}
                 branch={branch}
-                onOpen={setActiveFile}
+                onOpen={openFile}
                 newFileRequest={newFileRequest}
                 newFileKind={newEntryKind}
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}

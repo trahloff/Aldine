@@ -82,7 +82,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`toast${t.leaving ? ' toast--out' : ''}`}
+            className={`toast${!t.action && t.kind === 'error' ? ' toast--dismiss-only' : ''}${t.leaving ? ' toast--out' : ''}`}
             onPointerEnter={() => hold(t.id)}
             onPointerLeave={() => { if (t.ms && !t.leaving) arm(t.id, t.ms); }}
             onFocus={() => hold(t.id)}
@@ -92,26 +92,28 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               {t.kind === 'error' ? <span className="dot dot--error" /> : t.kind === 'ok' ? <span className="dot dot--ok" /> : null}
               <span className="toast__text">{t.text}</span>
             </span>
-            {t.action && (
+            {(t.action || t.kind === 'error') && (
               <span className="toast__actions" data-testid="toast-actions">
-                <button
-                  className="btn btn--small"
-                  data-testid={t.action.testId}
-                  onClick={() => {
-                    dismiss(t.id);
-                    t.action!.onClick();
-                  }}
-                >
-                  {t.action.label}
-                </button>
-                {t.action.sticky && (
+                {t.action && (
+                  <button
+                    className="btn btn--small"
+                    data-testid={t.action.testId}
+                    onClick={() => {
+                      dismiss(t.id);
+                      t.action!.onClick();
+                    }}
+                  >
+                    {t.action.label}
+                  </button>
+                )}
+                {(t.action?.sticky || t.kind === 'error') && (
                   <button
                     className="btn btn--ghost btn--small"
                     aria-label="Dismiss"
                     data-testid="toast-dismiss"
                     onClick={() => {
                       dismiss(t.id);
-                      t.action!.onDismiss?.();
+                      t.action?.onDismiss?.();
                     }}
                   >×</button>
                 )}
