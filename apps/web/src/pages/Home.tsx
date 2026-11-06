@@ -37,7 +37,7 @@ import { useMediaQuery, prefersReducedMotion } from '../util/useMediaQuery';
 import { useFlip } from '../util/useFlip';
 import { isMac } from '../platform';
 import {
-  isSharedWithMe, matchSentence, matchesQuery, parseShow, parseSort, pdfBranch, pdfOutputPath, projectHref, sectionsOf, SORT_KEY, SORTS,
+  HOME_RETURN_KEY, homeHref, isSharedWithMe, trashLosses, matchSentence, matchesQuery, parseShow, parseSort, pdfBranch, pdfOutputPath, projectHref, sectionsOf, SORT_KEY, SORTS,
   sortProjects, type ShelfSection, type Show, type SortKey,
 } from '../util/homeList';
 
@@ -90,7 +90,7 @@ function forCache(p: ProjectSummary): ProjectSummary {
     ...p,
     share: p.share ? { mode: p.share.mode, collaborators: p.share.collaborators.map(() => '') } : p.share,
     zotero: null,
-    remote: p.remote ? ({ provider: p.remote.provider, fullName: '' } as ProjectSummary['remote']) : p.remote,
+    remote: p.remote ? ({ provider: p.remote.provider, fullName: '', ...(p.remote.createdByAldine ? { createdByAldine: true } : {}) } as ProjectSummary['remote']) : p.remote,
   };
 }
 /** A row from that cache, before the fetch answered: its sharing details are not known. */
@@ -138,18 +138,28 @@ export default function Home() {
   const myId = user?.id ?? null;
   const compact = useMediaQuery(PHONE);
   const now = useMinuteTick();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const show: Show = parseShow(params.get('show'), authEnabled);
+  // In the address, so Back and the editor's back button return to the same search.
+  const query = params.get('q') ?? '';
+  const setQuery = useCallback((q: string) => {
+    setParams((cur) => {
+      const next = new URLSearchParams(cur);
+      if (q) next.set('q', q); else next.delete('q');
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+  useEffect(() => { safeSession.set(HOME_RETURN_KEY, homeHref(show, query)); }, [show, query]);
   useDocumentTitle('Projects');
 
   const cacheKey = `aldine.home.list:${myId ?? 'local'}`;
   const [projects, setProjects] = useState<ProjectSummary[] | null>(() => safeSession.getJSON<ProjectSummary[] | null>(cacheKey, null, (v): v is ProjectSummary[] => Array.isArray(v)));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [trash, setTrash] = useState<TrashedProject[] | null>(null);
+  const [archived, setArchived] = useState<ProjectSummary[] | null>(null);
   const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
   const [logins, setLogins] = useState<Partial<Record<RemoteProviderId, string>>>({});
   const [sort, setSortState] = useState<SortKey>(() => parseSort(safeStorage.get(SORT_KEY)));
-  const [query, setQuery] = useState('');
   const [skeleton, setSkeleton] = useState(false);
   const [starters, setStarters] = useState<TemplateInfo[] | null>(null);
   const [imports, setImports] = useState<ImportJob[]>([]);
@@ -210,8 +220,10 @@ export default function Home() {
   const setSort = (s: SortKey) => { setSortState(s); safeStorage.set(SORT_KEY, s); };
 
   const loadTrash = useCallback(() => api.listTrash().then(setTrash).catch(() => setTrash((t) => t ?? [])), []);
+  const loadArchived = useCallback(() => api.listArchived().then(setArchived).catch(() => setArchived((a) => a ?? [])), []);
   const load = useCallback((): Promise<void> => {
     loadTrash();
+    loadArchived();
     loadedAt.current = Date.now();
     const seq = ++loads.current;
     const at = edits.current;
@@ -230,7 +242,7 @@ export default function Home() {
         if (authEnabled && err instanceof ApiError && err.status === 401) { setUser(null); return; }
         setLoadError(failureReason(err));
       });
-  }, [cacheKey, loadTrash, authEnabled]);
+  }, [cacheKey, loadTrash, loadArchived, authEnabled]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (projects) safeSession.setJSON(cacheKey, projects.map(forCache)); }, [projects, cacheKey]);
   /** Every local change to the list goes through here. */
@@ -318,10 +330,10 @@ export default function Home() {
   // ---------- what is shown ----------
   const sharedCount = useMemo(() => (projects ?? []).filter(isSharedWithMe).length, [projects]);
   const visible = useMemo(() => {
-    const base = (projects ?? []).filter((p) => (show === 'shared' ? isSharedWithMe(p) : true));
+    const base = show === 'archived' ? (archived ?? []) : (projects ?? []).filter((p) => (show === 'shared' ? isSharedWithMe(p) : true));
     const q = query.trim();
     return sortProjects(q ? base.filter((p) => matchesQuery(p, q)) : base, sort);
-  }, [projects, show, query, sort]);
+  }, [projects, archived, show, query, sort]);
   const trashVisible = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
     return [...(trash ?? [])]
@@ -357,7 +369,7 @@ export default function Home() {
   });
 
   // ---------- actions ----------
-  const byId = (id: string) => projects?.find((p) => p.id === id) ?? null;
+  const byId = (id: string) => (show === 'archived' ? archived : projects)?.find((p) => p.id === id) ?? null;
 
   /** Where focus goes when the item `id` leaves the list: the next, else the previous, else the title. */
   const focusAfter = (id: string): string | 'title' => {
@@ -380,6 +392,7 @@ export default function Home() {
     flip();
     if (hadFocus) pendingFocus.current = next;
     change((cur) => cur?.filter((p) => p.id !== id) ?? cur);
+    setArchived((cur) => cur?.filter((p) => p.id !== id) ?? cur);
     setTrash((cur) => (show === 'trash' ? cur?.filter((t) => t.id !== id) ?? cur : cur));
     setLeaving((s) => { const n = new Set(s); n.delete(id); return n; });
     return true;
@@ -426,22 +439,67 @@ export default function Home() {
   };
 
   const moveToTrash = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
-    // No question first: the trash keeps the project, and the notification
-    // carries the way back.
+    // A private project goes without a question: the trash keeps it, and the
+    // notification carries the way back. Trashing locks out everyone it is
+    // shared with and deletes a repository Aldine created, so that is asked.
+    const losses = trashLosses(p);
+    if (losses.length && !(await dialogs.confirm({ title: `Move “${p.name}” to the trash?`, body: losses.join(' '), confirmLabel: 'Move to Trash', danger: true }))) return;
     const trashed = api.deleteProject(p.id);
-    let purgeAt: string | undefined;
+    let answer: Awaited<typeof trashed>;
     try {
       await exit(p.id, trashed, hadFocus);
-      ({ purgeAt } = await trashed);
+      answer = await trashed;
     } catch (err: any) {
       toast(`Could not move ${p.name} to the trash: ${err.message}`, 'error');
       return;
     }
+    const { purgeAt, remoteError, remoteScheduledFor } = answer;
+    if (remoteError) {
+      const repo = p.remote?.fullName ? `the GitLab repository ${p.remote.fullName}` : 'its GitLab repository';
+      toast(remoteScheduledFor
+        ? `GitLab keeps ${repo} until ${shortDate(remoteScheduledFor)}: deleting it now failed (${remoteError})`
+        : `Could not delete ${repo}: ${remoteError}`, 'error');
+    }
+    // Restored from the Archived list, it goes back there: a reload puts it where it belongs.
+    const original = show === 'archived' ? undefined : p;
     const key = `undo-trash-${p.id}`;
-    const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, p); };
-    toast(purgeAt ? `Moved ${p.name} to the trash · restorable until ${shortDate(purgeAt)}` : `Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => restoreFromTrash(p.id, p.name, p) });
+    const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, original); };
+    toast(purgeAt ? `Moved ${p.name} to the trash · restorable until ${shortDate(purgeAt)}` : `Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => restoreFromTrash(p.id, p.name, original) });
     armUndo(key, run);
     loadTrash();
+  });
+
+  /** Off the list for its owner only; everyone it is shared with keeps it. */
+  const archive = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
+    try {
+      await exit(p.id, api.removeFromList(p.id), hadFocus);
+    } catch (err: any) {
+      toast(`Could not archive ${p.name}: ${err.message}`, 'error');
+      return;
+    }
+    setArchived((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : cur));
+    const key = `undo-archive-${p.id}`;
+    const back = async () => {
+      disarm(key);
+      try {
+        await api.restoreListing(p.id, p.opened);
+        setArchived((cur) => cur?.filter((x) => x.id !== p.id) ?? cur);
+        reinsert(p);
+      } catch (err: any) { toast(err.message, 'error'); }
+    };
+    toast(`Archived ${p.name}`, 'info', { label: 'Undo', testId: 'undo-archive', key, onExpire: expireUndo(key), onClick: back });
+    armUndo(key, () => { dismissToast(key); back(); });
+  });
+
+  const unarchive = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
+    try {
+      await exit(p.id, api.restoreListing(p.id, p.opened), hadFocus);
+    } catch (err: any) {
+      toast(`Could not unarchive ${p.name}: ${err.message}`, 'error');
+      return;
+    }
+    change((cur) => (cur ? [p, ...cur.filter((x) => x.id !== p.id)] : cur));
+    toast(`Unarchived ${p.name}: it is back in All projects`, 'ok');
   });
 
   const removeFromList = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
@@ -544,6 +602,16 @@ export default function Home() {
       { id: 'pdf', label: 'Download PDF', disabled: !p.thumb && p.compile?.status !== 'ok', onSelect: () => downloadPdf(p), testId: 'menu-download-pdf' },
       { id: 'zip', label: 'Download source (.zip)', onSelect: () => download(api.archiveUrl(p.id, p.opened?.branch ?? 'main')), testId: 'menu-download-zip' },
     ];
+    if (show === 'archived') {
+      return [
+        ...open,
+        { kind: 'separator' },
+        { id: 'unarchive', label: 'Unarchive', onSelect: () => unarchive(p), testId: 'menu-unarchive' },
+        { kind: 'separator' },
+        ...downloads,
+        ...(canManage(p) ? [{ kind: 'separator' } as MenuEntry, { id: 'trash', label: 'Move to Trash', shortcut: trashKeys, danger: true, onSelect: () => moveToTrash(p), testId: 'menu-trash' } as MenuEntry] : []),
+      ];
+    }
     const claimItem: MenuEntry[] = authEnabled && !p.ownerId
       ? [{ kind: 'separator' }, { id: 'claim', label: 'Claim project…', onSelect: () => claim(p), testId: `claim-${p.id}` }]
       : [];
@@ -569,6 +637,7 @@ export default function Home() {
       ...downloads,
       ...claimItem,
       { kind: 'separator' },
+      { id: 'archive', label: 'Archive', onSelect: () => archive(p), testId: 'menu-archive' },
       { id: 'trash', label: 'Move to Trash', shortcut: trashKeys, danger: true, onSelect: () => moveToTrash(p), testId: 'menu-trash' },
     ];
   };
@@ -756,12 +825,13 @@ export default function Home() {
     ...remotes.map((r) => ({ id: `new-from-${r.id}`, group: 'New', title: `Clone from ${r.label}…`, keywords: 'import git repository', run: () => setImportFrom(r.id) })),
     ...appearanceCommands(appearance),
     ...(authEnabled ? [{ id: 'shared', group: 'More', title: 'Show projects shared with me', run: () => navigate('/?show=shared') }] : []),
+    ...(archived?.length ? [{ id: 'archived', group: 'More', title: `Show archived projects (${archived.length})`, run: () => navigate('/?show=archived') }] : []),
     { id: 'trash', group: 'More', title: trash?.length ? `Show the trash (${trash.length})` : 'Show the trash', run: () => navigate('/?show=trash') },
     ...(authEnabled && user ? [{ id: 'account', group: 'More', title: 'Account settings…', run: () => setShowAccount(true) }] : []),
     ...(admin && authEnabled ? [{ id: 'admin', group: 'More', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
     { id: 'about', group: 'More', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
     { id: 'connect-claude', group: 'More', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
-  ], [remotes, authEnabled, user, admin, trash, projects, navigate, appearance]);
+  ], [remotes, authEnabled, user, admin, trash, archived, projects, navigate, appearance]);
 
   const search = (
     <HomeSearch
@@ -789,11 +859,13 @@ export default function Home() {
   }), [ctx.bind]);
 
   // The counts arrive together: one answering before the other would push the segments sideways twice.
-  const counted = projects !== null && trash !== null;
+  const counted = projects !== null && trash !== null && archived !== null;
   const filters: { show: Show; label: string; count?: number; testId: string; to: string }[] = [
-    { show: 'all', label: 'All', testId: 'filter-all', to: '/' },
-    ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: (counted && sharedCount) || undefined, testId: 'filter-shared', to: '/?show=shared' }] : []),
-    { show: 'trash', label: 'Trash', count: (counted && trash?.length) || undefined, testId: 'open-trash', to: '/?show=trash' },
+    { show: 'all', label: 'All', testId: 'filter-all', to: homeHref('all', query) },
+    ...(authEnabled ? [{ show: 'shared' as Show, label: compact ? 'Shared' : 'Shared with me', count: (counted && sharedCount) || undefined, testId: 'filter-shared', to: homeHref('shared', query) }] : []),
+    // Appears once something is archived: until then it would only ever be empty.
+    ...(archived?.length || show === 'archived' ? [{ show: 'archived' as Show, label: 'Archived', count: (counted && archived?.length) || undefined, testId: 'filter-archived', to: homeHref('archived', query) }] : []),
+    { show: 'trash', label: 'Trash', count: (counted && trash?.length) || undefined, testId: 'open-trash', to: homeHref('trash', query) },
   ];
   const sortLabel = SORTS.find((s) => s.id === sort)!.label;
   const searching = !!query.trim();
@@ -853,9 +925,18 @@ export default function Home() {
         </section>
       );
     }
+    if (show === 'archived' && archived === null) return null;
     if (empty && !imports.length) return null;
     if (!visible.length && !imports.length) {
       if (searching) return <NoMatches query={query} onClear={() => setQuery('')} />;
+      if (show === 'archived') {
+        return (
+          <div className="shelf-empty" data-testid="archived-empty">
+            <h2 className="shelf-empty__title">No archived projects</h2>
+            <p className="shelf-empty__text">Archive a finished project from its menu to take it off your list. Everyone it is shared with keeps it.</p>
+          </div>
+        );
+      }
       return (
         <div className="shelf-empty" data-testid="shared-empty">
           <h2 className="shelf-empty__title">Nothing shared with you yet</h2>
@@ -869,7 +950,7 @@ export default function Home() {
       const stage = stages.sections[si];
       return (
       <section key={s.key} aria-labelledby={`sec-${s.key}`} className="shelf__section">
-        <h2 id={`sec-${s.key}`} className={s.label ? 'shelf__heading' : 'visually-hidden'}>{s.label ?? (show === 'shared' ? 'Shared with me' : 'All projects')}</h2>
+        <h2 id={`sec-${s.key}`} className={s.label ? 'shelf__heading' : 'visually-hidden'}>{s.label ?? (show === 'shared' ? 'Shared with me' : show === 'archived' ? 'Archived' : 'All projects')}</h2>
         <ul role="list" className="shelf__grid" data-testid={si === 0 ? 'project-grid' : undefined}>
           {lead.map((j, i) => (
             <ImportSheet key={j.key} testId={j.key} name={j.name} state={j.state} progress={j.progress} error={j.error} stage={stage[i]}

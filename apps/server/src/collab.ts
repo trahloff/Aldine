@@ -369,6 +369,8 @@ const authHook = AUTH_ENABLED ? {
     if (!user) throw new Error('Not authenticated');
     let meta;
     try { meta = await readMeta(parsed.projectId); } catch { throw new Error('project not found'); }
+    // The trash locks everyone out, as the HTTP guard does: trashProject drops the sockets, and this refuses their reconnect.
+    if (meta.deletedAt) throw new Error('project not found');
     if (!canAccess(meta, user)) throw new Error('Access denied');
     // Becomes connection.context: the only per-socket identity we keep, so
     // onlineUserIds can count people rather than sockets, and the project
@@ -413,6 +415,12 @@ export const protectedProjects = new Set(
   (process.env.ALDINE_PROTECTED_PROJECTS || '').split(',').map((s) => s.trim()).filter(Boolean),
 );
 
+/** The trash takes a project's documents away from everyone: trashProject
+ *  drops their sockets, and the hooks below refuse them until a restore. */
+function inTrash(projectId: string): Promise<boolean> {
+  return readMeta(projectId).then((m) => !!m.deletedAt, () => false);
+}
+
 export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // We handle upgrades ourselves from the Fastify HTTP server.
   quiet: true,
@@ -424,12 +432,16 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // websocket would bypass the HTTP-side write guard entirely.
   async onConnect({ documentName, connection }: { documentName: string; connection: { readOnly: boolean } }) {
     const parsed = parseDocName(documentName);
+    // With accounts the auth hook refuses a trashed project with a denial the
+    // client reports; refused here, the socket would just close.
+    if (parsed && !AUTH_ENABLED && await inTrash(parsed.projectId)) throw new Error('project not found');
     if (parsed && protectedProjects.has(parsed.projectId)) connection.readOnly = true;
   },
   async onLoadDocument({ documentName, document }) {
     const parsed = parseDocName(documentName);
     if (!parsed) throw new Error(`invalid document name: ${documentName}`);
     const { projectId, branch, filePath } = parsed;
+    if (await inTrash(projectId)) throw new Error('project not found');
     if (isSignalDoc(filePath)) return document; // ephemeral coordination channel, nothing to load
     if (!isProjectFile(filePath)) throw new Error(`invalid document name: ${documentName}`);
     // A client whose socket was closed by evictDoc reconnects at once; while

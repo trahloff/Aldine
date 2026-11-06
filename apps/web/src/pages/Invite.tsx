@@ -63,8 +63,8 @@ export default function Invite() {
   if (view.relation === 'unconfirmed') {
     return (
       <Card title="Confirm your email address first" testId="invite-unconfirmed">
-        <p className="consent__hint">{`${owner} invited ${view.to}. That is your address, but it isn’t confirmed yet. Open the confirmation link, then come back to this page or to your projects: the invitation waits there.`}</p>
-        <EmailConfirmBanner />
+        <p className="consent__hint" data-testid="invite-unconfirmed-text">{`${owner} invited ${view.to}. That is your address, but it isn’t confirmed yet. Open the link in the confirmation email: it brings you back here to accept. The invitation also waits on your projects page.`}</p>
+        <EmailConfirmBanner invite={view.id} />
         <BackLink />
       </Card>
     );
@@ -121,9 +121,10 @@ function SignInStep({ view, onAuthed }: { view: InvitationView; onAuthed: Parame
       registerHeading="Create an account to answer the invitation."
       notice={orcid
         ? `${owner} invited the ORCID iD ${view.to} to a project. Sign in with that ORCID iD to see it.`
-        : `${owner} invited ${view.to} to a project. Sign in or create an account with that address to see it.`}
+        : `${owner} invited ${view.to} to a project. Sign in or create an account with that address to see it. A new account with a password confirms the address first: a confirmation email follows, and its link brings you back here.`}
       initialEmail={orcid ? undefined : view.to}
       bothModes
+      invite={view.id}
     />
   );
 }

@@ -206,3 +206,76 @@ export function addBibLoad(projectId: string, branch: string, rootFile: string, 
   }
   return { added: describe(plan, rootFile, bibFile).fix!, state: { loaded: true, bibFile, rootFile } };
 }
+
+export type BibFormat = 'biblatex' | 'bibtex';
+
+const BIBLATEX_RESOURCE_RE = /\\(?:addbibresource|addglobalbib|addsectionbib)\b/;
+const BIBTEX_RE = /\\(?:bibliography|nobibliography|bibliographystyle)\s*\{/;
+
+/**
+ * Which fields the paper's bibliography reads. biblatex reads `date` and
+ * `journaltitle`; BibTeX styles (natbib's too) read only `year` and
+ * `journal`, so a biblatex export loses both there. biblatex wins when both
+ * show; a paper with neither gets biblatex, the export it always had.
+ */
+export function bibFormatOf(sources: TexSource[]): BibFormat {
+  const masked = sources.map((s) => maskComments(s.text));
+  const biblatex = masked.some((t) => BIBLATEX_RESOURCE_RE.test(t)
+    || [...t.matchAll(PACKAGE_RE)].some((m) => m[1].split(',').some((p) => p.trim() === 'biblatex')));
+  if (biblatex) return 'biblatex';
+  return masked.some((t) => BIBTEX_RE.test(t)) ? 'bibtex' : 'biblatex';
+}
+
+export function paperBibFormat(projectId: string, branch: string): BibFormat {
+  return bibFormatOf(texSources(projectId, branch));
+}
+
+/**
+ * The .bib files the paper loads, in the order its sources name them (root
+ * first): each name resolved from the root file's directory, or from the
+ * naming file's own where only that one exists. Names that leave the
+ * project are left out.
+ */
+export function loadedBibFiles(sources: TexSource[], rootFile: string, existing: Set<string>): string[] {
+  const rootDir = path.posix.dirname(rootFile || 'main.tex');
+  const out: string[] = [];
+  const ordered = [...sources].sort((a, b) => (a.path === rootFile ? -1 : b.path === rootFile ? 1 : a.path.localeCompare(b.path)));
+  for (const s of ordered) {
+    for (const m of maskComments(s.text).matchAll(RESOURCE_RE)) {
+      const bibtex = m[1] === 'bibliography' || m[1] === 'nobibliography';
+      for (const raw of m[2].split(',')) {
+        const name = raw.trim();
+        if (!name) continue;
+        const file = bibtex && !/\.bib$/i.test(name) ? `${name}.bib` : name;
+        const fromRoot = path.posix.normalize(path.posix.join(rootDir, file));
+        const fromSource = path.posix.normalize(path.posix.join(path.posix.dirname(s.path), file));
+        const pick = !existing.has(fromRoot) && existing.has(fromSource) ? fromSource : fromRoot;
+        if (pick.startsWith('../') || pick.startsWith('/') || out.includes(pick)) continue;
+        out.push(pick);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a reference added without a named file goes: the first .bib the
+ * paper loads that is not `avoid` (the Zotero file, rewritten at every
+ * sync), one that exists before one that does not. With none, references.bib
+ * beside the root file, which `loaded` then says the paper does not read.
+ * `others`: the rest of what the paper loads, where the same paper may sit
+ * under another key already.
+ */
+export function referenceTarget(projectId: string, branch: string, rootFile: string, avoid: string | null, fallback: string, usable: (p: string) => boolean): { bibFile: string; loaded: boolean; others: string[]; format: BibFormat } {
+  const sources = texSources(projectId, branch);
+  const existing = new Set(store.listFiles(projectId, branch).filter((f) => f.type === 'file').map((f) => f.path));
+  const loaded = loadedBibFiles(sources, rootFile, existing).filter(usable);
+  const candidates = loaded.filter((f) => f !== avoid && /\.bib$/i.test(f));
+  const bibFile = candidates.find((f) => existing.has(f)) ?? candidates[0] ?? fallback;
+  return {
+    bibFile,
+    loaded: loaded.includes(bibFile),
+    others: loaded.filter((f) => f !== bibFile && existing.has(f)),
+    format: bibFormatOf(sources),
+  };
+}

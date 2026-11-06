@@ -41,6 +41,39 @@ function GitHosts() {
   );
 }
 
+/** The Zotero key the account keeps for linking its projects, with a way to drop it. */
+function ZoteroKey() {
+  const [key, setKey] = useState<{ saved: boolean; username?: string | null } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const toast = useToast();
+  const load = () => api.zoteroKey().then((k) => { setKey(k); setFailed(false); }, () => setFailed(true));
+  useEffect(() => { load(); }, []);
+  const forget = async () => {
+    try {
+      await api.forgetZoteroKey();
+      toast('Aldine no longer keeps your Zotero key. Projects linked with it keep syncing until you unlink them.', 'ok');
+      load();
+    } catch (err: any) { toast(err.message, 'error'); }
+  };
+  return (
+    <div data-testid="account-zotero">
+      <div className="menu__label" style={{ margin: '18px 0 6px' }}>Zotero</div>
+      {failed && <LoadError text="Couldn’t load your Zotero key." onRetry={load} testId="account-zotero-error" />}
+      {!failed && key && !key.saved && (
+        <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }} data-testid="account-zotero-none">No Zotero key saved. Paste one in a project’s Zotero panel; Aldine keeps it here for your other projects.</p>
+      )}
+      {!failed && key?.saved && (
+        <div className="settings__row" data-testid="account-zotero-saved">
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Key saved{key.username ? <> for <strong>{key.username}</strong></> : null}
+          </span>
+          <button className="btn btn--small" onClick={forget} data-testid="account-zotero-forget">Forget key</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EXPIRY_CHOICES = [
   { value: '', label: 'Never expires' },
   { value: '7', label: 'Expires in 7 days' },
@@ -297,6 +330,71 @@ function AgentAccess() {
 
 const PROVIDER_NAME: Record<string, string> = { github: 'GitHub', google: 'Google', orcid: 'ORCID' };
 
+/** The name co-authors see on avatars, comments and commits; changed in place. */
+function NameRow({ user }: { user: AuthUser }) {
+  const { setUser } = useAuth();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(user.name);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    const name = value.trim();
+    if (!name) { setError('Enter a name'); return; }
+    if (name === user.name) { setEditing(false); return; }
+    setBusy(true);
+    try {
+      const r = await api.updateMe({ name });
+      setUser(r.user);
+      setEditing(false);
+      setError('');
+      toast(`Co-authors now see you as ${r.user.name}`, 'ok');
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setBusy(false);
+  };
+  if (!editing) {
+    return (
+      <div className="settings__row" data-testid="account-name-row">
+        <span className="settings__label">Name</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span data-testid="account-name" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</span>
+          <button type="button" className="link-button" onClick={() => { setValue(user.name); setError(''); setEditing(true); }} aria-label="Change your name" data-testid="account-name-edit">Change</button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={save} noValidate data-testid="account-name-form">
+      <div className="settings__row">
+        <label className="settings__label" htmlFor="account-name-input">Name</label>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <input
+            id="account-name-input"
+            className="input"
+            value={value}
+            maxLength={100}
+            autoComplete="name"
+            autoFocus
+            aria-describedby="account-name-hint"
+            aria-invalid={error ? true : undefined}
+            onChange={(e) => { setValue(e.target.value); setError(''); }}
+            data-testid="account-name-input"
+          />
+          <button type="button" className="btn btn--small" onClick={() => { setEditing(false); setError(''); }} data-testid="account-name-cancel">Cancel</button>
+          <button type="submit" className="btn btn--small btn--primary" disabled={busy} aria-busy={busy || undefined} data-testid="account-name-save">{busy ? 'Saving…' : 'Save'}</button>
+        </span>
+      </div>
+      {error
+        ? <p className="field__error" role="alert" data-testid="account-name-error">{error}</p>
+        : <p className="login__hint" id="account-name-hint">Co-authors see it on your avatar, your comments and your commits.</p>}
+    </form>
+  );
+}
+
 /** Account settings: identity, agent access, change password (password accounts only). */
 export default function AccountSettings({ user, onClose }: { user: AuthUser; onClose(): void }) {
   const [current, setCurrent] = useState('');
@@ -336,10 +434,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
         <h2 style={{ marginBottom: 2 }}>Account</h2>
         <p className="modal__sub" data-testid="account-email">{user.email ?? 'No email address on this account'}</p>
 
-        <div className="settings__row">
-          <span className="settings__label">Name</span>
-          <span>{user.name}</span>
-        </div>
+        <NameRow user={user} />
         {user.orcid && (
           <div className="settings__row">
             <span className="settings__label">ORCID iD</span>
@@ -357,6 +452,8 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
         <AgentAccess />
 
         <GitHosts />
+
+        <ZoteroKey />
 
         {isSso ? (
           <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', marginTop: 18 }}>

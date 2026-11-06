@@ -6,7 +6,7 @@
  */
 import { check, eq } from './assert.mjs';
 
-const { importPath, isHiddenPath, isHiddenName } = await import('../src/util.ts');
+const { importPath, isHiddenPath, isHiddenName, wrapperFolder } = await import('../src/util.ts');
 
 eq(importPath('main.tex'), 'main.tex', 'plain name');
 eq(importPath('paper/sections/a.tex'), 'paper/sections/a.tex', 'nested path');
@@ -28,6 +28,14 @@ check(importPath('./') === null, 'only dots rejected');
 check(importPath('a\0b.tex') === null, 'NUL rejected');
 
 console.log('importPath: all checks passed');
+
+eq(wrapperFolder(['thesis/main.tex', 'thesis/figs/a.png']), 'thesis', 'one folder holds everything: it is the wrapper');
+eq(wrapperFolder(['paper-main/main.tex']), 'paper-main', 'a single file in a folder');
+eq(wrapperFolder(['thesis/main.tex', 'README.md']), null, 'a file at the top level keeps the folder');
+eq(wrapperFolder(['a/main.tex', 'b/refs.bib']), null, 'two folders at the top level');
+eq(wrapperFolder(['main.tex']), null, 'a flat archive has no wrapper');
+eq(wrapperFolder([]), null, 'nothing to strip');
+console.log('wrapperFolder: all checks passed');
 
 check(isHiddenPath('.git/config'), '.git hidden');
 check(isHiddenPath('sub/.git/config'), 'nested .git hidden');

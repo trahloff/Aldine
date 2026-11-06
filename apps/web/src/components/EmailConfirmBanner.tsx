@@ -5,8 +5,9 @@ import { useToast } from './Toast';
 
 /** Home's notice for a password account whose address is not confirmed yet
  *  (projects shared with it by email stay hidden until it is), and the
- *  outcome of following a confirmation link. */
-export default function EmailConfirmBanner() {
+ *  outcome of following a confirmation link. `invite`: shown on that
+ *  invitation's page, where a new link then leads back. */
+export default function EmailConfirmBanner({ invite }: { invite?: string } = {}) {
   const { user, sendsEmail, emailNotice, clearEmailNotice, refresh } = useAuth();
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -24,7 +25,7 @@ export default function EmailConfirmBanner() {
   const resend = async () => {
     setBusy(true);
     try {
-      const r = await api.resendConfirmation();
+      const r = await api.resendConfirmation(invite);
       if (r.confirmed) { toast('Your email address is already confirmed', 'ok'); await refresh(); }
       else if (r.sent) toast(`A new confirmation link is on its way to ${user.email}`, 'ok');
       else toast('A new confirmation link is in the server log. Ask the administrator to send it to you; a link they already sent still works.', 'ok');

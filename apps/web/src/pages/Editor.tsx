@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, type AuthUser } from '../api';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, setLocalName, type AuthUser } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
@@ -24,7 +24,7 @@ import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
-import { PluginHost, PluginPanel, type PluginErrorsAction } from '../plugins/host';
+import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
 import { IconChevronLeft, IconChevronRight, IconDownload, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
@@ -55,7 +55,8 @@ import { MenuButton } from '../components/Menu';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
-import { safeStorage } from '../util/safeStorage';
+import { safeSession, safeStorage } from '../util/safeStorage';
+import { HOME_RETURN_KEY, homeReturn } from '../util/homeList';
 import { lastOpenFile, rememberOpenFile } from '../util/openFile';
 import SyncStatus from '../components/SyncStatus';
 import type { SyncState } from '../editor/syncStatus';
@@ -194,6 +195,7 @@ export default function Editor() {
   const [users, setUsers] = useState<PresenceUser[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [pluginActions, setPluginActions] = useState<PluginErrorsAction[]>([]);
+  const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
   const [auto, setAuto] = useState(() => safeStorage.get('aldine.autoTypeset') !== '0');
   // Auto-typeset runs one engine pass while you type; Typeset and Mod-s run the full cycle.
   const [draftTypeset, setDraftTypeset] = useState(() => safeStorage.get('aldine.draftTypeset') !== '0');
@@ -246,7 +248,8 @@ export default function Editor() {
   // Who collaborators and comment threads see: the account when there is one;
   // the browser's anonymous "Writer N" is only right without accounts (the
   // server applies the same rule to commits).
-  const identity = useMemo(() => (authEnabled && user ? accountIdentity(user) : localUser()), [authEnabled, user]);
+  const [localName, setLocalNameState] = useState(() => localUser().name);
+  const identity = useMemo(() => (authEnabled && user ? accountIdentity(user) : { ...localUser(), name: localName }), [authEnabled, user, localName]);
   // Bumped whenever the branch's history may have moved (files signal, a
   // revert, an agent session ending) so an open History panel refetches.
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -292,6 +295,8 @@ export default function Editor() {
   const paneKey = `${id}::${branch}::${activeFile}`;
   // Switching files or branches stays in the editor and is not asked about.
   const leaving = useLeaveGuard(() => !!(sync?.key === paneKey && sync.state.unsynced));
+  // The Zotero sync rewrites its .bib whole: a hand edit there would be lost.
+  const zoteroBib = !!activeFile && project?.zotero?.bibFile === activeFile;
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoad, setCommentsLoad] = useState<'loading' | 'ok' | 'error'>('loading');
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
@@ -373,7 +378,7 @@ export default function Editor() {
         if (open) setSessionEnded(true);
         else showInPlace('signed-out');
       } else {
-        toast(status === 403 ? 'You no longer have access to this project' : 'Project not found', 'error');
+        toast(status === 403 ? 'You no longer have access to this project' : err.code === 'trashed' ? err.message : 'Project not found', 'error');
         navigate('/');
       }
       return null;
@@ -389,7 +394,7 @@ export default function Editor() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) { setSessionEnded(true); return; }
       if (!(err instanceof ApiError) || (err.status !== 403 && err.status !== 404)) return;
-      toast(err.status === 403 ? `You no longer have access to “${project?.name ?? 'this project'}”` : 'Project not found', 'error');
+      toast(err.status === 403 ? `You no longer have access to “${project?.name ?? 'this project'}”` : err.code === 'trashed' ? err.message : 'Project not found', 'error');
       navigate('/');
     }
   }, [id, project?.name]);
@@ -965,6 +970,8 @@ export default function Editor() {
   };
 
   const insertAtCursor = useCallback((text: string) => codeRef.current?.insertAtCursor(text), []);
+  // A citation belongs in a TeX source: not in a .bib, a preview, or nothing.
+  const insertCitation = useCallback((key: string) => (activeFile && /\.(tex|ltx)$/i.test(activeFile) && codeRef.current?.insertCitation(key)) || false, [activeFile]);
 
   // ---- review comments ----
   const loadComments = useCallback(async () => {
@@ -1319,6 +1326,7 @@ export default function Editor() {
     getActiveFile: () => activeFile,
     getCompileResult: () => (compile.result ? { ok: compile.result.ok, errors: compile.result.errors || [], log: compile.result.log || '', explicit: compile.trigger === 'user' } : null),
     insertAtCursor,
+    insertCitation,
     refreshFiles: loadFiles,
     refreshProject: loadProject,
     compile: doCompile,
@@ -1328,7 +1336,7 @@ export default function Editor() {
       setTab(panelId);
       if (reveal && !window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
     },
-  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, loadFiles, loadProject, doCompile, toast]);
+  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, insertCitation, loadFiles, loadProject, doCompile, toast]);
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
@@ -1470,12 +1478,13 @@ export default function Editor() {
     for (const f of files.filter(isUserFile)) {
       cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => openFile(f.path) });
     }
+    for (const c of pluginCommands) cmds.push({ id: `plugin-${c.id}`, group: c.group || 'Plugins', title: c.title, keywords: c.keywords, run: () => c.run() });
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1540,9 +1549,9 @@ export default function Editor() {
 
   return (<>
     <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
-      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} onErrorsActions={setPluginActions} files={files} />
+      <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} onErrorsActions={setPluginActions} onCommands={setPluginCommands} files={files} />
       <header className="toolbar" aria-label="Project toolbar">
-        <button className="btn btn--ghost" onClick={() => leaving(() => navigate('/'))} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
+        <button className="btn btn--ghost" onClick={() => leaving(() => navigate(homeReturn(safeSession.get(HOME_RETURN_KEY))))} title="Back to projects" aria-label="Back to projects" data-testid="back-to-projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
           contentEditable={(canSync && !project.readOnly) || undefined}
@@ -1812,6 +1821,12 @@ export default function Editor() {
                 {paneMode === 'visual' && <FormatToolbar target={codeRef} />}
                 {sync?.key === paneKey && <SyncStatus state={sync.state} readOnly={!!project.readOnly} />}
               </div>
+              {zoteroBib && (
+                <div className="remote-pending" role="status" data-testid="zotero-bib-banner">
+                  <span className="remote-pending__text">Synced from Zotero, so it opens read-only: each sync replaces this file. Change entries in Zotero, then sync.</span>
+                  <button className="btn btn--small" onClick={() => pluginCtx.showPanel('plugin:zotero')} data-testid="zotero-bib-banner-open">Open Zotero</button>
+                </div>
+              )}
               <CodePane
                 key={`${id}::${branch}::${activeFile}`}
                 ref={codeRef}
@@ -1828,7 +1843,7 @@ export default function Editor() {
                 onAccessDenied={onAccessDenied}
                 mode={paneMode}
                 identity={identity}
-                readOnly={!!project.readOnly}
+                readOnly={!!project.readOnly || zoteroBib}
                 onSync={(state) => setSync({ key: paneKey, state })}
               />
             </>
@@ -2174,6 +2189,8 @@ export default function Editor() {
           onToggleVim={toggleVim}
           focus={settingsOpen === 'shortcuts' ? 'shortcuts' : undefined}
           readOnly={!!project.readOnly}
+          yourName={authEnabled ? undefined : localName}
+          onSetYourName={authEnabled ? undefined : (n) => setLocalNameState(setLocalName(n))}
         />
       )}
 

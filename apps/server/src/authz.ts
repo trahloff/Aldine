@@ -36,12 +36,12 @@ export type ListAccess = 'owner' | 'member' | 'link';
 /**
  * Why the project is on this user's project list, or null when it is not.
  * `open` is the user's own row (ProjectOpen): a link visitor's project is
- * listed once they opened it, for as long as the link still lets them in, and
- * a member's unless they removed it. The owner's always is.
+ * listed once they opened it, for as long as the link still lets them in, a
+ * member's unless they removed it, and the owner's unless they archived it.
  */
 export function listingAccess(meta: ProjectMeta, user: PublicUser | null, open: { hidden: boolean } | null): ListAccess | null {
-  if (isOwner(meta, user)) return 'owner';
   if (open?.hidden) return null;
+  if (isOwner(meta, user)) return 'owner';
   if (isMember(meta, user)) return 'member';
   return open && canAccess(meta, user) ? 'link' : null;
 }

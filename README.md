@@ -534,7 +534,8 @@ plugins/hello/
 ```
 
 The `aldine` API exposes `ui.registerSidebarPanel`, `ui.showPanel` (select
-one of the plugin's own panels), `editor.insertAtCursor`, `project` context,
+one of the plugin's own panels), `ui.registerCommand` (a palette command),
+`editor.insertAtCursor`, `editor.insertCitation`, `project` context,
 `compile()`, `toast()`, and `fetch()`. See
 `plugins/zotero` for a complete example.
 

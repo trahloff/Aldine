@@ -201,11 +201,27 @@ try {
   eq(d2.access, 'member', 'opening it again brings it back');
   check(d2.opened.at >= danaOpen.at, 'with the new open');
 
-  // ---- the owner cannot remove their own project ----
-  res = await send('DELETE', `/api/projects/${p1.id}/listing`, 'ada');
-  eq(res.statusCode, 400, 'the owner is refused');
-  check(/trash/.test(res.json().error), `and told to use the trash: ${res.json().error}`);
-  check(!!(await row('ada', p1.id)), 'the project stays listed');
+  // ---- a member's removed row waits on their Archived list ----
+  await send('DELETE', `/api/projects/${p2.id}/listing`, 'dana');
+  let shelved = (await send('GET', '/api/projects?archived=1', 'dana')).json();
+  eq(shelved.map((r) => [r.id, r.access]), [[p2.id, 'member']], 'Dana finds what she removed under Archived');
+  eq((await send('PUT', `/api/projects/${p2.id}/listing`, 'dana', { opened: null })).statusCode, 200, 'and puts it back');
+  eq((await send('GET', '/api/projects?archived=1', 'dana')).json(), [], 'her Archived list is empty again');
+
+  // ---- the owner archives their own project: off their list only ----
+  const adaOpened = (await row('ada', p2.id)).opened;
+  res = await send('DELETE', `/api/projects/${p2.id}/listing`, 'ada');
+  eq(res.statusCode, 200, 'the owner archives it');
+  check(!(await row('ada', p2.id)), 'it is off her list');
+  check(!!(await row('dana', p2.id)), 'a member still has it on hers');
+  shelved = (await send('GET', '/api/projects?archived=1', 'ada')).json();
+  eq(shelved.map((r) => [r.id, r.access]), [[p2.id, 'owner']], 'it is on her Archived list');
+  eq(shelved[0].opened, adaOpened, 'with her last open');
+  eq((await send('POST', `/api/projects/${p2.id}/opened`, 'ada', { branch: 'main' })).statusCode, 200, 'she opens it');
+  check(!(await row('ada', p2.id)), 'opening an archived project keeps it archived');
+  eq((await send('PUT', `/api/projects/${p2.id}/listing`, 'ada', { opened: null })).statusCode, 200, 'she unarchives it');
+  check(!!(await row('ada', p2.id)), 'back on her list');
+  eq((await send('GET', '/api/projects?archived=1', 'ada')).json(), [], 'and off the Archived list');
 
   // ---- Duplicate ----
   const mainDir = store.branchDir(p2.id, 'main');

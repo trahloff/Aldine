@@ -114,7 +114,7 @@ eq([onMain.json().synced, onMain.json().itemCount], [true, 1], 'which had no fil
 check(has('main'), 'zotero.bib is now on main');
 eq(exports, ['/users/7/collections/COLL1/items/top'], 'from one export of the collection');
 const again = await call(member, 'POST', '/zotero/sync', { branch: 'main', force: false });
-eq(again.json(), { synced: false, unchanged: true }, 'with the file there, an unchanged library is left alone');
+eq(again.json(), { synced: false, unchanged: true, format: 'biblatex' }, 'with the file there, an unchanged library is left alone');
 eq((await call(member, 'POST', '/zotero/sync', { branch: 'no-such-branch' })).statusCode, 400, 'a branch that does not exist is refused');
 revoked = true;
 const lost = await call(member, 'POST', '/zotero/sync', { branch: 'main', force: true });

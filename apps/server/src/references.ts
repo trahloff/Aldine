@@ -381,8 +381,10 @@ export interface AddedReference { key: string; bibFile: string; duplicate: boole
  * checkpointed and committed at once like every other agent mutation, so
  * the attributed commit carries only the new entry. `beforeWrite` runs
  * right before the file is written — and not at all when nothing is.
+ * `alsoIn`: other .bib files the paper reads; a paper already in one of them
+ * is reported there (duplicate, that file) and nothing is written.
  */
-export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void): Promise<AddedReference | null> {
+export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void, alsoIn: string[] = []): Promise<AddedReference | null> {
   const entry = await fetchBibEntry(query.trim());
   if (!entry) return null;
   await ensureWorktree(projectId, branch);
@@ -400,6 +402,12 @@ export async function addReference(projectId: string, branch: string, query: str
     const key = [...bibKeys(entry)][0] ?? '';
     const present = key && bibKeys(existing ?? '').has(key) ? key : entryWithSameIdentifier(existing ?? '', entry);
     if (present) return { key: present, bibFile, duplicate: true, created: false, before, after: existing ?? '' };
+    for (const other of alsoIn) {
+      let text: string;
+      try { text = store.readFile(projectId, branch, other).toString('utf8'); } catch { continue; }
+      const found = key && bibKeys(text).has(key) ? key : entryWithSameIdentifier(text, entry);
+      if (found) return { key: found, bibFile: other, duplicate: true, created: false, before, after: existing ?? '' };
+    }
     const after = (existing ?? '').trimEnd() + '\n\n' + entry.trim() + '\n';
     beforeWrite?.();
     store.writeFile(projectId, branch, bibFile, after);
@@ -411,15 +419,15 @@ export async function addReference(projectId: string, branch: string, query: str
     // The refresh resets every open doc that differs from its file: what was
     // typed but not yet saved, the .bib included, must be on disk first.
     flushBranchDocs(projectId, branch);
-    const { key, duplicate, created } = append();
-    return { key, bibFile, duplicate, created };
+    const { key, bibFile: file, duplicate, created } = append();
+    return { key, bibFile: file, duplicate, created };
   }
   return withRepoLock(projectId, async () => {
     flushBranchDocs(projectId, branch);
     await checkpointPathsHeld(projectId, branch, [bibFile]);
     flushBranchDocs(projectId, branch);
-    const { key, duplicate, created, before, after } = append();
+    const { key, bibFile: file, duplicate, created, before, after } = append();
     if (!duplicate) await commitAgentWrite(projectId, branch, [{ path: bibFile, before, after }], `Add reference ${key || bibFile}`);
-    return { key, bibFile, duplicate, created };
+    return { key, bibFile: file, duplicate, created };
   });
 }

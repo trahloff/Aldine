@@ -441,17 +441,21 @@ export const api = {
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
   patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  /** `purgeAt`: when a project moved to the trash stops being restorable (not sent for a permanent delete). */
-  deleteProject: (id: string, permanent = false) => req<{ ok: boolean; purgeAt?: string }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
+  /** `purgeAt`: when a project moved to the trash stops being restorable (not sent for a permanent delete).
+   *  `remoteError`: the GitLab repository Aldine created could not be deleted; `remoteScheduledFor`: GitLab
+   *  holds it until then. */
+  deleteProject: (id: string, permanent = false) => req<{ ok: boolean; purgeAt?: string; remoteError?: string; remoteScheduledFor?: string }>(`/api/projects/${id}${permanent ? '?permanent=1' : ''}`, { method: 'DELETE' }),
   restoreProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/restore`, { method: 'POST' }),
   claimProject: (id: string) => req<ProjectSummary>(`/api/projects/${id}/claim`, { method: 'POST' }),
   listTrash: () => req<TrashedProject[]>('/api/projects/trash'),
+  /** The caller's archived rows: projects they own and archived, and shared ones they removed from their list. */
+  listArchived: () => req<ProjectSummary[]>('/api/projects?archived=1'),
   /** Tell the server this project is open on `branch` (on open and on each
    *  branch switch). Lists a link-shared project for the caller and undoes an
    *  earlier removeFromList. */
   markOpened: (id: string, branch: string) =>
     req<{ ok: boolean; opened: { at: string; branch: string } }>(`/api/projects/${id}/opened`, { method: 'POST', body: JSON.stringify({ branch }) }),
-  /** "Remove from my list", for anyone but the owner. A member keeps access. */
+  /** "Remove from my list" (a member keeps access), or "Archive" for the owner: off the caller's list only. */
   removeFromList: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/listing`, { method: 'DELETE' }),
   /** Undoes removeFromList without counting as an open; `opened` is the row as it was. */
   restoreListing: (id: string, opened: { at: string; branch: string } | null | undefined) =>
@@ -617,10 +621,16 @@ export const api = {
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
   me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  /** Whether the account keeps a Zotero key for its next link; the key itself never comes back. */
+  zoteroKey: () => req<{ saved: boolean; userID?: number; username?: string | null }>('/api/zotero/key'),
+  forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),
+  /** The account's display name: what co-authors see on avatars, comments and commits. */
+  updateMe: (patch: { name: string }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
   confirmEmail: (token: string) =>
     req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
-  resendConfirmation: () =>
-    req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', { method: 'POST' }),
+  /** `invite`: asked from that invitation's page, whose link the mail then leads back to. */
+  resendConfirmation: (invite?: string) =>
+    req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', invite ? { method: 'POST', body: JSON.stringify({ invite }) } : { method: 'POST' }),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
   // Every account action sends a JSON body: the server refuses any other.
@@ -643,8 +653,9 @@ export const api = {
   login: (email: string, password: string, confirmToken?: string) =>
     req<{ user: AuthUser; emailConfirmed?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(confirmToken ? { confirmToken } : {}) }) }),
   /** `awaitingApproval`: no session; `message` says what happens next. */
-  register: (email: string, password: string, name?: string) =>
-    req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
+  /** `invite`: signing up from that invitation's page; the confirmation link leads back to it. */
+  register: (email: string, password: string, name?: string, invite?: string) =>
+    req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}) }) }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   listTokens: () => req<AccessToken[]>('/api/tokens'),
   createToken: (name: string, projectIds?: string[], expiresAt?: string) =>
@@ -704,6 +715,14 @@ export function localUser(): { name: string; color: string } {
     safeStorage.set('aldine.color', color);
   }
   return { name, color };
+}
+
+/** Without accounts: the name this browser writes under from now on. Blank
+ *  keeps the one it has; returns the name in use. */
+export function setLocalName(name: string): string {
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100);
+  if (clean) safeStorage.set('aldine.name', clean);
+  return localUser().name;
 }
 
 /** Presence identity of a signed-in person: the account name, with a colour

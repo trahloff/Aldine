@@ -132,6 +132,7 @@ eq(state, {
   loaded: false, bibFile: 'zotero.bib', rootFile: 'main.tex',
   fix: { file: 'main.tex', kind: 'addbibresource', entry: 'zotero.bib', command: '\\addbibresource{zotero.bib}' },
   lines: { biblatex: '\\addbibresource{zotero.bib}', bibtex: '\\bibliography{zotero}' },
+  format: 'biblatex', syncedFormat: 'biblatex',
 }, 'the default paper loads references.bib only');
 eq((await call('GET', '/zotero/bib-load?branch=nope')).statusCode, 404, 'a branch that does not exist');
 

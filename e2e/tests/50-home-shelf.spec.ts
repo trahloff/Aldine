@@ -147,7 +147,7 @@ test.describe('menus', () => {
       await page.getByTestId(`project-menu-${id}`).click();
       const menu = page.getByTestId('project-menu');
       await expect(menu).toBeVisible();
-      await expect(menu.getByRole('menuitem')).toHaveText(['Open', 'Open in new tab', 'Rename…', 'Duplicate', 'Download PDF', 'Download source (.zip)', 'Move to Trash'].map((t) => new RegExp(`^${t.replace(/[.()]/g, '\\$&')}`)));
+      await expect(menu.getByRole('menuitem')).toHaveText(['Open', 'Open in new tab', 'Rename…', 'Duplicate', 'Download PDF', 'Download source (.zip)', 'Archive', 'Move to Trash'].map((t) => new RegExp(`^${t.replace(/[.()]/g, '\\$&')}`)));
       await expect(page.getByTestId('menu-download-pdf')).toHaveAttribute('aria-disabled', 'true');
       await page.keyboard.press('Escape');
       await expect(menu).toHaveCount(0);
@@ -236,7 +236,8 @@ test.describe('search, sort and filters', () => {
 
       await expect(page.getByTestId('filter-all')).toHaveAttribute('aria-current', 'page');
       await page.getByTestId('open-trash').click();
-      await expect(page).toHaveURL(/\?show=trash$/);
+      // the search goes along to the next filter
+      await expect(page).toHaveURL(/\?show=trash&q=Sortable/);
       await expect(page.getByTestId('open-trash')).toHaveAttribute('aria-current', 'page');
       await expect(page.getByTestId('filter-all')).not.toHaveAttribute('aria-current', 'page');
       await page.goBack();
@@ -477,7 +478,8 @@ test.describe('a tab left open', () => {
     await page.goto('/');
     await expect(page.getByTestId('project-grid').or(page.getByTestId('projects-empty'))).toBeVisible();
     let lists = 0;
-    page.on('request', (r) => { if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/projects') lists += 1; });
+    // the list itself, not the Archived rows fetched beside it
+    page.on('request', (r) => { const u = new URL(r.url()); if (r.method() === 'GET' && u.pathname === '/api/projects' && !u.search) lists += 1; });
     const backToTab = () => page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     const id = await createProject(request, `Arrived While Away ${Date.now()}`);
     try {
@@ -494,3 +496,78 @@ test.describe('a tab left open', () => {
     } finally { await cleanup(request, id); }
   });
 });
+
+test.describe('archive, and the way back from a project', () => {
+  test('the search lives in the address, and the editor’s back button returns to it', async ({ page }) => {
+    const prefix = `Return ${Date.now()}`;
+    const ids = await trio(page, prefix);
+    try {
+      await page.goto('/');
+      await page.getByTestId('home-search').fill(`${prefix} bravo`);
+      await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe(`${prefix} bravo`);
+      await page.reload();
+      await expect(page.getByTestId('home-search')).toHaveValue(`${prefix} bravo`);
+      await expect(page.locator('[data-testid^="project-card-"]')).toHaveCount(1);
+
+      await page.getByTestId(`open-${ids[1]}`).click();
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.getByTestId('back-to-projects').click();
+      await expect(page.getByTestId('home-search')).toHaveValue(`${prefix} bravo`);
+      await expect(page.locator('[data-testid^="project-card-"]')).toHaveCount(1);
+
+      // the browser's Back finds the same search
+      await page.getByTestId(`open-${ids[1]}`).click();
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.goBack();
+      await expect(page.getByTestId('home-search')).toHaveValue(`${prefix} bravo`);
+
+      // a filter comes back too
+      await page.getByTestId('open-trash').click();
+      await expect(page).toHaveURL(/\?show=trash&q=/);
+      await page.getByTestId('search-clear').click();
+      await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBeNull();
+      await page.goto(`/p/${ids[0]}`);
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.getByTestId('back-to-projects').click();
+      await expect(page.getByTestId('open-trash')).toHaveAttribute('aria-current', 'page');
+    } finally { for (const id of ids) await cleanup(page.request, id); }
+  });
+
+  test('Archive takes a project off the owner’s list, and Archived gives it back', async ({ page, request }) => {
+    const name = `Archive Paper ${Date.now()}`;
+    const id = await createProject(request, name);
+    try {
+      await page.goto('/');
+      const card = page.getByTestId(`project-card-${id}`);
+      await expect(card).toBeVisible();
+      await projectAction(page, id, 'menu-archive');
+      await expect(card).toHaveCount(0);
+      await expect(page.locator('.toast', { hasText: `Archived ${name}` })).toBeVisible();
+      await page.locator('.toast', { hasText: `Archived ${name}` }).getByTestId('undo-archive').click();
+      await expect(card).toBeVisible();
+
+      await projectAction(page, id, 'menu-archive');
+      await expect(card).toHaveCount(0);
+      await page.getByTestId('filter-archived').click();
+      await expect(page).toHaveURL(/\?show=archived$/);
+      await expect(page.getByTestId('filter-archived')).toHaveAttribute('aria-current', 'page');
+      await expect(card).toBeVisible();
+
+      // opening an archived project leaves it archived
+      await page.getByTestId(`open-${id}`).click();
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.getByTestId('back-to-projects').click();
+      await expect(page.getByTestId('filter-archived')).toHaveAttribute('aria-current', 'page');
+      await expect(card).toBeVisible();
+
+      await projectAction(page, id, 'menu-unarchive');
+      await expect(card).toHaveCount(0);
+      await expect(page.locator('.toast', { hasText: `Unarchived ${name}: it is back in All projects` })).toBeVisible();
+      await page.getByTestId('filter-all').click();
+      await expect(card).toBeVisible();
+      const rows = (await (await request.get('/api/projects')).json()) as { id: string }[];
+      expect(rows.some((r) => r.id === id)).toBe(true);
+    } finally { await cleanup(request, id); }
+  });
+});
+

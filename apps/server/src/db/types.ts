@@ -89,6 +89,8 @@ export interface ProjectMeta {
     lastVersion?: number;
     bibFile: string;
     lastSyncedAt?: string;
+    /** The export the .bib holds: biblatex fields (`date`, `journaltitle`) unless the paper uses BibTeX. Absent means biblatex. */
+    format?: 'biblatex' | 'bibtex';
   };
   /** Remote repository this project syncs with (imported from, or published to). */
   remote?: RemoteLink;

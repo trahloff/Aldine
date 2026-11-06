@@ -130,6 +130,35 @@ test.describe('plugin system', () => {
       await expect.poll(async () => (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text(), { timeout: 15_000 })
         .toMatch(new RegExp(`^${inserted}\\n\\\\documentclass`));
 
+      // editor.insertCitation: a new \cite, then one more key in it, then a key it has
+      await page.locator('.cm-line').first().click();
+      await page.keyboard.press('End');
+      expect(await page.evaluate(() => (window as any).__aldineProbe.editor.insertCitation('knuth1984'))).toBe('inserted');
+      expect(await page.evaluate(() => (window as any).__aldineProbe.editor.insertCitation('lamport1994'))).toBe('added');
+      expect(await page.evaluate(() => (window as any).__aldineProbe.editor.insertCitation('knuth1984'))).toBe('present');
+      await expect(page.locator('.cm-line').first()).toHaveText(`${inserted}\\cite{knuth1984,lamport1994}`);
+      // ...and nothing without a TeX file open
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'notes.bib', content: '@misc{x, title={X}}\n' } })).ok()).toBeTruthy();
+      await page.evaluate(() => (window as any).__aldineProbe.project.refreshFiles());
+      await page.getByTestId('tab-files').click();
+      await page.getByTestId('file-notes.bib').click();
+      await expect(page.getByTestId('active-file')).toHaveText('notes.bib');
+      expect(await page.evaluate(() => (window as any).__aldineProbe.editor.insertCitation('knuth1984'))).toBe(false);
+      await expect(page.locator('.cm-content')).not.toContainText('\\cite');
+      await page.getByTestId('file-main.tex').click();
+      await expect(page.getByTestId('active-file')).toHaveText('main.tex');
+      // the edits are typeset as a document again
+      await page.locator('.cm-line').first().click();
+      await page.keyboard.press('End');
+      for (let i = 0; i < '\\cite{knuth1984,lamport1994}'.length; i++) await page.keyboard.press('Backspace');
+      await expect(page.locator('.cm-line').first()).toHaveText(inserted);
+
+      // ui.registerCommand puts a command in the palette
+      await page.getByTestId('palette-open').click();
+      await page.keyboard.type('Probe: say hello');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.toast', { hasText: 'The probe command ran' })).toBeVisible();
+
       // compile typesets, and lastCompile reports that run
       expect(await page.evaluate(() => (window as any).__aldineProbe.project.lastCompile())).toBeNull();
       const compiled = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith(`/api/projects/${id}/compile`));

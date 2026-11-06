@@ -56,11 +56,12 @@ test.describe('ZIP import hardening', () => {
     }
   });
 
-  test('a ZIP64 archive imports with its root detected', async ({ page, request }) => {
+  test('a ZIP64 archive of a zipped folder imports without the folder, its root detected', async ({ page, request }) => {
     const name = `zip64-${Date.now()}`;
     const { dir, file } = tmpZip(`${name}.zip`, buildZip({
       'paper/main.tex': doc('ZIP64-IMPORTED'),
       'paper/refs.bib': { data: '@book{k, title={T}}\n', method: 8 },
+      '__MACOSX/paper/._main.tex': 'junk',
     }, { zip64: true }));
     let id: string | null = null;
     try {
@@ -68,9 +69,32 @@ test.describe('ZIP import hardening', () => {
       await expect(page.getByTestId('editor-shell')).toBeVisible({ timeout: 20_000 });
       id = new URL(page.url()).pathname.split('/')[2];
       const meta = await (await request.get(`/api/projects/${id}`)).json();
-      expect(meta.rootFile).toBe('paper/main.tex');
+      expect(meta.rootFile).toBe('main.tex');
       await expect(page.locator('.cm-content')).toContainText('ZIP64-IMPORTED');
-      await expect(page.getByTestId('file-paper/refs.bib')).toBeVisible();
+      await expect(page.getByTestId('file-refs.bib')).toBeVisible();
+      await expect(page.getByTestId('file-paper')).toHaveCount(0);
+    } finally {
+      if (id) await cleanup(request, id);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a folder keeps its name when a file sits beside it in the archive', async ({ page, request }) => {
+    const name = `wrapper-kept-${Date.now()}`;
+    const { dir, file } = tmpZip(`${name}.zip`, buildZip({
+      'paper/main.tex': doc('WRAPPER-KEPT'),
+      'README.md': 'Notes\n',
+    }));
+    let id: string | null = null;
+    try {
+      await importFromHome(page, file);
+      await expect(page.getByTestId('editor-shell')).toBeVisible({ timeout: 20_000 });
+      id = new URL(page.url()).pathname.split('/')[2];
+      const meta = await (await request.get(`/api/projects/${id}`)).json();
+      expect(meta.rootFile).toBe('paper/main.tex');
+      await expect(page.locator('.cm-content')).toContainText('WRAPPER-KEPT');
+      const { files }: { files: { path: string }[] } = await (await request.get(`/api/projects/${id}/files?branch=main`)).json();
+      expect(files.map((f) => f.path)).toEqual(expect.arrayContaining(['paper/main.tex', 'README.md']));
     } finally {
       if (id) await cleanup(request, id);
       fs.rmSync(dir, { recursive: true, force: true });

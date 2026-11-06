@@ -22,6 +22,21 @@ const BIB = `@article{turing1950,
 }
 `;
 
+/** The same library as Zotero's BibTeX export: `journal` and `year`, which BibTeX styles read. */
+const BIB_BIBTEX = `@article{turing1950,
+  author = {Turing, Alan M.},
+  title = {Computing Machinery and Intelligence},
+  journal = {Mind},
+  year = {1950},
+}
+
+@book{shannon1948,
+  author = {Shannon, Claude E.},
+  title = {A Mathematical Theory of Communication},
+  year = {1948},
+}
+`;
+
 const server = http.createServer((req, res) => {
   const auth = req.headers['zotero-api-key'];
   const url = new URL(req.url, 'http://x');
@@ -105,6 +120,9 @@ const server = http.createServer((req, res) => {
   if (url.pathname.endsWith('/collections')) {
     return send(200, [
       { key: 'COLL1', data: { name: 'CRDT Research', parentCollection: false } },
+      { key: 'COLL2', data: { name: 'Sync', parentCollection: 'COLL1' } },
+      { key: 'COLL3', data: { name: 'Drafts', parentCollection: false } },
+      { key: 'COLL4', data: { name: 'Sync', parentCollection: 'COLL3' } },
     ]);
   }
   // (references DOI/arXiv mock handled by a separate server below; keep Zotero paths here)
@@ -114,6 +132,9 @@ const server = http.createServer((req, res) => {
     }
     if (url.searchParams.get('format') === 'biblatex') {
       return send(200, BIB, { 'Last-Modified-Version': '42', 'Total-Results': '2' });
+    }
+    if (url.searchParams.get('format') === 'bibtex') {
+      return send(200, BIB_BIBTEX, { 'Last-Modified-Version': '42', 'Total-Results': '2' });
     }
     return send(200, { items: [] }, { 'Last-Modified-Version': '42', 'Total-Results': '0' });
   }

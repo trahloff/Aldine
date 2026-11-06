@@ -58,6 +58,24 @@ export function importPath(entry: string): string | null {
   return segments.join('/');
 }
 
+/**
+ * The one folder every path sits in, when no file sits beside it: the
+ * wrapper a zipped folder brings ("thesis/…" from Finder's Compress,
+ * "<repo>-<branch>/…" from a host's Download ZIP). Null when any file is at
+ * the top level or the paths start with more than one folder.
+ */
+export function wrapperFolder(paths: string[]): string | null {
+  let wrapper: string | null = null;
+  for (const p of paths) {
+    const slash = p.indexOf('/');
+    if (slash <= 0) return null;
+    const first = p.slice(0, slash);
+    if (wrapper === null) wrapper = first;
+    else if (first !== wrapper) return null;
+  }
+  return wrapper;
+}
+
 /** "<root file's dir>/<name>" — where \\addbibresource{<name>} actually resolves. */
 export function rootSiblingPath(rootFile: string, name: string): string {
   const dir = path.dirname(rootFile || 'main.tex');

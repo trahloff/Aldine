@@ -59,7 +59,7 @@ export const PROJECT_NAME_MAX = 100;
 export function invitationMail(to: string, ownerName: string, projectName: string, inviteUrl: string): Mail {
   const owner = clip(ownerName, OWNER_NAME_MAX) || 'Someone';
   const project = clip(projectName, PROJECT_NAME_MAX) || 'Untitled project';
-  const how = `To accept, open the link and sign in or create an account with this address (${to}). The invitation works only for this address, and it expires in ${INVITE_TTL_DAYS} days.`;
+  const how = `To accept, open the link and sign in or create an account with this address (${to}). A new account with a password confirms the address first: Aldine sends a second email whose link brings you back to the invitation. The invitation works only for this address, and it expires in ${INVITE_TTL_DAYS} days.`;
   const ignore = 'If you do not know them, ignore this email: nothing happens unless you accept.';
   return {
     to,

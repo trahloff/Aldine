@@ -76,6 +76,8 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
       if (openStack[openStack.length - 1] !== id) return;
       // A menu opened from inside the dialog answers Escape and Tab itself.
       if (e.target instanceof Element && e.target.closest('.menu--floating')) return;
+      // A search field with text clears it on Escape (its own handler); the next Escape closes.
+      if (e.key === 'Escape' && e.target instanceof HTMLInputElement && e.target.type === 'search' && e.target.value) return;
       if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
       if (e.key !== 'Tab') return;
       const items = focusables();

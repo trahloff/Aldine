@@ -47,7 +47,11 @@ try {
   eq(opened.statusCode, 200, 'an open is recorded');
   eq((await db().getProjectOpen('local', p.id))?.branch, 'main', 'under the one implicit person');
   eq((await send('GET', '/api/projects')).json().find((r) => r.id === p.id).opened.branch, 'main', 'and shows on the row');
-  eq((await send('DELETE', `/api/projects/${p.id}/listing`)).statusCode, 400, 'there is nobody but the owner to remove it from a list');
+  eq((await send('DELETE', `/api/projects/${p.id}/listing`)).statusCode, 200, 'the one person archives it');
+  check(!(await send('GET', '/api/projects')).json().some((r) => r.id === p.id), 'it leaves the list');
+  eq((await send('GET', '/api/projects?archived=1')).json().map((r) => r.id), [p.id], 'and waits under Archived');
+  eq((await send('PUT', `/api/projects/${p.id}/listing`, { opened: null })).statusCode, 200, 'unarchived');
+  check((await send('GET', '/api/projects')).json().some((r) => r.id === p.id), 'it is back on the list');
 
   // ---- showcase: own list and own copy yes, writes no ----
   eq((await send('PUT', `/api/projects/${showcase.id}/file`, { path: 'main.tex', content: 'changed' })).statusCode, 403, 'the showcase refuses a write');

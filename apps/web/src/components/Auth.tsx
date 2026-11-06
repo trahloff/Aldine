@@ -173,8 +173,10 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  sign-in: an account that waits for approval has no session to confirm
  *  its address with afterwards; `onConfirmLinkUsed` runs once the server
  *  used it (`signedIn` false when the account still waits). `sendsEmail`:
- *  reset links go out by mail; otherwise only the administrator has them. */
-export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmail, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes }: {
+ *  reset links go out by mail; otherwise only the administrator has them.
+ *  `invite`: the invitation this form answers; the confirmation link of an
+ *  account created here leads back to it. */
+export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmail, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes, invite }: {
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
   signupApproval?: boolean;
@@ -192,6 +194,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
   /** Signing in and creating an account sit side by side, for someone who
    *  may have no account yet (an invitation). */
   bothModes?: boolean;
+  invite?: string;
 }) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState(initialEmail ?? '');
@@ -247,7 +250,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
         if (r.emailConfirmed) onConfirmLinkUsed?.(true);
         onAuthed(r.user);
       } else if (mode === 'register') {
-        const r = await api.register(email.trim(), password, name.trim() || undefined);
+        const r = await api.register(email.trim(), password, name.trim() || undefined, invite);
         if (!r.awaitingApproval) { onAuthed(r.user); return; }
         setMode('login'); setPassword(''); setBusy(false);
         setWaiting(r.message ?? '');

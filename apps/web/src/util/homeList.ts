@@ -8,7 +8,7 @@ import { timeAgo, timeSection } from './dates';
  */
 
 export type SortKey = 'edited' | 'opened' | 'name' | 'created';
-export type Show = 'all' | 'shared' | 'trash';
+export type Show = 'all' | 'shared' | 'archived' | 'trash';
 
 export const SORTS: readonly { id: SortKey; label: string }[] = [
   { id: 'edited', label: 'Last edited' },
@@ -26,8 +26,26 @@ export function parseSort(raw: string | null | undefined): SortKey {
 /** `?show=` as a place; "shared" exists only with accounts. */
 export function parseShow(raw: string | null | undefined, accounts: boolean): Show {
   if (raw === 'trash') return 'trash';
+  if (raw === 'archived') return 'archived';
   if (raw === 'shared' && accounts) return 'shared';
   return 'all';
+}
+
+/** The Home address of a filter and a search: "/", "/?show=shared&q=grant". */
+export function homeHref(show: Show, query: string): string {
+  const p = new URLSearchParams();
+  if (show !== 'all') p.set('show', show);
+  if (query) p.set('q', query);
+  const s = p.toString();
+  return s ? `/?${s}` : '/';
+}
+
+/** Where the editor's back button returns to: the last Home address of this tab. */
+export const HOME_RETURN_KEY = 'aldine.home.last';
+
+/** A remembered Home address, or "/" for anything that is not one. */
+export function homeReturn(raw: string | null | undefined): string {
+  return raw && /^\/(\?[^#]*)?$/.test(raw) ? raw : '/';
 }
 
 /** When the project's files last changed; a project from before that was recorded counts from its creation. */
@@ -180,4 +198,16 @@ export function pdfOutputPath(rootFile: string): string {
   const dir = slash >= 0 ? rootFile.slice(0, slash + 1) : '';
   const base = rootFile.slice(slash + 1).replace(/\.tex$/i, '');
   return `${dir}.aldine-out/${base}.pdf`;
+}
+
+/** What trashing `p` takes from others, one sentence each; none for a private project. */
+export function trashLosses(p: Pick<ProjectSummary, 'share' | 'remote'>): string[] {
+  const out: string[] = [];
+  const coAuthors = p.share?.collaborators.length ?? 0;
+  if (coAuthors) out.push(coAuthors === 1 ? 'Its co-author loses access until you restore it.' : `Its ${coAuthors} co-authors lose access until you restore it.`);
+  if (p.share?.mode === 'link') out.push('Anyone with its link loses access until you restore it.');
+  if (p.remote?.createdByAldine) {
+    out.push(`${p.remote.fullName ? `Its GitLab repository ${p.remote.fullName}` : 'Its GitLab repository'} is deleted now; restoring the project creates a new one.`);
+  }
+  return out;
 }
