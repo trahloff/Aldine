@@ -133,6 +133,11 @@ export const keyBraceGuard: Extension = Prec.high(EditorView.inputHandler.of((vi
 /** `at` 0 is stale: the entries still answer a hover until the refetch has. */
 let bibCache: { key: string; entries: BibEntry[]; at: number } | null = null;
 
+/** The cached entries of this project and branch; never another one's. */
+function cachedBib(projectId: string, branch: string): BibEntry[] {
+  return bibCache?.key === `${projectId}::${branch}` ? bibCache.entries : [];
+}
+
 async function loadBib(projectId: string, branch: string): Promise<BibEntry[]> {
   const cacheKey = `${projectId}::${branch}`;
   if (bibCache && bibCache.key === cacheKey && Date.now() - bibCache.at < 15_000) return bibCache.entries;
@@ -141,7 +146,7 @@ async function loadBib(projectId: string, branch: string): Promise<BibEntry[]> {
     bibCache = { key: cacheKey, entries, at: Date.now() };
     return entries;
   } catch {
-    return bibCache?.entries || [];
+    return cachedBib(projectId, branch);
   }
 }
 
@@ -216,7 +221,7 @@ async function loadLabels(projectId: string, branch: string): Promise<Array<{ la
     labelCache = { key: cacheKey, labels, at: Date.now() };
     return labels;
   } catch {
-    return labelCache?.labels || [];
+    return labelCache?.key === cacheKey ? labelCache.labels : [];
   }
 }
 

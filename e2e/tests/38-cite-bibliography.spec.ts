@@ -37,6 +37,22 @@ test.describe('Cite panel: the project bibliography', () => {
     }
   });
 
+  test('lists entries added after it opened, without a reload', async ({ page, request }) => {
+    const id = await createProject(request, 'Bib Later');
+    try {
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      await expect(page.getByTestId('cite-bib-list')).toBeVisible();
+      await expect(page.getByTestId('cite-bib-lamport1994')).toHaveCount(0);
+      // written behind the page, as a collaborator's upload or an agent would
+      const put = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'more.bib', content: BIB } });
+      expect(put.ok()).toBeTruthy();
+      await expect(page.getByTestId('cite-bib-lamport1994')).toBeVisible({ timeout: 10_000 });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('the paper search keeps focus while results arrive', async ({ page, request }) => {
     const id = await createProject(request, 'Bib Focus');
     try {

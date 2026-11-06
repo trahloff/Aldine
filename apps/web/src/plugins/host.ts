@@ -36,6 +36,13 @@ export interface AldineAPI {
     lastCompile(): { ok: boolean; errors: Array<{ type: string; line: number | null; message: string; file?: string }>; log: string } | null;
     refreshFiles(): Promise<unknown>;
     refresh(): Promise<unknown>;
+    /**
+     * Calls `listener` each time the editor has re-read the branch's file
+     * list: after a file is added, removed, renamed or rewritten here, in
+     * another tab, by a collaborator or on the server (an import, a sync, a
+     * pull). Returns a function that stops the calls.
+     */
+    onFilesChanged(listener: () => void): () => void;
   };
   editor: { insertAtCursor(text: string): void };
   compile(): void;
@@ -51,15 +58,20 @@ export interface AldineAPI {
 interface Props {
   ctx: PluginCtx;
   onPanels(panels: PluginPanel[]): void;
+  /** The branch's file list; a new value each time the editor re-reads it. */
+  files: unknown;
 }
 
-export function PluginHost({ ctx, onPanels }: Props) {
+export function PluginHost({ ctx, onPanels, files }: Props) {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
+  const filesListeners = useRef(new Set<() => void>());
 
   useEffect(() => {
     let cancelled = false;
     const panels: PluginPanel[] = [];
+    const listeners = new Set<() => void>();
+    filesListeners.current = listeners;
 
     const api: AldineAPI = {
       version: 1,
@@ -70,6 +82,10 @@ export function PluginHost({ ctx, onPanels }: Props) {
         lastCompile: () => ctxRef.current.getCompileResult(),
         refreshFiles: () => ctxRef.current.refreshFiles(),
         refresh: () => ctxRef.current.refreshProject(),
+        onFilesChanged: (listener) => {
+          listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
       },
       editor: { insertAtCursor: (t) => ctxRef.current.insertAtCursor(t) },
       compile: () => ctxRef.current.compile(),
@@ -103,9 +119,15 @@ export function PluginHost({ ctx, onPanels }: Props) {
       }
     })();
 
-    return () => { cancelled = true; onPanels([]); };
+    return () => { cancelled = true; listeners.clear(); onPanels([]); };
     // re-activate per project/branch so panels rebuild against fresh context
   }, [ctx.projectId, ctx.branch]);
+
+  useEffect(() => {
+    for (const listener of [...filesListeners.current]) {
+      try { listener(); } catch (err) { console.error('[plugins] onFilesChanged listener failed', err); }
+    }
+  }, [files]);
 
   return null;
 }
