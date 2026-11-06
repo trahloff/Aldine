@@ -37,8 +37,9 @@ export async function openProject(page: Page, id: string, branch?: string): Prom
   await page.goto(`/p/${id}${branch ? `?branch=${branch}` : ''}`);
   await expect(page.getByTestId('editor-shell')).toBeVisible();
   await expect(page.getByTestId('code-pane')).toBeVisible();
-  // editor content mounted
+  // editor content mounted, and editable: it takes no typing until the file has loaded
   await expect(page.locator('.cm-content')).toBeVisible();
+  await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
 }
 
 /** Type into the CodeMirror editor at the end of the document. */

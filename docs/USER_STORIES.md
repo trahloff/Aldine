@@ -100,8 +100,10 @@ in `21-zip-import.spec.ts`.*
 
 ## Collaboration (COLLAB)
 
-*Automated in `03-collab.spec.ts`; restart and reconnect behaviour in the
-`e2e/c2-shutdown.mjs` and `e2e/c3-reconnect-dup.mjs` harnesses.*
+*Automated in `03-collab.spec.ts`; offline and unsaved edits in
+`66-offline.spec.ts`, an ended session in `auth-tests/auth.spec.ts`; restart
+and reconnect behaviour in the `e2e/c2-shutdown.mjs` and
+`e2e/c3-reconnect-dup.mjs` harnesses.*
 
 - **COLLAB-1** — Two people editing the same file see each other's changes live,
   conflict-free (CRDT), with multiple cursors.
@@ -110,6 +112,11 @@ in `21-zip-import.spec.ts`.*
   updates).
 - **COLLAB-4** — A collaborator joining mid-session receives the current
   document state.
+- **COLLAB-5** — The editor tells me whether my edits are on the server and
+  when the connection is gone. Edits I make offline are saved once it is back.
+- **COLLAB-6** — Closing the tab while edits are not saved yet asks first.
+- **COLLAB-7** — When my session ends while I edit, I sign in again over the
+  editor and keep the edits it holds.
 
 ## Versioning & branches (GIT)
 

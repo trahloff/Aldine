@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
-import { useAuth } from './Auth';
+import { api, type AuthUser } from '../api';
+import { LoginScreen, useAuth } from './Auth';
+import { projectSignInStarts } from '../util/signInStart';
 import { useToast } from './Toast';
 import Wordmark from './Wordmark';
 import { useDocumentTitle } from '../util/documentTitle';
@@ -16,14 +17,23 @@ export interface ProjectLoadError {
   status: number;
 }
 
+/** A session that ended while the project was open: the sign-in happens
+ *  over the editor, which keeps the edits it holds and reconnects after. */
+export interface SignInInPlace {
+  /** Edits in this tab the server has not confirmed. */
+  unsynced: boolean;
+  onSignedIn(u: AuthUser): void;
+}
+
 /** In place of the editor when a project would not open: who is signed in
  *  and what they can do about it, or a way to try again. A refusal is not a
  *  missing project, and a server restart should not send anyone home. */
-export default function ProjectUnavailable({ projectId, error, onRetry }: { projectId: string; error: ProjectLoadError; onRetry(): void }) {
-  const { user, setUser } = useAuth();
+export default function ProjectUnavailable({ projectId, error, onRetry, inPlace }: { projectId: string; error: ProjectLoadError; onRetry(): void; inPlace?: SignInInPlace }) {
+  const { user, setUser, providers, passwordAuth, signupApproval, sendsEmail } = useAuth();
   const toast = useToast();
   const [invite, setInvite] = useState<MyInvitation | null>(null);
   const [busy, setBusy] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   useDocumentTitle(error.reason === 'denied' ? 'No access' : error.reason === 'signed-out' ? 'Sign in again' : 'Could not open the project');
 
   // Each failed attempt is a new error: the buttons wake up again.
@@ -50,6 +60,24 @@ export default function ProjectUnavailable({ projectId, error, onRetry }: { proj
   const switchAccount = async () => { await api.logout().catch(() => {}); setUser(null); };
   const who = user?.email || user?.orcid || user?.name;
 
+  if (inPlace && signingIn) {
+    return (
+      <LoginScreen
+        providers={providers}
+        passwordAuth={passwordAuth}
+        signupApproval={signupApproval}
+        sendsEmail={sendsEmail}
+        onAuthed={inPlace.onSignedIn}
+        // an SSO provider's callback lands on Home, which brings it back here
+        onStart={() => projectSignInStarts(projectId)}
+        heading="Sign in to keep editing."
+        notice={inPlace.unsynced ? 'Your session has ended. The edits in this tab are saved once you are signed in.' : 'Your session has ended.'}
+        noticeTone="warn"
+        initialEmail={user?.email || undefined}
+      />
+    );
+  }
+
   return (
     <main className="login">
       {error.reason === 'denied' ? (
@@ -72,9 +100,13 @@ export default function ProjectUnavailable({ projectId, error, onRetry }: { proj
         <div className="login__card consent" data-testid="project-signed-out">
           <h1 className="home__brand"><Wordmark height={21} /></h1>
           <h2 className="consent__title invite__title">Your session has ended</h2>
-          <p className="consent__hint">Sign in again to open this project. You come back to it afterwards.</p>
+          <p className="consent__hint" data-testid="project-signed-out-hint">
+            {!inPlace ? 'Sign in again to open this project. You come back to it afterwards.'
+              : inPlace.unsynced ? 'Sign in again to keep editing. Your latest edits are kept in this tab and saved once you are back, so keep the tab open.'
+              : 'Sign in again to keep editing. You come back to this page afterwards.'}
+          </p>
           <div className="consent__actions invite__actions">
-            <button className="btn btn--primary" onClick={switchAccount} data-testid="project-signin">Sign in again</button>
+            <button className="btn btn--primary" onClick={inPlace ? () => setSigningIn(true) : switchAccount} data-testid="project-signin">Sign in again</button>
           </div>
         </div>
       ) : (

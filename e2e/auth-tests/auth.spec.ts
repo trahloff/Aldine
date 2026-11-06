@@ -520,6 +520,78 @@ test.describe('auth', () => {
     await expect(page.getByTestId('editor-shell')).toBeVisible();
   });
 
+  test('a session that ends while a project is open signs in again over the editor, which keeps the edits made meanwhile and saves them', async ({ page, context }) => {
+    await context.setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.65' });
+    const email = uniq();
+    await register(page, email);
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Session Ends Mid-edit' } })).json();
+    const file = `/api/projects/${proj.id}/file?branch=main&path=main.tex`;
+    expect((await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'First paragraph.\n' } })).ok()).toBeTruthy();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    const status = page.getByTestId('sync-status');
+    await expect(status).toHaveAttribute('data-state', 'saved');
+
+    // an edit made offline waits in the tab, and meanwhile the session ends
+    await context.setOffline(true);
+    await page.locator('.cm-line', { hasText: 'First paragraph.' }).click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' Written offline.');
+    await expect(status).toHaveAttribute('data-unsynced', 'true');
+    expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
+    await context.setOffline(false);
+
+    // the reconnect is refused: the sign-in comes up over the editor, which still holds the edit
+    await expect(page.getByTestId('session-ended')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('project-signed-out')).toContainText('Your session has ended');
+    await expect(page.getByTestId('project-signed-out-hint')).toContainText('kept in this tab');
+    await expect(page.locator('.cm-content')).toContainText('First paragraph. Written offline.');
+    await expect(page.getByTestId('editor-shell')).toHaveAttribute('inert', '');
+    await page.getByTestId('project-signin').click();
+    await expect(page.getByRole('heading', { name: 'Sign in to keep editing.' })).toBeVisible();
+    await expect(page.getByTestId('auth-info')).toContainText('The edits in this tab are saved once you are signed in');
+    await expect(page.getByTestId('auth-email')).toHaveValue(email);
+    await page.getByTestId('auth-password').fill('password123');
+    await page.getByTestId('auth-submit').click();
+
+    // back in the same editor, and the edit reaches the server
+    await expect(page.getByTestId('session-ended')).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await expect(status).toHaveAttribute('data-state', 'saved', { timeout: 20_000 });
+    await expect(status).toHaveAttribute('data-unsynced', 'false');
+    await expect.poll(async () => (await page.request.get(file)).text()).toContain('First paragraph. Written offline.');
+    expect((await (await page.request.get(file)).text()).split('Written offline.').length, 'merged once').toBe(2);
+    expect(await page.evaluate(() => sessionStorage.getItem('aldine.project.resume')), 'nothing left for Home to bring back').toBeNull();
+    await page.keyboard.type(' And after.');
+    await expect.poll(async () => (await page.request.get(file)).text()).toContain('Written offline. And after.');
+  });
+
+  test('a request the server refuses for want of a session brings up the same sign-in, and Home asks to sign in instead of offering a retry', async ({ page, context }) => {
+    await context.setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.66' });
+    const email = uniq();
+    await register(page, email);
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Refused Request' } })).json();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+
+    // the socket stays up; the next request is refused
+    expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
+    await page.getByTestId('typeset-button').click();
+    await expect(page.getByTestId('session-ended')).toBeVisible();
+    await page.getByTestId('project-signin').click();
+    await page.getByTestId('auth-password').fill('password123');
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('session-ended')).toHaveCount(0);
+    await expect(page.getByTestId('sync-status')).toHaveAttribute('data-state', 'saved');
+
+    // Home, reached within the app after the session ended: the sign-in
+    // form, not "Sign in required" with a Try again
+    expect((await page.request.post('/api/auth/logout')).ok()).toBeTruthy();
+    await page.evaluate(() => { history.pushState({}, '', '/'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    await expect(page.getByTestId('projects-error')).toHaveCount(0);
+  });
+
   test('collaborators see each other under their account names, not the anonymous writer', async ({ page, browser }) => {
     const email = uniq();
     await register(page, email, 'password123', 'Ada Presence');

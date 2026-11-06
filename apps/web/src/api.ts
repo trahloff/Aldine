@@ -293,6 +293,14 @@ export class RemoteTokenError extends ApiError {
   constructor(message: string, public readonly provider: RemoteProviderId) { super(message, 401); }
 }
 
+const signedOutListeners = new Set<() => void>();
+/** `fn` runs whenever the server answers a request as if nobody were signed
+ *  in: the session ended while a page that needs it was open. */
+export function onSignedOut(fn: () => void): () => void {
+  signedOutListeners.add(fn);
+  return () => { signedOutListeners.delete(fn); };
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(withBase(url), {
     headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
@@ -301,11 +309,18 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     let code: string | undefined;
+    let reason: unknown;
     try {
-      const body = (await res.json()) as { error?: string; code?: unknown };
+      const body = (await res.json()) as { error?: string; code?: unknown; reason?: unknown };
       msg = body.error || msg;
       if (typeof body.code === 'string') code = body.code;
+      reason = body.reason;
     } catch { /* keep */ }
+    // The sign-in routes answer 401 for a wrong password, and a git host's
+    // refused token comes back as 401 too: neither is about this session.
+    if (res.status === 401 && !url.startsWith('/api/auth/') && code !== TOKEN_REJECTED && reason !== TOKEN_REJECTED) {
+      for (const fn of signedOutListeners) fn();
+    }
     const retryAfter = Number(res.headers.get('retry-after'));
     throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code);
   }
