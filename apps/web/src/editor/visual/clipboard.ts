@@ -4,7 +4,7 @@ import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNode } from '@lezer/common';
 import { verbatimArgCommand } from './decorations';
 import { safeStorage } from '../../util/safeStorage';
-import { escapeLatex, htmlToLatex } from './html2latex';
+import { escapeLatex, htmlToLatex, isCodeHtml, looksLikeLatex } from './html2latex';
 import { preambleFor } from './context';
 import { definesUrl } from './preamble';
 
@@ -38,30 +38,6 @@ export function isOwnCopy(text: string): boolean {
   return h === last || h === safeStorage.get(KEY);
 }
 
-/**
- * Clipboard text that is LaTeX already, copied from a .tex file, a terminal
- * or a chat: a control word (not a Windows path's `C:\Users`), an escape
- * (`30\%`), a tie after a word (`Fig.~3`, not the `3~5` of a range), or a
- * `$…$` formula (not the `$5 … $10` of prices).
- */
-const LATEX_TEXT = /(?:^|[^A-Za-z0-9:\\/])\\[A-Za-z]+|\\[A-Za-z]+\s*[{[]|(?:^|[^:\\/])\\[%&$#_{}]|[A-Za-z.]~[A-Za-z0-9\\]|\$[^\s$\d](?:[^$\n]*[^\s$])?\$/;
-
-/**
- * A `$…$` formula that opens with a digit (`$2n$`, `$10^{-3}$`): it holds a
- * letter or a math sign and ends on neither a space nor a sign, which the
- * `$5 to $10`, `$5-$10` and `$5M and $` of prices do. Every `$` may open one.
- */
-function digitMath(text: string): boolean {
-  for (let i = text.indexOf('$'); i >= 0; i = text.indexOf('$', i + 1)) {
-    if (!/\d/.test(text[i + 1] ?? '') || text[i - 1] === '\\') continue;
-    const end = text.indexOf('$', i + 1);
-    if (end < 0) return false;
-    const body = text.slice(i + 1, end);
-    if (!body.includes('\n') && !/[\s\-+,./]$/.test(body) && /[A-Za-z^_\\{}=<>]/.test(body)) return true;
-  }
-  return false;
-}
-
 /** Where text is taken as written (math, verbatim, a path), so an escape would show or break it. */
 const RAW_CONTENT = new Set(['Math', 'VerbatimContent', 'VerbContent', 'LstInlineContent', 'LiteralArgContent']);
 /** Arguments that hold keys or paths, raw strictly between their braces. */
@@ -82,13 +58,16 @@ export function rawAt(state: EditorState, pos: number): boolean {
 
 /**
  * What a paste writes in Visual mode, or null for the editor's own paste.
- * Rich text converts to clean LaTeX; plain prose is escaped, so `50% & $5`
- * stays text. Source copied from an editor, and anything pasted where text
- * is taken as written (`raw`: a formula, a listing, a \ref key), pastes as
- * it is.
+ * Rich text converts to clean LaTeX run by run: LaTeX it spells out (a
+ * `\cite{…}`, a `$…$`) stays as written, and the prose around it is escaped.
+ * Plain text, and code an editor copies with its colours, is LaTeX or prose
+ * as a whole: LaTeX pastes as it is, prose is escaped, so `50% & $5` stays
+ * text. The editor's own copies, and anything pasted where text is taken as
+ * written (`raw`: a formula, a listing, a \ref key), paste as they are.
  */
 export function pasteText(html: string, text: string, doc: string, raw = false): string | null {
-  if (raw || LATEX_TEXT.test(text) || digitMath(text) || isOwnCopy(text)) return null;
+  if (raw || isOwnCopy(text)) return null;
+  if (looksLikeLatex(text) && (!html || isCodeHtml(html))) return null;
   if (!html) {
     const escaped = escapeLatex(text);
     return escaped === text ? null : escaped;

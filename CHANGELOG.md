@@ -183,6 +183,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Text dragged into Visual from Word or a web page converts like a paste:
   its bold, lists and links come along, and `%` or `&` in it no longer
   break the document.
+- A Google Docs or Word paste into Visual that holds a `\cite{…}`, a
+  `$…$` formula or other LaTeX keeps that LaTeX as written and still
+  converts the rest: headings, bold and lists come along, and `50%`, `R&D`
+  or `a_b` in the prose are escaped. Before, one such command pasted the
+  whole selection as plain text, where a `%` hid the rest of its line.
+  LaTeX copied from a code editor still pastes as it is.
 - Clicking a citation or reference in Visual puts the caret at the end of
   its keys, a figure at the end of its caption, and a table's Edit source at
   its first cell. Before, the caret landed inside the command name, where
