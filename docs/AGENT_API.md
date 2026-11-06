@@ -315,7 +315,7 @@ configuration file, using the command from the previous section.
 | Tool | What it does | Changes |
 |---|---|---|
 | `ping` | Confirms the connector is reachable and who the token belongs to. | read-only |
-| `list_projects` | Projects the credential can reach, with branches, root file and engine. | read-only |
+| `list_projects` | Projects the credential can reach, with branches, root file and engine, and `canEdit`: false where the owner shares the project as "Can view", whose write tools are refused. | read-only |
 | `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `contentVersion` for conflict-safe writes (Versions and conflicts, below). | read-only |
 | `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line (`from_line`/`to_line`, echoed back; a window past the end or running backwards is an error). Text is decided by content, not extension. Returns `contentVersion` and `fileVersion`. | read-only |
 | `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`). | destructive |

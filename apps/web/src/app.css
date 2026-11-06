@@ -723,6 +723,10 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .share__invite-link { font-size: var(--text-s); }
 .share__person { display: flex; align-items: center; gap: 8px; font-size: var(--text-s); }
 .share__person .share__invite-to { flex: 1; }
+.share__role { width: auto; flex-shrink: 0; font-size: var(--text-s); padding-top: 2px; padding-bottom: 2px; }
+.share__invite-field { display: flex; gap: 8px; align-items: center; }
+.share__invite-field .input:not(select) { flex: 1; min-width: 0; }
+.share__invite-line .share__role { margin-left: auto; }
 
 /* the word count follows the typeset status, a dot between when both show */
 .pdf-status:not(:empty) + .pdf-words::before { content: '·'; color: var(--text-3); }
@@ -833,7 +837,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   .branch-menu { top: calc(100% + 4px); left: 8px; right: 8px; width: auto; max-height: 70dvh; overflow-y: auto; }
 }
 
-.presence { display: flex; align-items: center; }
+.presence { display: flex; align-items: center; border: 0; background: none; padding: 2px; border-radius: 999px; cursor: pointer; }
+.presence:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.presence__avatar--elsewhere { opacity: 0.55; }
 .presence__avatar {
   width: 24px;
   height: 24px;
@@ -1677,18 +1683,31 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* review panel */
 .review__item { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
 .review__item--resolved { opacity: 0.62; }
+.review__item--active { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+.cm-comment-tip { padding: 8px 10px; max-width: 340px; font-family: var(--font-ui); font-size: 12px; line-height: 1.5; display: grid; gap: 8px; }
+.cm-comment-tip__item { display: grid; gap: 4px; justify-items: start; }
+.cm-comment-tip__item + .cm-comment-tip__item { border-top: 1px solid var(--hairline); padding-top: 8px; }
+.cm-comment-tip__head { color: var(--text-2); }
+.cm-comment-tip__head strong { color: var(--text); }
+.cm-comment-tip__body { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.cm-comment-tip__suggestion { font-family: var(--font-mono); color: var(--ok-text); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cm-comment-range { cursor: pointer; }
 .review__anchor { border: 0; background: none; text-align: left; padding: 0; cursor: pointer; font-size: var(--text-s); }
 .review__file { color: var(--text-3); }
 .review__quote { color: var(--accent); }
-.review__body { font-size: var(--text-m); line-height: 1.45; }
+.review__body { font-size: var(--text-m); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review__suggestion { background: var(--bg-inset); border: 1px solid var(--hairline); border-radius: var(--radius-s); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .review__sugg-label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); font-weight: 600; }
 .review__sugg-text { margin: 0; font-family: var(--font-mono); font-size: var(--text-s); white-space: pre-wrap; color: var(--ok-text); }
 .review__meta { font-size: var(--text-xs); color: var(--text-2); }
-.review__reply { font-size: var(--text-s); color: var(--text); padding-left: 8px; border-left: 2px solid var(--hairline); }
+.review__reply { font-size: var(--text-s); color: var(--text); padding-left: 8px; border-left: 2px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; }
 .review__reply-author { font-weight: 600; }
 .review__actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-.review__reply-input { flex: 1; min-width: 0; height: 26px; }
+.review__reply-box { display: grid; gap: 4px; }
+.review__reply-row { display: flex; align-items: flex-start; gap: 6px; }
+.review__reply-input { flex: 1; min-width: 0; min-height: 26px; resize: vertical; font-family: inherit; line-height: 1.4; padding-top: 3px; padding-bottom: 3px; }
+.composer__count { margin: -4px 0 8px; font-size: var(--text-xs); color: var(--text-3); }
+.composer__count--over { color: var(--error); }
 .review__divider { font-size: var(--text-xs); font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 0 6px; }
 /* Per-commit headings in the agent review dialog carry Claude's own message
    (file names, LaTeX tokens) — no case transform, unlike the section label above. */

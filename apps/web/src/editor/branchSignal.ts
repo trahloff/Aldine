@@ -12,7 +12,9 @@ import { electTypesetter, type TypesetPeer } from './autoTypeset';
  * never the file list). The same doc's
  * awareness is the roster the auto-typeset election runs over, which is why
  * both live in one hook: a second provider on this doc name would make a tab
- * elect its own other socket and freeze the branch's auto-typeset.
+ * elect its own other socket and freeze the branch's auto-typeset. The same
+ * roster says who is on the branch and in which file (`user`, `file`): the
+ * file docs' awareness covers only the file this tab shows (editor/docCache).
  */
 export interface BranchSignalHandlers {
   onFilesChanged(): void;
@@ -22,7 +24,15 @@ export interface BranchSignalHandlers {
   /** A typeset no agent caused finished on the branch, this client's own included. */
   onTypesetFinished(): void;
   onCommitted(): void;
+  /** Everyone else on the branch, whenever that changes; [] once it closes. */
+  onRoster?(peers: BranchPeer[]): void;
 }
+
+/** Someone else's tab on the branch, and the file it shows (null: none). */
+export interface BranchPeer { clientId: number; name: string; color: string; file: string | null }
+
+/** What this tab tells the branch about itself. */
+export interface BranchSelf { name: string; color: string; file: string | null }
 
 export interface BranchSignalHandle {
   /** Tell the branch this client changed the file list. */
@@ -40,13 +50,17 @@ export function useBranchSignal(
   handlers: BranchSignalHandlers,
   eligible: boolean,
   session = 0,
+  self?: BranchSelf,
 ): BranchSignalHandle {
   const cbRef = useRef(handlers);
   cbRef.current = handlers;
+  const selfRef = useRef(self);
+  selfRef.current = self;
   const eligibleRef = useRef(eligible);
   eligibleRef.current = eligible;
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const bumpRef = useRef<() => void>(() => {});
+  const selfPublishRef = useRef<() => void>(() => {});
 
   const handleRef = useRef<BranchSignalHandle>({
     bumpFiles: () => bumpRef.current(),
@@ -117,14 +131,41 @@ export function useBranchSignal(
         });
       } catch { /* not connected yet; the synced handler publishes again */ }
     };
-    const onSynced = () => { record(); ready = true; publish(); };
+    const publishSelf = () => {
+      const me = selfRef.current;
+      if (!me) return;
+      try {
+        provider.setAwarenessField('user', { name: me.name, color: me.color });
+        provider.setAwarenessField('file', me.file);
+      } catch { /* not connected yet; the synced handler publishes again */ }
+    };
+    selfPublishRef.current = publishSelf;
+    const roster = () => {
+      const awareness = provider.awareness;
+      if (!awareness) return;
+      const peers: BranchPeer[] = [];
+      awareness.getStates().forEach((state, clientId) => {
+        if (clientId === awareness.clientID) return;
+        const { user, file } = state as { user?: { name?: unknown; color?: unknown }; file?: unknown };
+        if (typeof user?.name !== 'string' || !user.name) return;
+        peers.push({ clientId, name: user.name, color: typeof user.color === 'string' ? user.color : 'var(--text-3)', file: typeof file === 'string' ? file : null });
+      });
+      cbRef.current.onRoster?.(peers);
+    };
+    provider.awareness?.on('change', roster);
+
+    const onSynced = () => { record(); ready = true; publish(); publishSelf(); };
     provider.on('synced', onSynced);
     const onVisibility = () => publish();
     document.addEventListener('visibilitychange', onVisibility);
     publish();
+    publishSelf();
 
     return () => {
       map.unobserve(observer);
+      provider.awareness?.off('change', roster);
+      cbRef.current.onRoster?.([]);
+      selfPublishRef.current = () => {};
       provider.off('synced', onSynced);
       document.removeEventListener('visibilitychange', onVisibility);
       providerRef.current = null;
@@ -145,6 +186,10 @@ export function useBranchSignal(
       provider.setAwarenessField('typeset', { eligible, visible: document.visibilityState === 'visible' });
     } catch { /* not connected yet */ }
   }, [eligible]);
+
+  // The file this tab shows moves without the socket: a file switch is the
+  // next thing the branch hears.
+  useEffect(() => { selfPublishRef.current(); }, [self?.name, self?.color, self?.file]);
 
   return handleRef.current;
 }

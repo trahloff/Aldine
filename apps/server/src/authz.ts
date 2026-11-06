@@ -1,5 +1,6 @@
 import { ADMIN_EMAILS, AUTH_ENABLED, PublicUser, getUser } from './auth.js';
 import { ProjectMeta } from './store.js';
+import { normalizeEntry } from './invites.js';
 
 /**
  * Is this user a member of the project — its owner or someone the owner
@@ -12,9 +13,14 @@ export function isMember(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (!meta.ownerId) return true;      // legacy project created before auth
   if (!user) return false;
   if (meta.ownerId === user.id) return true;
-  // An address nobody confirmed is whatever the person typed at sign-up.
+  return entriesOf(meta, user).length > 0;
+}
+
+/** The share entries that name this user. An address nobody confirmed is
+ *  whatever the person typed at sign-up, so it names nobody. */
+function entriesOf(meta: ProjectMeta, user: PublicUser): string[] {
   const email = user.emailPending ? undefined : user.email?.toLowerCase();
-  return !!meta.share?.collaborators?.some((c) => (email && c.toLowerCase() === email) || (user.orcid && c === user.orcid));
+  return (meta.share?.collaborators ?? []).filter((c) => (email && c.toLowerCase() === email) || (user.orcid && c === user.orcid));
 }
 
 /** Members-only listing: what the Agent API's list_projects offers. A
@@ -29,6 +35,23 @@ export const isListed = isMember;
 export function canAccess(meta: ProjectMeta, user: PublicUser | null): boolean {
   if (isMember(meta, user)) return true;
   return !!user && meta.share?.mode === 'link';
+}
+
+/**
+ * May this user change the project: its files, branches, history and
+ * settings? Everyone who may open it, except a person the owner shares with
+ * as "Can view" (`share.viewers`) and a link visitor while the link is
+ * view-only (`share.linkRole`). A person with both a role and the link gets
+ * the wider of the two: the link lets them in as anyone signed in would be.
+ * Comments are not changes: viewers comment and reply (routes.ts lists what
+ * they may still send).
+ */
+export function canEdit(meta: ProjectMeta, user: PublicUser | null): boolean {
+  if (!canAccess(meta, user)) return false;
+  if (!AUTH_ENABLED || !meta.ownerId || meta.ownerId === user!.id) return true;
+  const viewers = new Set((meta.share?.viewers ?? []).map(normalizeEntry));
+  if (entriesOf(meta, user!).some((c) => !viewers.has(normalizeEntry(c)))) return true;
+  return meta.share?.mode === 'link' && meta.share.linkRole !== 'view';
 }
 
 export type ListAccess = 'owner' | 'member' | 'link';

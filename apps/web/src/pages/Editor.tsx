@@ -32,7 +32,8 @@ import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPa
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
-import { useBranchSignal, type BranchSignalHandle } from '../editor/branchSignal';
+import { presenceRows } from '../util/presence';
+import { useBranchSignal, type BranchPeer, type BranchSignalHandle } from '../editor/branchSignal';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
@@ -43,7 +44,7 @@ import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
-import { mergeAgentBatches, type AgentBatch } from '../util/agentReview';
+import { mergeAgentBatches, revertSummary, type AgentBatch } from '../util/agentReview';
 import { askWaitingCommit } from '../util/waitingCommit';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
@@ -110,6 +111,8 @@ function inTextField(target: EventTarget | null): boolean {
 
 /** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
 const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder']);
+/** Palette commands someone who can only view would see refused (with the engine and remote ones): what the showcase refuses, less commenting. */
+const VIEWER_REFUSES = new Set([...SHOWCASE_REFUSES].filter((c) => c !== 'comment'));
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
 
@@ -194,6 +197,8 @@ export default function Editor() {
     return () => window.removeEventListener('resize', fit);
   }, []);
   const [users, setUsers] = useState<PresenceUser[]>([]);
+  // Everyone else on the branch and the file they have open (the branch signal).
+  const [peers, setPeers] = useState<BranchPeer[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [pluginActions, setPluginActions] = useState<PluginErrorsAction[]>([]);
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
@@ -302,6 +307,9 @@ export default function Editor() {
   // The Zotero sync rewrites its .bib whole: a hand edit there would be lost.
   const zoteroBib = !!activeFile && project?.zotero?.bibFile === activeFile;
   const [comments, setComments] = useState<Comment[]>([]);
+  // The thread Review marks: the caret is in its text, or "Open in Review" asked for it.
+  const [activeComment, setActiveComment] = useState<{ id: string; n: number } | null>(null);
+  const markComment = useCallback((cid: string | null) => setActiveComment((a) => (cid ? { id: cid, n: (a?.n ?? 0) + 1 } : null)), []);
   const [commentsLoad, setCommentsLoad] = useState<'loading' | 'ok' | 'error'>('loading');
   const [composing, setComposing] = useState<{ from: number; to: number; quote: string } | null>(null);
   const codeRef = useRef<CodePaneHandle>(null);
@@ -710,6 +718,8 @@ export default function Editor() {
     files: string[];
     hashes: string[];
     commits: Array<{ hash: string; message: string; patch: string }>;
+    /** When the commits being reviewed were made (the revert confirmation says so). */
+    dates: string[];
     total: number;
     truncated: boolean;
   } | null>(null);
@@ -734,14 +744,14 @@ export default function Editor() {
   }, [id, branch, authEnabled]);
 
   /** One dialog for both prompts: the live session and the away check. */
-  const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string }>, total: number, onBranch: string): Promise<boolean> => {
+  const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string; date?: string }>, total: number, onBranch: string): Promise<boolean> => {
     const shown = entries.slice(0, AGENT_REVIEW_MAX_COMMITS); // newest first
     try {
       const diffs = await Promise.all(shown.map((c) => api.commitDiff(id, c.hash)));
       // Read oldest first (the log is newest first): the story of the session.
       const commits = shown.map((c, i) => ({ hash: c.hash, message: c.message, patch: diffs[i].patch })).reverse();
       const files = [...new Set(commits.flatMap((c) => filesInPatch(c.patch)))];
-      setAgentReview({ branch: onBranch, files, hashes: shown.map((c) => c.hash), commits, total, truncated: total > shown.length });
+      setAgentReview({ branch: onBranch, files, hashes: shown.map((c) => c.hash), commits, dates: shown.flatMap((c) => (c.date ? [c.date] : [])), total, truncated: total > shown.length });
       return true;
     } catch (err: any) {
       toast(`Could not load Claude’s changes: ${err.message}`, 'error');
@@ -850,31 +860,59 @@ export default function Editor() {
     return () => { cancelled = true; };
   }, [id, branch, authEnabled, toast, openAgentReview, recordSeen]);
 
+  /** A revert reached the files: the history, the tree and the preview follow. */
+  const afterRevert = useCallback(async () => {
+    bumpHistory();
+    // The preview followed Claude's edits (an agent write arms auto-typeset);
+    // the revert reaches the editor as a remote transaction, which arms
+    // nothing, so the PDF on screen would keep showing what was just undone.
+    if (compile.result) {
+      if (autoRef.current) doCompile();
+      else setCompile((c) => (c.result ? { ...c, result: { ...c.result, pdfStale: true } } : c));
+    }
+    await loadFiles();
+  }, [compile.result, doCompile, loadFiles, bumpHistory]);
+
   const revertAgent = useCallback(async () => {
     if (!agentReview) return;
+    const review = agentReview;
+    const confirmed = await dialogs.confirm({
+      title: 'Revert Claude’s changes?',
+      body: revertSummary({ commits: review.hashes.length, files: review.files.length, branch: review.branch, dates: review.dates, author: authEnabled ? identity.name : null }),
+      confirmLabel: 'Revert Claude’s changes',
+      danger: true,
+    });
+    if (!confirmed) return;
     const checkpoint = project?.manualCommits
-      ? await askWaitingCommit(dialogs, id, [agentReview.branch], { before: 'reverting Claude’s edits', confirmLabel: 'Commit and revert' })
+      ? await askWaitingCommit(dialogs, id, [review.branch], { before: 'reverting Claude’s edits', confirmLabel: 'Commit and revert' })
       : undefined;
     if (checkpoint === null) return;
     try {
       // log order is newest-first — exactly what the revert endpoint expects.
-      const res = await api.revertCommits(id, agentReview.branch, agentReview.hashes, 'Revert Claude’s edits', identity.name, checkpoint);
+      const res = await api.revertCommits(id, review.branch, review.hashes, 'Revert Claude’s edits', identity.name, checkpoint);
       setAgentReview(null);
-      toast(res.ok ? `Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}` : 'Nothing to revert — these changes were already undone', res.ok ? 'ok' : 'info');
-      bumpHistory();
-      // The preview followed Claude's edits (an agent write arms auto-typeset);
-      // the revert reaches the editor as a remote transaction, which arms
-      // nothing, so the PDF on screen would keep showing what was just undone.
-      if (res.ok && compile.result) {
-        if (autoRef.current) doCompile();
-        else setCompile((c) => (c.result ? { ...c, result: { ...c.result, pdfStale: true } } : c));
-      }
-      await loadFiles();
+      if (!res.ok) { toast('Nothing to revert — these changes were already undone', 'info'); bumpHistory(); return; }
+      // The revert is one commit; reverting it brings Claude's edits back.
+      const revertHash = res.hash;
+      toast(`Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}`, 'ok', revertHash ? {
+        label: 'Undo',
+        testId: 'agent-revert-undo',
+        onClick: async () => {
+          try {
+            const back = await api.revertCommits(id, review.branch, [revertHash], 'Bring back Claude’s edits', identity.name);
+            toast(back.ok ? 'Claude’s edits are back' : 'Nothing to undo — Claude’s edits are already back', back.ok ? 'ok' : 'info');
+            await afterRevert();
+          } catch (err: any) {
+            toast(/^Could not revert/.test(err.message) ? err.message : `Could not undo the revert: ${err.message}`, 'error');
+          }
+        },
+      } : undefined);
+      await afterRevert();
     } catch (err: any) {
       // The server's conflict message already opens with "Could not revert".
       toast(/^Could not revert/.test(err.message) ? err.message : `Could not revert: ${err.message}`, 'error');
     }
-  }, [agentReview, id, branch, identity, compile.result, doCompile, loadFiles, toast, bumpHistory, project?.manualCommits, dialogs]);
+  }, [agentReview, id, identity, authEnabled, dialogs, afterRevert, toast, bumpHistory, project?.manualCommits]);
 
   /** Claude's commits on this branch whatever the review mark says: the way
    *  back to a session whose prompt is long gone. */
@@ -1090,9 +1128,10 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted: bumpHistory },
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted: bumpHistory, onRoster: setPeers },
     auto && hasTex,
     session,
+    { name: identity.name, color: identity.color, file: activeFile },
   );
   signal.current = signalHandle;
   useEffect(() => {
@@ -1138,9 +1177,10 @@ export default function Editor() {
     if (!activeFile) return;
     const ranges = comments
       .filter((c) => c.file === activeFile)
-      .map((c) => ({ id: c.id, from: c.anchor.from, to: c.anchor.to, resolved: c.resolved, suggestion: c.suggestion, quote: c.anchor.quote }));
+      .map((c) => ({ id: c.id, from: c.anchor.from, to: c.anchor.to, resolved: c.resolved, suggestion: c.suggestion, quote: c.anchor.quote, author: c.author, body: c.body, replies: c.replies.length }));
     requestAnimationFrame(() => codeRef.current?.setCommentRanges(ranges));
   }, [comments, activeFile]);
+  useEffect(() => setActiveComment(null), [activeFile]);
 
   const startComment = useCallback(() => {
     if (!activeFile || project?.readOnly) return;
@@ -1149,18 +1189,59 @@ export default function Editor() {
     setComposing(sel);
   }, [activeFile, project?.readOnly, toast]);
 
+  // The composer closes only once the server has the comment: a refusal
+  // leaves it open with the text, and Comment tries again.
   const submitComment = useCallback(async (body: string, suggestion?: string) => {
     if (!composing || !activeFile) return;
     try {
       await api.addComment(id, { branch, file: activeFile, anchor: composing, body, suggestion, author: identity.name });
-      await loadComments();
-      bumpComments();
-      setTab('review');
     } catch (err: any) {
-      toast(`Could not add comment: ${err.message}`, 'error');
+      toast(`Could not save the comment: ${err.message}. It is still in the box: press Comment to try again.`, 'error');
+      throw err;
     }
     setComposing(null);
+    setTab('review');
+    await loadComments();
+    bumpComments();
   }, [composing, id, branch, activeFile, identity, loadComments, bumpComments, toast]);
+
+  const replyToComment = useCallback(async (c: Comment, body: string) => {
+    try {
+      await api.replyComment(id, c.id, body, identity.name);
+    } catch (err: any) {
+      toast(`Could not save the reply: ${err.message}. It is still in the box: press Reply to try again.`, 'error');
+      throw err;
+    }
+    await loadComments();
+    bumpComments();
+  }, [id, identity, loadComments, bumpComments, toast]);
+  const resolveComment = useCallback(async (c: Comment, resolved: boolean) => {
+    try {
+      await api.resolveComment(id, c.id, resolved);
+    } catch (err: any) {
+      toast(`Could not ${resolved ? 'resolve' : 'reopen'} the comment: ${err.message}`, 'error');
+      return;
+    }
+    await loadComments();
+    bumpComments();
+  }, [id, loadComments, bumpComments, toast]);
+  const deleteComment = useCallback(async (c: Comment) => {
+    if (!(await dialogs.confirm({ title: 'Delete this comment thread?', confirmLabel: 'Delete thread', danger: true }))) return;
+    try {
+      await api.deleteComment(id, c.id);
+    } catch (err: any) {
+      toast(`Could not delete the comment: ${err.message}`, 'error');
+      return;
+    }
+    await loadComments();
+    bumpComments();
+  }, [id, dialogs, loadComments, bumpComments, toast]);
+
+  const openCommentInReview = useCallback((cid: string) => {
+    setTab('review');
+    setSidebar(false);
+    markComment(cid);
+  }, [setSidebar, markComment]);
 
   const revealComment = useCallback((c: Comment) => {
     openFile(c.file);
@@ -1309,11 +1390,11 @@ export default function Editor() {
       const c = comments.find((x) => x.id === cid);
       if (!c || project?.readOnly) return;
       if (action === 'accept') acceptSuggestion(c);
-      else api.resolveComment(id, c.id, true).then(() => { loadComments(); bumpComments(); });
+      else void resolveComment(c, true);
     };
     window.addEventListener('aldine:suggestion', onAction);
     return () => window.removeEventListener('aldine:suggestion', onAction);
-  }, [comments, id, acceptSuggestion, loadComments, bumpComments, project?.readOnly]);
+  }, [comments, acceptSuggestion, resolveComment, project?.readOnly]);
 
 
   // The preview is stale when the last run produced no PDF: the server keeps
@@ -1597,10 +1678,11 @@ export default function Editor() {
     for (const c of pluginCommands) cmds.push({ id: `plugin-${c.id}`, group: c.group || 'Plugins', title: c.title, keywords: c.keywords, run: () => c.run() });
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
+    if (authEnabled && project?.canEdit === false) return cmds.filter((c) => !VIEWER_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1662,6 +1744,9 @@ export default function Editor() {
   const canSync = !authEnabled || !!project.isMember;
   // Access exists only with sign-in, and only the owner may change it.
   const canManageSharing = authEnabled && !!project.isOwner;
+  // "Can view": the files are as read-only as a showcase's, comments are not.
+  const viewOnly = authEnabled && project.canEdit === false && !project.readOnly;
+  const locked = !!project.readOnly || viewOnly;
 
   return (<>
     <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
@@ -1670,8 +1755,8 @@ export default function Editor() {
         <button className="btn btn--ghost" onClick={() => leaving(() => navigate(homeReturn(safeSession.get(HOME_RETURN_KEY))))} title="Back to projects" aria-label="Back to projects" data-testid="back-to-projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
-          contentEditable={(canSync && !project.readOnly) || undefined}
-          title={canSync ? undefined : 'Only the owner and collaborators can rename this project'}
+          contentEditable={(canSync && !locked) || undefined}
+          title={viewOnly ? 'You can view this project, not rename it' : canSync ? undefined : 'Only the owner and collaborators can rename this project'}
           suppressContentEditableWarning
           data-testid="project-name"
           onBlur={(e) => renameProject(e.currentTarget, e.currentTarget.textContent || '')}
@@ -1681,7 +1766,7 @@ export default function Editor() {
         </span>
         {/* Syncing is members-only and publishing is owner-only server-side —
             don't offer either to someone here on a share link. */}
-        {project.remote && canSync && !project.readOnly ? (
+        {project.remote && canSync && !locked ? (
           <RemoteSync
             projectId={id}
             link={project.remote}
@@ -1703,8 +1788,8 @@ export default function Editor() {
             current={branch}
             onSwitch={switchBranch}
             onChanged={() => { loadProject(); loadFiles(); }}
-            onPublish={!project.remote && isProjectOwner && !project.readOnly ? () => setPublishOpen(true) : undefined}
-            readOnly={!!project.readOnly}
+            onPublish={!project.remote && isProjectOwner && !locked ? () => setPublishOpen(true) : undefined}
+            readOnly={locked}
             manual={!!project.manualCommits}
           />
         )}
@@ -1723,7 +1808,7 @@ export default function Editor() {
             Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
           </button>
         )}
-        <Presence users={users} />
+        <Presence rows={presenceRows(users, peers, activeFile, identity)} onOpenFile={openFile} />
         <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
           {sidebarHidden ? 'Files' : 'Hide files'}
         </button>
@@ -1751,6 +1836,11 @@ export default function Editor() {
         <div className="showcase-note" role="status" data-testid="showcase-note">
           <span className="showcase-note__text">This showcase project is read-only. Make a copy to edit it.</span>
           <button className="btn btn--small btn--primary" onClick={copyShowcase} disabled={copying} data-testid="showcase-copy">{copying ? 'Copying…' : 'Make a copy'}</button>
+        </div>
+      )}
+      {viewOnly && (
+        <div className="showcase-note" role="status" data-testid="view-only-note">
+          <span className="showcase-note__text">You can view this project and comment on it. To edit it, ask {project.ownerName || 'its owner'} for edit access.</span>
         </div>
       )}
 
@@ -1842,7 +1932,7 @@ export default function Editor() {
                 newFileKind={newEntryKind}
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
                 hidden={tab !== 'files'}
-                readOnly={!!project.readOnly}
+                readOnly={locked}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -1897,10 +1987,10 @@ export default function Editor() {
                     setTimeout(() => { if (localRemoval.current === from) localRemoval.current = null; }, 0);
                   }
                 }}
-                onSetRoot={canSync ? setRootFile : undefined}
+                onSetRoot={canSync && !locked ? setRootFile : undefined}
               />
             </div>
-            <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} hidden={tab !== 'history'} onReverted={() => onDocChanged(true)} /></div>
+            <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={locked} onReverted={() => onDocChanged(true)} hidden={tab !== 'history'} /></div>
             <div className="sidebar__panel" style={{ display: tab === 'review' ? 'block' : 'none' }}>
               <ReviewPanel
                 comments={comments}
@@ -1908,10 +1998,14 @@ export default function Editor() {
                 onRetry={loadComments}
                 activeFile={activeFile}
                 onReveal={revealComment}
-                onResolve={async (c, resolved) => { await api.resolveComment(id, c.id, resolved); await loadComments(); bumpComments(); }}
-                onDelete={async (c) => { if (!(await dialogs.confirm({ title: 'Delete this comment thread?', confirmLabel: 'Delete thread', danger: true }))) return; await api.deleteComment(id, c.id); await loadComments(); bumpComments(); }}
-                onReply={async (c, body) => { await api.replyComment(id, c.id, body, identity.name); await loadComments(); bumpComments(); }}
+                onResolve={resolveComment}
+                onDelete={deleteComment}
+                onReply={replyToComment}
                 onAccept={acceptSuggestion}
+                canDelete={(c) => !authEnabled || (!!project.isMember && !viewOnly) || (!!c.authorId && c.authorId === user?.id)}
+                canAccept={!locked}
+                fileOrder={Object.keys(docWords?.files ?? {})}
+                active={activeComment}
                 readOnly={!!project.readOnly}
               />
             </div>
@@ -1928,6 +2022,7 @@ export default function Editor() {
                 version={searchVersion}
                 onOpenMatch={openMatch}
                 onReplaced={onReplaced}
+                readOnly={locked}
               />
             </div>
             {pluginPanels.map((p) => (
@@ -1958,7 +2053,7 @@ export default function Editor() {
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {paneMode === 'visual' && <FormatToolbar target={codeRef} />}
-                {sync?.key === paneKey && <SyncStatus state={sync.state} readOnly={!!project.readOnly} />}
+                {sync?.key === paneKey && <SyncStatus state={sync.state} readOnly={locked} />}
               </div>
               {zoteroBib && (
                 <div className="remote-pending" role="status" data-testid="zotero-bib-banner">
@@ -1980,9 +2075,12 @@ export default function Editor() {
                 vim={vim}
                 onWrite={doCompile}
                 onAccessDenied={onAccessDenied}
+                onScope={(ro) => { if ((ro && !locked) || (!ro && viewOnly)) loadProject(); }}
+                onOpenComment={openCommentInReview}
+                onCommentCaret={markComment}
                 mode={paneMode}
                 identity={identity}
-                readOnly={!!project.readOnly || zoteroBib}
+                readOnly={locked || zoteroBib}
                 onSync={(state) => setSync({ key: paneKey, state })}
               />
             </>
@@ -1990,6 +2088,8 @@ export default function Editor() {
             <div className="pdf-empty" data-testid="empty-project">
               {project.readOnly ? (
                 <p data-testid="empty-showcase">This showcase project is read-only. Make a copy to edit it.</p>
+              ) : viewOnly ? (
+                <p>This project has no files yet.</p>
               ) : (
                 <>
                   <p>Create a file to start writing.</p>
@@ -2300,7 +2400,7 @@ export default function Editor() {
             ))}
             <div className="modal__row">
               <button className="btn" onClick={() => setAgentReview(null)}>Close</button>
-              {!project.readOnly && (
+              {!locked && (
                 <button className="btn" onClick={revertAgent} data-testid="agent-revert" title="Creates a new commit that undoes these changes — history is kept">
                   Revert these changes
                 </button>
@@ -2317,7 +2417,8 @@ export default function Editor() {
           autoTypeset={auto}
           vim={vim}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
-          canConfigure={canSync}
+          canConfigure={canSync && !viewOnly}
+          viewOnly={viewOnly}
           onClose={() => setSettingsOpen(false)}
           onRename={saveName}
           onSetRoot={setRootFile}
@@ -2362,7 +2463,7 @@ export default function Editor() {
             })()}</pre>
             <div className="modal__row">
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: 'var(--text-s)' }} title="On: the run stops at the first error and the preview keeps the previous PDF. Off: the run continues to the end and the complete PDF is shown beside the errors">
-                <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} disabled={!!project?.readOnly} />
+                <input type="checkbox" data-testid="stop-on-error-toggle" checked={!!project?.stopOnFirstError} onChange={(e) => setStopOnFirstError(e.target.checked)} disabled={!!project?.readOnly || (authEnabled && project?.canEdit === false)} />
                 Stop on first error
               </label>
               <button className="btn" onClick={() => setShowLog(false)}>Close</button>

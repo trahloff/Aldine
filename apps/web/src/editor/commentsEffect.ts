@@ -8,6 +8,10 @@ export interface CommentRange {
   resolved: boolean;
   suggestion?: string;
   quote?: string;
+  /** What the commented text's card shows (editor/commentTips). */
+  author?: string;
+  body?: string;
+  replies?: number;
 }
 
 export const setComments = StateEffect.define<CommentRange[]>();

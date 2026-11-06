@@ -10,7 +10,7 @@ import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKe
 import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { replaceFileDurable } from './durable.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
-import { canAccess } from './authz.js';
+import { canAccess, canEdit } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 import { noteEdit, AGENT_EDITOR, editorOf } from './activity.js';
 
@@ -348,7 +348,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
 // Defining onAuthenticate makes Hocuspocus require a token from every client,
 // so only include it when auth is actually enabled (default is open).
 const authHook = AUTH_ENABLED ? {
-  async onAuthenticate({ documentName, requestHeaders }: { documentName: string; requestHeaders: Record<string, string | string[] | undefined> }) {
+  async onAuthenticate({ documentName, requestHeaders, connection }: { documentName: string; requestHeaders: Record<string, string | string[] | undefined>; connection: { readOnly: boolean } }) {
     const parsed = parseDocName(documentName);
     if (!parsed || !(isSignalDoc(parsed.filePath) || isProjectFile(parsed.filePath))) throw new Error('invalid document');
     // Bearer tokens (agents) are accepted alongside session cookies, with the
@@ -372,6 +372,10 @@ const authHook = AUTH_ENABLED ? {
     // The trash locks everyone out, as the HTTP guard does: trashProject drops the sockets, and this refuses their reconnect.
     if (meta.deletedAt) throw new Error('project not found');
     if (!canAccess(meta, user)) throw new Error('Access denied');
+    // "Can view" connects like a showcase visitor: edits are dropped, the
+    // awareness (presence) still flows. Sharing changes close the sockets,
+    // so a new role takes effect on the reconnect.
+    if (!canEdit(meta, user) || protectedProjects.has(parsed.projectId)) connection.readOnly = true;
     // Becomes connection.context: the only per-socket identity we keep, so
     // onlineUserIds can count people rather than sockets, and the project
     // list can name who typed last.

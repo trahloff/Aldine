@@ -175,13 +175,17 @@ test.describe('switching files', () => {
       await openProject(b, id);
       await openFile(a, 'a.tex', 'Line 1 of chapter A');
       await openFile(b, 'a.tex', 'Line 1 of chapter A');
-      await expect(b.getByTestId('presence')).toHaveAttribute('title', /Ada/);
+      const ada = b.getByTestId('presence').locator('[data-name="Ada"]');
+      await expect(ada).toHaveAttribute('data-here', 'true');
 
+      // The doc a.tex keeps for Ada carries no presence: she shows in b.tex only.
       await openFile(a, 'b.tex', 'Short file.');
-      await expect(b.getByTestId('presence'), 'Ada left a.tex').toHaveCount(0);
+      await expect(ada, 'Ada left a.tex').toHaveAttribute('data-here', 'false');
+      await expect(ada).toHaveAttribute('data-file', 'b.tex');
+      await expect(b.locator('.cm-ySelectionInfo', { hasText: 'Ada' }), 'and her caret left with her').toHaveCount(0);
       await openFile(a, 'a.tex', 'Line 1 of chapter A');
-      await expect(b.getByTestId('presence')).toHaveAttribute('title', /Ada/);
-      await expect(a.getByTestId('presence')).toHaveAttribute('title', /Bob/);
+      await expect(ada).toHaveAttribute('data-here', 'true');
+      await expect(a.getByTestId('presence').locator('[data-name="Bob"]')).toHaveAttribute('data-here', 'true');
     } finally {
       await ctxA.close();
       await ctxB.close();

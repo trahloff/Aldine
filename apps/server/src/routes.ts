@@ -36,7 +36,7 @@ import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import * as email from './email.js';
-import { canAccess, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
+import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
@@ -147,13 +147,15 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
   const owner = user !== undefined && isOwner(meta, user);
   return {
     ...rest,
-    share: share && (owner ? share : { mode: share.mode, collaborators: [] }),
+    share: share && (owner ? share : { mode: share.mode, collaborators: [], ...(share.linkRole ? { linkRole: share.linkRole } : {}) }),
     ownerId,
     ownerName: await ownerName(meta),
     remote: link,
     github: link?.provider === 'github' ? link : undefined,
     isOwner: user !== undefined ? isOwner(meta, user) : undefined,
     isMember: user !== undefined ? isMember(meta, user) : undefined,
+    // False for "Can view": the editor opens read-only, comments stay open.
+    canEdit: user !== undefined ? canEdit(meta, user) : undefined,
     zotero: z ? {
       libraryPrefix: z.libraryPrefix,
       collectionKey: z.collectionKey,
@@ -204,6 +206,24 @@ async function requireMember(req: any, reply: any, action: string): Promise<stor
   }
   return meta;
 }
+
+/** What a person who can only view (authz.canEdit) may still send: building
+ *  the document, their own project list and copy (like downloading it), and
+ *  review comments. Every other write answers VIEW_ONLY, so a route added
+ *  later is closed to viewers until it is listed here. */
+const VIEWER_WRITES = new Set([
+  '/api/projects/:id/compile', '/api/projects/:id/synctex',
+  '/api/projects/:id/opened', '/api/projects/:id/listing', '/api/projects/:id/copy',
+  '/api/projects/:id/comments', '/api/projects/:id/comments/:cid/reply', '/api/projects/:id/comments/:cid/resolve', '/api/projects/:id/comments/:cid',
+  '/api/projects/:id/agent-activity/seen',
+]);
+/** Reads closed to viewers: they reach the owner's linked accounts only to
+ *  change the document (a citation search inserts what it finds). */
+const VIEWER_READS_REFUSED = new Set(['/api/projects/:id/zotero/search']);
+const viewerMay = (method: string, route: string | undefined) => (method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+  ? !VIEWER_READS_REFUSED.has(route ?? '')
+  : VIEWER_WRITES.has(route ?? ''));
+const VIEW_ONLY = 'You can view this project, not change it. Ask its owner for edit access.';
 
 /** The Zotero link runs on the owner's own API key: an account an
  *  administrator disabled lends it to nobody. */
@@ -637,6 +657,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (scope && !tokenMayUseProjectRoute(req.method, req.routeOptions.url)) {
         return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
       }
+      if (!viewerMay(req.method, route) && !canEdit(meta, user)) return reply.code(403).send({ error: VIEW_ONLY });
       return;
     }
     // non-id routes: require sign-in for the project list / create / import
@@ -813,16 +834,32 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return { ...body, ...(resolved?.venueKit ? { venueKit: resolved.venueKit } : {}), ...(remoteError ? { remoteError } : {}) };
   });
 
+  const isListedInvitation = (i: store.Invitation) => ['pending', 'declined', 'expired'].includes(stateOf(i));
+  /** A share as stored: roles only where they differ from "Can edit". */
+  const shareOf = (mode: 'private' | 'link', collaborators: string[], viewers: string[] | undefined, linkRole: 'edit' | 'view' | undefined): NonNullable<store.ProjectMeta['share']> => ({
+    mode, collaborators, ...(viewers?.length ? { viewers } : {}), ...(linkRole === 'view' ? { linkRole } : {}),
+  });
+  /** `viewers` kept to the entries in `keep`, with each of `set` given `role`. */
+  const withRoles = (viewers: string[] | undefined, keep: string[], set: string[], role: 'edit' | 'view'): string[] => {
+    const next = new Set((viewers ?? []).map(normalizeEntry).filter((c) => keep.includes(c)));
+    for (const c of set) { if (role === 'view') next.add(c); else next.delete(c); }
+    return [...next];
+  };
+
   // ---------- sharing (owner only) ----------
   // The share list is the only source of access. With accounts on, an address
   // or ORCID iD added to it becomes an invitation instead, and joins the list
   // when its person accepts (POST /api/invitations/:invite/accept).
-  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[]; previous?: string[] } }>(
+  // `linkRole` sets what link visitors may do (kept when absent); `role` is
+  // the role of the entries this save adds (edit when absent).
+  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[]; previous?: string[]; linkRole?: 'edit' | 'view'; role?: 'edit' | 'view' } }>(
     '/api/projects/:id/share', async (req, reply) => {
       const meta = await store.readMeta(req.params.id);
       const user = reqUser(req);
       if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
       const mode = req.body?.mode === 'link' ? 'link' : 'private';
+      const linkRole = req.body?.linkRole === 'view' || req.body?.linkRole === 'edit' ? req.body.linkRole : (meta.share?.linkRole ?? 'edit');
+      const role = req.body?.role === 'view' ? 'view' : 'edit';
       const prev = (meta.share?.collaborators || []).map(normalizeEntry);
       // An entry is an email address or an ORCID iD (the only way to invite a
       // researcher whose ORCID account shares no email).
@@ -832,11 +869,12 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const added = requested.filter((c) => !prev.includes(c));
       // Gaining access needs no socket to reconnect: only a share that lets
       // fewer people in drops them (below).
-      const narrows = (list: string[]) => (meta.share?.mode === 'link' && mode !== 'link') || prev.some((c) => !list.includes(c));
+      const narrows = (list: string[]) => (meta.share?.mode === 'link' && mode !== 'link') || prev.some((c) => !list.includes(c))
+        || (mode === 'link' && (meta.share?.linkRole ?? 'edit') !== linkRole);
       if (!auth.AUTH_ENABLED || !user) {
         // Nobody signs in to accept anything: the list is the share.
         const revoke = narrows(requested);
-        meta.share = { mode, collaborators: requested };
+        meta.share = shareOf(mode, requested, withRoles(meta.share?.viewers, requested, added, role), linkRole);
         await store.writeMeta(meta);
         if (revoke) {
           closeProjectConnections(meta.id);
@@ -849,7 +887,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // took off it goes, so someone who accepted while it was open stays.
       const previous = Array.isArray(req.body?.previous) ? new Set(req.body!.previous.map((c) => normalizeEntry(String(c).trim()))) : null;
       const kept = previous ? prev.filter((c) => requested.includes(c) || !previous.has(c)) : requested.filter((c) => prev.includes(c));
-      const open = (await store.listProjectInvitations(meta.id)).filter((i) => stateOf(i) === 'pending');
+      const invitations = await store.listProjectInvitations(meta.id);
+      const open = invitations.filter((i) => stateOf(i) === 'pending');
       const fresh = added.filter((c) => !own.has(c) && !open.some((i) => i.to === c));
       if (kept.length + open.length + fresh.length > MAX_SHARE_ENTRIES) {
         return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together; this would make ${kept.length + open.length + fresh.length}` });
@@ -860,7 +899,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         return reply.code(429).send({ error: `You can invite at most ${shareBurst} people an hour, so nothing was saved. Invite fewer people at once, or try again later.` });
       }
       const revoke = narrows(kept);
-      meta.share = { mode, collaborators: kept };
+      // A role stays with its entry while the entry is shared, or invited on
+      // the dialog's list (Invite again keeps it).
+      const viewers = withRoles(meta.share?.viewers, [...kept, ...invitations.filter((i) => isListedInvitation(i)).map((i) => i.to)], fresh, role);
+      meta.share = shareOf(mode, kept, viewers, linkRole);
       await store.writeMeta(meta);
       // Access is checked when a collab socket connects, so a session already
       // in the document would survive being revoked. Drop this project's
@@ -887,12 +929,35 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const entry = normalizeEntry(req.params.entry.trim());
     const list = meta.share?.collaborators || [];
     if (!list.some((c) => normalizeEntry(c) === entry)) return reply.code(404).send({ error: `${entry} has no access to remove` });
-    meta.share = { mode: meta.share?.mode || 'private', collaborators: list.filter((c) => normalizeEntry(c) !== entry) };
+    meta.share = shareOf(meta.share?.mode || 'private', list.filter((c) => normalizeEntry(c) !== entry), meta.share?.viewers?.filter((c) => normalizeEntry(c) !== entry), meta.share?.linkRole);
     await store.writeMeta(meta);
     // As in the share route: drop the sockets so the removed person's
     // session re-authenticates and is refused.
     closeProjectConnections(meta.id);
     publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+    return publicMeta(meta, user);
+  });
+
+  // "Can edit" or "Can view" for one person with access or with an open
+  // invitation. Their sockets reconnect under the new role at once.
+  app.put<{ Params: { id: string; entry: string }; Body: { role?: unknown } }>('/api/projects/:id/collaborators/:entry', async (req, reply) => {
+    const meta = await store.readMeta(req.params.id);
+    const user = reqUser(req);
+    if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
+    const role = req.body?.role;
+    if (role !== 'edit' && role !== 'view') return reply.code(400).send({ error: 'role must be "edit" or "view"' });
+    const entry = normalizeEntry(req.params.entry.trim());
+    const shared = (meta.share?.collaborators || []).some((c) => normalizeEntry(c) === entry);
+    const invited = !shared && (await store.listProjectInvitations(meta.id)).some((i) => i.to === entry && isListedInvitation(i));
+    if (!shared && !invited) return reply.code(404).send({ error: `${entry} has no access or open invitation` });
+    const viewers = withRoles(meta.share?.viewers, (meta.share?.viewers ?? []).map(normalizeEntry), [entry], role);
+    const changed = viewers.length !== (meta.share?.viewers ?? []).length;
+    meta.share = shareOf(meta.share?.mode || 'private', meta.share?.collaborators || [], viewers, meta.share?.linkRole);
+    await store.writeMeta(meta);
+    if (changed && shared) {
+      closeProjectConnections(meta.id);
+      publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+    }
     return publicMeta(meta, user);
   });
 
@@ -902,8 +967,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   /** What the share dialog lists: open, declined and expired invitations.
    *  An accepted one is a share entry by now; a withdrawn one is gone. */
   const ownerInvitations = async (req: FastifyRequest, projectId: string) => (await store.listProjectInvitations(projectId))
-    .map((i) => ({ id: i.id, to: i.to, state: stateOf(i), createdAt: i.createdAt, expiresAt: i.expiresAt, emailedAt: i.emailedAt, respondedAt: i.respondedAt, link: inviteLink(req, i.id) }))
-    .filter((i) => i.state === 'pending' || i.state === 'declined' || i.state === 'expired');
+    .filter((i) => isListedInvitation(i))
+    .map((i) => ({ id: i.id, to: i.to, state: stateOf(i), createdAt: i.createdAt, expiresAt: i.expiresAt, emailedAt: i.emailedAt, respondedAt: i.respondedAt, link: inviteLink(req, i.id) }));
 
   /** A new invitation for each entry. An earlier one to the same entry that
    *  is no longer open is replaced, and its link stops working. */
@@ -986,7 +1051,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // Invite one address or iD: a new person, or again after a decline or expiry.
-  app.post<{ Params: { id: string }; Body: { to?: string } }>('/api/projects/:id/invitations', async (req, reply) => {
+  // `role` sets the invited entry's role; absent keeps the one it had (Invite again).
+  app.post<{ Params: { id: string }; Body: { to?: string; role?: 'edit' | 'view' } }>('/api/projects/:id/invitations', async (req, reply) => {
     const meta = await requireOwner(req, reply, 'invite people');
     if (!meta) return;
     const user = reqUser(req);
@@ -1000,6 +1066,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (open.some((i) => i.to === entry)) return reply.code(409).send({ error: `${entry} already has an open invitation` });
     if (kept.length + open.length + 1 > MAX_SHARE_ENTRIES) return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together` });
     if (!(await takeInvite(user, reply))) return;
+    const role = req.body?.role;
+    if (role === 'edit' || role === 'view') {
+      meta.share = shareOf(meta.share?.mode || 'private', kept, withRoles(meta.share?.viewers, (meta.share?.viewers ?? []).map(normalizeEntry), [entry], role), meta.share?.linkRole);
+      await store.writeMeta(meta);
+    }
     const staged = await stageInvitations(meta, user, [entry]);
     const report = await sendInvitations(staged, meta, user);
     return { ...report, invitations: await ownerInvitations(req, meta.id) };
@@ -1796,8 +1867,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
-  // Write access is the same as PUT /file's: there is no read-only share
-  // role, and the showcase guard already refuses this POST.
+  // Write access is the same as PUT /file's: the showcase guard and the
+  // view-only guard (VIEWER_WRITES) already refuse this POST.
   app.post<{ Params: { id: string }; Body: ReplaceBody }>('/api/projects/:id/replace', async (req, reply) => {
     const body: ReplaceBody = req.body && typeof req.body === 'object' ? req.body : {};
     const branch = typeof body.branch === 'string' && body.branch ? body.branch : 'main';
@@ -2158,6 +2229,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     } else if (auth.AUTH_ENABLED && user) {
       const row = await store.getProjectVisit(user.id, req.params.id, branch);
       mark = row ? { head: row.head, at: row.at } : null;
+      // Someone else's project opened for the first time (an invitation, a
+      // link) starts its review here: what Claude did before they came is
+      // not theirs to review, nor to revert. The owner's first open keeps the
+      // whole branch, so a project Claude made is reviewed when it is first
+      // opened. A token never sets a person's mark (see /seen below).
+      if (!row && !(req as any)._tokenScope && !isOwner(await store.readMeta(req.params.id), user)) {
+        const head = await gitops.branchHead(req.params.id, branch);
+        if (head) {
+          mark = { head, at: new Date().toISOString() };
+          await store.setProjectVisit({ userId: user.id, projectId: req.params.id, branch, head, at: mark.at, promptedHead: null });
+        }
+      }
     } else {
       const h = req.query.sinceHead;
       const a = req.query.sinceAt;
@@ -2461,6 +2544,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   });
 
   // ---------- review comments ----------
+  /** Someone who can only view has a read-only socket, so their client's bump
+   *  of the comments signal never reaches the others: the server bumps it. */
+  const signalViewerComment = async (req: any, branch: string) => {
+    if (!canEdit(await store.readMeta(req.params.id), reqUser(req))) bumpCommentsSignal(req.params.id, branch);
+  };
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/comments', async (req) =>
     comments.listComments(req.params.id, req.query.branch || 'main'));  // returns a Promise; Fastify awaits it
 
@@ -2478,9 +2566,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (typeof from !== 'number' || typeof to !== 'number' || from < 0 || to <= from) {
         return reply.code(400).send({ error: 'Invalid comment anchor' });
       }
-      if (typeof b.body === 'string' && b.body.length > 5000) return reply.code(400).send({ error: 'Comment is too long (max 5000 characters)' });
-      if (typeof b.suggestion === 'string' && b.suggestion.length > 20000) return reply.code(400).send({ error: 'Suggestion is too long' });
-      return comments.addComment(req.params.id, {
+      if (typeof b.body === 'string' && b.body.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Comment is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
+      if (typeof b.suggestion === 'string' && b.suggestion.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Suggestion is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
+      const added = await comments.addComment(req.params.id, {
         branch,
         file: b.file,
         anchor: b.anchor,
@@ -2489,17 +2577,22 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         body: b.body || '',
         suggestion: b.suggestion,
       });
+      await signalViewerComment(req, branch);
+      return added;
     });
 
   app.post<{ Params: { id: string; cid: string }; Body: { body: string; author?: string } }>(
     '/api/projects/:id/comments/:cid/reply', async (req, reply) => {
+      if (typeof req.body?.body === 'string' && req.body.body.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Reply is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
       const c = await comments.replyComment(req.params.id, req.params.cid, reqUser(req)?.name || req.body?.author || 'Anonymous', req.body?.body || '', reqUser(req)?.id);
+      if (c) await signalViewerComment(req, c.branch);
       return c || reply.code(404).send({ error: 'comment not found' });
     });
 
   app.post<{ Params: { id: string; cid: string }; Body: { resolved?: boolean } }>(
     '/api/projects/:id/comments/:cid/resolve', async (req, reply) => {
       const c = await comments.resolveComment(req.params.id, req.params.cid, req.body?.resolved !== false);
+      if (c) await signalViewerComment(req, c.branch);
       return c || reply.code(404).send({ error: 'comment not found' });
     });
 
@@ -2542,17 +2635,19 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     });
 
   // Anyone in the document may comment and reply, but clearing someone else's
-  // review thread is for the team — a link visitor can only delete their own,
-  // by account id (a comment without one is no visitor's).
+  // review thread is for the team's editors — a link visitor, and a person
+  // who can only view, can only delete their own, by account id (a comment
+  // without one is no visitor's).
   app.delete<{ Params: { id: string; cid: string }; Querystring: Q }>('/api/projects/:id/comments/:cid', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
-    if (!isMember(meta, reqUser(req))) {
+    if (!isMember(meta, reqUser(req)) || !canEdit(meta, reqUser(req))) {
       const all = await comments.listComments(req.params.id, req.query.branch || 'main');
       const authorId = all.find((c) => c.id === req.params.cid)?.authorId;
       const mine = !!authorId && authorId === reqUser(req)?.id;
       if (!mine) return reply.code(403).send({ error: 'Only the owner and collaborators can delete this comment' });
     }
     await comments.deleteComment(req.params.id, req.params.cid);
+    await signalViewerComment(req, req.query.branch || 'main');
     return { ok: true };
   });
 

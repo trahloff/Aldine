@@ -10,6 +10,7 @@ export interface OAuthProviderInfo { id: string; label: string }
 /** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
  *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
 export interface ProjectThumb { branch: string; w: number; h: number; v: string }
+export type ShareRole = 'edit' | 'view';
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -24,8 +25,13 @@ export interface ProjectSummary {
    *  Gates the affordances the server restricts to members. */
   isMember?: boolean;
   /** `collaborators` is empty unless you are the owner (the server does not
-   *  disclose other people's invite list). */
-  share?: { mode: 'private' | 'link'; collaborators: string[] } | null;
+   *  disclose other people's invite list). `viewers`: the owner's entries,
+   *  people with access or invitations, who can only view; `linkRole`: what
+   *  the link lets visitors do (absent is edit). */
+  share?: { mode: 'private' | 'link'; collaborators: string[]; viewers?: string[]; linkRole?: ShareRole } | null;
+  /** False for someone who can only view: the editor opens read-only, and
+   *  comments stay open. Absent from older servers, which have no roles. */
+  canEdit?: boolean;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
   remote?: RemoteLink | null;
   /** Server-side push after every autosave commit on main (owner-only toggle). */
@@ -225,6 +231,8 @@ export interface Comment {
   file: string;
   anchor: { from: number; to: number; quote: string };
   author: string;
+  /** The account that wrote it; absent without accounts. */
+  authorId?: string;
   body: string;
   suggestion?: string;
   resolved: boolean;
@@ -731,20 +739,24 @@ export const api = {
     oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   /** `previous`: the list the dialog started from, so that only what the
    *  owner took off it is removed (someone may have accepted meanwhile). */
-  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[]) =>
-    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous }) }),
+  /** `role`: what the people this save adds may do once they accept. */
+  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[], role?: ShareRole) =>
+    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous, role }) }),
   /** Changes only who the link lets in: without a list the server keeps the
    *  people with access as they are. */
-  shareMode: (id: string, mode: 'private' | 'link') =>
-    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode }) }),
+  shareMode: (id: string, mode: 'private' | 'link', linkRole?: ShareRole) =>
+    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, linkRole }) }),
+  /** "Can edit" or "Can view" for a person with access or an invitation. */
+  setRole: (id: string, entry: string, role: ShareRole) =>
+    req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'PUT', body: JSON.stringify({ role }) }),
   /** Takes one address or ORCID iD off the people with access. */
   removeCollaborator: (id: string, entry: string) =>
     req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'DELETE' }),
   /** The owner's view: open, declined and expired invitations of a project. */
   projectInvitations: (id: string) => req<OwnerInvitation[]>(`/api/projects/${id}/invitations`),
   /** Invite one address or ORCID iD: someone new, or again after a decline or expiry. */
-  invite: (id: string, to: string) =>
-    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify({ to }) }),
+  invite: (id: string, to: string, role?: ShareRole) =>
+    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify({ to, role }) }),
   resendInvitation: (id: string, invite: string) =>
     req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations/${invite}/resend`, { method: 'POST' }),
   /** Withdraws an open invitation, or clears a declined or expired one. */

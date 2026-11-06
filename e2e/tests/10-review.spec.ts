@@ -158,3 +158,131 @@ test.describe('comment re-anchoring (QA regression)', () => {
     }
   });
 });
+
+test.describe('comments that do not get lost', () => {
+  test('a comment or reply the server refuses stays in its box for another try, and long comments save whole', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Keep');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'KEEPSAKE text to review.\n' } });
+      await openProject(page, id);
+      await expect(page.locator('.cm-content')).toContainText('KEEPSAKE', { timeout: 10_000 });
+      const line = await page.locator('.cm-line').first().boundingBox();
+      await page.mouse.dblclick(line!.x + 30, line!.y + line!.height / 2);
+      await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('KEEPSAKE');
+
+      // past 5,000 characters, and the first save fails
+      const long = `LONG-START ${'careful review words '.repeat(400)}LONG-END`;
+      let refuse = true;
+      await page.route(`**/api/projects/${id}/comments`, (route) => (refuse && route.request().method() === 'POST'
+        ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The server is busy' }) })
+        : route.fallback()));
+      await page.getByTestId('add-comment').click();
+      await page.getByTestId('comment-body').fill(long);
+      await page.getByTestId('comment-submit').click();
+      await expect(page.locator('.toast', { hasText: 'Could not save the comment: The server is busy' })).toBeVisible();
+      await expect(page.getByTestId('comment-composer'), 'the composer stays open').toBeVisible();
+      await expect(page.getByTestId('comment-body')).toHaveValue(long);
+      refuse = false;
+      await page.getByTestId('comment-submit').click();
+      await expect(page.getByTestId('comment-composer')).toHaveCount(0);
+      await expect(page.getByTestId('review-panel')).toContainText('LONG-END', { timeout: 10_000 });
+      const saved = (await (await request.get(`/api/projects/${id}/comments?branch=main`)).json())[0];
+      expect(saved.body).toBe(long);
+
+      // a reply: Enter sends it, a refusal keeps it, Reply sends it again
+      let refuseReply = true;
+      await page.route(`**/api/projects/${id}/comments/${saved.id}/reply`, (route) => (refuseReply
+        ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The server is busy' }) })
+        : route.fallback()));
+      const reply = page.getByTestId(`reply-${saved.id}`);
+      await reply.fill('A REPLY WORTH KEEPING');
+      await reply.press('Enter');
+      await expect(page.locator('.toast', { hasText: 'Could not save the reply: The server is busy' })).toBeVisible();
+      await expect(reply).toHaveValue('A REPLY WORTH KEEPING');
+      refuseReply = false;
+      await page.getByTestId(`reply-send-${saved.id}`).click();
+      await expect(page.getByTestId(`comment-${saved.id}`).locator('.review__reply')).toContainText('A REPLY WORTH KEEPING');
+      await expect(reply).toHaveValue('');
+
+      // resolving that fails says so
+      await page.route(`**/api/projects/${id}/comments/${saved.id}/resolve`, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The server is busy' }) }));
+      await page.getByTestId(`resolve-${saved.id}`).click();
+      await expect(page.locator('.toast', { hasText: 'Could not resolve the comment: The server is busy' })).toBeVisible();
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('near the limit the composer counts, and past it waits instead of cutting the text', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Limit');
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'LIMITED text.\n' } });
+      await openProject(page, id);
+      const line = await page.locator('.cm-line').first().boundingBox();
+      await page.mouse.dblclick(line!.x + 25, line!.y + line!.height / 2);
+      await page.getByTestId('add-comment').click();
+      await page.getByTestId('comment-body').fill('x'.repeat(19_000));
+      await expect(page.getByTestId('comment-count')).toHaveText('19,000 of 20,000 characters');
+      await expect(page.getByTestId('comment-submit')).toBeEnabled();
+      await page.getByTestId('comment-body').fill('x'.repeat(20_001));
+      await expect(page.getByTestId('comment-count')).toHaveText('20,001 of 20,000 characters: shorten it to post it');
+      await expect(page.getByTestId('comment-submit')).toBeDisabled();
+      await expect(page.getByTestId('comment-body')).toHaveValue('x'.repeat(20_001));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
+
+test.describe('commented text', () => {
+  test('shows its comment on hover and at the caret, opens it in Review, and Review follows the document', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Read');
+    try {
+      const main = '\\documentclass{article}\n\\begin{document}\nFIRST-SPOT starts here.\n\\input{intro}\nLATER-SPOT ends it.\n\\end{document}\n';
+      const intro = 'INTRO-SPOT in the included file.\n';
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: main } });
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'intro.tex', content: intro } });
+      const add = async (file: string, text: string, quote: string, body: string) => (await (await request.post(`/api/projects/${id}/comments`, {
+        data: { branch: 'main', file, anchor: { from: text.indexOf(quote), to: text.indexOf(quote) + quote.length, quote }, body, author: 'Grace' },
+      })).json()).id as string;
+      // started in the opposite order to the text
+      const intoIntro = await add('intro.tex', intro, 'INTRO-SPOT', 'Check the included file.');
+      const later = await add('main.tex', main, 'LATER-SPOT', 'Tighten the ending.');
+      const first = await add('main.tex', main, 'FIRST-SPOT', 'Say what starts here.');
+
+      await openProject(page, id);
+      await page.getByTestId('tab-review').click();
+      const cards = page.locator('[data-testid="review-panel"] [data-comment-card]');
+      await expect(cards).toHaveCount(3);
+      await expect.poll(() => cards.evaluateAll((els) => els.map((e) => e.getAttribute('data-comment-card')))).toEqual([first, later, intoIntro]);
+
+      // hover: the comment, without moving the caret
+      await page.getByTestId('tab-files').click();
+      await page.locator(`.cm-comment-range[data-comment-id="${later}"]`).hover();
+      await expect(page.getByTestId('comment-hover')).toContainText('Tighten the ending.');
+      await expect(page.getByTestId('comment-hover')).toContainText('Grace');
+      await page.mouse.move(5, 5);
+      await expect(page.getByTestId('comment-hover'), 'it goes with the pointer').toHaveCount(0);
+
+      // a click puts the caret in it: the card stays while it is there
+      await page.locator(`.cm-comment-range[data-comment-id="${first}"]`).click();
+      await expect(page.getByTestId('comment-tip')).toContainText('Say what starts here.');
+      await page.getByTestId('comment-tip').getByTestId('comment-tip-open').click();
+      await expect(page.getByTestId('review-panel')).toBeVisible();
+      await expect(page.getByTestId(`comment-${first}`)).toHaveClass(/review__item--active/);
+
+      // typing in the text puts the card away; the text is the typed text, nothing more
+      await page.keyboard.type('Z');
+      await expect(page.getByTestId('comment-tip')).toHaveCount(0);
+      await expect(page.locator('.cm-line', { hasText: 'starts here' })).toContainText('Z');
+      // Escape puts it away too
+      await page.locator(`.cm-comment-range[data-comment-id="${later}"]`).click();
+      await expect(page.getByTestId('comment-tip')).toContainText('Tighten the ending.');
+      await expect(page.getByTestId(`comment-${later}`)).toHaveClass(/review__item--active/);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('comment-tip')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});

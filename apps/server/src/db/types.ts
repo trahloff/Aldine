@@ -76,7 +76,16 @@ export interface ProjectMeta {
   /** Created through the Agent API. The only projects its `trash_project` tool may trash: a person's own project is never within a tool's reach. */
   createdVia?: 'agent';
   ownerId?: string;
-  share?: { mode: 'private' | 'link'; collaborators: string[] };
+  share?: {
+    mode: 'private' | 'link';
+    collaborators: string[];
+    /** Entries (as `collaborators` stores them) the owner shares with as "Can
+     *  view". An entry here grants nothing by itself: it is the role an entry
+     *  of `collaborators`, or an open invitation to it, has. */
+    viewers?: string[];
+    /** What a link visitor may do; absent is 'edit', the link before roles. */
+    linkRole?: 'edit' | 'view';
+  };
   zotero?: {
     apiKey: string;
     userId: number;
@@ -347,8 +356,8 @@ export interface DataStore {
   listMeta(): Promise<ProjectMeta[]>;
   deleteMeta(id: string): Promise<void>;
   /** Add one entry to a project's share list in a single write that keeps
-   *  the rest of the metadata: two accepts landing together must both stay.
-   *  False when the project does not exist. */
+   *  the rest of the metadata, the rest of `share` included: two accepts
+   *  landing together must both stay. False when the project does not exist. */
   addShareEntry(projectId: string, entry: string): Promise<boolean>;
 
   // review comments (stored per project)

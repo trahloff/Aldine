@@ -61,8 +61,8 @@ test.describe('real-time collaboration', () => {
       expect(await a.evaluate(() => localStorage.getItem('aldine.name'))).toBe('Grace Hopper');
       await a.getByTestId('settings-close').click();
       // live, without reopening the file: the avatar shows two initials and the full name
-      await expect(b.getByTestId('presence').locator('[title="Grace Hopper"]')).toHaveText('GH', { timeout: 10_000 });
-      await expect(a.getByTestId('presence').locator('[title="Bob Baker"]')).toHaveText('BB');
+      await expect(b.getByTestId('presence').locator('[data-name="Grace Hopper"]')).toHaveText('GH', { timeout: 10_000 });
+      await expect(a.getByTestId('presence').locator('[data-name="Bob Baker"]')).toHaveText('BB');
 
       // a blank name keeps the one it had
       await a.getByTestId('project-settings-open').click();
@@ -91,7 +91,7 @@ test.describe('real-time collaboration', () => {
     }
   });
 
-  test('the presence chip empties when the open file gives way to a preview', async ({ browser, request }) => {
+  test('a preview leaves the chip with who is where: nobody in the preview, the others in their files', async ({ browser, request }) => {
     const id = await createProject(request, 'Presence Preview');
     const ctxA = await browser.newContext();
     const ctxB = await browser.newContext();
@@ -100,13 +100,51 @@ test.describe('real-time collaboration', () => {
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'figure.png', content: png, encoding: 'base64' } });
       const a = await ctxA.newPage();
       const b = await ctxB.newPage();
+      await b.addInitScript(() => { localStorage.setItem('aldine.name', 'Bob'); localStorage.setItem('aldine.color', '#2e933c'); });
       await openProject(a, id);
       await openProject(b, id);
-      await expect(a.getByTestId('presence')).toBeVisible();
+      const bob = a.getByTestId('presence').locator('[data-name="Bob"]');
+      await expect(bob).toHaveAttribute('data-here', 'true');
 
       await a.getByTestId('file-figure.png').click();
       await expect(a.getByTestId('file-preview')).toBeVisible();
-      await expect(a.getByTestId('presence'), 'nobody is in a preview').toHaveCount(0);
+      await expect(bob, 'Bob is still in main.tex, and the preview is not').toHaveAttribute('data-here', 'false');
+      await expect(bob).toHaveAttribute('data-file', 'main.tex');
+      await expect(a.getByTestId('presence').locator('[data-here="true"]')).toHaveCount(0);
+    } finally {
+      await ctxA.close();
+      await ctxB.close();
+      await cleanup(request, id);
+    }
+  });
+
+  test('co-authors in other files are on the chip with their file, and choosing one opens it', async ({ browser, request }) => {
+    const id = await createProject(request, 'Presence Elsewhere');
+    const ctxA = await browser.newContext();
+    const ctxB = await browser.newContext();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'methods.tex', content: 'METHODS-FILE text.\n' } });
+      const a = await ctxA.newPage();
+      const b = await ctxB.newPage();
+      await a.addInitScript(() => { localStorage.setItem('aldine.name', 'Ada'); localStorage.setItem('aldine.color', '#e8554d'); });
+      await b.addInitScript(() => { localStorage.setItem('aldine.name', 'Bob'); localStorage.setItem('aldine.color', '#2e933c'); });
+      await openProject(a, id);
+      await openProject(b, id);
+      await b.getByTestId('file-methods.tex').click();
+      await expect(b.locator('.cm-content')).toContainText('METHODS-FILE');
+
+      const bob = a.getByTestId('presence').locator('[data-name="Bob"]');
+      await expect(bob).toHaveAttribute('data-file', 'methods.tex');
+      await expect(bob).toHaveAttribute('data-here', 'false');
+      await expect(bob).toHaveAttribute('title', 'Bob, in methods.tex');
+      await expect(b.getByTestId('presence').locator('[data-name="Ada"]')).toHaveAttribute('data-file', 'main.tex');
+
+      await a.getByTestId('presence').click();
+      const row = a.getByTestId('presence-menu').getByTestId('presence-row').filter({ hasText: 'Bob, in methods.tex' });
+      await row.click();
+      await expect(a.getByTestId('active-file')).toHaveText('methods.tex');
+      await expect(bob, 'together in one file').toHaveAttribute('data-here', 'true');
+      await expect(b.getByTestId('presence').locator('[data-name="Ada"]')).toHaveAttribute('data-here', 'true');
     } finally {
       await ctxA.close();
       await ctxB.close();

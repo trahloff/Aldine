@@ -108,6 +108,8 @@ and reconnect behaviour in the `e2e/c2-shutdown.mjs` and
 - **COLLAB-1** — Two people editing the same file see each other's changes live,
   conflict-free (CRDT), with multiple cursors.
 - **COLLAB-2** — Each collaborator shows a presence indicator with name/color.
+  People in the branch's other files show too, dimmed, with their file;
+  choosing one in the chip's list opens that file.
 - **COLLAB-3** — Concurrent edits at different positions both survive (no lost
   updates).
 - **COLLAB-4** — A collaborator joining mid-session receives the current
@@ -253,6 +255,10 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
   click and the text changes.
 - **REV-3** — Comments highlight in the editor; I resolve and reopen them.
 - **REV-4** — Comments sync live between collaborators.
+- **REV-5** — Hovering commented text, or putting the caret in it, shows its
+  comment, with Open in Review; Review lists threads in document order.
+- **REV-6** — A comment or reply the server refuses stays in its box for
+  another try; comments and replies up to 20,000 characters save whole.
 
 ## AI error fix (AI)
 
@@ -291,6 +297,13 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
 - **AUTH-7** — An invitation by email or ORCID iD grants nothing until the
   invited person accepts it; its link opens nothing for another account; on
   a server without email it waits on the invitee's Home page.
+- **AUTH-8** — The owner shares as "Can edit" or "Can view", per person and
+  for the link. Someone who can view reads, typesets and comments; the REST
+  routes, the collab socket and the Agent API refuse their changes, and a
+  role changed while they have the project open applies at once.
+- **AUTH-9** — Opening someone else's project for the first time puts none
+  of Claude's earlier work up for review. Revert asks first, saying whose
+  commits it undoes, and offers Undo.
 
 ## Visual editor (VIS)
 

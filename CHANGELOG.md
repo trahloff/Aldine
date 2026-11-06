@@ -40,6 +40,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   it when the last sync is more than an hour old. Plugins can add palette
   commands with `aldine.ui.registerCommand` and cite with
   `aldine.editor.insertCitation(key)`.
+- Share a project with "Can edit" or "Can view", for each person you invite
+  and for the share link. Someone who can view reads the files, typesets,
+  downloads and comments; for them the editor, the file tree, branches,
+  history and settings are read-only, and the server and the Agent API
+  refuse their changes too. Choose the role when you invite, change it later
+  from the list of people or invitations in the Share dialog, and the
+  person's open editor follows at once.
+- The presence chip shows everyone on the branch, not only the people in your
+  file. Co-authors in other files show dimmed, their file is named on hover,
+  and choosing one in the chip's list opens their file.
+- Hovering commented text, or putting the caret in it, shows its comment with
+  Open in Review, and Review marks the thread the caret is in. Typing in the
+  text or Escape puts the card away.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or
@@ -251,6 +264,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   that instance instead of github.com. Its token pages are linked on the
   instance. `GITHUB_URL` points the server's GitHub OAuth app at an
   Enterprise Server (#250).
+- Review lists threads in the order of the document: the main file first,
+  then the files it includes, each from top to bottom. Before, they came in
+  the order they were started.
+- The first time you open someone else's project, what Claude did there
+  before counts as seen: you are not asked to review, or offered to revert,
+  agent work from before you joined. The owner's first open still shows all
+  of it.
+- Revert these changes asks first, saying how many of Claude's commits it
+  undoes, when they were made and that the revert goes in under your name.
+  The toast after it offers Undo.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -637,6 +660,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   line that starts with "--" shows instead of being taken for a header.
 - docs/AGENT_API.md no longer lists revert among what Claude can do through
   the MCP tools; it says where a person undoes Claude's work.
+- A comment or reply that fails to save stays in its box with a message, and
+  the button tries again. Before, a reply was cleared before it was sent and
+  lost, and a failed comment closed the composer with its text. Resolve and
+  Delete say when they fail.
+- Comments and replies up to 20,000 characters save whole. Before, a comment
+  over 5,000 characters was always refused and lost, and a long reply or
+  suggestion was cut short without a word. The composer counts near the
+  limit and waits past it. Replies have a Reply button, and Shift+Enter
+  starts a new line in them.
 
 ## [1.8.0] — 2026-11-04
 

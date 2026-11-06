@@ -12,6 +12,9 @@ import { importPath } from './util.js';
 export type { Reply, Comment } from './db/types.js';
 
 const MAX_COMMENTS = 2000;
+/** Characters in a comment, a reply or a suggestion. The routes refuse
+ *  longer text, so the caps below never cut what a person wrote. */
+export const MAX_COMMENT_TEXT = 20000;
 const cap = (s: string | undefined, n: number) => (s == null ? s : s.slice(0, n));
 
 export async function listComments(projectId: string, branch: string): Promise<Comment[]> {
@@ -23,8 +26,8 @@ export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'cre
   if (list.length >= MAX_COMMENTS) throw new Error('comment limit reached for this project');
   const comment: Comment = {
     ...c,
-    body: cap(c.body, 8000)!,
-    suggestion: cap(c.suggestion, 8000),
+    body: cap(c.body, MAX_COMMENT_TEXT)!,
+    suggestion: cap(c.suggestion, MAX_COMMENT_TEXT),
     anchor: { ...c.anchor, quote: cap(c.anchor.quote, 2000)! },
     id: crypto.randomBytes(8).toString('base64url'),
     createdAt: new Date().toISOString(),
@@ -41,7 +44,7 @@ export async function replyComment(projectId: string, id: string, author: string
   const c = list.find((x) => x.id === id);
   if (!c) return null;
   if (c.replies.length >= 500) throw new Error('reply limit reached');
-  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, 8000)!, createdAt: new Date().toISOString() });
+  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString() });
   await db().saveComments(projectId, list);
   return c;
 }

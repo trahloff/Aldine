@@ -111,52 +111,61 @@ test.describe('MCP over PAT auth', () => {
     }
   });
 
-  test('the away-review mark is per user: acknowledging it for one account leaves the other still prompted', async ({ request, baseURL }) => {
+  test('the away-review mark is per user: acknowledging it for one account leaves the other still prompted, and someone new starts from their first open', async ({ request, baseURL }) => {
     const reg = await request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ada Away' } });
     expect(reg.ok()).toBeTruthy();
     const project = await (await request.post('/api/projects', { data: { name: 'MCP Away Mark' } })).json();
-    await request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\n' } });
+    await request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\nSecond line.\n' } });
     await request.post(`/api/projects/${project.id}/share`, { data: { mode: 'link', collaborators: [] } });
     const minted = await (await request.post('/api/tokens', { data: { name: 'MCP away' } })).json();
-
-    const client = await connect(baseURL!, minted.token);
-    try {
-      const edit = await call(client, 'edit_file', {
-        project: project.id, path: 'main.tex',
-        edits: [{ quote: 'Original line.', replacement: 'Line rewritten while Ada was away.' }],
-      });
-      expect(edit.isError).toBeFalsy();
-      expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
-      const committed = await call(client, 'commit', { project: project.id, message: 'Rewrite the opening line' });
-      expect(committed.body.committed).toBe(false);
-    } finally {
-      await client.close().catch(() => {});
-    }
+    const edit = async (quote: string, replacement: string) => {
+      const client = await connect(baseURL!, minted.token);
+      try {
+        const r = await call(client, 'edit_file', { project: project.id, path: 'main.tex', edits: [{ quote, replacement }] });
+        expect(r.isError).toBeFalsy();
+        expect(r.body.commit).toMatch(/^[0-9a-f]{7,}$/);
+      } finally {
+        await client.close().catch(() => {});
+      }
+    };
+    await edit('Original line.', 'Line rewritten while Ada was away.');
 
     const url = `/api/projects/${project.id}/agent-activity?branch=main`;
     const first = await (await request.get(url)).json();
-    expect(first.commitCount).toBeGreaterThan(0);
+    expect(first.commitCount, "the owner's first look covers Claude's work").toBeGreaterThan(0);
     expect(first.commits[0].files).toContain('main.tex');
 
     const seen = await (await request.post(`/api/projects/${project.id}/agent-activity/seen`, { data: { branch: 'main', head: first.head, kind: 'acknowledged' } })).json();
     expect(seen).toMatchObject({ ok: true, stored: true, acknowledged: true });
     expect((await (await request.get(url)).json()).commitCount).toBe(0);
 
-    // a second account reaching the project by link has its own mark
+    // a second account reaching the project by link has its own mark, which
+    // starts at its first open: Claude's earlier work is not put to Bob
     const bob = await pwRequest.newContext({ baseURL });
     try {
       const regB = await bob.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Bob Away' } });
       expect(regB.ok()).toBeTruthy();
-      expect((await (await bob.get(url)).json()).commitCount).toBe(first.commitCount);
+      const bobFirst = await (await bob.get(url)).json();
+      expect(bobFirst.commitCount).toBe(0);
+      expect(bobFirst.since?.head).toBe(first.head);
+
+      // what Claude does next is put to both, and Ada's acknowledging it is hers alone
+      await edit('Second line.', 'Second line, rewritten later.');
+      expect((await (await bob.get(url)).json()).commitCount).toBe(1);
+      const again = await (await request.get(url)).json();
+      expect(again.commitCount).toBe(1);
+      await request.post(`/api/projects/${project.id}/agent-activity/seen`, { data: { branch: 'main', head: again.head, kind: 'acknowledged' } });
+      expect((await (await request.get(url)).json()).commitCount).toBe(0);
+      expect((await (await bob.get(url)).json()).commitCount).toBe(1);
 
       // Ada's agent token must not be able to clear Bob's prompt either
       const denied = await bob.post(`/api/projects/${project.id}/agent-activity/seen`, {
-        data: { branch: 'main', head: first.head, kind: 'acknowledged' },
+        data: { branch: 'main', head: again.head, kind: 'acknowledged' },
         headers: { authorization: `Bearer ${minted.token}` },
       });
       expect(denied.status()).toBe(403);
       expect((await denied.json()).error).toMatch(/Access tokens cannot use this route — sign in/);
-      expect((await (await bob.get(url)).json()).commitCount).toBe(first.commitCount);
+      expect((await (await bob.get(url)).json()).commitCount).toBe(1);
     } finally {
       await bob.dispose();
     }
