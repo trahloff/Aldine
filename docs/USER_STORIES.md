@@ -296,8 +296,11 @@ that guards VIS-9.*
   my last choice sticks after a reload.
 - **VIS-2** — Headings, bold/italic/underline, and lists render as formatted
   text; markup hides.
-- **VIS-3** — The construct under my caret (and a remote caret) reveals its raw
-  source; leaving re-renders.
+- **VIS-3** — The construct under my caret reveals its raw source; leaving
+  re-renders. A citation, reference, formula, figure or table reveals only
+  while my caret is inside it, and beside it moves and deletes as one unit; a
+  selection reveals only what its ends are in. A collaborator's caret outlines
+  a construct instead of revealing it.
 - **VIS-4** — Math renders via KaTeX; clicking a formula opens a MathLive
   editor that writes back only what I changed. A formula MathLive can't write
   back unchanged (a `\label`, alignment, a comment or a line break inside)

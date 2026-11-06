@@ -98,6 +98,29 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `aldine.ui.registerErrorsAction`, tell a typeset someone asked for from
   auto-typeset with `lastCompile().explicit`, and select their panel without
   showing a hidden sidebar with `aldine.ui.showPanel(id, { reveal: false })`.
+- In Visual, a citation, reference, formula, figure or table shows its LaTeX
+  only while the caret is inside it. Beside one, the arrow keys step over it
+  whole, and Backspace or Delete first selects it and deletes it on the next
+  press, so they no longer take its `}` or `$`. A click still shows its
+  source, a double-click selects it, and Cmd+Enter beside one shows its
+  source from the keyboard. The command palette calls this "Edit the
+  formula, table, citation or figure at the cursor".
+- Visual lists keep their bullets while the caret is at an item, so a new
+  item shows a bullet instead of `\item`. Backspace at the start of an item's
+  text joins it to the item above and removes an empty item, Delete at the
+  end of an item joins the next one, and Home, a click before a bullet or
+  Delete from the line above put the caret after the bullet. Before,
+  Backspace there wrote `\itemWord`.
+- A co-author's caret in a formula, citation or table no longer shows its
+  source on your screen: it gets an outline in their colour, and a table
+  cell you are typing in stays open. A co-author whose editor does not have
+  focus is left out.
+- A selection in Visual shows the source only of the constructs one of its
+  ends is in. Formulas, citations and tables it covers stay drawn, marked as
+  selected, and are copied or deleted whole, so Select all no longer turns
+  the page into LaTeX.
+- The formula editor saves your change on Enter and when you click outside
+  it. Escape discards the change and says so. Done's tooltip names Enter.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -200,6 +223,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   selects that word. Before, the first click showed the source and moved
   the text, so the second click landed on the command name or a citation,
   and typing broke the command. A triple-click still selects the line.
+- Find in Visual shows a heading's hidden `\label` while a match in it is
+  selected, so Replace changes text you can see.
+- Backspace right after bold, italic, underlined or small-caps text or a
+  heading in Visual deletes its last letter, and Delete right before one its
+  first letter. Before, they deleted the hidden `}` or the command itself,
+  which left the braces unbalanced and stopped the typeset. When the last
+  letter goes, the empty `\textbf{}` or heading goes with it.
+- Typing a letter in Visual right after a bullet whose `\item` has no space
+  after it, or right after `…` written as `\ldots`, puts a space in between
+  instead of running into the command and breaking it.
 - A table cell with a comment or a line break in it says why it opens in the
   source when you click it.
 - The formula editor shows "Loading the formula editor…" while it loads, and

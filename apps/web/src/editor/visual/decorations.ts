@@ -2,7 +2,7 @@ import { EditorState, Range, RangeSetBuilder } from '@codemirror/state';
 import { Decoration, DecorationSet, WidgetType } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNode } from '@lezer/common';
-import { RevealRange, intersectsReveal } from './reveal';
+import { RevealRange, headingLineTail, intersectsReveal, itemMarkerEnd, labelsOnlyTail, revealsWithin } from './reveal';
 import { MathWidget } from './widgets/math';
 import { figureChip, tableChip, citeChip, refChip } from './widgets/chips';
 import { TableWidget, tableModel } from './widgets/table';
@@ -96,20 +96,7 @@ export function symbolEscape(node: SyntaxNode, doc: Doc): { from: number; to: nu
   return { from: seq.from, to: arg.to, text };
 }
 
-const LABELS_ONLY = /^(?:\s*\\label\s*\{[^{}]*\})*\s*$/;
-
-/** Whether `rest` after a heading's `}` holds only \label{…}s and spaces, hidden with the brace. */
-export function labelsOnlyTail(rest: string): boolean {
-  return LABELS_ONLY.test(rest);
-}
-/**
- * Whether `rest`, the text after a heading's `}` up to the end of its line,
- * still leaves the heading on a line of its own: whitespace, a \label{…} and
- * a comment are not body text.
- */
-export function headingLineTail(rest: string): boolean {
-  return /^\s*(?:\\label\s*\{[^{}]*\}\s*)*(?:%.*)?$/.test(rest);
-}
+export { headingLineTail, labelsOnlyTail };
 
 export interface WalkEmit {
   /** Decoration.replace/widget material + atomic ranges (full-doc StateField). */
@@ -229,8 +216,9 @@ const captionMark = Decoration.mark({ class: 'cm-vis-cap' });
  * Single tree walk over [from,to] emitting visual decorations. Whitelist-only:
  * anything not positively matched (unknown commands, ⚠ errors, unclosed
  * constructs) stays raw source. Verbatim subtrees are never entered. Nodes
- * intersecting a reveal range show their source; headings and text styles
- * keep their marks there.
+ * intersecting a reveal range show their source, a closed unit (reveal.ts)
+ * only when one lies within it; headings and text styles keep their marks
+ * there. Closed units' widgets are marked `closed`, item markers `itemMarker`.
  */
 export function walk(state: EditorState, reveals: readonly RevealRange[], from: number, to: number, emit: WalkEmit): void {
   const doc = state.doc;
@@ -274,10 +262,9 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         const tok = n.node.getChild('ItemCtrlSeq');
         if (!top || !tok || !['itemize', 'enumerate', 'description'].includes(top.name)) return;
         if (intersectsReveal(reveals, tok.from, tok.to)) return;
-        let markerTo = tok.to;
-        if (doc.sliceString(markerTo, markerTo + 1) === ' ') markerTo += 1;
+        const markerTo = itemMarkerEnd(doc, tok);
         const marker = top.name === 'enumerate' ? `${++top.counter}. ` : top.name === 'description' ? '– ' : '•  ';
-        emit.atomic(tok.from, markerTo, Decoration.replace({ widget: new ItemMarkerWidget(marker) }));
+        emit.atomic(tok.from, markerTo, Decoration.replace({ widget: new ItemMarkerWidget(marker), itemMarker: true }));
         emit.mark(doc.lineAt(tok.from).from, doc.lineAt(tok.from).from, itemLine);
         return;
       }
@@ -293,7 +280,7 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
       }
 
       if (n.name === 'FigureEnvironment') {
-        if (intersectsReveal(reveals, n.from, n.to)) return; // revealed: show raw source
+        if (revealsWithin(reveals, n.from, n.to)) return; // revealed: show raw source
         const end = n.node.getChild('EndEnv');
         if (!end || end.to !== n.to) return; // incomplete env stays raw
         const caption = ownDescendant(n.node, 'Caption', 'FigureEnvironment') ?? findDescendant(n.node, 'Caption');
@@ -306,23 +293,23 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
           const close = igArg.getChild('CloseBrace');
           image = open && close ? doc.sliceString(open.to, close.from).trim() : doc.sliceString(igArg.from, igArg.to).trim();
         }
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: figureChip(label, image) }));
+        emit.atomic(n.from, n.to, Decoration.replace({ widget: figureChip(label, image), closed: true }));
         return false;
       }
 
       if (n.name === 'TabularEnvironment') {
-        if (intersectsReveal(reveals, n.from, n.to)) return; // revealed: show raw source
+        if (revealsWithin(reveals, n.from, n.to)) return; // revealed: show raw source
         const begin = n.node.getChild('BeginEnv');
         const end = n.node.getChild('EndEnv');
         if (!begin || !end || end.to !== n.to) return;
         const model = tableModel(doc, n.node);
         const source = doc.sliceString(n.from, n.to);
-        emit.atomic(n.from, n.to, Decoration.replace({ widget: model ? new TableWidget(model, source) : tableChip('') }));
+        emit.atomic(n.from, n.to, Decoration.replace({ widget: model ? new TableWidget(model, source) : tableChip(''), closed: true }));
         return false;
       }
 
       if (n.name === 'Cite' || n.name === 'Ref') {
-        if (intersectsReveal(reveals, n.from, n.to)) return;
+        if (revealsWithin(reveals, n.from, n.to)) return;
         const argName = n.name === 'Cite' ? 'BibKeyArgument' : 'RefArgument';
         const arg = n.node.getChild(argName);
         const inner = arg?.getChild('ShortTextArgument') ?? arg;
@@ -332,9 +319,9 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
         const keys = doc.sliceString(open.to, close.from).trim();
         if (n.name === 'Cite') {
           const notes = n.node.getChildren('OptionalArgument').map((o) => doc.sliceString(o.from + 1, o.to - 1));
-          emit.atomic(n.from, n.to, Decoration.replace({ widget: citeChip(keys, notes) }));
+          emit.atomic(n.from, n.to, Decoration.replace({ widget: citeChip(keys, notes), closed: true }));
         } else {
-          emit.atomic(n.from, n.to, Decoration.replace({ widget: refChip(keys) }));
+          emit.atomic(n.from, n.to, Decoration.replace({ widget: refChip(keys), closed: true }));
         }
         return false;
       }
@@ -361,9 +348,9 @@ export function walk(state: EditorState, reveals: readonly RevealRange[], from: 
 
       const math = mathParts(n.name, n.node, doc);
       if (math) {
-        if (intersectsReveal(reveals, n.from, n.to)) return false;
+        if (revealsWithin(reveals, n.from, n.to)) return false;
         const widget = new MathWidget(math.source, math.display, doc.sliceString(n.from, n.to), math.innerFrom - n.from, math.innerTo - n.from, macros);
-        emit.atomic(n.from, n.to, Decoration.replace({ widget }));
+        emit.atomic(n.from, n.to, Decoration.replace({ widget, closed: true }));
         return false; // math interior is the widget's business
       }
 

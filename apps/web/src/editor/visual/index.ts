@@ -17,16 +17,30 @@ import { suggestField, commentRangesField } from './suggestions';
 import { rangeTracker, widgetPos } from './positions';
 import { pasteText, rawAt } from './clipboard';
 import { openMathEditor, closeMathPopover, mathliveCanEdit, preloadMathlive } from './mathPopover';
-import { remoteCaretReveal } from './remoteCarets';
+import { peerOutlines } from './remoteCarets';
+import { pickedConstructs } from './picked';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
 import { chipCaret, labelsOnlyTail, mathParts } from './decorations';
-import { backspaceHiddenLine, breakAfterHeading, deleteHiddenLine, listItemEnter, paragraphEnter } from './commands';
-import { clickSequence, retargetsClick } from './clicks';
+import {
+  backspaceHiddenLine, backspaceIntoConstruct, breakAfterHeading, deleteHiddenLine, deleteIntoConstruct, itemBackspace, itemDelete,
+  itemHome, listItemEnter, markerOn, paragraphEnter, selectConstructBackward, selectConstructForward, visibleLineAbove,
+} from './commands';
+import { chipClicked, clickSequence, retargetsClick } from './clicks';
+
+/** The construct a chip drawn at `at` stands for, as the atomic decorations have it. */
+function chipRange(view: EditorView, at: number): { from: number; to: number } | null {
+  let hit: { from: number; to: number } | null = null;
+  view.state.field(atomicField).deco.between(at, at, (from, to, d) => {
+    if (from === at && d.spec.closed) hit = { from, to };
+  });
+  return hit;
+}
 
 /**
  * Clicking a rendered widget: math opens the MathLive editor; chips put the
- * caret inside their construct (chipCaret) → cursor-reveal shows the source.
+ * caret inside their construct (chipCaret) → cursor-reveal shows the source,
+ * and a double-click selects the construct whole (clicks.ts).
  * Positions come from where the widget is now, never from when it was drawn.
  */
 const widgetClick = EditorView.domEventHandlers({
@@ -44,6 +58,8 @@ const widgetClick = EditorView.domEventHandlers({
       return true;
     }
     closeMathPopover();
+    const unit = chipRange(view, at);
+    if (unit) chipClicked(view, unit);
     view.dispatch({ selection: { anchor: chipCaret(view.state, at) }, scrollIntoView: true });
     view.focus();
     return true;
@@ -114,6 +130,44 @@ const headingCloserStop = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: EditorSelection.cursor(stop), sequential: true }];
 });
 
+/**
+ * A caret at or before a bullet, where typing would land before `\item` (in
+ * the previous item, or outside any item): a click there, an arrow up or
+ * down onto the line or Delete from above puts it after the bullet instead.
+ * Arrowing left from the item's text goes on to the line above that shows.
+ */
+const itemMarkerStop = EditorState.transactionFilter.of((tr) => {
+  if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1) return tr;
+  const sel = tr.selection.main;
+  if (!sel.empty || tr.startState.field(atomicField, false) === undefined) return tr;
+  const state = tr.startState;
+  const line = state.doc.lineAt(sel.head);
+  const marker = markerOn(state, atomicDecoAt(state, line.from, line.to), line);
+  if (!marker || sel.head > marker.from) return tr;
+  const prev = state.selection.main;
+  if (!tr.isUserEvent('select.pointer') && prev.empty && prev.head === marker.to) {
+    const above = visibleLineAbove(state, line.number);
+    if (above) return [tr, { selection: EditorSelection.cursor(above.to), sequential: true }];
+  }
+  return [tr, { selection: EditorSelection.cursor(marker.to), sequential: true }];
+});
+
+/**
+ * Typing a letter right after a control word Visual hides (an `\item` with
+ * no space after it, `\ldots` drawn as …) would run into the command name
+ * and break it: a space goes between them, which TeX drops.
+ */
+const controlWordGap = EditorView.inputHandler.of((view, from, to, text) => {
+  if (from !== to || !/^[A-Za-z]/.test(text) || view.state.selection.ranges.length > 1) return false;
+  let word = false;
+  view.state.field(atomicField).deco.between(from, from, (a, b) => {
+    if (b === from && /\\[A-Za-z]+$/.test(view.state.doc.sliceString(a, b))) word = true;
+  });
+  if (!word) return false;
+  view.dispatch({ changes: { from, insert: ` ${text}` }, selection: { anchor: from + 1 + text.length }, scrollIntoView: true, userEvent: 'input.type' });
+  return true;
+});
+
 function innermost(state: EditorState, pos: number, test: (n: SyntaxNode) => boolean): SyntaxNode | null {
   for (const side of [-1, 1] as const) {
     for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, side); n; n = n.parent) {
@@ -126,8 +180,10 @@ function innermost(state: EditorState, pos: number, test: (n: SyntaxNode) => boo
 /**
  * Mod-Enter with the caret in a construct that has a visual editor: a
  * formula opens the formula editor, a table moves the caret below it and puts
- * focus in its grid. 'source' is a formula the formula editor would rewrite,
- * already shown as the source the caret is in; null is neither construct.
+ * focus in its grid, and a citation, reference or figure beside the caret
+ * shows its source with the caret where its chip's click puts it. 'source'
+ * is a formula the formula editor would rewrite, already shown as the source
+ * the caret is in; null is none of these.
  */
 function openAtCursor(view: EditorView): 'opened' | 'source' | null {
   const { state } = view;
@@ -141,6 +197,12 @@ function openAtCursor(view: EditorView): 'opened' | 'source' | null {
     if (!a || !b) return null;
     const rect = new DOMRect(a.left, Math.min(a.top, b.top), Math.max(1, b.right - a.left), Math.max(a.bottom, b.bottom) - Math.min(a.top, b.top));
     openMathEditor(view, { innerFrom: parts.innerFrom, innerTo: parts.innerTo, rect });
+    return 'opened';
+  }
+  // a chip at the caret's edge opens its source, which arrows step over
+  const chip = innermost(state, pos, (n) => (n.name === 'Cite' || n.name === 'Ref' || n.name === 'FigureEnvironment') && (n.from === pos || n.to === pos));
+  if (chip) {
+    view.dispatch({ selection: { anchor: chipCaret(state, chip.from) }, scrollIntoView: true });
     return 'opened';
   }
   const table = innermost(state, pos, (n) => n.name === 'TabularEnvironment');
@@ -197,20 +259,31 @@ export interface VisualDeps {
  * formula editor) and the formatting commands in ./commands.ts.
  */
 export { recordOwnCopies } from './clipboard';
+export { publishEditorFocus } from './remoteCarets';
 
 export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [
     revealField, macroField, atomicField, atomicFiller, markPlugin, visualTheme, widgetClick, clickSequence, pasteLatex, katexLifecycle,
-    commentRangesField, suggestField, rangeTracker, remoteCaretReveal(deps.awareness), headingCloserStop,
+    // after atomicField: a mark of lower precedence than a widget wraps it
+    pickedConstructs, peerOutlines(deps.awareness),
+    commentRangesField, suggestField, rangeTracker, headingCloserStop, itemMarkerStop, controlWordGap,
     Prec.high(keymap.of([
       // elsewhere, and in a formula that only edits as source, Mod-Enter keeps its usual meaning
       { key: 'Mod-Enter', run: (view) => openAtCursor(view) === 'opened' },
       { key: 'Enter', run: breakAfterHeading, shift: breakAfterHeading },
       { key: 'Enter', run: listItemEnter },
       { key: 'Enter', run: paragraphEnter },
+      { key: 'Backspace', run: itemBackspace },
+      { key: 'Backspace', run: selectConstructBackward },
+      { key: 'Backspace', run: backspaceIntoConstruct },
       { key: 'Backspace', run: backspaceHiddenLine },
+      { key: 'Delete', run: itemDelete },
+      { key: 'Delete', run: selectConstructForward },
+      { key: 'Delete', run: deleteIntoConstruct },
       { key: 'Delete', run: deleteHiddenLine },
+      { key: 'Home', run: itemHome(false), shift: itemHome(true) },
+      { mac: 'Cmd-ArrowLeft', run: itemHome(false), shift: itemHome(true) },
       { key: 'End', run: headingEnd },
       { mac: 'Cmd-ArrowRight', run: headingEnd },
     ])),

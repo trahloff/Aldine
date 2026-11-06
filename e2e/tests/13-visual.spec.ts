@@ -10,6 +10,17 @@ const DOC = [
   '',
 ].join('\n');
 
+/** The text of the line a collaborator's caret is on, up to that caret; null without one. */
+const textBeforeCaret = (page: import('@playwright/test').Page) => page.evaluate(() => {
+  const caret = document.querySelector('.cm-ySelectionCaret');
+  const line = caret?.closest('.cm-line');
+  if (!caret || !line) return null;
+  const r = document.createRange();
+  r.setStart(line, 0);
+  r.setEndBefore(caret);
+  return r.toString();
+});
+
 test.describe('the Source/Visual switch', () => {
   test('a fresh browser opens a document as source with the switch shown, and the last choice sticks after reload', async ({ page, request }) => {
     const id = await createProject(request, 'Visual Switch');
@@ -320,22 +331,22 @@ test.describe('visual editor', () => {
       await openProject(B.page, id);
       await A.page.locator('.cm-line', { hasText: 'More prose here.' }).click();
 
-      // B (source) extends the heading; A (visual) receives the edit. A renders
-      // it either as a styled heading or — because B's caret sits in that
-      // construct — as revealed raw source (remote-caret force-reveal). Either
-      // way the new text must be present in A's document.
+      // B (source) extends the heading; A (visual) receives the edit and
+      // keeps drawing it as a heading: a collaborator's caret never shows
+      // source here (vis-4).
       await B.page.locator('.cm-line', { hasText: '\\section{Introduction}' }).click();
       await B.page.keyboard.press('End');
       await B.page.keyboard.press('ArrowLeft'); // inside the closing brace
       await B.page.keyboard.type(' and Basics');
       await expect(A.page.locator('.cm-content')).toContainText('Introduction and Basics', { timeout: 10_000 });
+      await expect(A.page.locator('.cm-vis-h1')).toHaveCount(1);
 
-      // remote-caret force-reveal: B's caret sits inside \textbf{...} → A shows raw source
+      // B's caret inside \textbf{...}: A keeps the bold and draws B's caret in it
       await B.page.locator('.cm-line', { hasText: '\\textbf{brave}' }).click();
       await B.page.keyboard.press('Home');
       for (let i = 0; i < 15; i++) await B.page.keyboard.press('ArrowRight'); // into "brave"
-      // (the remote caret label renders inside the word, so match the markup prefix)
-      await expect(A.page.locator('.cm-content')).toContainText('\\textbf{', { timeout: 10_000 });
+      await expect.poll(() => textBeforeCaret(A.page), { timeout: 10_000 }).toBe('Hello b');
+      await expect(A.page.locator('.cm-content')).not.toContainText('\\textbf{');
 
       // A (visual) types prose; B sees the exact source
       await A.page.locator('.cm-line', { hasText: 'More prose here.' }).click();
@@ -1096,10 +1107,10 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await expect(pop).toHaveCount(0);
       await expect(page.locator('.cm-content')).toBeFocused();
 
-      // with the caret in a formula's source, Mod-Enter opens the editor on it
+      // with the caret at a formula, Mod-Enter opens the editor on it
       await page.locator('.cm-line', { hasText: 'Math' }).click();
       await page.keyboard.press('Home');
-      for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowRight');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
       await expect(page.getByTestId('math-field')).toBeFocused();
       await page.keyboard.press('Escape');
@@ -1110,9 +1121,9 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await expect(page.getByTestId('vis-math')).toHaveAttribute('title', /^Edit formula \((⌘|Ctrl\+)Enter in its source\)$/);
       await page.locator('.cm-line', { hasText: 'Math' }).click();
       await page.keyboard.press('Home');
-      for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowRight');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
-      await page.getByTestId('palette-input').fill('formula or table');
+      await page.getByTestId('palette-input').fill('citation or figure');
       await expect(page.getByTestId('palette-item-edit-at-cursor')).toContainText(/(⌘|Ctrl\+)Enter/);
       await page.getByTestId('palette-item-edit-at-cursor').click();
       await expect(page.getByTestId('math-field')).toBeFocused();
@@ -1308,8 +1319,10 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await page.keyboard.press('Escape');
       await page.locator('.cm-line', { hasText: 'Before.' }).click();
       await page.keyboard.press('End');
-      await page.keyboard.press('ArrowRight'); // into the table's source: it shows as text
-      await expect(page.locator('.cm-content')).toContainText('\\begin{tabular}');
+      // to the table's edge: it stays a grid (vis-2), and Mod-Enter there jumps into it
+      await page.keyboard.press('ArrowRight');
+      await expect(page.getByTestId('vis-table')).toBeVisible();
+      await expect(page.locator('.cm-content')).not.toContainText('\\begin{tabular}');
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
       await expect(page.getByTestId('vis-table').locator('td').first()).toBeFocused();
       await page.waitForTimeout(2500);
@@ -1808,6 +1821,365 @@ test.describe('visual editor on a phone (VIS-21)', () => {
         const box = await tab.boundingBox();
         if (box) expect(box.height).toBeGreaterThanOrEqual(24);
       }
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
+
+test.describe('visual editor: what shows as source (vis-1, vis-2, vis-4, vis-5, vis-12, find-6)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('aldine.editorMode', 'visual'));
+  });
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+  /** The editor's text as drawn (a formula's MathML copy for screen readers included, its $ delimiters not). */
+  const drawn = (page: import('@playwright/test').Page) => page.locator('.cm-content').evaluate((el) => (el as HTMLElement).innerText);
+  /** A click at the very start of the line holding `text`, clear of its chips and formulas. */
+  const clickLineStart = (page: import('@playwright/test').Page, text: string) => page.locator('.cm-line', { hasText: text }).click({ position: { x: 1, y: 8 } });
+
+  test('chips, formulas, figures and tables stay drawn beside the caret, arrows step over them, and Backspace selects one before deleting it (vis-2)', async ({ page, request }) => {
+    const doc = [
+      'See \\cite{knuth1984} and $x^2$ here.',
+      'Grid:',
+      '\\begin{tabular}{ll}',
+      'a & b \\\\',
+      '\\end{tabular}',
+      '\\begin{figure}',
+      '\\caption{A plot}',
+      '\\end{figure}',
+      '\\begin{equation}',
+      '  E = mc^2',
+      '\\end{equation}',
+      'plain end',
+      '',
+    ].join('\n');
+    const id = await seedDoc(request, 'Visual Closed Units', doc);
+    const noSource = async () => {
+      const text = await drawn(page);
+      for (const s of ['\\cite', '$x^2$', '\\begin']) expect(text, s).not.toContain(s);
+    };
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await expect(page.getByTestId('vis-table')).toBeVisible();
+      // down through the table, the figure and the equation: each stays drawn
+      await page.locator('.cm-line', { hasText: 'Grid:' }).click();
+      await page.keyboard.press('End');
+      for (let i = 0; i < 4; i++) {
+        await page.keyboard.press('ArrowDown');
+        await noSource();
+      }
+      await expect(page.getByTestId('vis-chip-figure')).toBeVisible();
+      await expect(page.getByTestId('vis-math')).toHaveCount(2);
+      // one ArrowRight steps over the chip; typing lands after it
+      await clickLineStart(page, 'See');
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+      await noSource();
+      await page.keyboard.type('!');
+      let expected = doc.replace('\\cite{knuth1984} and', '\\cite{knuth1984}! and');
+      await expectStored(request, id, expected);
+      // Backspace after a formula: the first press selects it whole, the second deletes it
+      await page.keyboard.press('End');
+      for (let i = 0; i < ' here.'.length; i++) await page.keyboard.press('ArrowLeft');
+      await page.keyboard.press('Backspace');
+      await expect(page.locator('.cm-vis-picked').getByTestId('vis-math')).toHaveCount(1);
+      await noSource();
+      await page.waitForTimeout(1000);
+      expect(await stored(request, id)).toBe(expected);
+      await page.keyboard.press('Backspace');
+      expected = expected.replace(' $x^2$ here', '  here');
+      await expectStored(request, id, expected);
+      // the same for the chip, from after the "!"
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Delete');
+      await page.keyboard.press('Backspace');
+      await expect(page.locator('.cm-vis-picked').getByTestId('vis-chip-cite')).toHaveCount(1);
+      await page.keyboard.press('Backspace');
+      expected = expected.replace('\\cite{knuth1984}! and', ' and');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('Backspace after a style\'s or heading\'s hidden brace, and Delete before its command, edit the text inside and keep the braces balanced', async ({ page, request }) => {
+    const doc = 'Hello \\textbf{brave} there\n\\emph{now} go.\n\\section{Intro}\nplain end\n';
+    const id = await seedDoc(request, 'Visual Hidden Braces', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      // after the bold's hidden }: its last letter goes, and the caret stays after the bold
+      await clickLineStart(page, 'Hello');
+      await page.keyboard.press('End');
+      for (let i = 0; i < ' there'.length; i++) await page.keyboard.press('ArrowLeft');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('!');
+      let expected = doc.replace('\\textbf{brave}', '\\textbf{brav}!');
+      await expectStored(request, id, expected);
+      // emptied, the bold goes with its markup
+      for (let i = 0; i < 5; i++) await page.keyboard.press('Backspace');
+      expected = expected.replace('Hello \\textbf{brav}! there', 'Hello  there');
+      await expectStored(request, id, expected);
+      // Delete before the hidden \emph{ takes its first letter
+      await clickLineStart(page, 'go.');
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Delete');
+      expected = expected.replace('\\emph{now}', '\\emph{ow}');
+      await expectStored(request, id, expected);
+      // a heading: Delete at its start, Backspace past its closing brace
+      await clickLineStart(page, 'Intro');
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Delete');
+      await page.keyboard.press('End');
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Backspace');
+      expected = expected.replace('\\section{Intro}', '\\section{ntr}');
+      await expectStored(request, id, expected);
+      await expect(page.locator('.cm-vis-h1')).toHaveCount(1);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('a double-click on a chip selects it whole; Mod-Enter beside one shows its source (vis-2)', async ({ page, request }) => {
+    const doc = 'See \\cite{knuth1984} and \\ref{fig:a} now.\nplain end\n';
+    const id = await seedDoc(request, 'Visual Chip Double Click', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-chip-ref').dblclick();
+      await expect(page.locator('.cm-vis-picked').getByTestId('vis-chip-ref')).toHaveCount(1);
+      await page.keyboard.type('Figure 1');
+      let expected = doc.replace('\\ref{fig:a}', 'Figure 1');
+      await expectStored(request, id, expected);
+      // keyboard: at the chip's edge Mod-Enter puts the caret at the end of its keys
+      await clickLineStart(page, 'See');
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+      await page.keyboard.press(`${mod}+Enter`);
+      await expect(page.locator('.cm-content')).toContainText('\\cite{knuth1984}');
+      await page.keyboard.type(',lamport1994');
+      expected = expected.replace('knuth1984', 'knuth1984,lamport1994');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('bullets keep hiding \\item at their edges; Enter, Backspace, Delete and Home act on items (vis-1)', async ({ page, request }) => {
+    const doc = 'Intro.\n\\begin{itemize}\n\\item One\n\\item Two\n\\end{itemize}\nplain end\n';
+    const id = await seedDoc(request, 'Visual Bullets', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.locator('.cm-line', { hasText: 'Two' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      // the new item shows its bullet, not \item
+      await expect(page.getByTestId('vis-item')).toHaveCount(3);
+      expect(await drawn(page)).not.toContain('\\item');
+      await page.keyboard.type('Three');
+      let expected = doc.replace('\\item Two\n', '\\item Two\n\\item Three\n');
+      await expectStored(request, id, expected);
+      // Home goes to the start of the item's text, after the bullet
+      await page.keyboard.press('Home');
+      await page.keyboard.type('A');
+      expected = expected.replace('\\item Three', '\\item AThree');
+      await expectStored(request, id, expected);
+      // Backspace there joins the item to the one above, never into \itemAThree
+      await page.keyboard.press('ArrowLeft');
+      await page.keyboard.press('Backspace');
+      expected = expected.replace('\\item Two\n\\item AThree', '\\item TwoAThree');
+      await expectStored(request, id, expected);
+      expect(await drawn(page)).not.toContain('\\item');
+      // Backspace on an empty item takes it away
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('vis-item')).toHaveCount(3);
+      await page.keyboard.press('Backspace');
+      await expect(page.getByTestId('vis-item')).toHaveCount(2);
+      await page.keyboard.type('!');
+      expected = expected.replace('TwoAThree', 'TwoAThree!');
+      await expectStored(request, id, expected);
+      // Delete at the end of the line above the list lands in the first item, after its bullet
+      await page.locator('.cm-line', { hasText: 'Intro.' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Delete');
+      await page.keyboard.type('Z');
+      expected = expected.replace('\\item One', '\\item ZOne');
+      await expectStored(request, id, expected);
+      // a click before a bullet puts the caret after it
+      const line = (await page.locator('.cm-line', { hasText: 'ZOne' }).boundingBox())!;
+      await page.mouse.click(line.x + 2, line.y + line.height / 2);
+      await page.keyboard.type('Y');
+      expected = expected.replace('\\item ZOne', '\\item YZOne');
+      await expectStored(request, id, expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  /** Whether the collaborator's outline sits around the widget with `testid`. */
+  const covers = (page: import('@playwright/test').Page, testid: string) => page.evaluate((testid) => {
+    const box = document.querySelector('[data-testid="vis-peer-outline"]')?.getBoundingClientRect();
+    const w = document.querySelector(`[data-testid="${testid}"]`)?.getBoundingClientRect();
+    if (!box || !w) return false;
+    return Math.abs(box.left - w.left) < 4 && Math.abs(box.right - w.right) < 4 && Math.abs(box.top - w.top) < 6 && Math.abs(box.bottom - w.bottom) < 6;
+  }, testid);
+
+  test('a collaborator\'s caret in a formula or table outlines it, shows no source and leaves an open cell alone; an unfocused one is ignored (vis-4)', async ({ browser, request }) => {
+    const id = await seedDoc(request, 'Visual Peer Outline', TABLE_DOC);
+    const A = await peer(browser, true, 'Ada');
+    const B = await peer(browser, false, 'Grace');
+    try {
+      await openProject(A.page, id);
+      await openProject(B.page, id);
+      await A.page.locator('.cm-line', { hasText: 'plain end' }).click();
+      const grid = A.page.getByTestId('vis-table');
+      await grid.locator('td', { hasText: /^b$/ }).click();
+      const input = A.page.getByTestId('vis-table-cell-input');
+      await A.page.keyboard.type('be');
+      // B's caret into the table's source: A keeps the grid and the open cell, outlined in B's colour
+      await B.page.locator('.cm-line', { hasText: 'c & d' }).click();
+      const outline = A.page.getByTestId('vis-peer-outline');
+      await expect(outline).toHaveCount(1, { timeout: 10_000 });
+      await expect.poll(() => covers(A.page, 'vis-table')).toBe(true);
+      await expect(input).toBeFocused();
+      await expect(input).toHaveValue('be');
+      expect(await drawn(A.page)).not.toContain('\\begin{tabular}');
+      await A.page.keyboard.type('ta');
+      await A.page.keyboard.press('Enter');
+      let expected = TABLE_DOC.replace('a & b \\\\', 'a & beta \\\\');
+      await expectStored(request, id, expected);
+      // into the formula: outlined, not shown as source
+      await B.page.locator('.cm-line', { hasText: 'Math' }).click();
+      await B.page.keyboard.press('Home');
+      for (let i = 0; i < 7; i++) await B.page.keyboard.press('ArrowRight');
+      await expect.poll(() => covers(A.page, 'vis-math'), { timeout: 10_000 }).toBe(true);
+      await expect(outline).toHaveCount(1);
+      expect(await drawn(A.page)).not.toContain('$x+y$');
+      // B's editor loses focus: the caret it left behind no longer counts
+      await B.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await expect(outline).toHaveCount(0, { timeout: 10_000 });
+      await A.page.waitForTimeout(1000);
+      expect(await stored(request, id)).toBe(expected);
+    } finally {
+      await A.ctx.close();
+      await B.ctx.close();
+      await cleanup(request, id);
+    }
+  });
+
+  test('a selection keeps the formulas and chips it covers drawn, and copies and deletes them whole (vis-12)', async ({ page, request }) => {
+    const doc = 'Start \\textbf{bold} with $x^2$ and \\cite{knuth1984} end.\nplain end\n';
+    const id = await seedDoc(request, 'Visual Selection', doc);
+    const copy = () => page.evaluate(() => {
+      const dt = new DataTransfer();
+      document.querySelector('.cm-content')!.dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+      return dt.getData('text/plain');
+    });
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await clickLineStart(page, 'Start');
+      await page.keyboard.press('Home');
+      await page.keyboard.press('Shift+End');
+      await expect(page.locator('.cm-vis-picked')).toHaveCount(2);
+      let text = await drawn(page);
+      for (const s of ['\\textbf', '$x^2$', '\\cite']) expect(text, s).not.toContain(s);
+      expect(await copy()).toBe(doc.split('\n')[0]);
+      // Select all shows no source either
+      await page.keyboard.press(`${mod}+a`);
+      text = await drawn(page);
+      for (const s of ['\\textbf', '$x^2$', '\\cite']) expect(text, s).not.toContain(s);
+      // a selection over the chip and the words before it: the chip goes whole
+      await clickLineStart(page, 'Start');
+      await page.keyboard.press('End');
+      for (let i = 0; i < ' end.'.length; i++) await page.keyboard.press('ArrowLeft');
+      for (let i = 0; i < ' and '.length + 1; i++) await page.keyboard.press('Shift+ArrowLeft');
+      await expect(page.locator('.cm-vis-picked').getByTestId('vis-chip-cite')).toHaveCount(1);
+      await page.keyboard.press('Backspace');
+      await expectStored(request, id, doc.replace(' and \\cite{knuth1984}', ''));
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the formula editor saves on Enter and on a click outside, and Escape discards with a notice (vis-5)', async ({ page, request }) => {
+    const doc = 'Math $x+y$ here and $a$ there.\nplain end\n';
+    const id = await seedDoc(request, 'Visual Formula Save', doc);
+    const pop = page.getByTestId('math-popover');
+    const field = page.getByTestId('math-field');
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      await page.getByTestId('vis-math').nth(0).click();
+      await expect(field).toBeFocused();
+      await expect(page.getByTestId('math-popover-done')).toHaveAttribute('title', 'Save the formula (Enter)');
+      await page.keyboard.press('End');
+      await page.keyboard.type('+1');
+      await page.keyboard.press('Enter');
+      await expect(pop).toHaveCount(0);
+      await expect(page.locator('.cm-content')).toBeFocused();
+      let expected = doc.replace('$x+y$', '$x+y+1$');
+      await expectStored(request, id, expected);
+
+      // a click in the text saves the change
+      await page.getByTestId('vis-math').nth(0).click();
+      await expect(field).toBeFocused();
+      await page.keyboard.press('End');
+      await page.keyboard.type('+2');
+      await clickLineStart(page, 'Math');
+      await expect(pop).toHaveCount(0);
+      expected = expected.replace('$x+y+1$', '$x+y+1+2$');
+      await expectStored(request, id, expected);
+
+      // so does a click on another formula, which opens that one
+      await page.getByTestId('vis-math').nth(0).click();
+      await expect(field).toBeFocused();
+      await page.keyboard.press('End');
+      await page.keyboard.type('+3');
+      await page.getByTestId('vis-math').nth(1).click();
+      await expect.poll(() => field.evaluate((mf) => (mf as HTMLElement & { value: string }).value)).toBe('a');
+      await expect(field).toBeFocused();
+      expected = expected.replace('$x+y+1+2$', '$x+y+1+2+3$');
+      await expectStored(request, id, expected);
+
+      // Escape discards a change and says so
+      await page.keyboard.press('End');
+      await page.keyboard.type('+b');
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+      await expect(page.getByTestId('toasts')).toContainText('Your change to the formula was discarded.');
+      await page.waitForTimeout(2500);
+      expect(await stored(request, id)).toBe(expected);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('Find shows a heading\'s hidden \\label while its match is selected, so Replace edits what shows (find-6)', async ({ page, request }) => {
+    const doc = '\\section{Introduction}\\label{sec:intro}\nBody text.\nplain end\n';
+    const id = await seedDoc(request, 'Visual Find Label', doc);
+    try {
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      expect(await drawn(page)).not.toContain('\\label');
+      await page.keyboard.press(`${mod}+f`);
+      const panel = page.locator('.cm-panels-top .cm-search');
+      await expect(panel.locator('input[name=search]')).toBeFocused();
+      await page.keyboard.type('sec:intro');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.cm-content')).toContainText('\\label{sec:intro}');
+      await panel.locator('input[name=replace]').click();
+      await page.keyboard.type('sec:start');
+      await panel.getByRole('button', { name: 'Replace', exact: true }).click();
+      await expectStored(request, id, doc.replace('sec:intro', 'sec:start'));
+      await page.keyboard.press('Escape');
+      await page.locator('.cm-line', { hasText: 'plain end' }).click();
+      expect(await drawn(page)).not.toContain('\\label');
     } finally {
       await cleanup(request, id);
     }

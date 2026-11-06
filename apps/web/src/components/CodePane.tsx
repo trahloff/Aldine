@@ -15,7 +15,7 @@ import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, 
 import { findKeymap, findPanel, restoreFind } from '../editor/findPanel';
 import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
-import { visualExtensions, editAtCursor, recordOwnCopies, type VisualDeps } from '../editor/visual';
+import { visualExtensions, editAtCursor, publishEditorFocus, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
@@ -479,6 +479,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           loadGate.of(provider.isSynced ? [] : readOnlyDoc(ydoc)),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, awareness, { undoManager }),
+          publishEditorFocus(awareness),
           // after yCollab on purpose — see agentHighlight's ordering contract
           ...(safeStorage.get('aldine.experimental.agentPresence') === '1'
             ? [agentHighlight(ytext, awareness)]

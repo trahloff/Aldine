@@ -105,19 +105,20 @@ describe('visual decorations', () => {
     expect(atomicRanges(s).length).toBe(2);
   });
 
-  it('a selection spanning constructs reveals every one it touches', () => {
+  it('a selection reveals the constructs an end of it is in, and keeps those it covers whole rendered (vis-12)', () => {
     const doc = 'x \\textbf{a} y \\emph{b} z';
-    const s = state(doc, { anchor: 0, head: doc.length });
-    const reveals = computeRevealRanges(s, []);
-    expect(reveals.length).toBeGreaterThanOrEqual(2);
-    expect(atomicRanges(s)).toEqual([]);
+    const whole = state(doc, { anchor: 0, head: doc.length });
+    expect(computeRevealRanges(whole)).toEqual([]);
+    expect(atomicRanges(whole).length).toBe(4);
+    // from the bold's text to the end: the bold shows its source, the italic stays rendered
+    const s = state(doc, { anchor: doc.indexOf('a}'), head: doc.length });
+    expect(computeRevealRanges(s)).toEqual([{ from: 2, to: 12 }]);
+    expect(atomicRanges(s)).toEqual([[doc.indexOf('\\emph'), doc.indexOf('b}')], [doc.indexOf('b}') + 1, doc.indexOf('b}') + 2]]);
   });
 
-  it('remote carets force-reveal their construct', () => {
+  it('only the local selection reveals', () => {
     const doc = 'a \\textbf{bold} b';
-    const s = state(doc, { anchor: 0 });
-    const reveals = computeRevealRanges(s, [12]);
-    expect(reveals).toContainEqual({ from: 2, to: 15 });
+    expect(computeRevealRanges(state(doc, { anchor: 0 }))).toEqual([]);
   });
 
   it('tolerates syntax errors elsewhere in the document', () => {
@@ -171,5 +172,87 @@ describe('escapes, \\url, \\centering and a heading\'s \\label (#150)', () => {
     const doc = '\\section{Intro} \\label{sec:intro}\nBody';
     expect(shown(state(doc, { anchor: doc.length }))).toEqual(['\\section{', '} \\label{sec:intro}']);
     expect(shown(state(doc, { anchor: 10 }))).toEqual([]);
+  });
+});
+
+describe('the source shows only from strictly inside a chip, a formula or a table (vis-2)', () => {
+  const doc = [
+    'See \\cite{knuth1984}, $x^2$ and \\ref{fig:a}.',
+    '\\begin{tabular}{l}',
+    'a \\\\',
+    '\\end{tabular}',
+    '\\begin{figure}',
+    '\\caption{A plot}',
+    '\\end{figure}',
+    '\\[ y = 1 \\]',
+    'end',
+  ].join('\n');
+  const constructs = ['\\cite{knuth1984}', '$x^2$', '\\ref{fig:a}', '\\begin{tabular}{l}\na \\\\\n\\end{tabular}', '\\begin{figure}\n\\caption{A plot}\n\\end{figure}', '\\[ y = 1 \\]'];
+  const drawn = (s: EditorState, text: string) => atomicRanges(s).some(([f, t]) => doc.slice(f, t) === text);
+
+  it('a caret at either edge keeps each one drawn; one strictly inside shows its source', () => {
+    for (const text of constructs) {
+      const from = doc.indexOf(text);
+      for (const at of [from, from + text.length]) {
+        const s = state(doc, { anchor: at });
+        expect(computeRevealRanges(s), `${text} at ${at}`).toEqual([]);
+        expect(drawn(s, text), `${text} at ${at}`).toBe(true);
+      }
+      expect(drawn(state(doc, { anchor: from + 1 }), text), text).toBe(false);
+    }
+  });
+
+  it('at a chip\'s edge inside bold the bold shows its source and the chip stays drawn', () => {
+    const d = 'a \\textbf{see \\cite{k}} b';
+    const s = state(d, { anchor: d.indexOf('}}') + 1 });
+    expect(computeRevealRanges(s)).toEqual([{ from: 2, to: d.length - 2 }]);
+    expect(atomicRanges(s)).toEqual([[d.indexOf('\\cite'), d.indexOf('}}') + 1]]);
+  });
+
+  it('a formula in a heading or caption the caret is in stays drawn', () => {
+    const d = '\\section{Cost $x$ now}\n\\begin{figure}\n\\caption{Plot of $y$}\n\\end{figure}\nend';
+    const math = (anchor: number) => atomicRanges(state(d, { anchor })).map(([f, t]) => d.slice(f, t)).filter((t) => t.startsWith('$'));
+    expect(math(d.indexOf('Cost') + 1)).toEqual(['$x$']);
+    // the figure shows its source around the caption the caret is in
+    expect(math(d.indexOf('Plot') + 1)).toEqual(['$x$', '$y$']);
+  });
+
+  it('a caret in a table float\'s caption shows the caption only, the grid stays drawn', () => {
+    const d = '\\begin{table}\n\\centering\n\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n\\caption{Results}\n\\end{table}\nend';
+    const s = state(d, { anchor: d.indexOf('Results') + 2 });
+    const shown = atomicRanges(s).map(([f, t]) => d.slice(f, t));
+    expect(shown).toEqual(['\\begin{table}', '\\centering', '\\begin{tabular}{l}\na \\\\\n\\end{tabular}', '\\end{table}']);
+  });
+
+  it('a caret in the indentation before a figure keeps it drawn', () => {
+    const d = 'x\n  \\begin{figure}\n  \\caption{A}\n  \\end{figure}\nend';
+    const s = state(d, { anchor: d.indexOf('  \\begin') });
+    expect(drawn(s, '\\begin{figure}\n  \\caption{A}\n  \\end{figure}')).toBe(false);
+    expect(atomicRanges(s).map(([f, t]) => d.slice(f, t))).toEqual(['\\begin{figure}\n  \\caption{A}\n  \\end{figure}']);
+  });
+});
+
+describe('a bullet hides its \\item at its edges (vis-1)', () => {
+  const doc = '\\begin{itemize}\n\\item First\n\\item Second\n\\end{itemize}\nend';
+  const marker = (s: EditorState) => atomicRanges(s).some(([f, t]) => doc.slice(f, t) === '\\item ' && f === doc.indexOf('\\item Second'));
+
+  it('a caret before the bullet or at the start of the item\'s text keeps the bullet', () => {
+    const at = doc.indexOf('\\item Second');
+    for (const anchor of [at, at + '\\item '.length]) expect(marker(state(doc, { anchor })), String(anchor)).toBe(true);
+    // strictly inside the hidden \item, as only a search or a jump can put it
+    expect(marker(state(doc, { anchor: at + 3 }))).toBe(false);
+  });
+});
+
+describe('a heading\'s hidden \\label shows for a selection with an end in it (find-6)', () => {
+  const doc = '\\section{Introduction}\\label{sec:intro}\nBody';
+  const label = (s: EditorState) => atomicRanges(s).some(([f, t]) => doc.slice(f, t) === '}\\label{sec:intro}');
+
+  it('a match inside the label shows it, a selection over the whole line does not', () => {
+    const at = doc.indexOf('sec:intro');
+    expect(label(state(doc, { anchor: at, head: at + 'sec:intro'.length }))).toBe(false);
+    expect(label(state(doc, { anchor: doc.indexOf('\\label'), head: doc.indexOf('\n') }))).toBe(false);
+    expect(label(state(doc, { anchor: 0, head: doc.indexOf('\n') + 1 }))).toBe(true);
+    expect(label(state(doc, { anchor: doc.length }))).toBe(true);
   });
 });

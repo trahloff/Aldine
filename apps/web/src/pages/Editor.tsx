@@ -1348,11 +1348,11 @@ export default function Editor() {
         : []),
       ...(paneMode === 'visual'
         ? [{
-          id: 'edit-at-cursor', group: 'Actions', title: 'Edit the formula or table at the cursor', hint: shortcut('Enter'),
+          id: 'edit-at-cursor', group: 'Actions', title: 'Edit the formula, table, citation or figure at the cursor', hint: shortcut('Enter'),
           run: () => {
             const opened = codeRef.current?.editAtCursor();
             if (opened === 'source') toast('This formula opens as source: the formula editor would rewrite its \\label, alignment, comments or line breaks');
-            else if (!opened) toast('Put the cursor in a formula or a table first');
+            else if (!opened) toast('Put the cursor in or beside a formula, table, citation or figure first');
             if (opened !== 'opened') requestAnimationFrame(() => codeRef.current?.focus());
           },
         }]
