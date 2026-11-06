@@ -408,10 +408,12 @@ describe('typing \\begin{name} (VIS-12)', () => {
   });
 });
 
-describe('selections', () => {
-  it('a selection over a hidden list line reveals it', () => {
+describe('selections (vis-12)', () => {
+  it('a selection over a hidden list line keeps it hidden, one ending in it shows it', () => {
     const doc = '\\begin{itemize}\n\\item A\n\\end{itemize}\nx';
-    const s = parsedState({ doc, selection: EditorSelection.single(0, doc.length), extensions: [latex(), revealField] });
-    expect(atomics(s).filter((a) => a.spec.block)).toEqual([]);
+    const whole = parsedState({ doc, selection: EditorSelection.single(0, doc.length), extensions: [latex(), revealField] });
+    expect(atomics(whole).filter((a) => a.spec.block).length).toBe(2);
+    const into = parsedState({ doc, selection: EditorSelection.single(doc.length, doc.indexOf('itemize}\nx')), extensions: [latex(), revealField] });
+    expect(atomics(into).filter((a) => a.spec.block).map((a) => doc.slice(a.from, a.to))).toEqual(['\\begin{itemize}']);
   });
 });

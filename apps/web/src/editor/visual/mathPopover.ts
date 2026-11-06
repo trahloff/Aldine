@@ -6,8 +6,9 @@ import type { MacroSet } from './preamble';
 
 /**
  * WYSIWYG math editing: clicking a rendered equation opens a floating
- * MathLive field. "Done" writes back only the span the person changed, as
- * one precise source edit (collaborative + undoable); "Edit source" drops
+ * MathLive field. "Done", Enter and a press outside write back only the
+ * span the person changed, as one precise source edit (collaborative +
+ * undoable); Escape discards a change and says so; "Edit source" drops
  * into raw source instead. A formula MathLive would rewrite (comments, line
  * breaks, alignment, labels) goes straight to source, and so does every
  * formula while MathLive cannot load, with a notice to reload the page.
@@ -266,6 +267,7 @@ let openPopover: { close(focusView: boolean): void } | null = null;
 let openSeq = 0;
 
 const LOAD_FAILED = 'Could not load the formula editor. Reload the page.';
+const DISCARDED = 'Your change to the formula was discarded. Press Enter or Done to keep a change.';
 
 /**
  * Puts a fixed-position popover under the formula at `rect`, above it when
@@ -384,6 +386,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   bar.className = 'vis-math-popover__bar';
   const done = document.createElement('button');
   done.textContent = 'Done';
+  done.title = 'Save the formula (Enter)';
   done.className = 'btn btn--primary vis-math-popover__btn';
   done.setAttribute('data-testid', 'math-popover-done');
   const tex = document.createElement('button');
@@ -445,38 +448,67 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   };
   const handle = { close };
 
-  done.onclick = () => {
+  const changed = () => canonical() !== c0;
+  /**
+   * Writes the person's change, if any, and closes; true once closed. Where
+   * it can't be written as it is (the formula was deleted or someone else
+   * changed it meanwhile, or the change would rewrite the rest), it says why
+   * and stays open. Only Done, after that notice, replaces another person's
+   * change.
+   */
+  const save = (focusView: boolean): boolean => {
     const c1 = canonical();
     const s1 = mf.value;
-    if (c1 === c0) return close(true);
-    if (!range.live) return close(false);
+    if (c1 === c0 || !range.live) {
+      close(focusView);
+      return true;
+    }
     const current = view.state.doc.sliceString(range.from, range.to);
     if (current !== source) {
       // never silently: the person decides whether their version replaces the other one
       if (range.from === range.to) {
         done.disabled = true;
-        return say('This formula was deleted while you were editing it. Nothing was written.');
+        say('This formula was deleted while you were editing it. Nothing was written.');
+        return false;
       }
       if (!overwrite) {
         overwrite = true;
-        return say('Someone else changed this formula while you were editing it. Press Done again to replace it with your version.');
+        say('Someone else changed this formula while you were editing it. Press Done to replace it with your version.');
+        return false;
       }
       view.dispatch({ changes: { from: range.from, to: range.to, insert: s1 }, userEvent: 'input.visual' });
-      return close(true);
+      close(focusView);
+      return true;
     }
     const edit = mathEdit(source, c0, c1, s1);
-    if (!edit) return say(`This change can't be written without rewriting the rest of the formula, so nothing was written. Press ${SOURCE_BUTTON.label} to make it in the LaTeX instead.`);
+    if (!edit) {
+      say(`This change can't be written without rewriting the rest of the formula, so nothing was written. Press ${SOURCE_BUTTON.label} to make it in the LaTeX instead.`);
+      return false;
+    }
     view.dispatch({ changes: { from: range.from + edit.from, to: range.from + edit.to, insert: edit.insert }, userEvent: 'input.visual' });
-    close(true);
+    close(focusView);
+    return true;
   };
+  const discard = (focusView: boolean) => {
+    const lost = changed();
+    close(focusView);
+    if (lost) visualNotice(DISCARDED, 'info');
+  };
+  done.onclick = () => { save(true); };
   tex.onclick = () => { close(false); toSource(); };
+  // MathLive fires change on Enter (its on-screen keyboard's too) and on blur:
+  // with the field still focused it is Enter, which is Done
+  mf.addEventListener('change', () => {
+    if (document.activeElement !== mf || openPopover !== handle) return;
+    setTimeout(() => { if (openPopover === handle) done.click(); });
+  });
 
   // capture: MathLive handles Escape and Tab inside its field before bubbling
   pop.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      close(true);
+      discard(true);
     } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       e.stopPropagation();
@@ -490,10 +522,16 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   }, true);
   // keep the page's own shortcuts out of the field
   pop.addEventListener('keydown', (e) => e.stopPropagation());
+  // a press outside saves a change; one that can't be saved is held once, so its notice is read
+  let held = false;
   const onOutside = (e: MouseEvent) => {
     const t = e.target as Node;
     if (pop.contains(t) || (t instanceof Element && t.closest('.ML__keyboard, .ui-menu-container'))) return;
-    close(false);
+    if (held) return discard(false);
+    if (save(false)) return;
+    held = true;
+    e.preventDefault();
+    e.stopPropagation();
   };
   window.addEventListener('mousedown', onOutside, true);
   keyboard()?.addEventListener('geometrychange', place);

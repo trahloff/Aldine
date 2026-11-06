@@ -60,6 +60,12 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-figure': { display: 'inline-block', padding: '6px 10px' },
   '.cm-vis-cap': { fontStyle: 'italic', color: 'var(--text-2)' },
 
+  // a construct a selection covers whole, and one a collaborator's caret is in
+  '.cm-vis-picked .cm-vis-chip, .cm-vis-picked .cm-vis-math, .cm-vis-picked .cm-vis-table': {
+    outline: '2px solid var(--accent)', outlineOffset: '1px', borderRadius: '4px', background: 'var(--selection)',
+  },
+  '.cm-vis-peer': { outline: '2px solid var(--vis-peer)', outlineOffset: '1px', borderRadius: '4px', pointerEvents: 'none' },
+
   // a wide table scrolls sideways; its cells break between words, never inside one
   '.cm-vis-table': { display: 'inline-block', margin: '4px 0', maxWidth: '100%', overflowX: 'auto', verticalAlign: 'top' },
   '.cm-vis-table__grid': { borderCollapse: 'collapse', fontFamily: 'var(--font-serif)', fontSize: '0.95em' },

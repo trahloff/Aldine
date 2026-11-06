@@ -45,8 +45,12 @@ function rangeForClick(view: EditorView, pos: number, assoc: -1 | 1, type: numbe
   return EditorSelection.undirectionalRange(block.from, to);
 }
 
-/** A sequence's first click: where it landed as the text was drawn then, what showed as source then, and the count of the sequence's latest mousedown. */
-interface FirstClick { down: number; pos: number; assoc: -1 | 1; reveal: RevealState }
+/**
+ * A sequence's first click: where it landed as the text was drawn then, what
+ * showed as source then, and the count of the sequence's latest mousedown.
+ * `unit`: the construct whose chip it was on, which a double-click selects.
+ */
+interface FirstClick { down: number; pos: number; assoc: -1 | 1; reveal: RevealState; unit?: { from: number; to: number } }
 
 /**
  * CodeMirror's mouse selection for the later clicks of a sequence, started
@@ -56,20 +60,28 @@ interface FirstClick { down: number; pos: number; assoc: -1 | 1; reveal: RevealS
 function sequenceStyle(view: EditorView, down: MouseEvent, first: FirstClick): MouseSelectionStyle {
   const type = down.detail;
   const start = { pos: first.pos, assoc: first.assoc };
+  const unit = first.unit && { ...first.unit };
   let startSel = view.state.selection;
   let dragged = false;
+  const at = (p: { pos: number; assoc: -1 | 1 }) => (unit && type === 2 && p === start
+    ? EditorSelection.range(unit.from, unit.to)
+    : rangeForClick(view, p.pos, p.assoc, type));
   return {
     update(u) {
       if (!u.docChanged) return;
       start.pos = u.changes.mapPos(start.pos, start.assoc);
+      if (unit) {
+        unit.from = u.changes.mapPos(unit.from, 1);
+        unit.to = Math.max(unit.from, u.changes.mapPos(unit.to, -1));
+      }
       startSel = startSel.map(u.changes);
     },
     get(event, extend, multiple) {
       dragged ||= Math.max(Math.abs(event.clientX - down.clientX), Math.abs(event.clientY - down.clientY)) >= DRAG;
       const cur = dragged ? view.posAndSideAtCoords({ x: event.clientX, y: event.clientY }, false) : start;
-      let range = rangeForClick(view, cur.pos, cur.assoc, type);
+      let range = at(cur);
       if (cur.pos !== start.pos && !extend) {
-        const startRange = rangeForClick(view, start.pos, start.assoc, type);
+        const startRange = at(start);
         const from = Math.min(startRange.from, range.from);
         const to = Math.max(startRange.to, range.to);
         range = from < range.from ? EditorSelection.range(from, to) : EditorSelection.range(to, from);
@@ -92,14 +104,25 @@ export const clickSequence = ViewPlugin.fromClass(class {
   private first: FirstClick | null = null;
 
   update(u: ViewUpdate) {
-    if (this.first && u.docChanged) this.first.pos = u.changes.mapPos(this.first.pos, this.first.assoc);
+    if (!this.first || !u.docChanged) return;
+    this.first.pos = u.changes.mapPos(this.first.pos, this.first.assoc);
+    const unit = this.first.unit;
+    if (unit) {
+      unit.from = u.changes.mapPos(unit.from, 1);
+      unit.to = Math.max(unit.from, u.changes.mapPos(unit.to, -1));
+    }
   }
 
-  /** The sequence's first click, when `event` continues it and the text has moved since it began. */
+  /** The sequence's first click, when `event` continues it and the text has moved since it began, or it began on a chip. */
   retarget(view: EditorView, event: MouseEvent): FirstClick | null {
     const first = this.first;
     if (event.button !== 0 || event.detail < 2 || !first || first.down !== this.downs - 1) return null;
-    return view.state.field(revealField) === first.reveal ? null : first;
+    return first.unit || view.state.field(revealField) !== first.reveal ? first : null;
+  }
+
+  /** A click on the chip of the construct `unit`, which the widget handled itself: a sequence's first click. */
+  chip(view: EditorView, unit: { from: number; to: number }) {
+    this.first = { down: this.downs, pos: unit.from, assoc: 1, reveal: view.state.field(revealField), unit };
   }
 
   style(view: EditorView, event: MouseEvent): MouseSelectionStyle | null {
@@ -125,4 +148,13 @@ export const clickSequence = ViewPlugin.fromClass(class {
 /** Whether `event` is a later click of a sequence whose text has moved: it selects text, even where a widget moved under the pointer. */
 export function retargetsClick(view: EditorView, event: MouseEvent): boolean {
   return !!view.plugin(clickSequence)?.retarget(view, event);
+}
+
+/**
+ * A click on the chip of `unit` starts a sequence: the click shows the
+ * source, and a double-click then selects the construct whole, which draws
+ * it again, and a triple-click its line.
+ */
+export function chipClicked(view: EditorView, unit: { from: number; to: number }): void {
+  view.plugin(clickSequence)?.chip(view, unit);
 }
