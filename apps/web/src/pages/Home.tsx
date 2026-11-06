@@ -574,7 +574,7 @@ export default function Home() {
   };
 
   const claim = async (p: ProjectSummary) => {
-    if (!(await dialogs.confirm({ title: `Claim “${p.name}”?`, body: 'You become its owner and other users lose access.', confirmLabel: 'Claim project' }))) return;
+    if (!(await dialogs.confirm({ title: `Claim “${p.name}”?`, body: 'You become its owner and other users lose access.', confirmLabel: 'Claim project', danger: true }))) return;
     try { await api.claimProject(p.id); toast(`You now own ${p.name}`, 'ok'); }
     catch (err: any) { toast(err.message, 'error'); } // e.g. someone claimed it first
     load(); // winner sees owner controls; a loser sees the project disappear

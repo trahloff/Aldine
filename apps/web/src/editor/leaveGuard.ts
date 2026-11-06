@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
 
 /** The question before leaving a page whose edits are not all on the server. */
-export const LEAVE_UNSAVED = { title: 'Some edits aren’t saved yet. Leave anyway?', confirmLabel: 'Leave', cancelLabel: 'Stay' };
+export const LEAVE_UNSAVED = { title: 'Some edits aren’t saved yet. Leave anyway?', confirmLabel: 'Leave', cancelLabel: 'Stay', danger: true };
 
 /** How far to move through the history to get back from the entry with index
  *  `to` to the one with index `from` (the router keeps `idx` in each entry's

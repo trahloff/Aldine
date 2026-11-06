@@ -150,7 +150,8 @@ test.describe('sidebar', () => {
       // A phone shows the sidebar as an overlay of its own width, with no divider.
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
-      await page.getByTestId('sidebar-toggle').click({ timeout: 15_000 });
+      await page.getByTestId('toolbar-more').click({ timeout: 15_000 });
+      await page.getByTestId('toolbar-more-sheet').getByTestId('sidebar-toggle').click();
       await expect(page.getByTestId('tab-files')).toBeVisible();
       expect(Math.round((await page.getByTestId('sidebar').boundingBox())!.width)).toBe(350);
       await expect(page.getByTestId('sidebar-resizer')).toBeHidden();

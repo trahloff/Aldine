@@ -53,6 +53,36 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Hovering commented text, or putting the caret in it, shows its comment with
   Open in Review, and Review marks the thread the caret is in. Typing in the
   text or Escape puts the card away.
+- An Outline under the file tree lists the headings of the open .tex file,
+  in Source and in Visual, and marks the one the caret is in. A click goes
+  to the heading. The Outline folds, and stays folded.
+- The toolbar has an Editor / Both / PDF toggle, also in the command
+  palette, and remembers the choice. A window narrower than 800px opens on
+  the editor alone until one is chosen. A phone shows the editor or the PDF,
+  with an Editor/PDF switch in the pane's header. Where the PDF is not on
+  screen, the editor's header shows how the last typeset went, and a click
+  on it shows the PDF. Jump to PDF from the editor alone shows both.
+- Autocomplete offers everyday commands it lacked (`\footnote`, `\url`,
+  `\href`, `\cdot`, `\mathbf`, `\mathcal`, `\text` and more), the project's
+  files inside `\includegraphics{}`, `\input{}`, `\include{}`,
+  `\bibliography{}` and `\addbibresource{}`, written from the main
+  document's folder, and the paper's own macros from `\newcommand` and
+  `\def` in any of its .tex files.
+- In-file Find shows how many matches there are and which one is selected
+  ("2 of 12"), says "No matches", and after Replace all says how many it
+  replaced.
+- The command palette has Find in this file, Replace in this file and Go to
+  line, and the editor's header has a Find button, so Find works without a
+  keyboard too.
+- Settings › This browser has a Spellcheck switch and a language for it.
+- Beside Typeset, a picker shows the main document and lists the project's
+  documents (the .tex files with `\documentclass`). Choosing one makes it
+  the main document and typesets it at once, so a manuscript, its
+  supplement and a response letter each typeset from one menu. On a phone
+  it is in the toolbar's "…" sheet; a read-only showcase or a link visitor
+  sees the name only.
+- With the PDF alone on screen, a typeset that stopped on errors says so,
+  with a Show the errors button that brings the editor back.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or
@@ -89,6 +119,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The invitation email and page say that a new account confirms its address
   by email first, and the confirmation link brings the person back to the
   invitation instead of to their project list.
+- ⌘F (Ctrl+F) opens the editor's Find from anywhere on the page, the file
+  tree included, unless a dialog or a text field has the focus; over the PDF
+  it opens Find in the PDF. The browser's own find only searched the lines
+  drawn on screen.
 - Merging a branch into main from the branch menu asks first and says how
   many checkpoints go in, because everyone working on main sees them. When
   main already has everything on the branch, it says "Nothing to merge"
@@ -274,6 +308,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Revert these changes asks first, saying how many of Claude's commits it
   undoes, when they were made and that the revert goes in under your name.
   The toast after it offers Undo.
+- Ctrl+Enter (⌘↩ on a Mac) typesets, as in Overleaf. It no longer inserts
+  a blank line; in Visual it still opens the formula or table editor where
+  the caret is in one, and Settings now accepts it for a shortcut.
+- Spellcheck is on by default in .tex and .md files and never underlines
+  commands, math, labels, citation keys or paths.
+- On a phone the editor's toolbar is one row: back, the project's name, the
+  branch and Typeset. Search, Files, Comment, Share, Settings and the
+  editing mode are in its "…" sheet.
+- In a confirmation, Enter takes the blue button, as the colour promises.
+  The ones that cannot be taken back are red and keep Enter on the way out:
+  claiming a project, Replace all across the project, declining an
+  invitation, discarding typed invitations and leaving with unsaved edits.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -669,6 +715,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   suggestion was cut short without a word. The composer counts near the
   limit and waits past it. Replies have a Reply button, and Shift+Enter
   starts a new line in them.
+- Escape in the project name in the toolbar puts the name back. Before,
+  the edited name was saved on the next click elsewhere. Screen readers hear
+  the name as a "Project name" text field and whether Auto-typeset is on.
+- While a finished typeset's PDF is still opening, the preview says it is
+  typesetting instead of "Press ⌘S to typeset and preview".
 
 ## [1.8.0] — 2026-11-04
 

@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createPaperProject, createProject, openProject, cleanup, projectAction } from './helpers';
+import { createPaperProject, createProject, openProject, cleanup, projectAction, phoneMore } from './helpers';
 
 /**
  * The shared pieces the project list and the editor stand on: the menu
@@ -271,7 +271,7 @@ test.describe('dialogs and notifications', () => {
       const id = await createPaperProject(request, 'Long Press Paper');
       try {
         await openProject(page, id);
-        await page.getByTestId('sidebar-toggle').click(); // a phone opens on the file, with the file list folded
+        await phoneMore(page, 'sidebar-toggle'); // a phone opens on the file, with the file list folded
         const row = page.getByTestId('file-references.bib');
         await expect(row).toBeVisible();
         const box = (await row.boundingBox())!;

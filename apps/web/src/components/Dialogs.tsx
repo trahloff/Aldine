@@ -6,9 +6,11 @@ export interface ConfirmOptions {
   body?: string;
   /** Names the action: "Delete branch", not "OK". */
   confirmLabel: string;
-  /** Names the way out, "Cancel" unless set. It has the focus, so Enter takes it too. */
+  /** Names the way out, "Cancel" unless set. */
   cancelLabel?: string;
-  /** The action destroys something: the button is red. */
+  /** The action destroys something or cannot be taken back: the button is
+   *  red and the way out has the focus, so Enter takes that. Otherwise Enter
+   *  takes the action, as the blue button promises. */
   danger?: boolean;
 }
 
@@ -49,6 +51,7 @@ export function useDialogs(): Dialogs {
 export function DialogProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<Open | null>(null);
   const [text, setText] = useState('');
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const api = useRef<Dialogs>({
     confirm: (o) => new Promise<boolean>((done) => setOpen({ kind: 'confirm', o, done })),
     prompt: (o) => new Promise<string | null>((done) => { setText(o.value ?? ''); setOpen({ kind: 'prompt', o, done }); }),
@@ -72,7 +75,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={api.current}>
       {children}
       {open && (
-        <Modal onClose={cancel} label={open.o.title} testId="app-dialog">
+        <Modal onClose={cancel} label={open.o.title} testId="app-dialog" initialFocus={open.kind === 'confirm' && !open.o.danger ? confirmRef : 'first'}>
           <form onSubmit={(e) => { e.preventDefault(); accept(); }}>
             <h2 data-testid="dialog-title">{open.o.title}</h2>
             {open.o.body && <p className="modal__sub" data-testid="dialog-message">{open.o.body}</p>}
@@ -93,6 +96,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
             <div className="modal__row">
               <button type="button" className="btn" onClick={cancel} data-testid="dialog-cancel">{(open.kind === 'confirm' && open.o.cancelLabel) || 'Cancel'}</button>
               <button
+                ref={confirmRef}
                 type="submit"
                 className={`btn ${open.kind === 'confirm' && open.o.danger ? 'btn--danger' : 'btn--primary'}`}
                 disabled={open.kind === 'prompt' && !text.trim()}

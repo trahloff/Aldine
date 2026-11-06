@@ -857,7 +857,12 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .presence__avatar:first-child { margin-left: 0; }
 .presence__avatar--agent svg { display: block; }
 
-.workspace { display: flex; flex: 1; min-height: 0; }
+.workspace { position: relative; display: flex; flex: 1; min-height: 0; }
+/* A pane the layout leaves out keeps its size out of the flow, so it comes
+   back at once and where it was; the preview's pages stay laid out. */
+.pane.pane--away { position: absolute; top: 0; bottom: 0; right: 0; visibility: hidden; pointer-events: none; }
+.pane--editor.pane--away { left: 0; }
+@media (max-width: 640px) { .pane--away { left: 0; } }
 
 .pane { background: var(--bg-panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pane + .pane { border-left: 1px solid var(--hairline); }
@@ -942,7 +947,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
    toolbar, not the window. */
 .sidebar-scrim { display: none; }
 @media (max-width: 640px) {
-  .workspace { position: relative; }
   .sidebar-scrim { display: block; position: absolute; inset: 0; z-index: 29; background: var(--scrim); }
 }
 
@@ -1888,20 +1892,70 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   .toolbar { flex-wrap: wrap; height: auto; row-gap: 4px; padding-top: 6px; padding-bottom: 6px; }
   .toolbar__name { max-width: 40vw; }
 }
-.sidebar-toggle { display: none; }
+/* A phone keeps back, the name, the branch and Typeset in one row; the rest
+   is in the "…" sheet. The pill and the name give way to keep Typeset in. */
+.toolbar__more { display: none; }
+@media (max-width: 640px) {
+  .toolbar { flex-wrap: nowrap; }
+  .toolbar > .toolbar__wide, .toolbar > .palette-trigger, .toolbar > .presence { display: none; }
+  .toolbar > .branch { flex-shrink: 1; }
+  .toolbar__more { display: inline-flex; }
+}
 @media (max-width: 640px) {
   .home__bar { flex-direction: column; align-items: stretch; gap: 12px; }
   .home__bar > div:last-child { flex-wrap: wrap; }
-  /* The whole preview pane goes, not just the PDF inside it: the pane keeps an
-     inline width of at least 360px, which on a 390px screen left the editor a
-     30px column. */
-  .pane--preview { display: none; }
   .sidebar { position: absolute; z-index: 30; height: 100%; width: calc(100vw - 40px); box-shadow: var(--shadow-pop); }
-  /* The overlay hides the editor; a deep link to a line collapses it and the
-     toolbar button brings it back, so the rail is not needed. */
+  /* The overlay hides the editor; a deep link to a line collapses it and
+     Show files in the toolbar's sheet brings it back, so the rail is not needed. */
   .sidebar-rail { display: none; }
-  .sidebar-toggle { display: inline-flex; }
 }
+
+/* where the preview is not on screen: the typeset's state, a click shows the PDF */
+.typeset-short { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--text-2); font: inherit; padding: 2px 4px; border-radius: var(--radius-s); cursor: pointer; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .typeset-short:hover { color: var(--text); background: var(--bg-hover); } }
+.pane__find { width: 26px; padding: 0; justify-content: center; }
+.phone-switch .seg__btn { padding: 4px 10px; }
+/* One row on a phone, Visual's formatting buttons aside: the file's name
+   and the two states give way to Find and the switch. */
+@media (max-width: 640px) {
+  .pane--editor > .pane__header:not(:has(.fmt)) { flex-wrap: nowrap; }
+  .pane--editor > .pane__header:not(:has(.fmt)) > * { flex-shrink: 0; }
+  .pane--editor > .pane__header:not(:has(.fmt)) > :is(.statusbar__file, .sync-status, .typeset-short) {
+    display: inline-block; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pane--editor > .pane__header:not(:has(.fmt)) > .statusbar__file { flex-shrink: 8; }
+  .pane--editor > .pane__header:not(:has(.fmt)) .dot { display: inline-block; vertical-align: 1px; }
+  /* a clean typeset is its dot; the label says the rest */
+  .typeset-short--ok .typeset-short__text { display: none; }
+  .typeset-short { min-width: 24px; text-align: center; }
+}
+/* the main document beside Typeset: a short name, the path in its title.
+   Short of room it moves into the "…" sheet, the toolbar's only button then. */
+@media (max-width: 1100px) {
+  .toolbar__group > .main-doc { display: none; }
+  .toolbar__more--main { display: inline-flex; }
+}
+.main-doc { display: inline-flex; align-items: center; gap: 4px; max-width: 160px; min-width: 0; font-size: var(--text-s); color: var(--text-2); }
+.main-doc__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main-doc__chev { display: inline-flex; transform: rotate(90deg); opacity: 0.6; }
+.main-doc--fixed { padding: 0 6px; }
+.layout-toggle .seg__btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; }
+@media (pointer: coarse) { .pane__find { width: 40px; height: 40px; } }
+
+/* the files tab: the tree scrolls, the outline of the open file below it */
+.sidebar__panel--files { flex-direction: column; overflow: hidden; }
+.sidebar__tree { flex: 1 1 auto; min-height: 80px; overflow: auto; }
+.outline { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 0; max-height: 45%; border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 4px; }
+.outline__head { display: flex; align-items: center; gap: 4px; flex: none; border: 0; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); text-align: left; padding: 4px 6px; border-radius: var(--radius-s); cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .outline__head:hover { color: var(--text); background: var(--bg-hover); } }
+.outline__chev { display: inline-flex; transition: transform 150ms var(--ease); }
+.outline__chev--open { transform: rotate(90deg); }
+.outline__list { list-style: none; margin: 0; padding: 0 0 4px; overflow: auto; min-height: 0; }
+.outline__item { display: block; width: 100%; border: 0; background: transparent; color: var(--text-2); font: var(--text-s) var(--font-ui); text-align: left; padding: 3px 8px; border-radius: var(--radius-s); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .outline__item:hover { background: var(--bg-hover); color: var(--text); } }
+.outline__item--current { color: var(--text); background: var(--accent-soft); font-weight: 600; }
+.outline__empty { margin: 2px 8px 6px; color: var(--text-3); font-size: var(--text-s); }
+@media (pointer: coarse) { .outline__item { min-height: 40px; } .outline__head { min-height: 40px; } }
 
 /* ---------- OAuth consent (/oauth/authorize) ---------- */
 .consent { width: 420px; }

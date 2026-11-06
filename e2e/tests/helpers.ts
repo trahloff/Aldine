@@ -86,6 +86,16 @@ export async function cleanup(request: APIRequestContext, id: string): Promise<v
  *  ZIP64): the server unit tests own the builder. */
 export { buildZip, unicodePathExtra } from '../../apps/server/test/zip.mjs';
 
+/** A phone's editor toolbar: an item of its "…" sheet ("sidebar-toggle", "more-settings", …). */
+export async function phoneMore(page: Page, item: string, how: 'click' | 'tap' = 'click'): Promise<void> {
+  // a sheet closed just before is still sliding away over the toolbar
+  await expect(page.locator('.modal-backdrop[aria-hidden="true"]')).toHaveCount(0);
+  await page.getByTestId('toolbar-more')[how]();
+  await page.getByTestId('toolbar-more-sheet').getByTestId(item)[how]();
+  // the sheet's exit copy covers what the item opened until it has slid away
+  await expect(page.locator('.modal-backdrop[aria-hidden="true"]')).toHaveCount(0);
+}
+
 /** Home: an item of the New project split button's menu ("import-zip", "new-from-gitlab", …). */
 export async function startFrom(page: Page, item: string): Promise<void> {
   await page.getByTestId('new-menu').click();

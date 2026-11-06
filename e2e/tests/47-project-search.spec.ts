@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures';
 import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
-import { createProject, openProject, typeAtEnd, cleanup, openSidebarTab } from './helpers';
+import { createProject, openProject, typeAtEnd, cleanup, openSidebarTab, phoneMore } from './helpers';
 
 /**
  * Search and replace across a project (#112): every text file on the
@@ -287,7 +287,7 @@ test.describe('project search', () => {
       try {
         await put(request, id, 'main.tex', '\\documentclass{article}\n\\begin{document}\nA gadget here.\n\\end{document}\n');
         await openProject(page, id);
-        await page.getByTestId('sidebar-toggle').tap();
+        await phoneMore(page, 'sidebar-toggle', 'tap');
         await page.getByTestId('tab-search').tap();
         await expect(page.getByTestId('search-panel')).toBeVisible();
         await page.getByTestId('search-input').fill('gadget');

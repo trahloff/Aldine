@@ -44,7 +44,7 @@ export default function InvitationsStrip({ onAccepted, refresh = 0 }: { onAccept
   };
   const decline = async (inv: MyInvitation) => {
     const owner = inv.ownerName || 'The owner';
-    if (!(await dialogs.confirm({ title: `Decline the invitation to “${inv.project.name}”?`, body: `You can’t accept it afterwards. ${owner} can invite you again.`, confirmLabel: 'Decline' }))) return;
+    if (!(await dialogs.confirm({ title: `Decline the invitation to “${inv.project.name}”?`, body: `You can’t accept it afterwards. ${owner} can invite you again.`, confirmLabel: 'Decline', danger: true }))) return;
     setBusy(inv.id);
     try {
       await api.declineInvitation(inv.id);

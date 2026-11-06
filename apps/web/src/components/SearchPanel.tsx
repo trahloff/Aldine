@@ -301,7 +301,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
       title: `${del ? 'Delete' : 'Replace'} ${count(total, 'match', 'matches')} in ${count(files.length, 'file')}?`,
       body: `${del ? shownPattern(q) : `${shownPattern(q)} → ${replacement}`}, in ${where}. ${manual ? 'The changes wait in History for your commit.' : 'This lands as one commit.'}`,
       confirmLabel: del ? 'Delete matches' : 'Replace all',
-      danger: del,
+      danger: true,
     });
     if (!ok) return;
     setBusy(true);

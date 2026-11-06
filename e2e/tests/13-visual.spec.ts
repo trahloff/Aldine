@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, phoneMore } from './helpers';
 
 const DOC = [
   '\\section{Introduction}',
@@ -1818,10 +1818,20 @@ test.describe('visual editor on a phone (VIS-21)', () => {
         const box = (await page.getByTestId(testid).boundingBox())!;
         expect(box.height, testid).toBeGreaterThanOrEqual(24);
       }
-      for (const tab of await page.getByTestId('mode-toggle').getByRole('button').all()) {
-        const box = await tab.boundingBox();
-        if (box) expect(box.height).toBeGreaterThanOrEqual(24);
-      }
+      // the editing mode is in the toolbar's … sheet on a phone, a row a thumb can hit
+      await expect(page.getByTestId('mode-toggle')).toBeHidden();
+      await page.getByTestId('toolbar-more').tap();
+      const modeRow = page.getByTestId('toolbar-more-sheet').getByTestId('more-mode');
+      await expect(modeRow).toHaveText('Switch to Source editing');
+      expect((await modeRow.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await page.getByTestId('toolbar-more-sheet-cancel').tap();
+      await phoneMore(page, 'more-mode', 'tap');
+      await expect(page.getByTestId('vis-math')).toHaveCount(0);
+      await expect(page.locator('.cm-line', { hasText: 'Near the bottom $x+y$ here.' })).toHaveCount(1);
+      await page.getByTestId('toolbar-more').tap();
+      await expect(page.getByTestId('toolbar-more-sheet').getByTestId('more-mode')).toHaveText('Switch to Visual editing');
+      await page.getByTestId('toolbar-more-sheet').getByTestId('more-mode').tap();
+      await expect(page.getByTestId('vis-math')).toHaveCount(1);
     } finally {
       await cleanup(request, id);
     }

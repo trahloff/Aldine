@@ -3,7 +3,8 @@ import { api, CompilerInfo, ProjectSummary, TreeEntry } from '../api';
 import Modal from './Modal';
 import { ENGINES, texliveLabel } from '../util/engines';
 import { Appearance, APPEARANCES, setAppearance, useAppearance } from '../theme';
-import { chordConflict, chordFromEvent, chordProblem, isDefaultChord, setChord, ShortcutId, SHORTCUTS, useShortcutLabel } from '../util/shortcuts';
+import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, sameChord, setChord, ShortcutId, SHORTCUTS, TYPESET_ENTER, useShortcutLabel } from '../util/shortcuts';
+import { SPELL_LANGS } from '../editor/spellcheck';
 
 interface Props {
   project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
@@ -12,6 +13,11 @@ interface Props {
   autoTypeset: boolean;
   /** Vim keybindings, also this browser's. */
   vim: boolean;
+  /** Spellcheck in .tex and .md files, and its language ('' follows the browser): this browser's too. */
+  spellcheck: boolean;
+  spellLang: string;
+  onToggleSpellcheck(): void;
+  onSetSpellLang(lang: string): void;
   /** Shown under the compiler picker right after an import: where the choice came from. */
   importNote?: string;
   /** The owner or a collaborator: only they may change what is stored with the project. */
@@ -106,8 +112,10 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
 
   const clash = recording ? null : chordConflict(id);
   const clashHint = clash ? `${keys} is also ${clash} — change one of them` : null;
+  // Typeset's second keys, unless they are this row's own or another row took them
+  const enter = id === 'typeset' && !SHORTCUTS.some((s) => sameChord(chordFor(s.id), TYPESET_ENTER)) ? `${formatChord(TYPESET_ENTER)} typesets too` : undefined;
   return (
-    <Row label={label} hint={problem ?? clashHint ?? (recording ? 'Press the new keys · Esc keeps these' : undefined)} hintTestId={`shortcut-hint-${id}`} hintError={!!(problem || clashHint)}>
+    <Row label={label} hint={problem ?? clashHint ?? (recording ? 'Press the new keys · Esc keeps these' : enter)} hintTestId={`shortcut-hint-${id}`} hintError={!!(problem || clashHint)}>
       <button
         type="button"
         className={`input shortcut${recording ? ' is-recording' : ''}`}
@@ -132,7 +140,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, spellcheck, spellLang, onToggleSpellcheck, onSetSpellLang, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -276,6 +284,31 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               onChange={onToggleVim}
               data-testid="settings-vim"
             />
+          </Row>
+          <Row
+            label="Spellcheck"
+            htmlFor="settings-spellcheck"
+            hint={spellcheck ? 'Underlines misspelled words in .tex and .md files, never in commands or math' : 'No underlines'}
+          >
+            <input
+              id="settings-spellcheck"
+              type="checkbox"
+              checked={spellcheck}
+              onChange={onToggleSpellcheck}
+              data-testid="settings-spellcheck"
+            />
+          </Row>
+          <Row label="Spellcheck language" htmlFor="settings-spell-lang" hint="Checked with the browser’s dictionary for it, where the browser has one">
+            <select
+              id="settings-spell-lang"
+              className="input"
+              value={spellLang}
+              onChange={(e) => onSetSpellLang(e.target.value)}
+              disabled={!spellcheck}
+              data-testid="settings-spell-lang"
+            >
+              {SPELL_LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+            </select>
           </Row>
           <Row label="Appearance" htmlFor="settings-theme">
             <select

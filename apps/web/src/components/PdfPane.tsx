@@ -49,6 +49,8 @@ interface Props {
   onFirstOpen(): void;
   /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
   onInverse?(page: number, x: number, y: number): void;
+  /** Set while the errors list is out of sight (the editor pane is hidden): brings it back. */
+  onShowErrors?(): void;
   /** Receives the page on screen and the page count; null while no PDF shows. */
   pages?: PdfPagesStore;
   /** A pinch or Ctrl+wheel over the pages asks for this zoom. */
@@ -425,7 +427,7 @@ function stretch(info: PageInfo[], ratio: number) {
 /** CSS pixels per PDF point of a page as it is sized now, stretched or not. */
 const shownScale = (info: PageInfo) => info.el.offsetHeight / info.view.height;
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, staleNote, notice, ready = true, hasTex = true, onFirstOpen, onInverse, pages, onZoom }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, staleNote, notice, ready = true, hasTex = true, onFirstOpen, onInverse, onShowErrors, pages, onZoom }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
@@ -994,6 +996,11 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
               </>
             ) : pdfUrl ? (
               <><span className="spinner" /><p>Opening the PDF…</p></>
+            ) : status === 'error' && hasErrors && onShowErrors ? (
+              <>
+                <p data-testid="pdf-errors-hidden">The typeset stopped on errors.</p>
+                <button className="btn" onClick={onShowErrors} data-testid="pdf-show-errors">Show the errors</button>
+              </>
             ) : status === 'error' ? (
               // Only blame the document when there are errors to fix — a failed
               // run without parsed errors (missing root, server trouble) isn't

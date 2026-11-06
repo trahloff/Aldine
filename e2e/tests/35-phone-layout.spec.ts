@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup, openSidebarTab } from './helpers';
+import { createProject, openProject, cleanup, openSidebarTab, phoneMore } from './helpers';
 
 /**
  * The editor at phone width (≤640px), where the agent flow sends people: a
@@ -47,22 +47,22 @@ test.describe('phone layout', () => {
       await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
       await openProject(page, id);
       // a phone opens on the file, with the file tree folded
-      await expect(page.getByTestId('sidebar-toggle')).toHaveText('Files');
+      await expect(page.getByTestId('sidebar')).toBeHidden();
       const content = await page.locator('.cm-content').boundingBox();
       expect(content!.width).toBeGreaterThanOrEqual(PHONE.width * 0.6);
       await expect(page.locator('.pane--preview')).toBeHidden();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-      await page.getByTestId('sidebar-toggle').click(); // "Files"
+      await phoneMore(page, 'sidebar-toggle'); // "Show files"
       await openSidebarTab(page, 'history');
       const sidebar = await page.locator('.sidebar').boundingBox();
       expect(sidebar!.width).toBeGreaterThanOrEqual(PHONE.width - 60);
-      await page.getByTestId('sidebar-toggle').click(); // "Hide files"
+      await phoneMore(page, 'sidebar-toggle'); // "Hide files"
 
       // a deep link to a line (the PDF viewer's and Claude's click-through) lands in the same state
       await page.goto(`/p/${id}?line=5`);
       await expect(page.locator('.cm-content')).toBeVisible();
-      await expect(page.getByTestId('sidebar-toggle')).toHaveText('Files');
+      await expect(page.getByTestId('sidebar')).toBeHidden();
       const linked = await page.locator('.cm-content').boundingBox();
       expect(linked!.width).toBeGreaterThanOrEqual(PHONE.width * 0.6);
     } finally {
