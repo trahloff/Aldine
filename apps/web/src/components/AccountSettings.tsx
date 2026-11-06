@@ -302,6 +302,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [busy, setBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const toast = useToast();
   const isSso = !!user.provider;
   const { providers } = useAuth();
@@ -312,8 +313,11 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
   // filled; before that it would sit as a second primary under "Create token".
   const passwordReady = current.length > 0 && next.length > 0;
 
-  const change = async () => {
-    if (next.length < 8) { toast('New password must be at least 8 characters', 'error'); return; }
+  const change = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (busy) return;
+    setPasswordError('');
+    if (next.length < 8) { setPasswordError('New password must be at least 8 characters'); return; }
     setBusy(true);
     try {
       const { revokedTokens } = await api.changePassword(current, next);
@@ -321,7 +325,7 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
       setCurrent(''); setNext('');
       onClose();
     } catch (err: any) {
-      toast(err.message, 'error');
+      setPasswordError(err.message);
     }
     setBusy(false);
   };
@@ -361,16 +365,29 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
           </p>
         ) : (
           <>
-            <div className="menu__label" style={{ margin: '18px 0 6px' }}>Change password</div>
-            <input className="input login__input" type="password" placeholder="Current password" aria-label="Current password" value={current} data-testid="current-password" onChange={(e) => setCurrent(e.target.value)} />
-            <input className="input login__input" type="password" placeholder="New password (min 8)" aria-label="New password" value={next} data-testid="new-password" onChange={(e) => setNext(e.target.value)} />
+            <div className="menu__label" id="change-password-label" style={{ margin: '18px 0 6px' }}>Change password</div>
+            {/* A form a password manager recognises: Enter submits it, and the
+                hidden username tells the manager which saved login to update. */}
+            <form id="change-password" className="login__form" onSubmit={change} noValidate aria-labelledby="change-password-label" data-testid="change-password-form">
+              <input type="text" name="username" autoComplete="username" value={user.email ?? ''} readOnly hidden />
+              <div className="login__field">
+                <label className="field__label" htmlFor="account-current-password">Current password</label>
+                <input id="account-current-password" className="input login__input" type="password" name="current-password" autoComplete="current-password" value={current} data-testid="current-password" onChange={(e) => { setCurrent(e.target.value); setPasswordError(''); }} />
+              </div>
+              <div className="login__field">
+                <label className="field__label" htmlFor="account-new-password">New password</label>
+                <input id="account-new-password" className="input login__input" type="password" name="new-password" autoComplete="new-password" aria-describedby="account-new-password-hint" value={next} data-testid="new-password" onChange={(e) => { setNext(e.target.value); setPasswordError(''); }} />
+                <p className="login__hint" id="account-new-password-hint">At least 8 characters.</p>
+              </div>
+              {passwordError && <p className="login__error" role="alert" data-testid="password-error">{passwordError}</p>}
+            </form>
             <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '4px 0 0' }}>Changing your password signs out your other sessions and revokes agent access.</p>
           </>
         )}
 
         <div className="modal__row" style={{ marginTop: 18 }}>
           <button className="btn" onClick={onClose}>Close</button>
-          {!isSso && <button className={`btn${passwordReady ? ' btn--primary' : ''}`} onClick={change} disabled={busy} aria-busy={busy || undefined} data-testid="save-password">{busy ? '…' : 'Update password'}</button>}
+          {!isSso && <button type="submit" form="change-password" className={`btn${passwordReady ? ' btn--primary' : ''}`} disabled={busy} aria-busy={busy || undefined} data-testid="save-password">{busy ? '…' : 'Update password'}</button>}
         </div>
       </div>
     </Modal>

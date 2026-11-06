@@ -14,6 +14,8 @@ interface Props {
   vim: boolean;
   /** Shown under the compiler picker right after an import: where the choice came from. */
   importNote?: string;
+  /** The owner or a collaborator: only they may change what is stored with the project. */
+  canConfigure?: boolean;
   onClose(): void;
   onRename(name: string): Promise<void>;
   onSetRoot(path: string): Promise<void>;
@@ -101,7 +103,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -140,7 +142,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
 
         <section className="settings__section" data-testid="settings-this-project">
           <div className="menu__label settings__heading">This project</div>
-          {readOnly && <p className="settings__hint" data-testid="settings-read-only">A read-only showcase keeps its settings. Make a copy to change them.</p>}
+          {readOnly ? <p className="settings__hint" data-testid="settings-read-only">A read-only showcase keeps its settings. Make a copy to change them.</p> : !canConfigure && <p className="settings__hint" style={{ margin: '2px 0 4px' }} data-testid="settings-project-locked">Only the owner and collaborators can change these.</p>}
           <Row label="Name" htmlFor="settings-name">
             <input
               id="settings-name"
@@ -149,7 +151,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               onChange={(e) => setName(e.target.value)}
               onBlur={commitName}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-              disabled={readOnly}
+              disabled={readOnly || !canConfigure}
               data-testid="settings-name"
             />
           </Row>
@@ -159,7 +161,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={project.rootFile}
               onChange={(e) => onSetRoot(e.target.value)}
-              disabled={readOnly}
+              disabled={readOnly || !canConfigure}
               data-testid="settings-root-file"
             >
               {rootOptions.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -171,7 +173,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={engine}
               onChange={(e) => onSetEngine(e.target.value)}
-              disabled={readOnly}
+              disabled={readOnly || !canConfigure}
               data-testid="settings-engine"
             >
               {ENGINES.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
@@ -190,7 +192,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               type="checkbox"
               checked={!!project.stopOnFirstError}
               onChange={(e) => onSetStopOnFirstError(e.target.checked)}
-              disabled={readOnly}
+              disabled={readOnly || !canConfigure}
               data-testid="settings-stop-on-error"
             />
           </Row>
@@ -204,7 +206,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
               className="input"
               value={project.manualCommits ? 'manual' : 'auto'}
               onChange={(e) => onSetManualCommits(e.target.value === 'manual')}
-              disabled={readOnly}
+              disabled={readOnly || !canConfigure}
               data-testid="settings-commit-mode"
             >
               <option value="auto">Automatically</option>

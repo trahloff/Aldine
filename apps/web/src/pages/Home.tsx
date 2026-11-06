@@ -26,7 +26,7 @@ import { rememberedNamespace } from '../components/NamespacePicker';
 import About from '../components/About';
 import CommandPalette, { Command, usePaletteHotkey } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
-import { useMinuteTick } from '../util/dates';
+import { shortDate, useMinuteTick } from '../util/dates';
 import { takeOAuthResume } from '../util/oauthParams';
 import { takeInviteResume } from '../util/invites';
 import { takeProjectResume } from '../util/projectResume';
@@ -58,6 +58,8 @@ const PALETTE_GROUPS = ['Projects', 'New', 'Appearance', 'More'];
 const EXIT_MS = 150;
 /** A list that answers quicker than this never shows its skeleton. */
 const SKELETON_DELAY_MS = 300;
+/** Coming back to the tab reloads the list at most this often. */
+const REFRESH_MIN_MS = 30_000;
 /** With this few projects a blank "New project" page ends the shelf. */
 const BLANK_SHEET_MAX = 3;
 
@@ -167,6 +169,7 @@ export default function Home() {
   const [addSheet, setAddSheet] = useState<{ keyboard: boolean } | null>(null);
   const [emptying, setEmptying] = useState(false);
   const [startKey, setStartKey] = useState<string | null>(null);
+  const [invitesAsked, setInvitesAsked] = useState(0);
   usePaletteHotkey(useCallback(() => setPaletteOpen((o) => !o), []));
 
   const zipInput = useRef<HTMLInputElement>(null);
@@ -183,6 +186,7 @@ export default function Home() {
   /** Bumped by every change made here, so a list fetched before it does not undo it. */
   const edits = useRef(0);
   const loads = useRef(0);
+  const loadedAt = useRef(0);
   const flip = useFlip(shelfRef);
   const mainRef = useRef<HTMLElement>(null);
   /** The shelf's width; its columns are the rows each sheet's stage is sized by. Measured before the first paint. */
@@ -208,6 +212,7 @@ export default function Home() {
   const loadTrash = useCallback(() => api.listTrash().then(setTrash).catch(() => setTrash((t) => t ?? [])), []);
   const load = useCallback((): Promise<void> => {
     loadTrash();
+    loadedAt.current = Date.now();
     const seq = ++loads.current;
     const at = edits.current;
     return api.listProjects()
@@ -234,6 +239,17 @@ export default function Home() {
     if (wasPending.current && !user?.emailPending) load();
     wasPending.current = !!user?.emailPending;
   }, [user?.emailPending]);
+  // A tab left open goes stale: coming back to it brings in new invitations,
+  // shares and edits. Not under an open menu or dialog, which a re-sort would move.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - loadedAt.current < REFRESH_MIN_MS || overlayOpen()) return;
+      load();
+      setInvitesAsked((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [load]);
   // Back online: the list that failed to load tries again by itself.
   useEffect(() => {
     if (!loadError) return;
@@ -410,15 +426,18 @@ export default function Home() {
   const moveToTrash = (p: ProjectSummary, hadFocus = false) => once(p.id, async () => {
     // No question first: the trash keeps the project, and the notification
     // carries the way back.
+    const trashed = api.deleteProject(p.id);
+    let purgeAt: string | undefined;
     try {
-      await exit(p.id, api.deleteProject(p.id), hadFocus);
+      await exit(p.id, trashed, hadFocus);
+      ({ purgeAt } = await trashed);
     } catch (err: any) {
       toast(`Could not move ${p.name} to the trash: ${err.message}`, 'error');
       return;
     }
     const key = `undo-trash-${p.id}`;
     const run = () => { dismissToast(key); restoreFromTrash(p.id, p.name, p); };
-    toast(`Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => restoreFromTrash(p.id, p.name, p) });
+    toast(purgeAt ? `Moved ${p.name} to the trash · restorable until ${shortDate(purgeAt)}` : `Moved ${p.name} to the trash`, 'info', { label: 'Undo', testId: 'undo-trash', key, onExpire: expireUndo(key), onClick: () => restoreFromTrash(p.id, p.name, p) });
     armUndo(key, run);
     loadTrash();
   });
@@ -529,6 +548,10 @@ export default function Home() {
     if (!canManage(p)) {
       return [
         ...open,
+        { kind: 'separator' },
+        // The server lets anyone who may download the source copy it, and own the copy.
+        { id: 'duplicate', label: 'Make a copy', onSelect: () => duplicate(p), testId: 'menu-duplicate' },
+        { kind: 'separator' },
         ...downloads,
         ...claimItem,
         ...(p.ownerId ? [{ kind: 'separator' } as MenuEntry, { id: 'remove', label: 'Remove from my list', onSelect: () => removeFromList(p), testId: 'menu-remove' } as MenuEntry] : []),
@@ -858,7 +881,7 @@ export default function Home() {
               stage={stage[stage.length - 1]}
               testId="new-project-tile"
               title="New project"
-              detail="Template, ZIP or repository"
+              detail="Blank or from a template"
               ratio={blankRatio}
               tabIndex={tabIndexOf('new')}
               onActivate={() => setCreating({})}
@@ -924,7 +947,7 @@ export default function Home() {
           )}
         </div>
         {authEnabled && <EmailConfirmBanner />}
-        {authEnabled && show !== 'trash' && <InvitationsStrip onAccepted={() => { load(); }} />}
+        {authEnabled && show !== 'trash' && <InvitationsStrip refresh={invitesAsked} onAccepted={() => { load(); }} />}
         {compact && search}
         <nav className="seg home-filter" aria-label="Show">
           {filters.map((f) => (

@@ -225,6 +225,11 @@ test.describe('dialogs and notifications', () => {
       const region = page.getByRole('region', { name: 'Notifications' });
       const toast = region.locator('.toast', { hasText: 'Moved Neutral Trash to the trash' });
       await expect(toast).toBeVisible();
+      // the day it stops being restorable, as the trash itself shows it
+      const [trashed] = (await (await request.get('/api/projects/trash')).json()).filter((t: { id: string }) => t.id === id);
+      const purge = new Date(trashed.purgeAt);
+      const until = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', ...(purge.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) }).format(purge);
+      await expect(toast).toContainText(`Moved Neutral Trash to the trash · restorable until ${until}`);
       await expect(toast.locator('.dot')).toHaveCount(0);
       await page.getByTestId('undo-trash').click();
     } finally { await cleanup(request, id); }

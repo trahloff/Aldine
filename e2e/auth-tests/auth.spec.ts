@@ -266,6 +266,67 @@ test.describe('auth', () => {
     await carol.close();
   });
 
+  test('a link visitor sees the project settings read-only, and can make a copy from the palette and the list', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    const alice = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.61' } });
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const name = `Link Copy ${Date.now()}`;
+    const proj = await (await alice.request.post('/api/projects', { data: { name } })).json();
+    expect((await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+
+    const carol = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.61' } });
+    const page = await carol.newPage();
+    await register(page, uniq(), 'password123', 'Carol');
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    // the name is not a field she could type into
+    await expect(page.getByTestId('project-name')).toHaveText(name);
+    await expect(page.getByTestId('project-name')).not.toHaveAttribute('contenteditable');
+    await expect(page.getByTestId('project-name')).toHaveAttribute('title', 'Only the owner and collaborators can rename this project');
+    // what is stored with the project is shown, not offered; this browser's settings still are
+    await page.getByTestId('project-settings-open').click();
+    await expect(page.getByTestId('settings-project-locked')).toHaveText('Only the owner and collaborators can change these.');
+    for (const control of ['settings-name', 'settings-root-file', 'settings-engine', 'settings-stop-on-error', 'settings-commit-mode']) {
+      await expect(page.getByTestId(control), control).toBeDisabled();
+    }
+    await expect(page.getByTestId('settings-auto-typeset')).toBeEnabled();
+    await page.getByTestId('settings-close').click();
+    // and the file tree does not offer to change the main document
+    await page.getByTestId('file-main.tex').click({ button: 'right' });
+    await expect(page.getByTestId('file-menu')).toBeVisible();
+    await expect(page.getByTestId('file-menu-rename')).toBeVisible();
+    await expect(page.getByTestId('file-menu-root')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    // a copy from the palette is hers
+    await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+k`);
+    await page.getByTestId('palette-input').fill('Make a copy');
+    await page.getByTestId('palette-item-make-copy').click();
+    const made = page.locator('.toast', { hasText: `Made a copy: “${name} copy”` });
+    await expect(made).toBeVisible();
+    await made.getByTestId('copy-open').click();
+    await expect(page).not.toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await expect(page.getByTestId('project-name')).toHaveText(`${name} copy`);
+    await expect(page.getByTestId('project-name')).toHaveAttribute('contenteditable', 'true');
+    const copyId = new URL(page.url()).pathname.split('/')[2];
+    expect((await (await carol.request.get(`/api/projects/${copyId}`)).json()).isOwner).toBe(true);
+
+    // and so is one from the project list's menu
+    await page.goto('/');
+    await page.getByTestId(`project-menu-${proj.id}`).click();
+    await expect(page.getByTestId('menu-duplicate')).toHaveText('Make a copy');
+    await expect(page.getByTestId('menu-rename')).toHaveCount(0);
+    await page.getByTestId('menu-duplicate').click();
+    await expect(page.locator('.toast', { hasText: `Duplicated ${name} as` })).toBeVisible();
+    const mine = (await (await carol.request.get('/api/projects')).json()) as { name: string; isOwner?: boolean }[];
+    expect(mine.filter((p) => p.name === `${name} copy` && p.isOwner)).toHaveLength(2);
+    // the original is untouched
+    expect((await (await alice.request.get(`/api/projects/${proj.id}`)).json()).name).toBe(name);
+
+    await alice.close();
+    await carol.close();
+  });
+
   test('share from the editor toolbar: owner-only access, link mode, copyable link', async ({ page, browser }) => {
     const email = uniq();
     await register(page, email);
@@ -899,6 +960,68 @@ test.describe('auth depth', () => {
     await expect(page.getByTestId('account-menu')).toBeVisible({ timeout: 15_000 });
   });
 
+  test('Forgot password says where the reset link goes: the inbox, or on a server without email the administrator', async ({ page }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.65' });
+    // The suite's server echoes the token instead; this is the answer of one that only logs it.
+    await page.route('**/api/auth/reset-request', (route) => route.fulfill({ json: { ok: true } }));
+    await page.goto('/');
+    await page.getByTestId('auth-forgot').click();
+    await page.getByTestId('auth-email').fill(uniq());
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('auth-info')).toHaveText('This server doesn’t send email. Ask the administrator for a reset link.');
+
+    // a server that mails reset links says so
+    await page.route('**/api/auth/me', async (route) => route.fulfill({ json: { ...(await (await route.fetch()).json()), sendsEmail: true } }));
+    await page.reload();
+    await page.getByTestId('auth-forgot').click();
+    await page.getByTestId('auth-email').fill(uniq());
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('auth-info')).toHaveText('If an account exists for that email, a reset link has been sent.');
+  });
+
+  test('change password is a form a password manager can fill, and says in place what went wrong', async ({ page }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': '203.0.113.66' });
+    const email = uniq();
+    await register(page, email);
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('user-name').click();
+    const settings = page.getByTestId('account-settings');
+    await expect(settings).toBeVisible();
+    // the account the new password belongs to, for the manager to update
+    await expect(settings.getByTestId('change-password-form').locator('input[autocomplete="username"]')).toHaveValue(email);
+    const current = settings.getByLabel('Current password');
+    const next = settings.getByLabel('New password');
+    await expect(current).toHaveAttribute('autocomplete', 'current-password');
+    await expect(current).toHaveAttribute('type', 'password');
+    await expect(next).toHaveAttribute('autocomplete', 'new-password');
+    await expect(next).toHaveAttribute('type', 'password');
+    await expect(next).toHaveAccessibleDescription('At least 8 characters.');
+
+    // too short: said under the fields, nothing sent
+    let sent = 0;
+    page.on('request', (r) => { if (r.url().endsWith('/api/auth/password')) sent += 1; });
+    await current.fill('password123');
+    await next.fill('short');
+    await next.press('Enter');
+    await expect(settings.getByRole('alert')).toHaveText('New password must be at least 8 characters');
+    expect(sent).toBe(0);
+    // a wrong current password: the server's answer, and the dialog stays
+    await current.fill('not-my-password');
+    await next.fill('changed-pw-42');
+    await current.press('Enter');
+    await expect(settings.getByTestId('password-error')).toHaveText('Current password is incorrect');
+    expect(sent).toBe(1);
+    // Enter in either field sends the form
+    await current.fill('password123');
+    await expect(settings.getByTestId('password-error')).toHaveCount(0);
+    await next.press('Enter');
+    await expect(page.locator('.toast', { hasText: 'Password updated' })).toBeVisible();
+    await expect(settings).toHaveCount(0);
+    expect((await page.request.post('/api/auth/login', { headers: { 'x-forwarded-for': '203.0.113.22' }, data: { email, password: 'changed-pw-42' } })).ok()).toBeTruthy();
+  });
+
   test('SSO endpoints 404 for unconfigured providers, and only configured ones show a button', async ({ page, request }) => {
     for (const p of ['github', 'google']) {
       expect((await request.get(`/api/auth/oauth/${p}`, { maxRedirects: 0 })).status()).toBe(404);
@@ -1260,6 +1383,45 @@ test.describe('ORCID sign-in', () => {
 
     await alice.close();
     await ctx.close();
+  });
+
+  test('a project link brings back a sign-in started on it; a password sign-in there leaves nothing behind', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    const alice = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.67' } });
+    await alice.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Alice' } });
+    const proj = await (await alice.request.post('/api/projects', { data: { name: `Open after sign-in ${Date.now()}` } })).json();
+    expect((await alice.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+    const pendingIn = (p: import('@playwright/test').Page) => p.evaluate(() => sessionStorage.getItem('aldine.project.resume'));
+
+    // ORCID from the project's link: back on the project, not on an empty list
+    const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.67' } });
+    const page = await ctx.newPage();
+    await page.goto(`/p/${proj.id}`);
+    await page.getByTestId('oauth-orcid').click();
+    await page.getByTestId('persona-private').click();
+    await expect(page.getByTestId('editor-shell')).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    expect(await pendingIn(page)).toBeNull();
+
+    // A password sign-in on the link stays there, and the projects page later stays the projects page.
+    const email = uniq();
+    const other = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.67' } });
+    await other.request.post('/api/auth/register', { data: { email, password: 'password123' } });
+    await other.clearCookies();
+    const second = await other.newPage();
+    await second.goto(`/p/${proj.id}`);
+    await second.getByTestId('auth-email').fill(email);
+    await second.getByTestId('auth-password').fill('password123');
+    await second.getByTestId('auth-submit').click();
+    await expect(second.getByTestId('editor-shell')).toBeVisible({ timeout: 15_000 });
+    expect(await pendingIn(second)).toBeNull();
+    await second.getByRole('button', { name: 'Back to projects' }).click();
+    await expect(second.getByTestId('new-project')).toBeVisible();
+    await expect(second).toHaveURL(/\/$/);
+
+    await alice.close();
+    await ctx.close();
+    await other.close();
   });
 
   test('the consent page brings back only a sign-in started there', async ({ page, request, baseURL }) => {

@@ -774,7 +774,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (hover: hover) and (pointer: fine) { .toolbar__name:hover { border-color: var(--hairline); } }
+@media (hover: hover) and (pointer: fine) { .toolbar__name[contenteditable]:hover { border-color: var(--hairline); } }
 .toolbar__name:focus { outline: none; border-color: var(--accent); background: var(--bg-panel); }
 .toolbar__spacer { flex: 1; }
 .toolbar__group { display: flex; align-items: center; gap: 6px; }

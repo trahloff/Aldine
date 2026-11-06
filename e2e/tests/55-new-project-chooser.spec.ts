@@ -50,6 +50,8 @@ test.describe('New project chooser', () => {
     await page.goto('/');
     const tile = page.getByTestId('new-project-tile');
     await expect(tile).toBeVisible();
+    // it says what the sheet it opens offers; ZIPs and repositories start elsewhere
+    await expect(tile).toHaveAccessibleDescription('Blank or from a template');
     await expect(page.getByTestId('new-project-sheet')).toHaveCount(0);
     await tile.click();
     await expect(page.getByTestId('new-project-sheet')).toHaveCount(1);

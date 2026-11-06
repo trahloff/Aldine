@@ -785,14 +785,20 @@ export default function Editor() {
 
   const setRootFile = useCallback(async (path: string) => {
     if (!project || path === project.rootFile) return;
+    const before = project.rootFile;
+    // The select is controlled: follow the choice now, roll back if refused.
+    setProject((prev) => (prev ? { ...prev, rootFile: path } : prev));
     try {
       await api.patchProject(id, { rootFile: path });
-      await loadProject();
       toast(`Main document is now ${path}`, 'ok');
+      // A PDF on screen was typeset from the old main document.
+      if (compile.result) doCompile();
+      loadProject();
     } catch (err: any) {
+      setProject((prev) => (prev ? { ...prev, rootFile: before } : prev));
       toast(`Could not change the main document: ${err.message}`, 'error');
     }
-  }, [id, project, loadProject, toast]);
+  }, [id, project, compile.result, loadProject, doCompile, toast]);
 
   const setStopOnFirstError = useCallback(async (on: boolean) => {
     if (!project || on === !!project.stopOnFirstError) return;
@@ -822,12 +828,15 @@ export default function Editor() {
 
   const setEngine = useCallback(async (engine: string) => {
     if (!project || engine === project.engine) return;
+    const before = project.engine;
+    setProject((prev) => (prev ? { ...prev, engine } : prev));
     try {
       await api.patchProject(id, { engine });
-      await loadProject();
       // A PDF on screen was typeset with the old engine — rebuild it.
       if (compile.result) doCompile();
+      loadProject();
     } catch (err: any) {
+      setProject((prev) => (prev ? { ...prev, engine: before } : prev));
       toast(`Could not change the engine: ${err.message}`, 'error');
     }
   }, [id, project, compile.result, loadProject, doCompile, toast]);
@@ -1210,6 +1219,18 @@ export default function Editor() {
       { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
       { id: 'sidebar', group: 'View', title: sidebarHidden ? 'Show the sidebar' : 'Hide the sidebar', run: () => setSidebar(!sidebarHidden) },
       { id: 'download-zip', group: 'Project', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
+      {
+        id: 'make-copy', group: 'Project', title: 'Make a copy of this project', keywords: 'duplicate copy fork', run: async () => {
+          try {
+            // The copy is of the main branch, whichever branch is open here.
+            const c = await api.copyProject(id);
+            if (c.remoteError) toast(c.remoteError, 'error');
+            toast(branch === 'main' ? `Made a copy: “${c.name}”` : `Made a copy of the main branch: “${c.name}”`, 'ok', { label: 'Open', testId: 'copy-open', onClick: () => navigate(`/p/${c.id}`) });
+          } catch (err: any) {
+            toast(`Could not make a copy: ${err.message}`, 'error');
+          }
+        },
+      },
       { id: 'share', group: 'Project', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
       { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
@@ -1359,7 +1380,8 @@ export default function Editor() {
         <button className="btn btn--ghost" onClick={() => navigate('/')} title="All projects" aria-label="Back to projects"><IconChevronLeft /></button>
         <span
           className="toolbar__name"
-          contentEditable={!project.readOnly}
+          contentEditable={(canSync && !project.readOnly) || undefined}
+          title={canSync ? undefined : 'Only the owner and collaborators can rename this project'}
           suppressContentEditableWarning
           data-testid="project-name"
           onBlur={(e) => renameProject(e.currentTarget, e.currentTarget.textContent || '')}
@@ -1562,7 +1584,7 @@ export default function Editor() {
                     setTimeout(() => { if (localRemoval.current === from) localRemoval.current = null; }, 0);
                   }
                 }}
-                onSetRoot={setRootFile}
+                onSetRoot={canSync ? setRootFile : undefined}
               />
             )}
             {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} />}
@@ -1898,6 +1920,7 @@ export default function Editor() {
           autoTypeset={auto}
           vim={vim}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
+          canConfigure={canSync}
           onClose={() => setSettingsOpen(false)}
           onRename={saveName}
           onSetRoot={setRootFile}

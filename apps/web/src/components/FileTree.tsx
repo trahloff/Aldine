@@ -23,7 +23,8 @@ interface Props {
   /** A file or a folder; a drop onto a folder moves it there the same way.
    *  Resolves true once it has moved. */
   onRename(from: string, to: string): Promise<boolean>;
-  onSetRoot(path: string): void;
+  /** Absent for someone who may not reconfigure the project (a link visitor). */
+  onSetRoot?(path: string): void;
   /** Bumped by the parent to open the new-file input from outside the tree
    *  (the editor's empty state). */
   newFileRequest?: number;
@@ -236,7 +237,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
   const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
   const fileActions = (path: string): MenuEntry[] => [
-    { id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' },
+    ...(onSetRoot ? [{ id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' } as MenuEntry] : []),
     {
       id: 'rename', label: 'Rename…', testId: 'file-menu-rename',
       onSelect: async () => {
