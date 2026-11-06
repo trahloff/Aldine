@@ -5,10 +5,15 @@ export interface TreeNode { name: string; path: string; type: 'file' | 'dir'; ch
 /** Git keeps no empty directories: a new folder is this file inside it. */
 export const KEEP_FILE = '.gitkeep';
 
-/** What the Source view lists: LaTeX sources and the images they include. */
-export const SOURCE_FILE = /\.(tex|bib|cls|bbx|cbx|sty|bst|png|jpe?g|pdf|eps|svg|tikz)$/i;
+/** What the Source view lists: LaTeX sources (Sweave and Asymptote ones
+ *  too), a journal kit's class options, configs and language files, the
+ *  images and plot data they read, notes, and latexmk's settings. */
+export const SOURCE_FILE = /\.(tex|ltx|latex|rnw|rtex|bib|cls|clo|cfg|def|ldf|lbx|bbx|cbx|sty|bst|ist|mtx|asy|png|jpe?g|pdf|eps|svg|tikz|pgf|csv|tsv|dat|txt|md)$|^\.latexmkrc$/i;
 
 const isDotName = (name: string) => name.startsWith('.');
+
+/** chapter2 before chapter10, and case aside. */
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 /** A nested tree from the flat listing: folders first, then files, each by name. */
 export function buildTree(files: TreeEntry[]): TreeNode[] {
@@ -28,7 +33,7 @@ export function buildTree(files: TreeEntry[]): TreeNode[] {
     });
   }
   const sort = (n: TreeNode) => {
-    n.children.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)));
+    n.children.sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : byName.compare(a.name, b.name)));
     n.children.forEach(sort);
   };
   sort(root);
@@ -87,6 +92,12 @@ export function moveTarget(path: string, dir: string): string | null {
  *  no trailing slash. */
 export function normalizeEntryPath(raw: string): string {
   return raw.trim().replace(/\\/g, '/').split('/').filter((s) => s !== '' && s !== '.').join('/');
+}
+
+/** A new file named without an extension is a .tex file; a dot-file such as
+ *  .latexmkrc keeps its name. */
+export function withTexExtension(path: string): string {
+  return path.split('/').pop()!.includes('.') ? path : `${path}.tex`;
 }
 
 const isReserved = (seg: string) => {

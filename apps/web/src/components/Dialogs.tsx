@@ -14,7 +14,9 @@ export interface PromptOptions {
   title: string;
   value?: string;
   confirmLabel: string;
-  /** Select only this many leading characters of the value (a file's stem, not its extension). */
+  /** Where the selection starts, 0 if unset: a file's name, after the folder it is in. */
+  selectFrom?: number;
+  /** Where the selection ends, the end if unset: before a file's extension. */
   selectTo?: number;
 }
 
@@ -79,7 +81,7 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => setText(e.target.value)}
-                onFocus={(e) => e.target.setSelectionRange(0, open.o.selectTo ?? e.target.value.length)}
+                onFocus={(e) => e.target.setSelectionRange(open.o.selectFrom ?? 0, open.o.selectTo ?? e.target.value.length)}
               />
             )}
             <div className="modal__row">

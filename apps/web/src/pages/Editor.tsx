@@ -1299,7 +1299,7 @@ export default function Editor() {
     if (activeFile) {
       cmds.push({
         id: 'rename-file', group: 'Project', title: `Rename ${activeFile}…`, run: async () => {
-          const to = (await dialogs.prompt({ title: `Rename ${activeFile}`, value: activeFile, confirmLabel: 'Rename', selectTo: stemEnd(activeFile) }))?.trim();
+          const to = (await dialogs.prompt({ title: `Rename ${activeFile}`, value: activeFile, confirmLabel: 'Rename', selectFrom: activeFile.lastIndexOf('/') + 1, selectTo: stemEnd(activeFile) }))?.trim();
           if (to && to !== activeFile) {
             try {
               await api.renameFile(id, branch, activeFile, to);
@@ -1316,7 +1316,12 @@ export default function Editor() {
       cmds.push({
         id: 'delete-file', group: 'Project', title: `Delete ${activeFile}…`, run: async () => {
           if (await dialogs.confirm({ title: `Delete ${activeFile}?`, confirmLabel: 'Delete file', danger: true })) {
-            await api.deleteFile(id, branch, activeFile);
+            try {
+              await api.deleteFile(id, branch, activeFile);
+            } catch (err: any) {
+              toast(`Could not delete ${activeFile}: ${err.message}`, 'error');
+              return;
+            }
             await loadFiles();
             setActiveFile(null);
           }
@@ -1520,7 +1525,10 @@ export default function Editor() {
             <button className="sidebar__collapse" onClick={() => setSidebar(true)} title="Hide the sidebar" aria-label="Hide the sidebar" data-testid="sidebar-collapse"><IconSidebar /></button>
           </div>
           <div className="sidebar__body">
-            {tab === 'files' && (
+            {/* Files, History and Review stay mounted too, like Search below:
+                the tree's view, a half-typed reply or commit message and each
+                panel's scroll survive a trip to another tab. */}
+            <div className="sidebar__panel" style={{ display: tab === 'files' ? 'block' : 'none' }}>
               <FileTree
                 files={files}
                 active={activeFile}
@@ -1531,6 +1539,7 @@ export default function Editor() {
                 newFileRequest={newFileRequest}
                 newFileKind={newEntryKind}
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
+                hidden={tab !== 'files'}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -1561,6 +1570,8 @@ export default function Editor() {
                     await loadFiles();
                     loadProject(); // deleting the root re-derives (or unsets) it
                     if (activeFile && within(activeFile, path)) setActiveFile(null);
+                  } catch (err: any) {
+                    toast(`Could not delete ${path}: ${err.message}`, 'error');
                   } finally {
                     setTimeout(() => { if (localRemoval.current === path) localRemoval.current = null; }, 0);
                   }
@@ -1583,9 +1594,9 @@ export default function Editor() {
                 }}
                 onSetRoot={canSync ? setRootFile : undefined}
               />
-            )}
-            {tab === 'history' && <HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} />}
-            {tab === 'review' && (
+            </div>
+            <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={!!project.readOnly} hidden={tab !== 'history'} /></div>
+            <div className="sidebar__panel" style={{ display: tab === 'review' ? 'block' : 'none' }}>
               <ReviewPanel
                 comments={comments}
                 load={commentsLoad}
@@ -1598,7 +1609,7 @@ export default function Editor() {
                 onAccept={acceptSuggestion}
                 readOnly={!!project.readOnly}
               />
-            )}
+            </div>
             {/* Always mounted, like the plugin panels: the query, the toggles
                 and the results survive a trip to another tab. */}
             <div className="sidebar__panel" style={{ display: tab === 'search' ? 'block' : 'none' }}>

@@ -46,6 +46,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - On a phone, a project opens on its file with the file list folded away.
   Files in the toolbar brings it back. A project with no file to show still
   opens on the file list.
+- The Source view of the file tree also lists plot data (.csv, .tsv, .dat),
+  .pgf figures, a journal kit's .clo, .cfg, .def, .ldf and .lbx files, other
+  TeX sources (.ltx, .latex, .Rnw, .rtex, .asy, .ist, .mtx), notes (.txt,
+  .md) and .latexmkrc. Choosing All is kept per project in this browser,
+  across reloads.
+- A new file named without an extension, such as "introduction", is created
+  as introduction.tex.
+- Moving a file or folder by dragging it shows "Moved intro.tex to
+  figures/" with an Undo that puts it back.
+- Rows in the file tree show a "⋯" button, on the open file and under the
+  mouse, with the same actions as a right-click.
 
 ### Fixed
 - A merge in History shows the changes it brought in. It used to say "No
@@ -267,6 +278,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The More tab's menu works from the keyboard: the arrow keys move through
   it and Escape goes back to the tab. Escape in the branch menu puts focus
   back on the branch pill instead of the top of the page.
+- Renaming a file or folder inside a folder selects only its name, so typing
+  a new one keeps it in its folder. Before, the folder was selected too, and
+  the renamed file moved to the top level.
+- A file dragged from the desktop that misses the file tree no longer opens
+  in place of Aldine. Dropped on the editor, it is uploaded instead of having
+  its text pasted into the document, and the tree takes drops on the whole
+  sidebar below its rows.
+- A folder dropped on the file tree says it cannot be read, and the files
+  dropped with it still upload. Before, nothing happened at all.
+- A file or folder that could not be deleted says so, from the tree and from
+  the command palette.
+- The file tree sorts numbered names in number order: chapter2 before
+  chapter10.
+- Switching sidebar tabs keeps the Files, History and Review tabs as they
+  were: the tree's Source or All view and scroll, a half-typed commit
+  message and a half-typed reply.
 
 ## [1.8.0] — 2026-11-04
 
