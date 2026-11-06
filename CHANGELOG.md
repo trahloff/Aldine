@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- A project named with a LaTeX special such as `_`, `&` or `%` ("Results_v2",
+  "R&D notes") now typesets on the first run: the starter `main.tex` escapes
+  the name in its title instead of stopping with "Missing $ inserted".
+
 ## [1.9.1] — 2026-11-07
 
 ### Added
