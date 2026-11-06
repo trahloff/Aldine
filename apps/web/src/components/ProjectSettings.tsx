@@ -28,6 +28,33 @@ interface Props {
   focus?: 'shortcuts';
   /** A read-only showcase: what is stored with the project shows, unchangeable. */
   readOnly?: boolean;
+  /** Without accounts: the name this browser writes under, shown to co-authors. */
+  yourName?: string;
+  onSetYourName?(name: string): void;
+}
+
+/** Saved on Enter and when the field loses focus; a blank field keeps the name. */
+function YourNameField({ name, onSave }: { name: string; onSave(name: string): void }) {
+  const [value, setValue] = useState(name);
+  useEffect(() => { setValue(name); }, [name]);
+  const commit = () => {
+    const next = value.trim();
+    if (!next) { setValue(name); return; }
+    if (next !== name) onSave(next);
+  };
+  return (
+    <input
+      id="settings-your-name"
+      className="input"
+      value={value}
+      maxLength={100}
+      autoComplete="name"
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
+      data-testid="settings-your-name"
+    />
+  );
 }
 
 /** Label and explanation on the left, the control in one column on the right. */
@@ -103,7 +130,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -217,6 +244,11 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
 
         <section className="settings__section" data-testid="settings-this-browser">
           <div className="menu__label settings__heading">This browser</div>
+          {onSetYourName && yourName !== undefined && (
+            <Row label="Your name" htmlFor="settings-your-name" hint="Co-authors see it on your cursor, your comments and your commits">
+              <YourNameField name={yourName} onSave={onSetYourName} />
+            </Row>
+          )}
           <Row
             label="Auto-typeset"
             htmlFor="settings-auto-typeset"

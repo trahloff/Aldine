@@ -30,6 +30,7 @@ import { readOnlyDoc } from '../editor/readOnly';
 import { openDoc, parkDoc } from '../editor/docCache';
 import { captureSpot, clampSpot, fileSpots, spotScroll, spotSelection } from '../editor/fileSpots';
 import { watchSync, reconnectProvider, type SyncState } from '../editor/syncStatus';
+import { citationEdit } from '../editor/citeInsert';
 
 export type EditorMode = 'source' | 'visual';
 
@@ -79,6 +80,9 @@ export interface CodePaneHandle {
    *  Selection only: no document change. */
   selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }): void;
   insertAtCursor(text: string): void;
+  /** Cites `key` at the cursor (citeInsert.ts): 'inserted' a new \cite, 'added' to the citation there, or
+   *  'present' already; null when the document cannot take it (no view, read-only). */
+  insertCitation(key: string): 'inserted' | 'added' | 'present' | null;
   currentLine(): number | null;
   getSelection(): { from: number; to: number; quote: string } | null;
   setCommentRanges(ranges: CommentRange[]): void;
@@ -290,6 +294,16 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       if (!view) return;
       view.dispatch(view.state.replaceSelection(text));
       view.focus();
+    },
+    insertCitation(key: string) {
+      const view = viewRef.current;
+      if (!view || view.state.readOnly) return null;
+      const sel = view.state.selection.main;
+      const edit = citationEdit(view.state.doc.toString(), sel.from, key, sel.to);
+      if (edit.kind === 'present') view.dispatch({ selection: { anchor: edit.cursor }, scrollIntoView: true });
+      else view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.cursor }, scrollIntoView: true, userEvent: 'input' });
+      view.focus();
+      return edit.kind === 'insert' ? 'inserted' : edit.kind === 'add' ? 'added' : 'present';
     },
     currentLine() {
       const view = viewRef.current;
@@ -560,6 +574,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       if (s) fileSpots.set(docName, s);
     };
     document.addEventListener('visibilitychange', keepSpot);
+    // Without accounts a refused document closes the socket as Forbidden (a
+    // project in the trash): the project route then says why.
+    const onClosed = ({ event }: { event: { code: number } }) => { if (event?.code === 4403) cbRef.current.onAccessDenied?.(); };
+    provider.on('close', onClosed);
     providerRef.current = provider;
     // A kept doc is synced already: it opens without the load gate.
     let gated = !provider.isSynced;
@@ -583,6 +601,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       ytext.unobserve(onYChange);
       provider.off('synced', initialStats);
       provider.off('authenticationFailed', onDenied);
+      provider.off('close', onClosed);
       sync.dispose();
       providerRef.current = null;
       awareness.off('change', reportUsers);
@@ -629,6 +648,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     });
     return () => { live = false; };
   }, [vim, projectId, branch, filePath]);
+  // A name changed while the file is open reaches co-authors' avatars at once.
+  useEffect(() => {
+    if (identity) providerRef.current?.setAwarenessField('user', { name: identity.name, color: identity.color, colorLight: identity.color + '55' });
+  }, [identity?.name, identity?.color]);
   // The project's details load again while its pane is open, and the
   // showcase flag in them can have changed.
   useEffect(() => {

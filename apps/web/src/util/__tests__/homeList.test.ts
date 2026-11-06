@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectSummary } from '../../api';
 import {
-  errorLabel, firstName, initials, isUnread, matchSentence, matchesQuery, metaLine, ownerChipShown, parseShow, parseSort, pdfBranch,
-  pdfOutputPath, projectHref, sectionsOf, sortProjects,
+  errorLabel, firstName, homeHref, homeReturn, initials, isUnread, matchSentence, matchesQuery, metaLine, ownerChipShown, parseShow, parseSort, pdfBranch,
+  pdfOutputPath, projectHref, sectionsOf, sortProjects, trashLosses,
 } from '../homeList';
 
 const NOW = new Date(2026, 9, 25, 15, 30).getTime();
@@ -145,3 +145,34 @@ describe('small helpers', () => {
     expect(pdfOutputPath('paper/thesis.tex')).toBe('paper/.aldine-out/thesis.pdf');
   });
 });
+
+describe('the Home address', () => {
+  it('holds the filter and the search, and nothing for All without one', () => {
+    expect(homeHref('all', '')).toBe('/');
+    expect(homeHref('shared', 'grant draft')).toBe('/?show=shared&q=grant+draft');
+    expect(homeHref('archived', '')).toBe('/?show=archived');
+    expect(parseShow('archived', false)).toBe('archived');
+  });
+  it('returns only to a Home address', () => {
+    expect(homeReturn('/?show=trash&q=x')).toBe('/?show=trash&q=x');
+    expect(homeReturn('/p/abc')).toBe('/');
+    expect(homeReturn('//evil.example/')).toBe('/');
+    expect(homeReturn(null)).toBe('/');
+  });
+});
+
+describe('trashLosses', () => {
+  it('names what others lose, and nothing for a private project', () => {
+    expect(trashLosses({ share: null, remote: null })).toEqual([]);
+    expect(trashLosses({ share: { mode: 'private', collaborators: [] } })).toEqual([]);
+    expect(trashLosses({ share: { mode: 'private', collaborators: ['a@x.org'] } })).toEqual(['Its co-author loses access until you restore it.']);
+    expect(trashLosses({ share: { mode: 'link', collaborators: ['a@x.org', 'b@x.org'] } })).toEqual([
+      'Its 2 co-authors lose access until you restore it.',
+      'Anyone with its link loses access until you restore it.',
+    ]);
+    const remote = { provider: 'gitlab' as const, fullName: 'research/latex/paper', owner: 'research/latex', repo: 'paper', remoteBranch: 'main', cloneUrl: '', createdByAldine: true };
+    expect(trashLosses({ remote })).toEqual(['Its GitLab repository research/latex/paper is deleted now; restoring the project creates a new one.']);
+    expect(trashLosses({ remote: { ...remote, createdByAldine: false } })).toEqual([]);
+  });
+});
+

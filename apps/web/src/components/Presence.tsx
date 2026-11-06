@@ -1,4 +1,5 @@
 import { IconSpark } from './Icons';
+import { initials } from '../util/homeList';
 
 export interface PresenceUser {
   name: string;
@@ -31,7 +32,7 @@ export default function Presence({ users }: { users: PresenceUser[] }) {
           </span>
         ) : (
           <span key={i} className="presence__avatar" title={u.name} aria-label={u.name} style={{ background: u.color }}>
-            {u.name.trim().slice(0, 1).toUpperCase()}
+            {initials(u.name)}
           </span>
         )
       ))}

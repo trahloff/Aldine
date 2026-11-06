@@ -27,12 +27,23 @@ export interface PluginErrorsAction {
  *  co-author's or an agent's run. */
 type LastCompile = { ok: boolean; errors: Array<{ type: string; line: number | null; message: string; file?: string }>; log: string; explicit: boolean } | null;
 
+/** A command a plugin adds to the editor's command palette. */
+export interface PluginCommand {
+  id: string;
+  title: string;
+  /** The palette section it is listed under; "Plugins" by default. */
+  group?: string;
+  keywords?: string;
+  run(): void;
+}
+
 export interface PluginCtx {
   projectId: string;
   branch: string;
   getActiveFile(): string | null;
   getCompileResult(): LastCompile;
   insertAtCursor(text: string): void;
+  insertCitation(key: string): CitationResult;
   refreshFiles(): Promise<unknown>;
   refreshProject(): Promise<unknown>;
   compile(): void;
@@ -40,6 +51,11 @@ export interface PluginCtx {
   /** `reveal`: also show a hidden sidebar. */
   showPanel(id: string, reveal?: boolean): void;
 }
+
+/** What citing a key did: a new \cite, a key added to the citation at the
+ *  cursor, a citation that has it already, or false when no TeX file is open
+ *  in the editor to cite it in. */
+export type CitationResult = 'inserted' | 'added' | 'present' | false;
 
 export interface AldineAPI {
   version: 1;
@@ -58,7 +74,11 @@ export interface AldineAPI {
      */
     onFilesChanged(listener: () => void): () => void;
   };
-  editor: { insertAtCursor(text: string): void };
+  editor: {
+    insertAtCursor(text: string): void;
+    /** Cite `key` at the cursor of the open TeX file: in the citation there, else as \cite{key}. */
+    insertCitation(key: string): CitationResult;
+  };
   compile(): void;
   toast(text: string, kind?: 'info' | 'error' | 'ok'): void;
   fetch(url: string, init?: RequestInit): Promise<Response>;
@@ -70,6 +90,8 @@ export interface AldineAPI {
     /** Add a button to the header of the errors list, shown while the last
      *  typeset failed. */
     registerErrorsAction(action: { id: string; label: string; title?: string; run(): void }): void;
+    /** Add a command to the editor's command palette. */
+    registerCommand(command: PluginCommand): void;
   };
 }
 
@@ -77,11 +99,12 @@ interface Props {
   ctx: PluginCtx;
   onPanels(panels: PluginPanel[]): void;
   onErrorsActions?(actions: PluginErrorsAction[]): void;
+  onCommands?(commands: PluginCommand[]): void;
   /** The branch's file list; a new value each time the editor re-reads it. */
   files: unknown;
 }
 
-export function PluginHost({ ctx, onPanels, onErrorsActions, files }: Props) {
+export function PluginHost({ ctx, onPanels, onErrorsActions, onCommands, files }: Props) {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
   const filesListeners = useRef(new Set<() => void>());
@@ -90,6 +113,7 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, files }: Props) {
     let cancelled = false;
     const panels: PluginPanel[] = [];
     const actions: PluginErrorsAction[] = [];
+    const commands: PluginCommand[] = [];
     const listeners = new Set<() => void>();
     filesListeners.current = listeners;
 
@@ -107,7 +131,10 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, files }: Props) {
           return () => { listeners.delete(listener); };
         },
       },
-      editor: { insertAtCursor: (t) => ctxRef.current.insertAtCursor(t) },
+      editor: {
+        insertAtCursor: (t) => ctxRef.current.insertAtCursor(t),
+        insertCitation: (key) => ctxRef.current.insertCitation(key),
+      },
       compile: () => ctxRef.current.compile(),
       toast: (t, k) => ctxRef.current.toast(t, k),
       // plugins address the API root-relatively; the base path is the host's concern
@@ -119,6 +146,9 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, files }: Props) {
         showPanel: (panelId, opts) => ctxRef.current.showPanel(`plugin:${panelId}`, opts?.reveal !== false),
         registerErrorsAction(action) {
           actions.push({ id: action.id, label: action.label, title: action.title, run: () => action.run() });
+        },
+        registerCommand(command) {
+          if (command && typeof command.run === 'function' && command.id && command.title) commands.push(command);
         },
       },
     };
@@ -136,13 +166,13 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, files }: Props) {
             console.error(`[plugins] failed to load ${m.id}`, err);
           }
         }
-        if (!cancelled) { onPanels([...panels]); onErrorsActions?.([...actions]); }
+        if (!cancelled) { onPanels([...panels]); onErrorsActions?.([...actions]); onCommands?.([...commands]); }
       } catch (err) {
         console.error('[plugins] registry unavailable', err);
       }
     })();
 
-    return () => { cancelled = true; listeners.clear(); onPanels([]); onErrorsActions?.([]); };
+    return () => { cancelled = true; listeners.clear(); onPanels([]); onErrorsActions?.([]); onCommands?.([]); };
     // re-activate per project/branch so panels rebuild against fresh context
   }, [ctx.projectId, ctx.branch]);
 

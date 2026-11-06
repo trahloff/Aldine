@@ -21,6 +21,25 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   left or right, deletes a row or column, and merges a cell with the one on
   its right or splits it again. New columns copy their neighbour's type,
   width included. Each is one step for Undo.
+- Projects can be archived: "Archive" in a project's menu takes it off your
+  list and nobody else's, and an "Archived" filter lists it with
+  "Unarchive". Shared projects you removed from your list wait there too.
+  Opening an archived project of your own leaves it archived.
+- Account settings has an editable Name: the name co-authors see on your
+  avatar, your comments and your commits. Without accounts, Project
+  settings has "Your name" under This browser instead of a made-up
+  "Writer 482". Avatars show two initials.
+- The Zotero key is kept with your account: paste it once, and every other
+  project starts at the library and collection. Aldine never shows the key
+  again; Account settings says one is saved and can forget it. A linked
+  project has "Change library or collection", and subcollections show under
+  their parents ("Thesis / Drafts").
+- Zotero is in the command palette ("Zotero: import or cite from your
+  library", "Zotero: sync the library now"), and the Cite tab's empty
+  bibliography offers "import from Zotero". Opening a linked project syncs
+  it when the last sync is more than an hour old. Plugins can add palette
+  commands with `aldine.ui.registerCommand` and cite with
+  `aldine.editor.insertCitation(key)`.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or
@@ -33,6 +52,30 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   first row or down from the last one leaves the table.
 - A click on a numbered equation opens the formula editor; its `\label` stays
   as written. A formula that still opens as source says why.
+- Moving a project to the trash asks first when it is shared with
+  co-authors, open to anyone with its link, or has a GitLab repository Aldine
+  created: "Its 2 co-authors lose access until you restore it", "Its GitLab
+  repository research/latex/paper is deleted now". A private project still
+  goes without a question. A failed GitLab deletion is shown, and a
+  co-author with the project open is told "The owner moved this project to
+  the trash" instead of "Project not found".
+- The project search is kept in the address (`?q=`), so Back and the
+  editor's back button return to the same search and filter.
+- Escape in the New project dialog's template search clears it first; the
+  next Escape closes the dialog.
+- Importing a ZIP of one folder (Finder's Compress, a host's Download ZIP)
+  drops that folder: `thesis/main.tex` imports as `main.tex`. A folder with
+  a file beside it in the archive is kept.
+- The `.bib` a Zotero link writes opens read-only, under "Synced from
+  Zotero", since each sync replaces it.
+- Add & cite writes to the `.bib` the paper loads (refs.bib for
+  `\bibliography{refs}`), never into the Zotero file, and finds a paper
+  already in any `.bib` the paper loads instead of adding it again. The
+  notice names the file, and says which line to add when the paper loads
+  no `.bib` yet.
+- The invitation email and page say that a new account confirms its address
+  by email first, and the confirmation link brings the person back to the
+  invitation instead of to their project list.
 - Merging a branch into main from the branch menu asks first and says how
   many checkpoints go in, because everyone working on main sees them. When
   main already has everything on the branch, it says "Nothing to merge"
@@ -159,6 +202,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Undo takes back. A document with its own main font only switches engine.
   The error also offers XeLaTeX or LuaLaTeX alone, and either engine leaving
   out a character the font lacks is now a warning.
+- Clicking a reference with the cursor inside `\cite{knuth1984}` adds the
+  key to it (`\cite{knuth1984,lamport1994}`) instead of nesting a `\cite`
+  inside, and picks in a row make one citation. With no `.tex` file in the
+  editor (a `.bib`, an image, the PDF), nothing claims "Inserted" any more:
+  the notice says to open one.
+- A Zotero library linked to a BibTeX or natbib paper is exported with
+  BibTeX fields (`journal`, `year`); biblatex's `journaltitle` and `date`
+  left those entries without a journal and year. A paper that switches
+  between the two gets the library exported again.
+- Every open editor of a project moved to the trash is let go at once and
+  says why, with or without accounts; it used to reconnect and keep editing
+  the trashed project. A restore lets them back in.
 - A merge in History shows the changes it brought in. It used to say "No
   changes in this commit."
 - The History diff and the Push, pull request and merge conflict dialogs

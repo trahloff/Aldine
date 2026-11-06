@@ -50,6 +50,36 @@ test.describe('home', () => {
     await page.getByTestId('dialog-confirm').click();
     await expect(page.getByTestId(`trash-${id}`)).toHaveCount(0);
   });
+
+  test('a project moved to the trash leaves every open editor, and a restore lets it back in', async ({ browser, request }) => {
+    const { id } = await (await request.post('/api/projects', { data: { name: 'Open Elsewhere' } })).json();
+    const home = await browser.newContext();
+    const other = await browser.newContext();
+    try {
+      const page = await home.newPage();
+      const editor = await other.newPage();
+      await editor.goto(`/p/${id}`);
+      await expect(editor.locator('.cm-content')).toContainText('documentclass', { timeout: 15_000 });
+
+      await page.goto('/');
+      await projectAction(page, id, 'menu-trash');
+      await expect(page.getByTestId(`project-card-${id}`)).toHaveCount(0);
+      // the other browser's editor is let go, and says why
+      await expect(editor.locator('.toast', { hasText: 'This project is in the trash' })).toBeVisible({ timeout: 15_000 });
+      await expect(editor.getByTestId('editor-shell')).toHaveCount(0);
+
+      await page.getByTestId('undo-trash').click();
+      await expect(page.getByTestId(`project-card-${id}`)).toBeVisible();
+      await editor.goto(`/p/${id}`);
+      await editor.locator('.cm-content').click();
+      await editor.keyboard.type('BACK AGAIN ');
+      await expect.poll(async () => (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text(), { timeout: 15_000 }).toContain('BACK AGAIN');
+    } finally {
+      await home.close();
+      await other.close();
+      await request.delete(`/api/projects/${id}?permanent=1`).catch(() => {});
+    }
+  });
 });
 
 test.describe('first visit', () => {

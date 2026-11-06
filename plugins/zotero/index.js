@@ -1,8 +1,19 @@
 /**
  * Aldine Zotero plugin — vanilla-DOM sidebar panel.
- * Link a Zotero library (API key), pick a library/collection, keep a .bib
- * in sync, and insert \cite{...} while writing.
+ * Link a Zotero library (API key, kept with the account), pick a
+ * library/collection, keep a .bib in sync, and insert \cite{...} while writing.
  */
+
+/** A sync on open when the last one is older than this. */
+const STALE_SECONDS = 3600;
+
+/** What the toast says after a citation pick (aldine.editor.insertCitation). */
+function citeToast(aldine, key, result) {
+  if (result === 'added') aldine.toast(`Added ${key} to the citation`, 'ok');
+  else if (result === 'present') aldine.toast(`${key} is in this citation already`, 'ok');
+  else if (result) aldine.toast(`Inserted \\cite{${key}}`, 'ok');
+  else aldine.toast(`Open a .tex file and put the cursor where \\cite{${key}} goes`, 'error');
+}
 
 const h = (tag, attrs = {}, ...children) => {
   const el = document.createElement(tag);
@@ -21,6 +32,16 @@ const h = (tag, attrs = {}, ...children) => {
 
 export default {
   activate(aldine) {
+    // The panel's own actions, for the palette commands; set once it renders.
+    let panel = null;
+    aldine.ui.registerCommand?.({
+      id: 'zotero-open', group: 'References', title: 'Zotero: import or cite from your library', keywords: 'zotero bibliography references import cite',
+      run: () => aldine.ui.showPanel('zotero'),
+    });
+    aldine.ui.registerCommand?.({
+      id: 'zotero-sync', group: 'References', title: 'Zotero: sync the library now', keywords: 'zotero bibliography references refresh update',
+      run: () => { aldine.ui.showPanel('zotero'); panel?.syncNow(); },
+    });
     aldine.ui.registerSidebarPanel({
       id: 'zotero',
       title: 'Zotero',
@@ -42,6 +63,10 @@ export default {
           bibLoaded: false,
           // whether the document reads the linked .bib: GET /zotero/bib-load
           bibLoad: null,
+          // the account's saved key: { username } once one is saved; the key itself never comes back
+          saved: null,
+          // picking a new library or collection for a linked project
+          changing: false,
         };
 
         // build() makes fresh inputs; hand focus and the caret to the new copy
@@ -65,6 +90,20 @@ export default {
           return body;
         };
 
+        /** The libraries the key reaches (`projectId`: the owner's link key when the account saved none). */
+        const openPicker = async (current) => {
+          const info = await jfetch('/api/zotero/validate', { method: 'POST', body: JSON.stringify({ projectId: aldine.project.id }) });
+          state.userID = info.userID;
+          state.username = info.username || `user ${info.userID}`;
+          state.groups = info.groups || [];
+          state.libraryPrefix = current?.libraryPrefix || `users/${info.userID}`;
+          state.collectionKey = current?.collectionKey || '';
+          await loadCollections();
+          state.view = 'pick';
+        };
+
+        let readOnly = false;
+        let firstLoad = true;
         const loadStatus = async () => {
           try {
             const p = await jfetch(`/api/projects/${aldine.project.id}`);
@@ -73,13 +112,45 @@ export default {
             state.isOwner = p.isOwner !== false;
             state.isMember = p.isMember !== false;
             state.ownerName = p.ownerName || '';
+            readOnly = !!p.readOnly;
             state.view = p.zotero ? 'linked' : state.isOwner ? 'connect' : 'ask-owner';
+            state.changing = false;
+            if (state.view === 'connect') {
+              state.saved = await jfetch('/api/zotero/key').then((k) => (k.saved ? { username: k.username } : null), () => null);
+              if (state.saved) await openPicker().catch(() => { state.view = 'connect'; });
+            }
           } catch {
             state.view = 'connect';
           }
           busy = false;
           rerender();
           if (state.view === 'linked') checkBibLoad();
+          if (firstLoad && state.view === 'linked') syncIfStale();
+          firstLoad = false;
+        };
+
+        // Papers that cite from a group library get its new entries without
+        // anyone pressing Sync: once an hour at most, when the project opens.
+        // One automatic sync at a time: the one on open and a re-export can both be due.
+        let autoSyncing = false;
+        const syncIfStale = async () => {
+          if (!state.isMember || readOnly || autoSyncing) return;
+          autoSyncing = true;
+          let res;
+          try {
+            res = await jfetch(`/api/projects/${aldine.project.id}/zotero/sync`, {
+              method: 'POST',
+              body: JSON.stringify({ branch: aldine.project.branch, olderThan: STALE_SECONDS }),
+            });
+          } catch {
+            autoSyncing = false;
+            return;
+          }
+          autoSyncing = false;
+          if (!res.synced) { if (!res.fresh) await loadStatus(); return; }
+          aldine.toast(`Synced ${res.itemCount ?? ''} references from Zotero into ${res.bibFile || 'zotero.bib'}`, 'info');
+          await aldine.project.refreshFiles();
+          await loadStatus();
         };
 
         const bibLoadUrl = () => `/api/projects/${aldine.project.id}/zotero/bib-load`;
@@ -95,6 +166,27 @@ export default {
           if (seq !== bibLoadSeq) return;
           state.bibLoad = s;
           rerender();
+          if (s && s.format && s.syncedFormat && s.format !== s.syncedFormat) reexport(s.format);
+        };
+
+        // The paper moved between BibTeX and biblatex: the fields its
+        // bibliography reads differ, so the library is exported again.
+        let reexported = null;
+        const reexport = async (format) => {
+          if (!state.isMember || readOnly || reexported === format || autoSyncing) return;
+          reexported = format;
+          autoSyncing = true;
+          try {
+            const res = await jfetch(`/api/projects/${aldine.project.id}/zotero/sync`, {
+              method: 'POST',
+              body: JSON.stringify({ branch: aldine.project.branch, force: false }),
+            });
+            autoSyncing = false;
+            if (!res.synced) return;
+            aldine.toast(`Exported ${res.itemCount ?? ''} references again with ${format === 'bibtex' ? 'BibTeX' : 'biblatex'} fields, which ${state.bibLoad?.rootFile || 'the paper'} uses`, 'info');
+            await aldine.project.refreshFiles();
+            await loadStatus();
+          } catch { autoSyncing = false; /* the next sync tries again */ }
         };
 
         const fixLabel = (fix, done) => {
@@ -121,16 +213,21 @@ export default {
           rerender();
         };
 
+        // The key is saved with the account and stays on the server: the
+        // panel asks for libraries and collections by the account, not the key.
         const connect = async () => {
           const key = state.apiKey.trim();
           if (!key) { aldine.toast('Paste a Zotero API key first', 'error'); return; }
           setBusy(true);
           try {
-            const info = await jfetch('/api/zotero/validate', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
+            const info = await jfetch('/api/zotero/key', { method: 'PUT', body: JSON.stringify({ apiKey: key }) });
+            state.apiKey = '';
+            state.saved = { username: info.username };
             state.userID = info.userID;
             state.username = info.username || `user ${info.userID}`;
             state.groups = info.groups || [];
-            state.libraryPrefix = `users/${info.userID}`;
+            state.libraryPrefix = state.changing && state.link ? state.link.libraryPrefix : `users/${info.userID}`;
+            if (!state.changing) state.collectionKey = '';
             await loadCollections();
             state.view = 'pick';
           } catch (err) {
@@ -142,13 +239,28 @@ export default {
 
         const loadCollections = async () => {
           try {
-            state.collections = await jfetch('/api/zotero/collections', {
+            const list = await jfetch('/api/zotero/collections', {
               method: 'POST',
-              body: JSON.stringify({ apiKey: state.apiKey.trim(), libraryPrefix: state.libraryPrefix }),
+              body: JSON.stringify({ libraryPrefix: state.libraryPrefix, projectId: aldine.project.id }),
             });
+            state.collections = list.map((c) => ({ ...c, path: c.path || c.name })).sort((a, b) => a.path.localeCompare(b.path));
           } catch {
             state.collections = [];
           }
+        };
+
+        const startChange = async () => {
+          setBusy(true);
+          state.changing = true;
+          try {
+            await openPicker(state.link);
+          } catch (err) {
+            // No key on the account and none the server will use: paste one.
+            state.view = 'connect';
+            if (!/key/i.test(err.message)) aldine.toast(`Zotero: ${err.message}`, 'error');
+          }
+          setBusy(false);
+          rerender();
         };
 
         const link = async (collectionKey) => {
@@ -157,16 +269,17 @@ export default {
             const res = await jfetch(`/api/projects/${aldine.project.id}/zotero/link`, {
               method: 'POST',
               body: JSON.stringify({
-                apiKey: state.apiKey.trim(),
                 libraryPrefix: state.libraryPrefix,
                 collectionKey: collectionKey || undefined,
                 branch: aldine.project.branch,
-                // no bibFile: the server defaults to zotero.bib NEXT TO THE ROOT
-                // FILE, which is where \addbibresource{zotero.bib} resolves
+                // no bibFile: the server keeps the linked one, or defaults to
+                // zotero.bib NEXT TO THE ROOT FILE, which is where
+                // \addbibresource{zotero.bib} resolves
               }),
             });
             aldine.toast(`Imported ${res.itemCount ?? '?'} references into ${res.bibFile || 'zotero.bib'}`, 'ok');
             await aldine.project.refreshFiles();
+            await aldine.project.refresh?.();
             await loadStatus();
           } catch (err) {
             aldine.toast(`Zotero link failed: ${err.message}`, 'error');
@@ -198,7 +311,12 @@ export default {
             aldine.toast(`Unlink failed: ${err.message}`, 'error');
             return;
           }
+          await aldine.project.refresh?.();
           await loadStatus();
+        };
+
+        panel = {
+          syncNow: () => { if (state.view === 'linked' && state.isMember && !busy) sync(); },
         };
 
         let bibSeq = 0;
@@ -286,7 +404,7 @@ export default {
               h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: '0' } },
                 'Paste a Zotero API key with library read access. ',
                 h('a', { href: 'https://www.zotero.org/settings/keys/new', target: '_blank', style: { color: 'var(--accent)' } }, 'Create one'),
-                '.'),
+                '. Aldine keeps it for your other projects and never shows it again.'),
               h('input', {
                 class: 'input',
                 type: 'password',
@@ -304,12 +422,29 @@ export default {
                 disabled: busy ? '' : null,
                 onclick: connect,
               }, busy ? 'Checking…' : 'Connect'),
+              state.changing || state.saved
+                ? h('button', {
+                  class: 'btn btn--ghost btn--small',
+                  dataset: { testid: 'zotero-connect-back' },
+                  onclick: () => { if (state.changing) { state.changing = false; state.view = 'linked'; rerender(); } else { setBusy(true); openPicker().catch(() => {}).then(() => setBusy(false)); } },
+                }, state.changing ? 'Cancel' : `Keep using ${state.saved?.username || 'the saved key'}`)
+                : null,
             );
             return wrap;
           }
 
           if (state.view === 'pick') {
-            wrap.append(section(`Signed in as ${state.username}`));
+            wrap.append(
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' } },
+                section(`Signed in as ${state.username}`),
+                h('button', {
+                  class: 'link-button',
+                  style: { fontSize: '12px' },
+                  dataset: { testid: 'zotero-other-key' },
+                  onclick: () => { state.view = 'connect'; rerender(); },
+                }, 'Use a different key'),
+              ),
+            );
             const libSelect = h('select', { class: 'input', style: { width: '100%' }, dataset: { testid: 'zotero-library' } },
               h('option', { value: `users/${state.userID}` }, 'My Library'),
               ...state.groups.map((g) => h('option', { value: `groups/${g.id}` }, `Group: ${g.name}`)),
@@ -317,13 +452,18 @@ export default {
             libSelect.value = state.libraryPrefix;
             libSelect.addEventListener('change', async () => {
               state.libraryPrefix = libSelect.value;
+              state.collectionKey = '';
               await loadCollections();
               rerender();
             });
+            // Subcollections under their parents' names: two "Drafts" tell apart.
             const colSelect = h('select', { class: 'input', style: { width: '100%', marginTop: '6px' }, dataset: { testid: 'zotero-collection' } },
               h('option', { value: '' }, 'Entire library'),
-              ...state.collections.map((c) => h('option', { value: c.key }, c.name)),
+              ...state.collections.map((c) => h('option', { value: c.key }, c.path)),
             );
+            if (state.collections.some((c) => c.key === state.collectionKey)) colSelect.value = state.collectionKey;
+            colSelect.addEventListener('change', () => { state.collectionKey = colSelect.value; });
+            const target = state.changing && state.link ? state.link.bibFile : 'zotero.bib';
             wrap.append(
               libSelect,
               colSelect,
@@ -333,7 +473,15 @@ export default {
                 dataset: { testid: 'zotero-import' },
                 disabled: busy ? '' : null,
                 onclick: () => link(colSelect.value),
-              }, busy ? 'Importing…' : 'Import into zotero.bib'),
+              }, busy ? 'Importing…' : `Import into ${target}`),
+              state.changing
+                ? h('button', {
+                  class: 'btn btn--ghost btn--small',
+                  style: { marginTop: '6px', width: '100%', justifyContent: 'center' },
+                  dataset: { testid: 'zotero-change-cancel' },
+                  onclick: () => { state.changing = false; state.view = 'linked'; rerender(); },
+                }, 'Cancel')
+                : null,
             );
             return wrap;
           }
@@ -347,6 +495,7 @@ export default {
           const collection = z.collectionKey ? ` › ${z.collectionName || `collection ${z.collectionKey}`}` : '';
           const actions = [
             state.isMember ? h('button', { class: 'btn btn--small', dataset: { testid: 'zotero-sync' }, disabled: busy ? '' : null, onclick: sync }, busy ? 'Syncing…' : 'Sync now') : null,
+            state.isOwner ? h('button', { class: 'btn btn--small btn--ghost', dataset: { testid: 'zotero-change' }, disabled: busy ? '' : null, onclick: startChange }, 'Change library or collection') : null,
             state.isOwner ? h('button', { class: 'btn btn--small btn--ghost', dataset: { testid: 'zotero-unlink' }, onclick: unlink }, 'Unlink') : null,
           ].filter(Boolean);
           wrap.append(
@@ -355,7 +504,7 @@ export default {
               `${library}${collection} → ${z.bibFile}`,
               z.lastSyncedAt ? h('div', {}, `Last synced ${new Date(z.lastSyncedAt).toLocaleString()}`) : null,
             ),
-            ...(actions.length ? [h('div', { style: { display: 'flex', gap: '6px' } }, ...actions)] : []),
+            ...(actions.length ? [h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } }, ...actions)] : []),
             ...[unloadedNote()].filter(Boolean),
             section('Insert citation'),
             h('input', {
@@ -380,7 +529,7 @@ export default {
               style: { height: 'auto', padding: '5px 8px', display: 'block' },
               dataset: { testid: `cite-${e.key}` },
               title: `Insert \\cite{${e.key}}`,
-              onclick: () => { aldine.editor.insertAtCursor(`\\cite{${e.key}}`); aldine.toast(`Inserted \\cite{${e.key}}`, 'ok'); },
+              onclick: () => citeToast(aldine, e.key, aldine.editor.insertCitation ? aldine.editor.insertCitation(e.key) : (aldine.editor.insertAtCursor(`\\cite{${e.key}}`), 'inserted')),
             },
               h('div', { style: { fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis' } }, e.key),
               h('div', { style: { color: 'var(--text-2)', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis' } },

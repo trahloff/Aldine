@@ -711,6 +711,8 @@ test.describe('invitations', () => {
     await bPage.goto(link);
     await expect(bPage.getByTestId('auth-email')).toHaveValue(bEmail);
     await expect(bPage.getByTestId('auth-info')).toContainText(`Olive Owner invited ${bEmail} to a project.`);
+    // a new account confirms its address first, and the page says so before anyone signs up
+    await expect(bPage.getByTestId('auth-info')).toContainText('a confirmation email follows, and its link brings you back here');
     await expect(bPage.locator('body')).not.toContainText(name);
     // signing in and creating an account are offered side by side, and the
     // notice of who invited them stays when they pick sign-up
@@ -723,8 +725,13 @@ test.describe('invitations', () => {
     await bPage.getByTestId('auth-submit').click();
     await expect(bPage.getByTestId('invite-unconfirmed')).toBeVisible();
     await expect(bPage.getByTestId('invite-unconfirmed')).not.toContainText(name);
+    await expect(bPage.getByTestId('invite-unconfirmed-text')).toContainText('Open the link in the confirmation email: it brings you back here to accept.');
     expect((await b.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
-    await confirmEmail(b.request, bEmail);
+    // the confirmation link leads back to this invitation, which it then answers
+    const confirmLink = await confirmationLink(b.request, bEmail);
+    expect(new URL(confirmLink, 'http://x').pathname).toBe(new URL(link).pathname);
+    await bPage.goto(confirmLink);
+    await expect(bPage.getByTestId('invite-pending')).toContainText(`Olive Owner invited you to “${name}”`);
     expect((await b.request.get(`/api/projects/${proj.id}`)).status()).toBe(403); // confirmed, not accepted
 
     // C, signed in as someone else, opens B's link: no project, no access
@@ -1596,3 +1603,89 @@ test.describe('git hosts in account settings', () => {
     expect((await request.get('/api/remotes/connections')).status()).toBe(401);
   });
 });
+
+test.describe('names and the trash', () => {
+  test('the account name is changed in Account settings, and others see the new one (acct-2)', async ({ browser }) => {
+    // its own client address keeps it off the sign-in limit the suite shares
+    const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.71' } });
+    const page = await ctx.newPage();
+    const email = uniq();
+    await register(page, email, 'password123', 'jsmith42');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Named Paper' } })).json();
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('user-name').click();
+    const settings = page.getByTestId('account-settings');
+    await expect(settings.getByTestId('account-name')).toHaveText('jsmith42');
+    await settings.getByTestId('account-name-edit').click();
+    await settings.getByTestId('account-name-input').fill('   ');
+    await settings.getByTestId('account-name-save').click();
+    await expect(settings.getByTestId('account-name-error')).toHaveText('Enter a name');
+    await settings.getByTestId('account-name-input').fill('Jane Smith');
+    await settings.getByTestId('account-name-input').press('Enter');
+    await expect(page.locator('.toast', { hasText: 'Co-authors now see you as Jane Smith' })).toBeVisible();
+    await expect(settings.getByTestId('account-name')).toHaveText('Jane Smith');
+    await page.keyboard.press('Escape');
+    // two-letter initials on the avatar
+    await expect(page.locator('.home-avatar__face')).toHaveText('JS');
+    expect((await (await page.request.get('/api/auth/me')).json()).user.name).toBe('Jane Smith');
+    expect((await (await page.request.get(`/api/projects/${proj.id}`)).json()).ownerName).toBe('Jane Smith');
+    // an access token is the agent's, not the person: it cannot rename the account
+    const { token } = await (await page.request.post('/api/tokens', { data: { name: 'agent' } })).json();
+    const renamed = await page.request.fetch('/api/auth/me', { method: 'PATCH', headers: { authorization: `Bearer ${token}`, cookie: '' }, data: { name: 'Mallory' } });
+    expect(renamed.status()).toBe(403);
+    expect((await (await page.request.get('/api/auth/me')).json()).user.name).toBe('Jane Smith');
+    await page.request.delete(`/api/projects/${proj.id}?permanent=1`);
+    await ctx.close();
+  });
+
+  test('trashing a shared project asks first, and its co-author is told why it went (home-1)', async ({ browser }) => {
+    const owner = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.72' } });
+    const ownerPage = await owner.newPage();
+    const ownerEmail = uniq();
+    await register(ownerPage, ownerEmail, 'password123', 'Olive Owner');
+    await confirmEmail(ownerPage.request, ownerEmail);
+    const proj = await (await ownerPage.request.post('/api/projects', { data: { name: 'Shared Then Trashed' } })).json();
+    const b = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.72' } });
+    const bPage = await b.newPage();
+    const bEmail = uniq();
+    await register(bPage, bEmail, 'password123', 'Bea');
+    await confirmEmail(b.request, bEmail);
+    expect((await ownerPage.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'private', collaborators: [bEmail] } })).ok()).toBeTruthy();
+    await acceptInvitation(b.request, proj.id);
+    await bPage.goto(`/p/${proj.id}`);
+    await expect(bPage.getByTestId('editor-shell')).toBeVisible();
+    await expect(bPage.locator('.cm-content')).toContainText('documentclass', { timeout: 15_000 });
+
+    await ownerPage.goto('/');
+    const card = ownerPage.getByTestId(`project-card-${proj.id}`);
+    await ownerPage.getByTestId(`project-menu-${proj.id}`).click();
+    await ownerPage.getByTestId('menu-trash').click();
+    await expect(ownerPage.getByTestId('dialog-title')).toHaveText('Move “Shared Then Trashed” to the trash?');
+    await expect(ownerPage.getByTestId('dialog-message')).toHaveText('Its co-author loses access until you restore it.');
+    await ownerPage.getByTestId('dialog-cancel').click();
+    await expect(card).toBeVisible();
+    expect((await bPage.request.get(`/api/projects/${proj.id}`)).ok()).toBeTruthy();
+    // the Delete key asks the same
+    await ownerPage.getByTestId(`open-${proj.id}`).focus();
+    await ownerPage.keyboard.press('Delete');
+    await expect(ownerPage.getByTestId('dialog-message')).toHaveText('Its co-author loses access until you restore it.');
+    await ownerPage.getByTestId('dialog-confirm').click();
+    await expect(card).toHaveCount(0);
+
+    // the co-author, editing it, learns why it went and lands on their list
+    await expect(bPage.locator('.toast', { hasText: 'The owner moved this project to the trash' })).toBeVisible({ timeout: 20_000 });
+    await expect(bPage.getByTestId('editor-shell')).toHaveCount(0);
+    expect(await (await ownerPage.request.get(`/api/projects/${proj.id}`)).json()).toMatchObject({ code: 'trashed', error: 'This project is in the trash' });
+    // someone it was never open to learns nothing about it
+    const c = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.72' } });
+    const cPage = await c.newPage();
+    await register(cPage, uniq(), 'password123', 'Carl');
+    expect(await (await cPage.request.get(`/api/projects/${proj.id}`)).json()).toEqual({ error: 'project not found' });
+
+    await ownerPage.request.delete(`/api/projects/${proj.id}?permanent=1`);
+    await owner.close();
+    await b.close();
+    await c.close();
+  });
+});
+

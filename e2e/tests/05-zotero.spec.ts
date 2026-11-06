@@ -36,6 +36,12 @@ async function caretAfter(page: Page, text: string): Promise<void> {
 
 /** Runs against the mock Zotero API (tests/mock-zotero.mjs, key: test-key-123). */
 test.describe('Zotero integration (via plugin system)', () => {
+  // The key is the account's (here the one user of a server without
+  // accounts): each test starts with none saved, as a new account would.
+  test.beforeEach(async ({ request }) => {
+    expect((await request.delete('/api/zotero/key')).ok()).toBeTruthy();
+  });
+
   test('link library, import bib, insert citation, autocomplete', async ({ page, request }) => {
     const id = await createProject(request, 'Zotero Test');
     try {
@@ -131,6 +137,9 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.getByTestId('zotero-linked')).toBeVisible();
       await page.unroute(unlinkRoute);
       await page.getByTestId('zotero-unlink').click();
+      // the key stays with the account: a new link starts at the library
+      await expect(page.getByTestId('zotero-library')).toBeVisible();
+      await page.getByTestId('zotero-other-key').click();
       await expect(page.getByTestId('zotero-key')).toBeVisible();
     } finally {
       await cleanup(request, id);
@@ -198,6 +207,11 @@ test.describe('Zotero integration (via plugin system)', () => {
       await put([...BODY, '\\bibliographystyle{plainnat}', '\\bibliography{references}', '\\end{document}', ''].join('\n'));
       const add = page.getByTestId('zotero-load-bib');
       await expect(add).toHaveText('Add zotero to \\bibliography in main.tex', { timeout: 15_000 });
+      // BibTeX styles read journal and year, not biblatex's journaltitle and date: the library comes again with those
+      await expect(page.locator('.toast', { hasText: 'Exported 2 references again with BibTeX fields, which main.tex uses' })).toBeVisible({ timeout: 15_000 });
+      const zbib = await (await request.get(`/api/projects/${id}/file?branch=main&path=zotero.bib`)).text();
+      expect(zbib).toContain('journal = {Mind}');
+      expect(zbib).not.toContain('journaltitle');
 
       await caretAfter(page, 'Prior work.');
       await page.getByTestId('zotero-search').click();
@@ -246,6 +260,109 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.getByTestId('zotero-search')).toBeVisible();
       await expect(page.getByTestId('zotero-sync')).toHaveCount(0);
       await expect(page.getByTestId('zotero-unlink')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the key is pasted once per account; a link changes library or collection in place', async ({ page, request }) => {
+    const first = await createProject(request, 'Zotero Key One');
+    const second = await createProject(request, 'Zotero Key Two');
+    try {
+      await openProject(page, first);
+      await openPluginTab(page, 'zotero');
+      await page.getByTestId('zotero-key').fill('test-key-123');
+      await page.getByTestId('zotero-connect').click();
+      // subcollections under their parents' names, so two "Sync" tell apart
+      const collection = page.getByTestId('zotero-collection');
+      await expect(collection.locator('option')).toHaveText(['Entire library', 'CRDT Research', 'CRDT Research / Sync', 'Drafts', 'Drafts / Sync']);
+      await page.getByTestId('zotero-import').click();
+      await expect(page.getByTestId('zotero-linked')).toContainText('testuser’s library → zotero.bib', { timeout: 15_000 });
+
+      // the server keeps the key and never hands it back
+      const saved = await request.get('/api/zotero/key');
+      expect(await saved.json()).toEqual({ saved: true, userID: 777, username: 'testuser' });
+      expect(await (await request.get(`/api/projects/${first}`)).text()).not.toContain('test-key-123');
+
+      // another project: no key to paste, straight to the library
+      await openProject(page, second);
+      await openPluginTab(page, 'zotero');
+      await expect(page.getByTestId('zotero-library')).toBeVisible();
+      await expect(page.getByTestId('zotero-key')).toHaveCount(0);
+      await expect(page.getByTestId('zotero-panel')).toContainText('Signed in as testuser');
+      await page.getByTestId('zotero-collection').selectOption('COLL1');
+      await page.getByTestId('zotero-import').click();
+      await expect(page.getByTestId('zotero-linked')).toContainText('testuser’s library › CRDT Research → zotero.bib', { timeout: 15_000 });
+
+      // a different collection without unlinking, the current one chosen to start with
+      await page.getByTestId('zotero-change').click();
+      await expect(page.getByTestId('zotero-collection')).toHaveValue('COLL1');
+      await page.getByTestId('zotero-collection').selectOption('COLL4');
+      await page.getByTestId('zotero-import').click();
+      await expect(page.getByTestId('zotero-linked')).toContainText('testuser’s library › Drafts / Sync → zotero.bib', { timeout: 15_000 });
+      await page.getByTestId('zotero-change').click();
+      await page.getByTestId('zotero-change-cancel').click();
+      await expect(page.getByTestId('zotero-linked')).toContainText('Drafts / Sync');
+    } finally {
+      await cleanup(request, first);
+      await cleanup(request, second);
+    }
+  });
+
+  test('the synced .bib opens read-only under a banner', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Read Only');
+    try {
+      expect((await request.post(`/api/projects/${id}/zotero/link`, { data: { apiKey: 'test-key-123', libraryPrefix: 'users/777' } })).ok()).toBeTruthy();
+      await openProject(page, id);
+      await page.getByTestId('tab-files').click();
+      await page.getByTestId('file-zotero.bib').click();
+      await expect(page.getByTestId('active-file')).toHaveText('zotero.bib');
+      await expect(page.getByTestId('zotero-bib-banner')).toContainText('Synced from Zotero, so it opens read-only');
+      const before = await (await request.get(`/api/projects/${id}/file?branch=main&path=zotero.bib`)).text();
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('hand edit');
+      await expect(page.locator('.cm-content')).not.toContainText('hand edit');
+      await page.waitForTimeout(500);
+      expect(await (await request.get(`/api/projects/${id}/file?branch=main&path=zotero.bib`)).text()).toBe(before);
+      // its button leads to the panel that syncs it
+      await page.getByTestId('zotero-bib-banner-open').click();
+      await expect(page.getByTestId('zotero-sync')).toBeVisible();
+      // another .bib stays editable
+      await page.getByTestId('tab-files').click();
+      await page.getByTestId('file-references.bib').click();
+      await expect(page.getByTestId('zotero-bib-banner')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('palette commands reach Zotero, Cite offers it, and opening a linked project asks for a sync', async ({ page, request }) => {
+    const id = await createProject(request, 'Zotero Palette');
+    try {
+      // an empty bibliography points at Zotero
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'references.bib', content: '' } })).ok()).toBeTruthy();
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      await expect(page.getByTestId('cite-bib-empty')).toContainText('or import from Zotero');
+      await page.getByTestId('cite-import-zotero').click();
+      await expect(page.getByTestId('zotero-key')).toBeVisible();
+
+      await page.getByTestId('tab-files').click();
+      await page.getByTestId('palette-open').click();
+      await page.keyboard.type('Zotero: import');
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('zotero-key')).toBeVisible();
+
+      // linked: the project asks for a sync when it opens; the server skips a fresh one
+      expect((await request.post(`/api/projects/${id}/zotero/link`, { data: { apiKey: 'test-key-123', libraryPrefix: 'users/777' } })).ok()).toBeTruthy();
+      const onOpen = page.waitForRequest((r) => r.url().endsWith(`/api/projects/${id}/zotero/sync`) && r.method() === 'POST');
+      await openProject(page, id);
+      expect((await onOpen).postDataJSON()).toMatchObject({ olderThan: 3600 });
+
+      await page.getByTestId('palette-open').click();
+      await page.keyboard.type('Zotero: sync');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.toast', { hasText: /Zotero library unchanged|Synced/ })).toBeVisible({ timeout: 10_000 });
     } finally {
       await cleanup(request, id);
     }

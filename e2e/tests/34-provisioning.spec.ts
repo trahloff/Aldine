@@ -258,6 +258,10 @@ test.describe('GitLab auto-provisioning', () => {
     const card = page.getByTestId(`project-card-${teamPaperId}`);
     await expect(card).toBeVisible();
     await projectAction(page, teamPaperId, 'menu-trash');
+    // a repository Aldine created goes with it, so the trash asks first
+    await expect(page.getByTestId('dialog-title')).toHaveText('Move “Team Paper” to the trash?');
+    await expect(page.getByTestId('dialog-message')).toHaveText(`Its GitLab repository ${teamPaperRepo} is deleted now; restoring the project creates a new one.`);
+    await page.getByTestId('dialog-confirm').click();
     await expect(card).not.toBeVisible();
     // delayed deletion on the mock: marked, then purged by path — both by the server
     expect(await mock<string[]>('/__deleted')).toContain(teamPaperRepo);

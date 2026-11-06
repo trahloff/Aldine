@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
-import { bibLoadState, addBibLoad } from './bibload.js';
+import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
 import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
@@ -39,7 +39,7 @@ import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
-import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
+import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
@@ -272,6 +272,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  // The account's display name. Session only: an access token is the
+  // agent's, not the person.
+  app.patch<{ Body: { name?: unknown } }>('/api/auth/me', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
+    if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot change the account — sign in to do this' });
+    const user = reqUser(req);
+    if (!user) return reply.code(401).send({ error: 'Sign in required' });
+    if (!(await visitLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+    try {
+      return { user: await auth.setName(user.id, req.body?.name) };
+    } catch (err: any) { return reply.code(400).send({ error: err.message }); }
+  });
+
   /** Author for a human commit (checkpoint, merge, revert): the account name
    *  whenever there is one — the browser's anonymous "Writer N" identity is
    *  only right without accounts, and the audit trail must name the person
@@ -290,9 +303,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Last confirmation link logged per address; read by the test hook only. */
   const loggedConfirmations = new Map<string, string>();
   /** Mail the confirmation link, or log it for the operator. True when mailed.
-   *  `waiting`: the account waits for an administrator's approval. */
-  const deliverConfirmation = (to: string, token: string, signUp: boolean, waiting = false): boolean => {
-    const link = `${config.publicUrl || config.basePath}/?confirm_email=${encodeURIComponent(token)}`;
+   *  `waiting`: the account waits for an administrator's approval.
+   *  `returnTo`: the invitation page the link leads back to (inviteReturn). */
+  const deliverConfirmation = (to: string, token: string, signUp: boolean, waiting = false, returnTo: string | null = null): boolean => {
+    const link = `${config.publicUrl || config.basePath}${returnTo ?? '/'}?confirm_email=${encodeURIComponent(token)}`;
     if (sendsEmail()) {
       // Nothing but the address comes from the request: the address is
       // unconfirmed, so a name would put the signer's own text and links in
@@ -302,7 +316,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         : `Here is a new link to confirm the address of your Aldine account at ${config.publicUrl}.`;
       const why = waiting
         ? 'Confirm the address, then an administrator of this server approves the account. Aldine asks you to sign in to confirm it, and emails you once the account is approved.'
-        : 'Confirm the address to see the projects people share with you by email. If you are not signed in, Aldine asks you to sign in first.';
+        : returnTo
+          ? 'Confirm the address to accept the invitation you signed up from: the link brings you back to it. If you are not signed in, Aldine asks you to sign in first.'
+          : 'Confirm the address to see the projects people share with you by email. If you are not signed in, Aldine asks you to sign in first.';
       email.sendMail({
         to,
         subject: 'Confirm your email address for Aldine',
@@ -316,6 +332,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (process.env.ALDINE_TEST_HOOKS === '1') loggedConfirmations.set(to, link);
     return false;
   };
+  /** The invitation page a confirmation link leads back to: only one that
+   *  was sent to that very address, so the mail links nowhere its reader was
+   *  not already invited to. */
+  const inviteReturn = async (invite: unknown, to: string | null): Promise<string | null> => {
+    if (!to || typeof invite !== 'string' || !INVITE_ID_RE.test(invite)) return null;
+    const inv = await store.getInvitation(invite).catch(() => null);
+    return inv && inv.to === to.toLowerCase() ? `/invite/${inv.id}` : null;
+  };
   /** The per-account backoff key: this browser's device entry for the typed
    *  email when it has one, else the email itself (hashed, account or not). */
   const accountKey = (typed: string) => `a:${auth.secretDigest(typed.trim().toLowerCase())}`;
@@ -324,7 +348,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(429).header('retry-after', String(s)).send({ error: `Too many failed sign-ins to this account. Try again in ${s} ${s === 1 ? 'second' : 'seconds'}.` });
   };
 
-  app.post<{ Body: { email: string; password: string; name?: string } }>('/api/auth/register', async (req, reply) => {
+  // `invite`: signed up on that invitation's page, where the confirmation link returns.
+  app.post<{ Body: { email: string; password: string; name?: string; invite?: unknown } }>('/api/auth/register', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     if (!(await registerLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many accounts created — try again later' });
@@ -335,7 +360,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       // An account waiting for approval gets no session: it could not use one.
       if (!awaiting) reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
       // In the background: a mail failure never fails the sign-up.
-      const mailed = !!user.email && deliverConfirmation(user.email, confirmToken, true, awaiting);
+      const mailed = !!user.email && deliverConfirmation(user.email, confirmToken, true, awaiting, awaiting ? null : await inviteReturn(req.body.invite, user.email));
       if (awaiting) {
         const confirm = mailed ? `Confirm your email address with the link we sent to ${user.email}. ` : '';
         return { user, awaitingApproval: true, message: `Your account is created. ${confirm}${auth.AWAITING_APPROVAL}` };
@@ -439,7 +464,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
-  app.post('/api/auth/confirm-email/resend', async (req, reply) => {
+  app.post<{ Body: { invite?: unknown } }>('/api/auth/confirm-email/resend', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     const user = reqUser(req);
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
@@ -451,7 +476,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // asking again must not cancel it.
     const r = await auth.reissueConfirmation(user.id, !sendsEmail());
     if (!r?.user.email) return { ok: true, confirmed: true };
-    return { ok: true, sent: deliverConfirmation(r.user.email, r.token, false) };
+    return { ok: true, sent: deliverConfirmation(r.user.email, r.token, false, false, await inviteReturn(req.body?.invite, r.user.email)) };
   });
 
   // Test hook (never in production): the link the server would have the
@@ -581,6 +606,12 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // The trash shows its owner each project's thumbnail.
       const trashView = (meta: store.ProjectMeta) => route === '/api/projects/:id/thumbnail' && isOwner(meta, reqUser(req));
       if (m?.deletedAt && !(route === '/api/projects/:id/restore' || (req.method === 'DELETE' && route === '/api/projects/:id') || trashView(m))) {
+        // Someone the project was open to learns why it went; anyone else
+        // learns nothing about it.
+        const user = reqUser(req);
+        if (canAccess(m, user)) {
+          return reply.code(404).send({ error: isOwner(m, user) ? 'This project is in the trash' : 'The owner moved this project to the trash', code: 'trashed' });
+        }
         return reply.code(404).send({ error: 'project not found' });
       }
     }
@@ -693,13 +724,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // Most recently edited first. Three store reads for the whole list and no
   // git call: a project with no recorded edit is backfilled from its history
   // in the background and sorts by its creation until then.
-  app.get('/api/projects', async (req) => {
+  // ?archived=1: the rows taken off the list instead, an owner's archive and
+  // the shared projects a member removed (a link visitor's row is deleted).
+  app.get<{ Querystring: { archived?: string } }>('/api/projects', async (req) => {
     const user = reqUser(req);
+    const archived = req.query.archived === '1';
     const [metas, opens, activity] = await Promise.all([store.listProjects(), store.listProjectOpens(listUserId(user)), activitySnapshot()]);
     const openOf = new Map(opens.map((o) => [o.projectId, o]));
     const rows = await Promise.all(metas.filter((m) => !m.deletedAt).flatMap((m) => {
       const open = openOf.get(m.id) ?? null;
-      const access = listingAccess(m, user, open);
+      const access = archived
+        ? (open?.hidden ? (isOwner(m, user) ? 'owner' : isMember(m, user) ? 'member' : null) : null)
+        : listingAccess(m, user, open);
       return access ? [projectRow(m, user, open, activity.get(m.id), access)] : [];
     }));
     const unknown = rows.filter((r) => !r.lastEdit).map((r) => r.id);
@@ -1276,6 +1312,12 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         files[p] = data;
       }
       if (!Object.keys(files).length) return fail(400, 'ZIP had no usable files');
+      const wrapper = wrapperFolder(Object.keys(files));
+      if (wrapper) {
+        const inside = Object.entries(files).map(([p, data]) => [p.slice(wrapper.length + 1), data] as const);
+        for (const p of Object.keys(files)) delete files[p];
+        for (const [p, data] of inside) files[p] = data;
+      }
       const clash = pathConflict(Object.keys(files));
       if (clash) return fail(400, `The archive uses "${clash}" as both a file and a directory`);
       // create with text files seeded; write binaries as buffers afterward
@@ -1398,7 +1440,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   // The editor reports each open and each branch switch. For someone who is
   // here through a share link this is what puts the project on their list,
-  // and for anyone it undoes an earlier "Remove from my list".
+  // and for a member it undoes an earlier "Remove from my list". An owner's
+  // archive stays until they unarchive: opening a finished paper to look at
+  // it does not put it back on the list.
   app.post<{ Params: { id: string }; Body: { branch?: unknown } }>('/api/projects/:id/opened', async (req, reply) => {
     const branch = typeof req.body?.branch === 'string' && req.body.branch ? req.body.branch : 'main';
     if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
@@ -1407,19 +1451,22 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // Only a branch that exists: the list opens the project on it.
     if (!(await gitops.branchHead(req.params.id, branch))) return reply.code(404).send({ error: 'Project or branch not found' });
     const at = new Date().toISOString();
-    await store.setProjectOpen({ userId: listUserId(user), projectId: req.params.id, at, branch, hidden: false });
+    const userId = listUserId(user);
+    const archived = isOwner(await store.readMeta(req.params.id), user) && !!(await store.getProjectOpen(userId, req.params.id))?.hidden;
+    await store.setProjectOpen({ userId, projectId: req.params.id, at, branch, hidden: archived });
     return { ok: true, opened: { at, branch } };
   });
 
-  // "Remove from my list". A link visitor's row goes; an invited member keeps
-  // access and the project stays off their list until they open it again.
+  // "Remove from my list", or "Archive" for the owner. A link visitor's row
+  // goes; an invited member keeps access and the project stays off their list
+  // until they open it again; the owner's stays off until they unarchive it.
+  // Nobody else's list changes.
   app.delete<{ Params: { id: string } }>('/api/projects/:id/listing', async (req, reply) => {
     let meta: store.ProjectMeta;
     try { meta = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
     const user = reqUser(req);
-    if (isOwner(meta, user)) return reply.code(400).send({ error: 'Your own projects stay on your list. Move this one to the trash to remove it.' });
     const userId = listUserId(user);
-    if (isMember(meta, user)) {
+    if (isOwner(meta, user) || isMember(meta, user)) {
       const prev = await store.getProjectOpen(userId, meta.id);
       await store.setProjectOpen({ userId, projectId: meta.id, at: prev?.at ?? null, branch: prev?.branch ?? null, hidden: true });
     } else {
@@ -1428,7 +1475,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     return { ok: true };
   });
 
-  // Undo of "Remove from my list": puts the row back as it was, without
+  // Undo of "Remove from my list", and "Unarchive": puts the row back as it was, without
   // counting as an open, so what changed since the last open stays unread.
   // A link visitor's row was deleted, so the client hands back its open;
   // it can only name a time already past and a branch that exists.
@@ -1436,7 +1483,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     let meta: store.ProjectMeta;
     try { meta = await store.readMeta(req.params.id); } catch { return reply.code(404).send({ error: 'project not found' }); }
     const user = reqUser(req);
-    if (isOwner(meta, user)) return { ok: true };
+    if (isOwner(meta, user)) {
+      const prev = await store.getProjectOpen(listUserId(user), meta.id);
+      if (prev?.hidden) await store.setProjectOpen({ ...prev, hidden: false });
+      return { ok: true };
+    }
     // Each call may look up a branch in git and writes the datastore: the same budget as an open.
     if (!(await visitLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
     const userId = listUserId(user);
@@ -2106,9 +2157,57 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     });
 
   // ---------- zotero ----------
-  app.post<{ Body: { apiKey: string } }>('/api/zotero/validate', async (req, reply) => {
-    const { apiKey } = req.body || {};
-    if (!apiKey) return reply.code(400).send({ error: 'apiKey required' });
+  // The key is the account's (zotero.savedKey): pasted once, used for every
+  // project it links, and never sent back. With accounts on, only a
+  // signed-in person has one; without, the one implicit user does.
+  const zoteroAccount = (req: any, reply: any): string | null => {
+    if (auth.AUTH_ENABLED && !reqUser(req)) { reply.code(401).send({ error: 'Sign in required' }); return null; }
+    return reqUser(req)?.id || 'local';
+  };
+  const NO_ZOTERO_KEY = 'Paste a Zotero API key first';
+  /** A key pasted with the request, else the account's saved key, else — for
+   *  the project's owner — the key its link holds. */
+  const zoteroKey = async (req: any, account: string, apiKey: unknown, projectId: unknown): Promise<string | null> => {
+    if (typeof apiKey === 'string' && apiKey.trim()) return apiKey.trim();
+    const saved = await zotero.savedKey(account);
+    if (saved) return saved.apiKey;
+    if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) return null;
+    const meta = await store.readMeta(projectId).catch(() => null);
+    return meta?.zotero && !meta.deletedAt && isOwner(meta, reqUser(req)) ? meta.zotero.apiKey : null;
+  };
+
+  app.get('/api/zotero/key', async (req, reply) => {
+    const account = zoteroAccount(req, reply);
+    if (!account) return;
+    const saved = await zotero.savedKey(account);
+    return saved ? { saved: true, userID: saved.userID, username: saved.username ?? null } : { saved: false };
+  });
+  app.put<{ Body: { apiKey?: unknown } }>('/api/zotero/key', async (req, reply) => {
+    const account = zoteroAccount(req, reply);
+    if (!account) return;
+    const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    if (!apiKey || apiKey.length > 200) return reply.code(400).send({ error: NO_ZOTERO_KEY });
+    try {
+      const info = await zotero.validateKey(apiKey);
+      await zotero.saveKey(account, { apiKey, userID: info.userID, username: info.username });
+      const groups = await zotero.listGroups(apiKey, info.userID);
+      return { saved: true, userID: info.userID, username: info.username ?? null, groups };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+  app.delete('/api/zotero/key', async (req, reply) => {
+    const account = zoteroAccount(req, reply);
+    if (!account) return;
+    await zotero.forgetKey(account);
+    return { ok: true };
+  });
+
+  app.post<{ Body: { apiKey?: string; projectId?: string } }>('/api/zotero/validate', async (req, reply) => {
+    const account = zoteroAccount(req, reply);
+    if (!account) return;
+    const apiKey = await zoteroKey(req, account, req.body?.apiKey, req.body?.projectId);
+    if (!apiKey) return reply.code(400).send({ error: NO_ZOTERO_KEY });
     try {
       const info = await zotero.validateKey(apiKey);
       const groups = await zotero.listGroups(apiKey, info.userID);
@@ -2118,29 +2217,39 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
-  app.post<{ Body: { apiKey: string; libraryPrefix: string } }>('/api/zotero/collections', async (req, reply) => {
-    const { apiKey, libraryPrefix } = req.body || {};
-    if (!apiKey || !libraryPrefix) return reply.code(400).send({ error: 'apiKey and libraryPrefix required' });
+  // `path`: the collection under the ones it sits in ("CRDT Research / Sync").
+  app.post<{ Body: { apiKey?: string; libraryPrefix: string; projectId?: string } }>('/api/zotero/collections', async (req, reply) => {
+    const account = zoteroAccount(req, reply);
+    if (!account) return;
+    const { libraryPrefix } = req.body || {};
+    if (!libraryPrefix) return reply.code(400).send({ error: 'libraryPrefix required' });
+    const apiKey = await zoteroKey(req, account, req.body?.apiKey, req.body?.projectId);
+    if (!apiKey) return reply.code(400).send({ error: NO_ZOTERO_KEY });
     try {
-      return await zotero.listCollections(apiKey, libraryPrefix);
+      const list = await zotero.listCollections(apiKey, libraryPrefix);
+      return list.map((c) => ({ ...c, path: zotero.collectionPath(list, c.key) ?? c.name }));
     } catch (err: any) {
       return reply.code(400).send({ error: err.message });
     }
   });
 
-  app.post<{ Params: { id: string }; Body: { apiKey: string; libraryPrefix: string; collectionKey?: string; bibFile?: string; branch?: string } }>(
+  // Without `apiKey`, the link runs on the owner's saved key, or on the key
+  // the link already holds (a change of library or collection).
+  app.post<{ Params: { id: string }; Body: { apiKey?: string; libraryPrefix: string; collectionKey?: string; bibFile?: string; branch?: string } }>(
     '/api/projects/:id/zotero/link', async (req, reply) => {
-      const { apiKey, libraryPrefix, collectionKey, branch = 'main' } = req.body || {};
+      const { libraryPrefix, collectionKey, branch = 'main' } = req.body || {};
       const owned = await requireOwner(req, reply, 'link a Zotero library');
       if (!owned) return;
-      if (!apiKey || !libraryPrefix) return reply.code(400).send({ error: 'apiKey and libraryPrefix required' });
+      if (!libraryPrefix) return reply.code(400).send({ error: 'libraryPrefix required' });
+      const apiKey = await zoteroKey(req, reqUser(req)?.id || 'local', req.body?.apiKey, req.params.id);
+      if (!apiKey) return reply.code(400).send({ error: NO_ZOTERO_KEY });
       try {
         const info = await zotero.validateKey(apiKey);
         const meta = await store.readMeta(req.params.id);
         // default next to the root file — \addbibresource{zotero.bib} resolves
         // relative to its dir, so a project-root default would write a file the
         // document never reads when the root lives in a subdirectory
-        const bibFile = req.body?.bibFile || rootSiblingPath(meta.rootFile, 'zotero.bib');
+        const bibFile = req.body?.bibFile || meta.zotero?.bibFile || rootSiblingPath(meta.rootFile, 'zotero.bib');
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
         const names = await zotero.linkNames(apiKey, info.userID, libraryPrefix, collectionKey);
         const link = { apiKey, userId: info.userID, username: info.username, libraryPrefix, collectionKey, ...names, bibFile };
@@ -2154,14 +2263,17 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
     });
 
-  app.post<{ Params: { id: string }; Body: { branch?: string; force?: boolean } }>(
+  // `olderThan` (seconds): sync only when the last one is older, or its
+  // export no longer fits the paper (`fresh` when it skipped).
+  app.post<{ Params: { id: string }; Body: { branch?: string; force?: boolean; olderThan?: unknown } }>(
     '/api/projects/:id/zotero/sync', async (req, reply) => {
       const meta = await requireMember(req, reply, 'sync this Zotero library');
       if (!meta) return;
       if (await ownerDisabled(meta)) return reply.code(403).send({ error: ZOTERO_OWNER_DISABLED });
       const branch = req.body?.branch || 'main';
+      const olderThan = typeof req.body?.olderThan === 'number' && req.body.olderThan > 0 ? req.body.olderThan : undefined;
       try {
-        const sync = await zotero.syncProject(req.params.id, branch, !!req.body?.force);
+        const sync = await zotero.syncProject(req.params.id, branch, !!req.body?.force, undefined, olderThan);
         if (sync.synced) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
         return sync;
       } catch (err: any) {
@@ -2183,13 +2295,15 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { meta = await store.readMeta(req.params.id); } catch { reply.code(404).send({ error: 'project not found' }); return null; }
     if (!meta.zotero) { reply.code(400).send({ error: 'no Zotero link' }); return null; }
     try { await gitops.ensureWorktree(req.params.id, branch); } catch { reply.code(404).send({ error: 'Branch not found' }); return null; }
-    return { rootFile: meta.rootFile, bibFile: meta.zotero.bibFile };
+    return { rootFile: meta.rootFile, bibFile: meta.zotero.bibFile, syncedFormat: meta.zotero.format ?? 'biblatex' };
   };
+  // `format`: the export the paper reads (BibTeX or biblatex fields);
+  // `syncedFormat`: the one the .bib holds. They differ until the next sync.
   app.get<{ Params: { id: string }; Querystring: { branch?: string } }>('/api/projects/:id/zotero/bib-load', async (req, reply) => {
     const branch = req.query.branch || 'main';
     const t = await bibLoadTarget(req, reply, branch);
     if (!t) return;
-    return bibLoadState(req.params.id, branch, t.rootFile, t.bibFile);
+    return { ...bibLoadState(req.params.id, branch, t.rootFile, t.bibFile), format: paperBibFormat(req.params.id, branch), syncedFormat: t.syncedFormat };
   });
   app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/zotero/bib-load', async (req, reply) => {
     const branch = req.body?.branch || 'main';
@@ -2231,14 +2345,28 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (!query) return reply.code(400).send({ error: 'query required' });
       if (!(await refLimiter.take(clientKey(req, reqUser(req)?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
       try {
-        // default next to the root file (see zotero/link) so inserted cites
-        // land in a .bib the document actually reads
-        const bibFile = req.body?.bibFile || rootSiblingPath((await store.readMeta(req.params.id)).rootFile, 'references.bib');
+        // Without a file named: a .bib the paper reads (not the Zotero one,
+        // which every sync rewrites), else references.bib beside the root
+        // file; `loaded` says whether the paper reads it.
+        const meta = await store.readMeta(req.params.id);
+        const fallback = rootSiblingPath(meta.rootFile, 'references.bib');
+        let bibFile = req.body?.bibFile;
+        let chosen: ReturnType<typeof referenceTarget> | null = null;
+        if (!bibFile) {
+          if (!BRANCH_RE.test(branch)) return reply.code(400).send({ error: 'invalid branch name' });
+          await gitops.ensureWorktree(req.params.id, branch);
+          chosen = referenceTarget(req.params.id, branch, meta.rootFile, meta.zotero?.bibFile ?? null, fallback, (p) => !isHiddenPath(p));
+          bibFile = chosen.bibFile;
+        }
         if (isHiddenPath(bibFile)) return reply.code(403).send({ error: 'forbidden path' });
-        const added = await addReference(req.params.id, branch, query, bibFile);
+        const added = await addReference(req.params.id, branch, query, bibFile, undefined, undefined, chosen?.others ?? []);
         if (!added) return reply.code(404).send({ error: 'No reference found for that DOI/arXiv id' });
         if (!added.duplicate) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
-        return { ok: true, ...added };
+        if (!chosen) return { ok: true, ...added };
+        const loaded = chosen.loaded || added.bibFile !== bibFile;
+        const entry = path.posix.relative(path.posix.dirname(meta.rootFile || 'main.tex'), added.bibFile);
+        const loadLine = chosen.format === 'bibtex' ? `\\bibliography{${entry.replace(/\.bib$/i, '')}}` : `\\addbibresource{${entry}}`;
+        return { ok: true, ...added, loaded, rootFile: meta.rootFile, ...(loaded ? {} : { loadLine }) };
       } catch (err: any) {
         return reply.code(502).send({ error: err.message });
       }

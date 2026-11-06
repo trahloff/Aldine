@@ -256,6 +256,7 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === 'Enter') { e.preventDefault(); create(); return; }
+    if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); return; }
     if (e.key === 'ArrowDown' && ordered.length) { e.preventDefault(); setTemplate(effective); focusTile(effective); }
   };
 
@@ -288,7 +289,6 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
               onChange={(e) => { setQuery(e.target.value); if (e.target.value) setRail(ALL); }}
               onKeyDown={onSearchKey}
             />
-            {/* Escape belongs to the dialog: the sheet closes on it. */}
             {query && (
               <button className="tpl-search__clear" aria-label="Clear the template search" data-testid="template-search-clear"
                 onClick={() => { setQuery(''); searchRef.current?.focus(); }}>

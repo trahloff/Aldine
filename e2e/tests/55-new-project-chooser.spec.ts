@@ -177,6 +177,24 @@ test.describe('New project chooser', () => {
     await cleanup(request, page.url().split('/p/')[1].split('?')[0]);
   });
 
+  test('Escape in the template search clears it first, then closes the sheet', async ({ page }) => {
+    await openChooser(page);
+    await page.keyboard.type('Escape Paper');
+    // typing on a tile goes into the search
+    await page.getByTestId('template-article').focus();
+    await page.keyboard.type('beam');
+    const search = page.getByTestId('template-search');
+    await expect(search).toBeFocused();
+    await expect(search).toHaveValue('beam');
+    await page.keyboard.press('Escape');
+    await expect(search).toHaveValue('');
+    await expect(page.getByTestId('new-project-sheet')).toBeVisible();
+    await expect(page.getByLabel('Project name')).toHaveValue('Escape Paper');
+    await expect(page.getByTestId('template-article')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('new-project-sheet')).toHaveCount(0);
+  });
+
   test('a venue kit without a preview shows a serif title page', async ({ page, request }) => {
     let kit: Template | undefined;
     for (let i = 0; i < 15 && !kit; i++) {

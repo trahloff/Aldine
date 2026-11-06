@@ -78,13 +78,22 @@ try {
   eq(fs.readdirSync(path.join(process.env.DATA_DIR, 'projects')), [], 'orphan repo dir removed');
 
   // ---- happy path: backslash names, __MACOSX junk, data..csv, nested root ----
-  res = await importZip({ '__MACOSX/._main.tex': 'junk', 'paper\\main.tex': doc, 'paper/data..csv': '1,2', 'paper/figs/plot.png': bin });
+  res = await importZip({ '__MACOSX/._main.tex': 'junk', 'paper\\main.tex': doc, 'paper/data..csv': '1,2', 'paper/figs/plot.png': bin, 'NOTES.txt': 'n' });
   eq(res.statusCode, 200, `windows-style archive imports: ${res.body}`);
   const meta = res.json();
   eq(meta.rootFile, 'paper/main.tex', 'root detected from the normalized path');
   const files = store.listFiles(meta.id, 'main').filter((f) => f.type === 'file' && f.path !== '.gitignore').map((f) => f.path).sort();
-  eq(files, ['paper/data..csv', 'paper/figs/plot.png', 'paper/main.tex'], 'files placed under normalized paths, junk dropped');
+  eq(files, ['NOTES.txt', 'paper/data..csv', 'paper/figs/plot.png', 'paper/main.tex'], 'files placed under normalized paths, junk dropped, a folder beside a file kept');
   eq(store.readFile(meta.id, 'main', 'paper/figs/plot.png').equals(bin), true, 'binary written byte-exact');
+  before = await projectIds();
+
+  // ---- a zipped folder: its one wrapper folder is dropped ----
+  res = await importZip({ '__MACOSX/thesis/._main.tex': 'junk', 'thesis/main.tex': doc, 'thesis/thesis/notes.tex': 'inner', 'thesis/figs/plot.png': bin });
+  eq(res.statusCode, 200, `zipped folder imports: ${res.body}`);
+  eq(res.json().rootFile, 'main.tex', 'root found at the top once the wrapper is gone');
+  eq(store.listFiles(res.json().id, 'main').filter((f) => f.type === 'file' && f.path !== '.gitignore').map((f) => f.path).sort(),
+    ['figs/plot.png', 'main.tex', 'thesis/notes.tex'], 'only the outer folder is stripped');
+  eq(store.readFile(res.json().id, 'main', 'thesis/notes.tex').toString(), 'inner', 'a folder named like the wrapper keeps its own files');
   before = await projectIds();
 
   // ---- body past the global limit is accepted on this route ----
@@ -164,7 +173,7 @@ try {
   // ---- ZIP64 and legacy names import normally ----
   res = await importZip({ 'paper/main.tex': doc, 'paper/refs.bib': { data: '@book{k}', method: 8 } }, 'Z64', { zip64: true });
   eq(res.statusCode, 200, `ZIP64 archive imports: ${res.body.slice(0, 200)}`);
-  eq(res.json().rootFile, 'paper/main.tex', 'ZIP64 root detected');
+  eq(res.json().rootFile, 'main.tex', 'ZIP64 root detected, its wrapper folder dropped');
   const cp437 = Buffer.concat([Buffer.from('r'), Buffer.from([0x82]), Buffer.from('sum'), Buffer.from([0x82]), Buffer.from('.tex')]);
   res = await importZip({ x: { data: doc, nameBytes: cp437 } }, 'CP');
   eq(res.statusCode, 200, 'cp437 archive imports');

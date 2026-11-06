@@ -12,6 +12,18 @@ const h = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
+/** Cite `key` at the cursor; null when no TeX file is open to cite it in. */
+const citeAtCursor = (aldine, key) => {
+  if (aldine.editor.insertCitation) return aldine.editor.insertCitation(key) || null;
+  aldine.editor.insertAtCursor(`\\cite{${key}}`);
+  return 'inserted';
+};
+
+/** What a citation pick did, as the toast says it. */
+const citedText = (key, result) => (result === 'added' ? `added ${key} to the citation`
+  : result === 'present' ? `${key} is in this citation already`
+  : `inserted \\cite{${key}}`);
+
 export default {
   activate(aldine) {
     aldine.ui.registerSidebarPanel({
@@ -39,8 +51,12 @@ export default {
             await aldine.project.refreshFiles();
             loadBib();
             if (body.key) {
-              aldine.editor.insertAtCursor(`\\cite{${body.key}}`);
-              aldine.toast(body.duplicate ? `Already in bibliography — inserted \\cite{${body.key}}` : `Added ${body.key} and inserted citation`, 'ok');
+              const cited = citeAtCursor(aldine, body.key);
+              const where = body.duplicate ? `${body.key} is in ${body.bibFile} already` : `Added ${body.key} to ${body.bibFile}`;
+              // The paper reads no .bib this could go to: say which line makes it read this one.
+              const unread = body.loaded === false ? ` ${body.rootFile || 'The paper'} doesn’t load it yet: add ${body.loadLine}.` : '';
+              if (cited) aldine.toast(`${where}; ${citedText(body.key, cited)}.${unread}`, unread ? 'info' : 'ok');
+              else aldine.toast(`${where}. Open a .tex file and put the cursor where \\cite{${body.key}} goes.${unread}`, 'info');
             }
           } catch (err) {
             aldine.toast(`${label || 'Lookup'} failed: ${err.message}`, 'error');
@@ -94,8 +110,9 @@ export default {
         // A Zotero import, an upload or a collaborator's new .bib adds entries.
         aldine.project.onFilesChanged?.(loadBib);
         const insertKey = (key) => {
-          aldine.editor.insertAtCursor(`\\cite{${key}}`);
-          aldine.toast(`Inserted \\cite{${key}}`, 'ok');
+          const cited = citeAtCursor(aldine, key);
+          if (cited) aldine.toast(citedText(key, cited).replace(/^./, (c) => c.toUpperCase()), 'ok');
+          else aldine.toast(`Open a .tex file and put the cursor where \\cite{${key}} goes`, 'error');
         };
 
         const line1 = { fontWeight: '600', fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -149,7 +166,12 @@ export default {
             h('div', { style: line2 }, [e.key, e.author, e.year].filter(Boolean).join(' · ')),
           ));
           if (!bibLoaded) rows.push(h('div', { class: 'spinner', style: { margin: '6px auto' } }));
-          else if (!bib.length) rows.push(h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 } }, 'No entries in this project’s .bib files yet. Search below to add one.'));
+          else if (!bib.length) {
+            rows.push(h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 }, dataset: { testid: 'cite-bib-empty' } },
+              'No entries in this project’s .bib files yet. Search below to add one, or ',
+              h('button', { class: 'link-button', style: { fontSize: '12px' }, dataset: { testid: 'cite-import-zotero' }, onclick: () => aldine.ui.showPanel('zotero') }, 'import from Zotero'),
+              '.'));
+          }
           else if (!matches.length) rows.push(h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 } }, 'No matches.'));
           else if (matches.length > 50) rows.push(h('p', { style: { color: 'var(--text-2)', fontSize: '11px', padding: '2px 4px', margin: 0 } }, `${matches.length - 50} more; narrow the filter.`));
           bibFilter.style.display = bib.length > 8 ? '' : 'none';

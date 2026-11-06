@@ -349,6 +349,17 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   return pub(user);
 }
 
+/** The name co-authors see on avatars, comments and commits. */
+export async function setName(userId: string, name: unknown): Promise<PublicUser> {
+  const clean = cleanName(name);
+  if (!clean) throw new Error('Enter a name');
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  user.name = clean;
+  await db().updateUser(user);
+  return pub(user);
+}
+
 /** Returns how many access tokens were revoked with the old password. */
 export async function changePassword(userId: string, current: string, next: string): Promise<number> {
   if (next.length < 8) throw new Error('New password must be at least 8 characters');
