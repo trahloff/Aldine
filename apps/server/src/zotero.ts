@@ -1,5 +1,5 @@
 import { readMeta, writeMeta, writeFile, fileExists, ProjectMeta } from './store.js';
-import { refreshBranchDocsFromDisk } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk } from './collab.js';
 import { autoCommit, ensureWorktree } from './gitops.js';
 
 export type ZoteroLink = NonNullable<ProjectMeta['zotero']>;
@@ -116,6 +116,9 @@ export async function syncProject(projectId: string, branch = 'main', force = fa
   const result = await fetchBib(z.apiKey, z.libraryPrefix, z.collectionKey, full ? undefined : z.lastVersion);
   if (result === 'unchanged') return { synced: false, unchanged: true };
   const header = `% Auto-generated from Zotero (${z.libraryPrefix}${z.collectionKey ? ', collection ' + z.collectionKey : ''})\n% Synced ${new Date().toISOString()} — edits will be overwritten on next sync.\n\n`;
+  // The refresh resets every open doc that differs from its file: what was
+  // typed but not yet saved must be on disk first.
+  flushBranchDocs(projectId, branch);
   writeFile(projectId, branch, z.bibFile, header + result.bib);
   refreshBranchDocsFromDisk(projectId, branch, [z.bibFile]);
   const updated: ProjectMeta = { ...meta, zotero: { ...z, lastVersion: result.version, lastSyncedAt: new Date().toISOString() } };

@@ -19,6 +19,7 @@ import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ra
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
 import { isListed, isOwner } from '../authz.js';
 import { addReference } from '../references.js';
+import { bibLoadedBySource } from '../bibload.js';
 import { bibIndex, labelIndex, wordCount } from '../indexes.js';
 import { adoptRootIfUnset } from '../root.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from '../templates.js';
@@ -1162,34 +1163,4 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       });
     } catch (err) { return toolError(err); }
   });
-}
-
-/** Whether any .tex on the branch loads `bibFile` — \addbibresource{x.bib}
- *  (biblatex) or \bibliography{a,b} (bibtex), both resolved from the root
- *  file's directory, both with or without the extension. Scans every .tex,
- *  not only the root: a preamble \input may hold the line. */
-export function bibLoadedBySource(projectId: string, branch: string, rootFile: string, bibFile: string): boolean {
-  const rootDir = path.posix.dirname(rootFile || 'main.tex');
-  const wanted = new Set<string>();
-  for (const spelled of [bibFile, bibFile.replace(/\.bib$/i, '')]) {
-    wanted.add(path.posix.normalize(spelled));
-    wanted.add(path.posix.relative(rootDir, spelled));
-  }
-  const re = /\\(?:addbibresource|addglobalbib|bibliography)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
-  for (const f of store.listFiles(projectId, branch)) {
-    if (f.type !== 'file' || !/\.tex$/i.test(f.path)) continue;
-    let text: string;
-    try { text = store.readFile(projectId, branch, f.path).toString('utf8'); } catch { continue; }
-    const dir = path.posix.dirname(f.path);
-    for (const m of text.matchAll(re)) {
-      for (const raw of m[1].split(',')) {
-        const name = raw.trim();
-        if (!name) continue;
-        // Resolved against the root's directory (how TeX reads it) and against
-        // the naming file's own directory; either spelling counts.
-        if (wanted.has(name) || wanted.has(path.posix.normalize(path.posix.join(dir, name))) || wanted.has(path.posix.normalize(path.posix.join(rootDir, name)))) return true;
-      }
-    }
-  }
-  return false;
 }

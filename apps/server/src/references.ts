@@ -407,7 +407,13 @@ export async function addReference(projectId: string, branch: string, query: str
     if (!author) scheduleCommit(projectId, branch);
     return { key, bibFile, duplicate: false, created: existing === null, before, after };
   };
-  if (!author) { const { key, duplicate, created } = append(); return { key, bibFile, duplicate, created }; }
+  if (!author) {
+    // The refresh resets every open doc that differs from its file: what was
+    // typed but not yet saved, the .bib included, must be on disk first.
+    flushBranchDocs(projectId, branch);
+    const { key, duplicate, created } = append();
+    return { key, bibFile, duplicate, created };
+  }
   return withRepoLock(projectId, async () => {
     flushBranchDocs(projectId, branch);
     await checkpointPathsHeld(projectId, branch, [bibFile]);

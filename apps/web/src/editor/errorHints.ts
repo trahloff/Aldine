@@ -16,7 +16,7 @@ const HINTS: Array<{ re: RegExp; hint: string }> = [
   { re: /Missing \\begin\{document\}/i, hint: 'Content appears before \\begin{document} — move text after it (or a stray character sits in the preamble).' },
   { re: /Runaway argument/i, hint: 'An argument never closed — look for a missing closing brace }.' },
   { re: /Extra \}, or forgotten/i, hint: 'Brace mismatch — an extra } or a missing { earlier in the line.' },
-  { re: /Citation .* undefined|Empty bibliography/i, hint: 'The citation key isn’t in your .bib — check the key, or sync your bibliography.' },
+  { re: /Citation .* undefined|Empty bibliography/i, hint: 'The citation key isn’t in a .bib the document loads — check the key, and that \\addbibresource or \\bibliography names its .bib.' },
   { re: /Reference .* undefined/i, hint: 'No matching \\label — typeset twice or fix the label name.' },
   { re: /Overfull \\hbox/i, hint: 'A line is too wide — often a long word or URL; consider \\sloppy or breaking it manually.' },
   { re: /Package biblatex Error: Please \(re\)run Biber/i, hint: 'The bibliography needs another pass — typeset again.' },

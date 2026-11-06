@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
+import { bibLoadState, addBibLoad } from './bibload.js';
 import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
@@ -2171,6 +2172,33 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         return reply.code(400).send({ error: err.message });
       }
     });
+
+  // Whether the paper reads the linked .bib (bibload.ts): without the line,
+  // every citation from it is undefined. POST adds the line where one edit
+  // clearly does; it is an edit to the paper like any other, so anyone who
+  // may edit the paper may make it.
+  const bibLoadTarget = async (req: any, reply: any, branch: string) => {
+    if (!BRANCH_RE.test(branch)) { reply.code(400).send({ error: 'invalid branch name' }); return null; }
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); } catch { reply.code(404).send({ error: 'project not found' }); return null; }
+    if (!meta.zotero) { reply.code(400).send({ error: 'no Zotero link' }); return null; }
+    try { await gitops.ensureWorktree(req.params.id, branch); } catch { reply.code(404).send({ error: 'Branch not found' }); return null; }
+    return { rootFile: meta.rootFile, bibFile: meta.zotero.bibFile };
+  };
+  app.get<{ Params: { id: string }; Querystring: { branch?: string } }>('/api/projects/:id/zotero/bib-load', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    const t = await bibLoadTarget(req, reply, branch);
+    if (!t) return;
+    return bibLoadState(req.params.id, branch, t.rootFile, t.bibFile);
+  });
+  app.post<{ Params: { id: string }; Body: { branch?: string } }>('/api/projects/:id/zotero/bib-load', async (req, reply) => {
+    const branch = req.body?.branch || 'main';
+    const t = await bibLoadTarget(req, reply, branch);
+    if (!t) return;
+    const { added, state } = addBibLoad(req.params.id, branch, t.rootFile, t.bibFile);
+    if (added) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
+    return { ok: true, added, ...state };
+  });
 
   app.delete<{ Params: { id: string } }>('/api/projects/:id/zotero', async (req, reply) => {
     const meta = await requireOwner(req, reply, 'unlink the Zotero library');
