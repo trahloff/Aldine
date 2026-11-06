@@ -16,8 +16,23 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   open it too. In the editor, Cmd+F is still the editor's Find. Links in the
   PDF still follow on a click, and a double-click on text still jumps to its
   source.
+- In Visual, a table cell's "Rows and columns" menu (right-click, Shift+F10
+  or the button under the table) inserts rows above or below and columns
+  left or right, deletes a row or column, and merges a cell with the one on
+  its right or splits it again. New columns copy their neighbour's type,
+  width included. Each is one step for Undo.
 
 ### Changed
+- In Visual, a `%` or `&` typed into a table cell is written as `\%` or
+  `\&`, so `91%` and `R&D` no longer break the row; `$…$` and what is already
+  escaped stay as typed. A paste into a cell converts like any Visual paste,
+  and a block copied from a spreadsheet or a Word table fills the cells from
+  there on, adding the rows and columns it needs.
+- Tab in a table's last cell adds a row and opens its first cell; "+ row"
+  puts focus in the new row. Arrow keys move between cells, and up from the
+  first row or down from the last one leaves the table.
+- A click on a numbered equation opens the formula editor; its `\label` stays
+  as written. A formula that still opens as source says why.
 - Merging a branch into main from the branch menu asks first and says how
   many checkpoints go in, because everyone working on main sees them. When
   main already has everything on the branch, it says "Nothing to merge"
@@ -123,6 +138,27 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   it. Escape discards the change and says so. Done's tooltip names Enter.
 
 ### Fixed
+- Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
+  typeset, and a `\multicolumn` cell spans its columns.
+- Formulas in Visual use the macros of files the preamble `\input`s (such as
+  the ICLR kit's math_commands.tex) and of `\def`, `\let` and
+  `\DeclarePairedDelimiter`, and pick up a changed file. A command defined
+  nowhere shows muted, with its name in the tooltip.
+- Pasting from desktop Word keeps bullet and numbered lists as lists and drops
+  the numbers of numbered headings. Superscripts and subscripts keep their
+  formatting, Word's tracked deletions are left out, and struck text pastes
+  as plain text.
+- Formulas pasted from KaTeX pages, ChatGPT, Wikipedia, MathJax or arXiv
+  arrive once, as their TeX, and Word equations paste as LaTeX instead of
+  vanishing.
+- In a pdfLaTeX project, Greek letters and math symbols pasted in Visual are
+  written as commands such as `\ensuremath{\alpha}`. pdfLaTeX's "Unicode
+  character" error offers "Typeset with XeLaTeX and a font that has these
+  characters": it switches the engine and adds DejaVu Serif to the root
+  file's preamble, keeping fontenc and inputenc for pdfLaTeX, in one step
+  Undo takes back. A document with its own main font only switches engine.
+  The error also offers XeLaTeX or LuaLaTeX alone, and either engine leaving
+  out a character the font lacks is now a warning.
 - A merge in History shows the changes it brought in. It used to say "No
   changes in this commit."
 - The History diff and the Push, pull request and merge conflict dialogs

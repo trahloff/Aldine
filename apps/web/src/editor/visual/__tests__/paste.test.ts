@@ -5,6 +5,7 @@ import { latex } from 'codemirror-lang-latex';
 import { pasteText, rawAt, recordOwnCopies } from '../clipboard';
 import { htmlToLatex } from '../html2latex';
 import { definesUrl, preambleOf } from '../preamble';
+import { setVisualEngine } from '../context';
 import { parsedState } from './parsedState';
 import { installMiniDom } from './miniDom';
 
@@ -232,5 +233,109 @@ describe('\\url only where the preamble defines it (#149)', () => {
     expect(definesUrl(preambleOf(doc('% \\usepackage{hyperref}')))).toBe(false);
     // a file without a preamble of its own (and no root file read) has none
     expect(definesUrl(preambleOf('Some chapter text.'))).toBe(false);
+  });
+});
+
+describe('superscripts, subscripts and struck text (vis-19)', () => {
+  it('keeps <sup>, <sub> and Google Docs\' raised runs, drops deleted text and keeps struck text plain', () => {
+    expect(htmlToLatex('<p>About 10<sup>-3</sup> s for H<sub>2</sub>O.</p>')).toBe('About 10\\textsuperscript{-3} s for H\\textsubscript{2}O.');
+    const docs = '<b style="font-weight:normal;" id="docs-internal-guid-1"><p dir="ltr"><span style="font-weight:400;vertical-align:baseline;">x</span><span style="font-size:0.6em;vertical-align:super;">2</span><span style="vertical-align:sub;">i</span></p></b>';
+    expect(htmlToLatex(docs)).toBe('x\\textsuperscript{2}\\textsubscript{i}');
+    expect(htmlToLatex('<p>Keep <del>old </del>new and <s>struck</s> and <strike>gone</strike> text.</p>')).toBe('Keep new and struck and gone text.');
+    // Word's tracked changes: the deletion goes, the insertion stays
+    expect(htmlToLatex('<p class=MsoNormal>We <del cite="mailto:Ada" datetime="2026-11-05T10:00">never </del><ins cite="mailto:Ada" datetime="2026-11-05T10:00">always </ins>agree.<o:p></o:p></p>')).toBe('We always agree.');
+    // nested markup is not raised twice
+    expect(htmlToLatex('<p>e<sup><span style="vertical-align:super">x</span></sup></p>')).toBe('e\\textsuperscript{x}');
+  });
+});
+
+describe('desktop Word lists and numbered headings (vis-18)', () => {
+  const marker = (m: string, font = '') =>
+    `<![if !supportLists]><span style='${font}mso-fareast-font-family:Symbol'><span style='mso-list:Ignore'>${m}<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span></span></span><![endif]>`;
+  const item = (level: number, m: string, text: string, list = 'l0', font = 'font-family:Symbol;') =>
+    `<p class=MsoListParagraphCxSpMiddle style='margin-left:${36 * level}.0pt;text-indent:-18.0pt;mso-list:${list} level${level} lfo1'>${marker(m, font)}${text}<o:p></o:p></p>\r\n`;
+  const word = (body: string) => `<html xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta name=Generator content="Microsoft Word 15"></head><body lang=EN-GB><!--StartFragment-->${body}<!--EndFragment--></body></html>`;
+
+  it('groups bullet paragraphs into itemize, nested by level, without Word\'s bullet characters', () => {
+    const html = word(`<p class=MsoNormal>Before.<o:p></o:p></p>\r\n${item(1, '·', 'First <b>point</b>')}${item(2, 'o', 'Sub point', 'l0', 'font-family:"Courier New";')}${item(1, '·', 'Second, at 50%')}<p class=MsoNormal>After.<o:p></o:p></p>`);
+    expect(htmlToLatex(html)).toBe([
+      'Before.',
+      '',
+      '\\begin{itemize}',
+      '\\item First \\textbf{point}',
+      '\\begin{itemize}',
+      '\\item Sub point',
+      '\\end{itemize}',
+      '\\item Second, at 50\\%',
+      '\\end{itemize}',
+      'After.',
+    ].join('\n'));
+  });
+
+  it('makes numbered paragraphs an enumerate, with lettered sub-items', () => {
+    const html = word(`${item(1, '1.', 'One', 'l1', '')}${item(2, 'a.', 'One a', 'l1', '')}${item(1, '2.', 'Two', 'l1', '')}`);
+    expect(htmlToLatex(html)).toBe('\\begin{enumerate}\n\\item One\n\\begin{enumerate}\n\\item One a\n\\end{enumerate}\n\\item Two\n\\end{enumerate}');
+  });
+
+  it('drops the number Word writes before a numbered heading', () => {
+    const h = (tag: string, n: string, text: string) =>
+      `<${tag} style='margin-left:21.6pt;text-indent:-21.6pt;mso-list:l2 level1 lfo2'><![if !supportLists]><span style='mso-list:Ignore'>${n}<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp;&nbsp; </span></span><![endif]>${text}<o:p></o:p></${tag}>`;
+    expect(htmlToLatex(word(`${h('h1', '1', 'Introduction')}${h('h2', '1.1', 'Scope &amp; aims')}`))).toBe('\\section{Introduction}\n\n\\subsection{Scope \\& aims}');
+  });
+});
+
+describe('formulas from web pages and Word (vis-21)', () => {
+  const katex = (tex: string, glyphs: string, display = false) =>
+    `<span class="katex${display ? '-display' : ''}"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"${display ? ' display="block"' : ''}><semantics><mrow><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">${tex}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="mord mathnormal">${glyphs}</span></span></span></span></span>`;
+
+  it('pastes a KaTeX formula (ChatGPT, many blogs) once, from its TeX', () => {
+    expect(htmlToLatex(`<p>Energy ${katex('E=mc^2', 'E=mc2')} holds.</p>`)).toBe('Energy $E=mc^2$ holds.');
+    expect(htmlToLatex(`<p>So</p>${katex('E = mc^2', 'E=mc2', true)}<p>and</p>`)).toBe('So\n\n\\[ E = mc^2 \\]and');
+  });
+
+  it('pastes Wikipedia\'s formula from its TeX, without its image', () => {
+    const wiki = '<p>Sum <span class="mwe-math-element"><span class="mwe-math-mathml-inline mwe-math-mathml-a11y" style="display: none;"><math xmlns="http://www.w3.org/1998/Math/MathML" alttext="{\\displaystyle \\alpha +\\beta }"><semantics><mrow class="MJX-TeXAtom-ORD"><mstyle displaystyle="true" scriptlevel="0"><mi>α</mi><mo>+</mo><mi>β</mi></mstyle></mrow><annotation encoding="application/x-tex">{\\displaystyle \\alpha +\\beta }</annotation></semantics></math></span><img src="https://wikimedia.org/api/rest_v1/media/math/render/svg/1" class="mwe-math-fallback-image-inline" aria-hidden="true" alt="{\\displaystyle \\alpha +\\beta }"></span> of 50%.</p>';
+    expect(htmlToLatex(wiki)).toBe('Sum $\\alpha +\\beta$ of 50\\%.');
+  });
+
+  it('pastes arXiv\'s HTML formulas from their TeX', () => {
+    const arxiv = '<p class="ltx_p">where <math id="S1.p1.m1" class="ltx_Math" alttext="x_{i}" display="inline"><semantics><msub><mi>x</mi><mi>i</mi></msub><annotation encoding="application/x-tex">x_{i}</annotation></semantics></math> and</p><table class="ltx_equation ltx_eqn_table"><tr class="ltx_equation ltx_eqn_row"><td class="ltx_eqn_cell ltx_align_center"><math alttext="\\sum_{i=1}^{n}x_{i}" display="block"><semantics><mrow><mo>∑</mo></mrow><annotation-xml encoding="MathML-Content"><apply>sum</apply></annotation-xml><annotation encoding="application/x-tex">\\sum_{i=1}^{n}x_{i}</annotation></semantics></math></td><td class="ltx_eqn_cell ltx_eqn_eqno ltx_align_right" rowspan="1"><span class="ltx_tag ltx_tag_equation">(1)</span></td></tr></table>';
+    expect(htmlToLatex(arxiv)).toBe('where $x_{i}$ and\n\n\\[ \\sum_{i=1}^{n}x_{i} \\]');
+    // an aligned equation: its parts, split at the alignment, make one formula per row
+    const cell = (tex: string) => `<td class="ltx_eqn_cell"><math alttext="${tex}" display="inline"><semantics><mi>a</mi><annotation encoding="application/x-tex">${tex}</annotation></semantics></math></td>`;
+    expect(htmlToLatex(`<table class="ltx_equationgroup ltx_eqn_align ltx_eqn_table"><tbody><tr class="ltx_eqn_row">${cell('\\displaystyle a')}${cell('\\displaystyle=b+c')}<td class="ltx_eqn_cell ltx_eqn_eqno"><span>(2)</span></td></tr></tbody></table>`)).toBe('\\[ a =b+c \\]');
+  });
+
+  it('reads MathJax 3\'s MathML when it carries no TeX, and MathJax 2\'s TeX script once', () => {
+    const mj3 = '<p>Then <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msup><mi>x</mi><mn>2</mn></msup><mo>≤</mo><mfrac><mn>1</mn><mi>α</mi></mfrac></math></mjx-assistive-mml></mjx-container> holds.</p>';
+    expect(htmlToLatex(mj3)).toBe('Then $x^{2}\\le \\frac{1}{\\alpha}$ holds.');
+    const mj2 = '<p>Let <span class="MathJax_Preview" style="color: inherit; display: none;"></span><span class="MathJax" id="MathJax-Element-1-Frame" tabindex="0" role="presentation"><nobr aria-hidden="true"><span class="math"><span>x1+y</span></span></nobr><span class="MJX_Assistive_MathML" role="presentation"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>x</mi><mn>1</mn></msub><mo>+</mo><mi>y</mi></math></span></span><script type="math/tex" id="MathJax-Element-1">x_1 + y</script> be.</p>';
+    expect(htmlToLatex(mj2)).toBe('Let $x_1 + y$ be.');
+  });
+
+  it('turns Word\'s equations into LaTeX instead of dropping them with their image', () => {
+    const span = (t: string) => `<i><span style='font-family:"Cambria Math",serif'><m:r>${t}</m:r></span></i>`;
+    const inline = `<!--[if gte msEquation 12]><m:oMath>${span('E')}${span('=')}${span('m')}<m:sSup><m:sSupPr><span style='font-family:"Cambria Math",serif'><i>x</i></span></m:sSupPr><m:e>${span('c')}</m:e><m:sup>${span('2')}</m:sup></m:sSup></m:oMath><![endif]-->`;
+    const image = '<![if !msEquation]><span style=\'font-size:11.0pt;position:relative;top:3.0pt\'><img width=55 height=19 src="file:///C:/Users/me/AppData/Local/Temp/msohtmlclip1/01/clip_image001.png"></span><![endif]>';
+    expect(htmlToLatex(`<p class=MsoNormal>So ${inline}${image} holds.<o:p></o:p></p>`)).toBe('So $E=mc^{2}$ holds.');
+    const display = '<!--[if gte msEquation 12]><m:oMathPara><m:oMath><m:f><m:fPr><m:ctrlPr></m:ctrlPr></m:fPr><m:num><m:r>α</m:r></m:num><m:den><m:r>2</m:r></m:den></m:f><m:r>≤</m:r><m:nary><m:naryPr><m:chr m:val="∑"/><m:limLoc m:val="undOvr"/></m:naryPr><m:sub><m:r>i=1</m:r></m:sub><m:sup><m:r>n</m:r></m:sup><m:e><m:sSub><m:e><m:r>x</m:r></m:e><m:sub><m:r>i</m:r></m:sub></m:sSub></m:e></m:nary><m:r>+</m:r><m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg></m:deg><m:e><m:r>y</m:r></m:e></m:rad><m:func><m:fName><m:r>sin</m:r></m:fName><m:e><m:d><m:e><m:r>θ</m:r></m:e></m:d></m:e></m:func></m:oMath></m:oMathPara><![endif]-->';
+    expect(htmlToLatex(`<p class=MsoNormal>${display}${image}<o:p></o:p></p>`)).toBe('\\[ \\frac{\\alpha}{2}\\le \\sum_{i=1}^{n} x_{i}+\\sqrt{y}\\sin \\left( \\theta \\right) \\]');
+  });
+});
+
+describe('Unicode math in a pdfLaTeX project (vis-9)', () => {
+  it('writes Greek letters and math symbols as commands, which pdfLaTeX can typeset', () => {
+    try {
+      setVisualEngine('pdf');
+      expect(pasteText('', 'p ≤ 0.05 for α and Ω, x ≠ y', '')).toBe('p \\ensuremath{\\le} 0.05 for \\ensuremath{\\alpha} and \\ensuremath{\\Omega}, x \\ensuremath{\\neq} y');
+      // what pdfLaTeX typesets as it is stays as it is
+      expect(pasteText('', '3 × 4 ± 1 at 20 °C', '')).toBeNull();
+      expect(pasteText('<p>Mean <b>μ</b> ≈ 5%</p>', 'Mean μ ≈ 5%', '')).toBe('Mean \\textbf{\\ensuremath{\\mu}} \\ensuremath{\\approx} 5\\%');
+      setVisualEngine('xelatex');
+      expect(pasteText('', 'p ≤ 0.05 for α', '')).toBeNull();
+      expect(pasteText('<p>Mean <b>μ</b> ≈ 5%</p>', 'Mean μ ≈ 5%', '')).toBe('Mean \\textbf{μ} ≈ 5\\%');
+    } finally {
+      setVisualEngine(null);
+    }
   });
 });

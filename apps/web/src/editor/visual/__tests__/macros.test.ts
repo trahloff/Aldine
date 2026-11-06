@@ -53,3 +53,56 @@ describe('the macros a formula uses', () => {
     expect(macrosUsedBy('x \\in \\Rn', edited).key).toBe(macrosUsedBy('x \\in \\Rn', set).key);
   });
 });
+
+/** The kind of notation file the ICLR kit ships as math_commands.tex. */
+const MATH_COMMANDS = [
+  '%%%%% NEW MATH DEFINITIONS %%%%%',
+  '\\usepackage{amsmath,amsfonts,bm}',
+  '\\newcommand{\\figleft}{{\\em (Left)}}',
+  '\\def\\figref#1{figure~\\ref{#1}}',
+  '\\def\\twofigref#1#2{figures \\ref{#1} and \\ref{#2}}',
+  '\\def\\ceil#1{\\lceil #1 \\rceil}',
+  '\\def\\1{\\bm{1}}',
+  '\\def\\vx{{\\bm{x}}}',
+  '\\def\\mA{{\\bm{A}}}',
+  '\\DeclareMathAlphabet{\\mathsfit}{\\encodingdefault}{\\sfdefault}{m}{sl}',
+  '\\newcommand{\\tens}[1]{\\bm{\\mathsfit{#1}}}',
+  '\\def\\tA{{\\tens{A}}}',
+  '\\newcommand{\\E}{\\mathbb{E}}',
+  '\\DeclareMathOperator*{\\argmax}{arg\\,max}',
+  '\\let\\ab\\allowbreak',
+].join('\n');
+
+describe('\\def, \\let and paired delimiters (vis-17)', () => {
+  it('reads the definitions a notation file like the ICLR kit\'s math_commands.tex makes', () => {
+    const { defs } = preambleMacros(MATH_COMMANDS);
+    expect(defs.vx).toEqual({ def: '{\\bm{x}}', args: 0 });
+    expect(defs.tA).toEqual({ def: '{\\tens{A}}', args: 0 });
+    expect(defs.tens).toEqual({ def: '\\bm{\\mathsfit{#1}}', args: 1 });
+    expect(defs.ceil).toEqual({ def: '\\lceil #1 \\rceil', args: 1 });
+    expect(defs.twofigref).toEqual({ def: 'figures \\ref{#1} and \\ref{#2}', args: 2 });
+    expect(defs.ab).toEqual({ def: '\\allowbreak', args: 0 });
+    expect(defs.argmax).toEqual({ def: '\\operatorname*{arg\\,max}', args: 0 });
+    expect(defs['1']).toBeUndefined();
+  });
+
+  it('leaves out what a formula renderer cannot expand', () => {
+    const { defs } = preambleMacros([
+      '\\def\\upto#1.{#1}',
+      '\\def\\a@b{x}',
+      '\\newcommand{\\cond}{\\ifmmode x\\else y\\fi}',
+      '\\newcommand{\\eqv}{\\iff}',
+      '\\let\\nothing\\relax',
+      '\\let\\same=\\equiv',
+      '\\DeclarePairedDelimiter\\abs{\\lvert}{\\rvert}',
+      '\\DeclarePairedDelimiter{\\norm}{\\lVert}{\\rVert}',
+      '\\defaultfontfeatures{Ligatures=TeX}',
+    ].join('\n'));
+    expect(defs).toEqual({
+      eqv: { def: '\\iff', args: 0 },
+      same: { def: '\\equiv', args: 0 },
+      abs: { def: '\\lvert #1 \\rvert', args: 1 },
+      norm: { def: '\\lVert #1 \\rVert', args: 1 },
+    });
+  });
+});

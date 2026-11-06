@@ -127,6 +127,7 @@ function fileStack() {
 /** Parse LaTeX log for errors/warnings with file/line where possible. */
 function parseLog(log) {
   const errors = [];
+  const missing = new Set();
   const lines = log.split('\n');
   const files = fileStack();
   // Lines holding document text, whose parentheses say nothing about files:
@@ -174,6 +175,15 @@ function parseLog(log) {
       let message = line;
       const m = line.match(/on input line (\d+)/) || (lines[i + 1] || '').match(/on input line (\d+)/);
       errors.push({ type: 'warning', ...(file && m ? { file } : {}), line: m ? Number(m[1]) : null, message: message.trim() });
+    } else if (/^Missing character: There is no /.test(line)) {
+      // XeLaTeX and LuaLaTeX leave out a character the font lacks and only log it, once per occurrence
+      const m = line.match(/^Missing character: There is no (\S+) \((?:U\+|")([0-9A-Fa-f]+)\) in font (.+?)!?\s*$/);
+      if (!m) continue;
+      const font = m[3].replace(/^\[([^\]]+)\].*$/, '$1');
+      const message = `Missing character: There is no ${m[1]} (U+${m[2].toUpperCase().padStart(4, '0')}) in font ${font}`;
+      if (missing.has(message)) continue;
+      missing.add(message);
+      errors.push({ type: 'warning', line: null, message });
     } else if (/^Underfull|^Overfull/.test(line)) {
       // "in paragraph at lines 57--58", "in alignment at lines …", "detected at line 4"
       const m = line.match(/at lines? (\d+)/);

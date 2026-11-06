@@ -21,6 +21,7 @@ import { peerOutlines } from './remoteCarets';
 import { pickedConstructs } from './picked';
 import { mathSpans } from './widgets/math';
 import { focusTableAt } from './widgets/table';
+import { undoBoundary } from './history';
 import { chipCaret, labelsOnlyTail, mathParts } from './decorations';
 import {
   backspaceHiddenLine, backspaceIntoConstruct, breakAfterHeading, deleteHiddenLine, deleteIntoConstruct, itemBackspace, itemDelete,
@@ -250,6 +251,8 @@ export interface VisualDeps {
   awareness: Awareness;
   /** Shows a short message to the person: a widget edit that could not be written or a widget that failed ('error'), why a widget opened its source ('info'). */
   notify?: (text: string, kind: NoticeKind) => void;
+  /** The editor's undo history, which a table operation closes the open step of on both sides. */
+  undoManager?: { stopCapturing(): void };
 }
 
 /**
@@ -265,6 +268,7 @@ export function visualExtensions(deps: VisualDeps): Extension {
   setVisualContext(deps.projectId, deps.branch, deps.rootFile, deps.notify);
   return [
     revealField, macroField, atomicField, atomicFiller, markPlugin, visualTheme, widgetClick, clickSequence, pasteLatex, katexLifecycle,
+    deps.undoManager ? undoBoundary.of(() => deps.undoManager!.stopCapturing()) : [],
     // after atomicField: a mark of lower precedence than a widget wraps it
     pickedConstructs, peerOutlines(deps.awareness),
     commentRangesField, suggestField, rangeTracker, headingCloserStop, itemMarkerStop, controlWordGap,

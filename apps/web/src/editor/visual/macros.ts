@@ -1,6 +1,6 @@
 import { StateField } from '@codemirror/state';
 import type { EditorState, Text, Transaction } from '@codemirror/state';
-import { rootPreambleText } from './context';
+import { rootPreambleText, withIncludes } from './context';
 import { NO_MACROS, MacroSet, preambleMacros } from './preamble';
 import { resourceArrived } from './refresh';
 
@@ -25,7 +25,7 @@ function ownPreamble(doc: Text): { end: number; text: string } | null {
 
 function read(doc: Text, prev: MacroSet | null): MacroValue {
   const own = ownPreamble(doc);
-  const set = preambleMacros(own ? own.text : rootPreambleText());
+  const set = preambleMacros(withIncludes(own ? own.text : rootPreambleText()));
   return { end: own?.end ?? null, own: own?.text ?? null, set: prev && prev.key === set.key ? prev : set };
 }
 
@@ -46,16 +46,18 @@ function preambleTouched(value: MacroValue, tr: Transaction): boolean {
 
 /**
  * The math macros the formulas of this file can use: from its own preamble,
- * or the root file's for a file without one. Read again only when an edit
- * reaches the preamble, so typing in the body costs nothing.
+ * or the root file's for a file without one, and the project files that
+ * preamble \input's (withIncludes). Read again only when an edit reaches the
+ * preamble or a file arrives, so typing in the body costs nothing.
  */
 export const macroField = StateField.define<MacroValue>({
   create: (state) => read(state.doc, null),
   update(value, tr) {
     if (tr.docChanged && preambleTouched(value, tr)) return read(tr.state.doc, value.set);
-    if (tr.effects.some((e) => e.is(resourceArrived)) && value.own === null) {
-      const set = preambleMacros(rootPreambleText());
-      return set.key === value.set.key ? value : { ...value, set };
+    // the root preamble or a file \input arrived, or changed in the project
+    if (tr.effects.some((e) => e.is(resourceArrived))) {
+      const next = read(tr.state.doc, value.set);
+      return next.set === value.set && next.end === value.end ? value : next;
     }
     if (tr.docChanged && value.end !== null) return { ...value, end: tr.changes.mapPos(value.end) };
     return value;

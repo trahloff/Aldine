@@ -1430,6 +1430,8 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .errors__chev--open { transform: rotate(90deg); }
 .errors__row--warning { cursor: default; padding-top: 4px; padding-bottom: 4px; align-items: center; }
 .errors__row--warning:active { background: var(--bg-hover); }
+.errors__row--offer { cursor: default; padding-top: 4px; padding-bottom: 4px; align-items: center; }
+.errors__offer { flex: none; }
 .errors__jump {
   display: flex; gap: 8px; flex: 1; min-width: 0; align-items: baseline;
   border: 0; background: transparent; padding: 3px 0; cursor: pointer;

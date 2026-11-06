@@ -8,7 +8,7 @@ import { breakAfterHeading } from '../commands';
 import { revealField } from '../reveal';
 import { parseTabular, tableModel } from '../widgets/table';
 import { citeChip } from '../widgets/chips';
-import { mathEdit, mathliveCanEdit, roundTrips } from '../mathPopover';
+import { formulaSpan, mathEdit, mathliveBlocker, mathliveCanEdit, roundTrips } from '../mathPopover';
 import { commentRangesField, suggestField } from '../suggestions';
 import { setComments } from '../../commentsEffect';
 import { closeBeginBrace } from '../../beginEnv';
@@ -178,7 +178,8 @@ describe('formula editor write-back (VIS-02)', () => {
   it('refuses what MathLive would rewrite', () => {
     expect(mathliveCanEdit('x + y')).toBe(true);
     expect(mathliveCanEdit('50\\% of x')).toBe(true);
-    expect(mathliveCanEdit('\\label{eq:one} f(x)')).toBe(false);
+    expect(mathliveCanEdit('f(x) \\label{eq:one} + 1')).toBe(false);
+    expect(mathliveCanEdit('x \\tag{3}')).toBe(false);
     expect(mathliveCanEdit('a &= b')).toBe(false);
     expect(mathliveCanEdit('a \\\\ b')).toBe(false);
     expect(mathliveCanEdit('f(x) % keep me')).toBe(false);
@@ -199,6 +200,21 @@ describe('formula editor write-back (VIS-02)', () => {
     expect(roundTrips('\\text{a b}', '\\text{ab}')).toBe(false);
     expect(roundTrips('\\mathrm{a b}', '\\mathrm{ab}')).toBe(true);
     expect(roundTrips('\\textstyle a b', '\\textstyle ab')).toBe(true);
+  });
+
+  it('edits a numbered equation without its \\label, at the start or the end (vis-16)', () => {
+    const span = (src: string) => { const r = formulaSpan(src); return src.slice(r.from, r.to); };
+    expect(span('\\label{eq:one} f(x)')).toBe('f(x)');
+    expect(span('\n  E = mc^2 \\label{eq:e}\n')).toBe('\n  E = mc^2');
+    expect(span('\\label{eq:a}\n  a + b\n')).toBe('a + b\n');
+    expect(span('x + y')).toBe('x + y');
+    expect(mathliveCanEdit('\\label{eq:one} f(x)')).toBe(true);
+    expect(mathliveCanEdit('\n  E = mc^2 \\label{eq:e}\n')).toBe(true);
+    // what it still cannot write says why
+    expect(mathliveBlocker('a &= b \\label{x}')).toMatch(/^This formula has alignment/);
+    expect(mathliveBlocker('f(x) % note')).toMatch(/^This formula has a comment/);
+    expect(mathliveBlocker('a\n+ b')).toMatch(/several lines/);
+    expect(mathliveBlocker('x \\tag{3}')).toBe('This formula uses \\tag inside it, so it opens in the source: the formula editor would move or drop it.');
   });
 
   it('opens a formula written between line breaks, but not one with a line break inside', () => {

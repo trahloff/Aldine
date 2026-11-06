@@ -4,8 +4,8 @@ import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNode } from '@lezer/common';
 import { verbatimArgCommand } from './decorations';
 import { safeStorage } from '../../util/safeStorage';
-import { escapeLatex, htmlToLatex, isCodeHtml, looksLikeLatex } from './html2latex';
-import { preambleFor } from './context';
+import { htmlToLatex, isCodeHtml, looksLikeLatex, proseLatex } from './html2latex';
+import { pasteNeedsSymbols, preambleFor } from './context';
 import { definesUrl } from './preamble';
 
 /**
@@ -68,11 +68,12 @@ export function rawAt(state: EditorState, pos: number): boolean {
 export function pasteText(html: string, text: string, doc: string, raw = false): string | null {
   if (raw || isOwnCopy(text)) return null;
   if (looksLikeLatex(text) && (!html || isCodeHtml(html))) return null;
+  const symbols = pasteNeedsSymbols();
   if (!html) {
-    const escaped = escapeLatex(text);
+    const escaped = proseLatex(text, symbols);
     return escaped === text ? null : escaped;
   }
-  const latex = htmlToLatex(html, { url: definesUrl(preambleFor(doc)) });
+  const latex = htmlToLatex(html, { url: definesUrl(preambleFor(doc)), symbols });
   if (!latex || latex === text.trim()) return null;
   return latex;
 }

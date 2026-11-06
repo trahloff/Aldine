@@ -106,25 +106,50 @@ function holdKeys(view: EditorView, giveUp: (focusView: boolean) => void) {
 }
 
 /**
- * Whether MathLive may edit this formula at all. It serialises the whole
- * formula its own way: comments and line breaks vanish, alignment `&` and
- * `\\` come back escaped or merged, \label moves. Those go to source editing.
- * Line breaks around the formula (`\begin{equation}` on a line of its own)
- * are outside every token, and an edit keeps them as they are.
+ * The part of a formula's source the formula editor edits: all of it but a
+ * \label at its start or end (a numbered equation's), with the space around
+ * that label. The label stays as written, and so does its place.
  */
-export function mathliveCanEdit(source: string): boolean {
-  if (source.trim().includes('\n')) return false;
-  if (/\\(?:label|tag|notag|nonumber|begin|end|intertext|ref|eqref)(?![A-Za-z])/.test(source)) return false;
-  for (let i = 0; i < source.length; i++) {
-    const ch = source[i];
+export function formulaSpan(source: string): { from: number; to: number } {
+  const lead = /^\s*\\label\s*\{[^{}]*\}\s*/.exec(source);
+  const from = lead ? lead[0].length : 0;
+  const trail = /\s*\\label\s*\{[^{}]*\}\s*$/.exec(source.slice(from));
+  return { from, to: trail ? source.length - trail[0].length : source.length };
+}
+
+/**
+ * Why MathLive may not edit this formula, or null when it may. It
+ * serialises the whole formula its own way: comments and line breaks
+ * vanish, alignment `&` and `\\` come back escaped or merged, \label and
+ * \tag move. Those go to source editing. Line breaks around the formula
+ * (`\begin{equation}` on a line of its own) are outside every token, and an
+ * edit keeps them as they are; so is a \label at either end (formulaSpan).
+ */
+export function mathliveBlocker(source: string): string | null {
+  const span = formulaSpan(source);
+  const formula = source.slice(span.from, span.to);
+  if (formula.trim().includes('\n')) return 'This formula is written on several lines, so it opens in the source: the formula editor would join them.';
+  const cmd = /\\(label|tag|notag|nonumber|begin|end|intertext|ref|eqref)(?![A-Za-z])/.exec(formula);
+  if (cmd) return `This formula uses \\${cmd[1]} inside it, so it opens in the source: the formula editor would move or drop it.`;
+  for (let i = 0; i < formula.length; i++) {
+    const ch = formula[i];
     if (ch === '\\') {
-      if (source[i + 1] === '\\') return false;
+      if (formula[i + 1] === '\\') return ALIGNED;
       i++;
-    } else if (ch === '%' || ch === '&') {
-      return false;
+    } else if (ch === '&') {
+      return ALIGNED;
+    } else if (ch === '%') {
+      return 'This formula has a comment, so it opens in the source: the formula editor would drop it.';
     }
   }
-  return true;
+  return null;
+}
+
+const ALIGNED = 'This formula has alignment (& or \\\\), so it opens in the source: the formula editor would rewrite it.';
+const REWRITTEN = 'The formula editor would write this formula differently, so it opens in the source.';
+
+export function mathliveCanEdit(source: string): boolean {
+  return mathliveBlocker(source) === null;
 }
 
 /** A TeX token with the source span it stands for (a brace group around a single token included). */
@@ -324,8 +349,11 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   closeMathPopover();
   const seq = ++openSeq;
   // the formula follows edits above it (or a collaborator's) while the editor is open
-  const range = trackRange(view, target.innerFrom, target.innerTo);
-  const toSource = () => {
+  const span = formulaSpan(view.state.doc.sliceString(target.innerFrom, target.innerTo));
+  const range = trackRange(view, target.innerFrom + span.from, target.innerFrom + span.to);
+  /** Shows the formula's source; `why` tells the person why the formula editor did not open. */
+  const toSource = (why?: string | null) => {
+    if (why) visualNotice(why, 'info');
     untrack(view, range);
     if (range.live) {
       const head = view.state.selection.main.head;
@@ -335,7 +363,8 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     }
     view.focus();
   };
-  if (!mathliveCanEdit(view.state.doc.sliceString(range.from, range.to))) return toSource();
+  const blocked = mathliveBlocker(view.state.doc.sliceString(range.from, range.to));
+  if (blocked) return toSource(blocked);
   const keys = holdKeys(view, (focusView) => {
     if (seq !== openSeq) return;
     closeMathPopover();
@@ -352,7 +381,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   if (seq !== openSeq) { keys.release(); untrack(view, range); return; }
   const source = view.state.doc.sliceString(range.from, range.to);
   if (!ok) visualNotice(LOAD_FAILED);
-  if (!ok || !range.live || !mathliveCanEdit(source)) { keys.release(); return toSource(); }
+  if (!ok || !range.live || !mathliveCanEdit(source)) { keys.release(); return toSource(ok && range.live ? mathliveBlocker(source) : null); }
 
   const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   // MathLive's virtual keyboard (on touch devices) styles itself from a [theme] ancestor
@@ -408,7 +437,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   if (!roundTrips(source, c0)) {
     pop.remove();
     keys.release();
-    return toSource();
+    return toSource(REWRITTEN);
   }
 
   // where the formula is now: its rendering while that is drawn, else its source

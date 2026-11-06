@@ -23,12 +23,18 @@ export const visualTheme = EditorView.theme({
   '.cm-vis-i': { fontStyle: 'italic' },
   '.cm-vis-u': { textDecoration: 'underline' },
   '.cm-vis-sc': { fontVariant: 'small-caps' },
+  // what a table cell draws of \texttt, \textsuperscript and \textsubscript
+  '.cm-vis-tt': { fontFamily: 'var(--font-mono)', fontSize: '0.9em' },
+  '.cm-vis-sup': { verticalAlign: 'super', fontSize: '0.75em' },
+  '.cm-vis-sub': { verticalAlign: 'sub', fontSize: '0.75em' },
   '.cm-vis-url': { color: 'var(--accent)', textDecoration: 'underline', textDecorationThickness: '1px', overflowWrap: 'anywhere' },
 
   '.cm-vis-math': { cursor: 'pointer', borderRadius: '4px', padding: '0 1px', position: 'relative' },
   // KaTeX's visually hidden MathML copy (for screen readers) sits inside the formula's box
   '.cm-vis-math .katex-mathml': { top: '0', left: '0' },
   '.cm-vis-math--display': { display: 'block', textAlign: 'center', padding: '8px 0' },
+  '.cm-vis-cellmath': { position: 'relative' },
+  '.cm-vis-cellmath .katex-mathml': { top: '0', left: '0' },
   '.cm-vis-math--raw': { fontFamily: 'var(--font-mono)', fontSize: '0.85em', color: 'var(--syn-command)' },
 
   '.cm-vis-chip': {
