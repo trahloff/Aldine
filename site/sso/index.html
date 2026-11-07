@@ -153,7 +153,7 @@
 </tbody>
 </table>
 </div>
-<p>Each provider is independent, and each one that is configured adds a button to the sign-in page. A session lasts 30 days.</p>
+<p>Each provider is independent, and each one that is configured adds a button to the sign-in page. A session lasts 30 days from its last use, and at most 90 days from the sign-in.</p>
 
 <h2 id="pass-variables">Where the variables go</h2>
 <p>All configuration is environment variables on the <code>app</code> container. How they get there depends on which compose file you run (the <a href="/self-hosting/">self-hosting guide</a> explains both):</p>
@@ -374,7 +374,7 @@ OIDC_LABEL=Dex</code></pre>
 <ul>
 <li>Accounts created by single sign-on never have a password. Aldine refuses to set one, sends no reset link for them and refuses password sign-in, so every sign-in goes through the provider.</li>
 <li><code>OIDC_ALLOWED_GROUPS</code> gates OpenID Connect sign-in only. Anyone can still register a password account unless <code>ALDINE_SSO_ONLY=1</code> is set. If the group is meant to decide who uses the instance, set both.</li>
-<li>Group membership is checked at sign-in. Removing someone from the group, or disabling them at the provider, takes effect at their next sign-in. Until then their Aldine session (up to 30 days) and any access tokens they created keep working. Cutting access at once means removing the person's sessions and tokens; the commands are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md#access-control">docs/OIDC.md</a>.</li>
+<li>Group membership is checked at sign-in. Removing someone from the group, or disabling them at the provider, takes effect at their next sign-in. Until then their Aldine session (30 days from its last use, 90 days from the sign-in at most) and any access tokens they created keep working. Cutting access at once means removing the person's sessions and tokens; the commands are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/OIDC.md#access-control">docs/OIDC.md</a>.</li>
 </ul>
 
 <h2 id="admins">Administrators</h2>

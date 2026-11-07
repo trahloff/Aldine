@@ -5,14 +5,12 @@ import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
 import { PROJECT_ID_RE } from '../util.js';
 import { LINK_UNSUPPORTED, fsyncDir } from '../durable.js';
 import { DamagedStoreFileError, JsonStore, type StoreDump } from './json.js';
-import type { DataStore, User, EmailPending, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation } from './types.js';
+import { PRE_RENEWAL_SESSION_MS } from './types.js';
+import type { DataStore, User, EmailPending, TokenRecord, ProjectMeta, ProjectVisit, ProjectOpen, ProjectActivity, LastEdit, CompileMark, Comment, OAuthClient, RefreshTokenRecord, Invitation, SignInLink } from './types.js';
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 
-/** What `PRAGMA user_version` holds once the tables below exist. A file with
- *  a higher number was written by a newer Aldine. */
-const SCHEMA_VERSION = 1;
-
+/** The tables of schema 1 (1.7), which every file starts from. */
 const SCHEMA = `
   CREATE TABLE users (
     id text PRIMARY KEY, email text UNIQUE, name text NOT NULL, salt text NOT NULL, hash text NOT NULL,
@@ -73,6 +71,23 @@ const SCHEMA = `
   -- json_copied_at: when the JSON datastore beside the file was copied in.
   CREATE TABLE aldine_meta (key text PRIMARY KEY, value text NOT NULL);
 `;
+
+/** MIGRATIONS[i] takes a file from schema i + 1 to i + 2. One that shipped
+ *  is never edited: a change is a new entry. */
+const MIGRATIONS = [
+  // 1.9: the sign-in each session began with, for the cap on renewals.
+  `ALTER TABLE sessions ADD COLUMN created_at integer;
+   UPDATE sessions SET created_at = exp - ${PRE_RENEWAL_SESSION_MS};`,
+  // Single sign-on identities connected to password accounts (Sign-in methods).
+  `CREATE TABLE sign_in_links (
+    subject text PRIMARY KEY, user_id text NOT NULL, provider text NOT NULL, created_at text NOT NULL,
+    UNIQUE (user_id, provider)
+  );`,
+];
+
+/** What `PRAGMA user_version` holds once every migration ran. A file with
+ *  a higher number was written by a newer Aldine. */
+const SCHEMA_VERSION = 1 + MIGRATIONS.length;
 
 type Row = Record<string, any>;
 type Sqlite = typeof import('node:sqlite');
@@ -222,7 +237,7 @@ export class SqliteStore implements DataStore {
     };
     try {
       await copy(() => 'users.json', d.users, (u) => this.createUser(u));
-      await copy(() => 'sessions.json', d.sessions, (s) => this.createSession(s.sid, s.userId, s.exp));
+      await copy(() => 'sessions.json', d.sessions, (s) => this.createSession(s.sid, s.userId, s.exp, s.createdAt));
       await copy(() => 'resets.json', d.resets, (r) => this.createReset(r.token, r.userId, r.exp));
       await copy(() => 'tokens.json', d.tokens, (t) => this.createToken(t));
       await copy(() => 'oauth_clients.json', d.oauthClients, (c) => this.createOAuthClient(c));
@@ -238,6 +253,9 @@ export class SqliteStore implements DataStore {
         for (const [branch, mark] of Object.entries(a.compile)) await this.setCompileMark(a.projectId, branch, mark);
       });
       await copy(() => 'invitations.json', d.invitations, (i) => this.setInvitation(i));
+      await copy(() => 'sign_in_links.json', d.signInLinks, async (l) => {
+        if (!(await this.createSignInLink(l))) throw new Error(`a second link for ${l.subject}`);
+      });
       const count = (table: string) => Number(this.get(`SELECT count(*) AS n FROM ${table}`)!.n);
       if (count('users') !== d.users.length) throw new Error(`${d.users.length} accounts read, ${count('users')} written`);
       if (count('project_meta') !== d.meta.length) throw new Error(`${d.meta.length} projects read, ${count('project_meta')} written`);
@@ -314,7 +332,7 @@ export class SqliteStore implements DataStore {
   async setDisabled(id: string, disabledAt: string | null) { this.run(`UPDATE users SET disabled_at=?2 WHERE id=?1`, id, disabledAt); }
   async deleteUser(id: string) {
     this.tx(() => {
-      for (const table of ['sessions', 'resets', 'tokens', 'refresh_tokens', 'connections', 'project_opens', 'project_visits']) {
+      for (const table of ['sessions', 'resets', 'tokens', 'refresh_tokens', 'connections', 'project_opens', 'project_visits', 'sign_in_links']) {
         this.run(`DELETE FROM ${table} WHERE user_id=?1`, id);
       }
       this.run(`DELETE FROM users WHERE id=?1`, id);
@@ -328,15 +346,18 @@ export class SqliteStore implements DataStore {
   async findUserBySubject(subject: string) { const r = this.get(`SELECT * FROM users WHERE subject=?1`, subject); return r ? this.rowToUser(r) : null; }
 
   // ---- sessions ----
-  async createSession(sid: string, userId: string, exp: number) {
+  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
     this.tx(() => {
       this.run(`DELETE FROM sessions WHERE exp < ?1`, Date.now());
-      this.run(`INSERT INTO sessions(sid,user_id,exp) VALUES(?1,?2,?3)`, sid, userId, exp);
+      this.run(`INSERT INTO sessions(sid,user_id,exp,created_at) VALUES(?1,?2,?3,?4)`, sid, userId, exp, createdAt);
     });
   }
   async getSession(sid: string) {
-    const r = this.get(`SELECT user_id, exp FROM sessions WHERE sid=?1`, sid);
-    return r ? { userId: r.user_id as string, exp: Number(r.exp) } : null;
+    const r = this.get(`SELECT user_id, exp, created_at FROM sessions WHERE sid=?1`, sid);
+    return r ? { userId: r.user_id as string, exp: Number(r.exp), createdAt: Number(r.created_at) } : null;
+  }
+  async renewSession(sid: string, exp: number) {
+    return this.run(`UPDATE sessions SET exp=?2 WHERE sid=?1 AND exp < ?2`, sid, exp) > 0;
   }
   async deleteSession(sid: string) { this.run(`DELETE FROM sessions WHERE sid=?1`, sid); }
   async deleteSessionsForUser(userId: string) { this.run(`DELETE FROM sessions WHERE user_id=?1`, userId); }
@@ -644,6 +665,24 @@ export class SqliteStore implements DataStore {
     this.run(`DELETE FROM invitations WHERE project_id=?1`, projectId);
   }
 
+  // ---- sign-in links ----
+  private rowToLink(r: Row): SignInLink {
+    return { subject: r.subject, userId: r.user_id, provider: r.provider, createdAt: r.created_at };
+  }
+  async createSignInLink(l: SignInLink) {
+    return this.run(`INSERT INTO sign_in_links(subject,user_id,provider,created_at) VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING`, l.subject, l.userId, l.provider, l.createdAt) === 1;
+  }
+  async findSignInLink(subject: string) {
+    const r = this.get(`SELECT * FROM sign_in_links WHERE subject=?1`, subject);
+    return r ? this.rowToLink(r) : null;
+  }
+  async listSignInLinks(userId: string) {
+    return this.all(`SELECT * FROM sign_in_links WHERE user_id=?1 ORDER BY created_at, provider`, userId).map((r) => this.rowToLink(r));
+  }
+  async deleteSignInLink(userId: string, provider: string) {
+    return this.run(`DELETE FROM sign_in_links WHERE user_id=?1 AND provider=?2`, userId, provider) === 1;
+  }
+
   // ---- connections ----
   async getConnection(userId: string, provider: string) {
     const r = this.get(`SELECT data FROM connections WHERE user_id=?1 AND provider=?2`, userId, provider);
@@ -701,10 +740,9 @@ function migrate(db: DatabaseSync, file: string): void {
     if (version > SCHEMA_VERSION) {
       throw new Error(`Datastore file ${file} was written by a newer Aldine (schema ${version}; this one knows ${SCHEMA_VERSION}). Run that release again, or restore the backup taken before the upgrade.`);
     }
-    if (version === 0) {
-      db.exec(SCHEMA);
-      db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
-    }
+    if (version === 0) db.exec(SCHEMA);
+    for (let v = Math.max(version, 1); v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v - 1]);
+    if (version !== SCHEMA_VERSION) db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

@@ -83,6 +83,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   sees the name only.
 - With the PDF alone on screen, a typeset that stopped on errors says so,
   with a Show the errors button that brings the editor back.
+- Account settings has a Sign-in methods section. A password account can
+  connect ORCID, single sign-on, and Google or GitHub when the server offers
+  them, and then sign in either way into the same account. Connecting from a
+  session older than 10 minutes asks for the password first. An identity that
+  already belongs to another account is refused and the page says so.
+  Disconnect removes one again, unless it is the last way to sign in.
+- A password account that connected ORCID gets invitations sent to its ORCID
+  iD, also ones that were waiting before it connected. After Disconnect,
+  invitations and projects shared with the iD no longer reach it.
+- The Sign-in column on /admin lists every way an account signs in: the
+  password and each connected provider.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or
@@ -336,6 +347,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Ada)" in the presence chip, in History and in the review prompt. Each
   Claude commit names that person in an `On-behalf-of` trailer; the author
   stays Claude.
+- You stay signed in while you use Aldine: each day you use it, your sign-in
+  lasts another 30 days from then, up to 90 days after you signed in. Before,
+  it ended 30 days after signing in, however much you used it. Signing out, a
+  password change and an administrator's disable still end it at once. On
+  SQLite the first start updates `aldine.db`, which 1.8 then refuses to open;
+  to go back, restore the backup taken before the upgrade.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -747,6 +764,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   top of the file and could drop what they were typing.
 - The experimental agent edit highlight tints only text Claude wrote. Before,
   a co-author's typing was tinted too while Claude was at work.
+- An account an administrator disabled in the same millisecond it was
+  created no longer reads as waiting for approval: its sign-in says it is
+  disabled.
 
 ## [1.8.0] — 2026-11-04
 

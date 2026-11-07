@@ -63,6 +63,7 @@ const ada = { id: 'ada', email: 'ada@example.com', name: 'Ada', salt: 's', hash:
 const orc = { id: 'orc', email: null, name: 'Josiah', salt: 's', hash: '', createdAt: '2026-10-02T00:00:00.000Z', provider: 'orcid', subject: 'orcid:0000-0002-1825-0097' };
 const wen = { id: 'wen', email: 'wen@example.com', name: 'Wen', salt: 's', hash: 'h', createdAt: '2026-10-03T00:00:00.000Z', disabledAt: '2026-10-03T00:00:00.000Z', emailPending: { hash: 'a'.repeat(64), expiresAt: '2027-01-01T00:00:00.000Z' } };
 const later = Date.now() + 86_400_000;
+const signedIn = Date.now() - 86_400_000;
 const pat = { id: 'pat1', userId: 'ada', name: 'Agent', hash: 'digest1', projectIds: ['proj1'], createdAt: '2026-10-04T00:00:00.000Z', lastUsedAt: null, expiresAt: null, revokedAt: null, clientName: null, family: null };
 const oat = { id: 'oat1', userId: 'ada', name: 'Claude', hash: 'digest2', projectIds: null, createdAt: '2026-10-05T00:00:00.000Z', lastUsedAt: '2026-10-06T00:00:00.000Z', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, clientName: 'Claude', family: 'fam1' };
 const client = { id: 'aldc_1', name: 'Claude', redirectUris: ['https://claude.ai/cb'], createdAt: '2026-10-05T00:00:00.000Z', lastUsedAt: '2026-10-06T00:00:00.000Z' };
@@ -75,13 +76,14 @@ const opened = { userId: 'ada', projectId: 'proj1', at: '2026-10-09T00:00:00.000
 const hidden = { userId: 'wen', projectId: 'proj1', at: null, branch: null, hidden: true };
 const edit = { at: '2026-10-10T00:00:00.000Z', byId: 'ada', byName: 'Ada', branch: 'main' };
 const mark = { status: 'error', errors: 2, at: '2026-10-10T01:00:00.000Z' };
+const link = { subject: 'oidc:abc:ada-1', userId: 'ada', provider: 'oidc', createdAt: '2026-10-12T00:00:00.000Z' };
 const inv = { id: 'f'.repeat(32), projectId: 'proj2', to: 'ada@example.com', invitedBy: 'orc', createdAt: '2026-10-11T00:00:00.000Z', expiresAt: '2026-10-25T00:00:00.000Z', status: 'pending', respondedAt: null, emailedAt: '2026-10-11T00:00:01.000Z' };
 
 async function seed(dir) {
   const s = new JsonStore(dir);
   await s.init();
   for (const u of [ada, orc, wen]) await s.createUser(u);
-  await s.createSession('sid1', 'ada', later);
+  await s.createSession('sid1', 'ada', later, signedIn);
   await s.createReset('reset1', 'wen', later);
   await s.createToken(pat);
   await s.createToken(oat);
@@ -99,7 +101,8 @@ async function seed(dir) {
   await s.setCompileMark('proj1', 'feature/x', mark);
   await s.setCompileMark('proj2', 'main', mark);
   await s.setInvitation(inv);
-  // Shapes from before later fields: usage.json before July 2026, a token before OAuth.
+  await s.createSignInLink(link);
+  // Shapes from before later fields: usage.json before July 2026, a token before OAuth, a session before renewals.
   const usage = JSON.parse(fs.readFileSync(at(dir, 'usage.json'), 'utf8'));
   usage.orc = { month: '2026-06', seconds: 30 };
   fs.writeFileSync(at(dir, 'usage.json'), JSON.stringify(usage));
@@ -107,6 +110,9 @@ async function seed(dir) {
   const { clientName: _c, family: _f, ...old } = { ...pat, id: 'pat0', hash: 'digest0' };
   tokens.pat0 = old;
   fs.writeFileSync(at(dir, 'tokens.json'), JSON.stringify(tokens));
+  const sessions = JSON.parse(fs.readFileSync(at(dir, 'sessions.json'), 'utf8'));
+  sessions.sid0 = { userId: 'wen', exp: later };
+  fs.writeFileSync(at(dir, 'sessions.json'), JSON.stringify(sessions));
   await s.close();
 }
 
@@ -118,6 +124,7 @@ async function readAll(s) {
     users: await s.listUsers(),
     bySubject: await s.findUserBySubject(orc.subject),
     session: await s.getSession('sid1'),
+    oldSession: await s.getSession('sid0'),
     reset: await s.getReset('reset1'),
     tokens: (await s.listTokensForUser('ada')).map(tok),
     byHash: tok(await s.getTokenByHash('digest0')),
@@ -132,6 +139,7 @@ async function readAll(s) {
     opens: [await s.listProjectOpens('ada'), await s.listProjectOpens('wen')],
     activity: (await s.listProjectActivity()).sort((a, b) => a.projectId.localeCompare(b.projectId)),
     invitations: [await s.listProjectInvitations('proj2'), await s.listInvitationsTo(['ada@example.com'])],
+    links: [await s.listSignInLinks('ada'), await s.findSignInLink(link.subject)],
   };
   return out;
 }
@@ -147,6 +155,7 @@ async function readAll(s) {
   const logged = await linesOf('log', () => s.init());
   check(logged.some((l) => l.includes(`copied 3 account(s) and 2 project(s) from the JSON files in ${dir} into ${file}`)), `the copy is logged with what it moved (got ${JSON.stringify(logged)})`);
   eq(await readAll(s), expected, 'every record reads back the same from SQLite, older shapes included');
+  eq(expected.oldSession, { userId: 'wen', exp: later, createdAt: later - 30 * 86_400_000 }, 'a session from before renewals began 30 days before its expiry');
   eq((await s.readMeta('proj1')).github, proj1.github, 'project metadata is kept whole, a field the code no longer writes included');
   eq(snapshot(dir), before, 'the JSON files are byte for byte and time for time as they were');
   eq(fs.readdirSync(dir).filter((f) => f.includes('.tmp')), [], 'no temp file is left behind');
@@ -258,6 +267,49 @@ async function readAll(s) {
   raw.exec('PRAGMA user_version=99');
   raw.close();
   await throws(() => new SqliteStore(newer).init(), 'was written by a newer Aldine (schema 99', 'a file from a newer release is not touched');
+}
+
+// ---- a file from 1.7 or 1.8 (schema 1) is migrated at start ----
+{
+  const file = at(freshDir(), SQLITE_FILE);
+  const first = new SqliteStore(file);
+  await first.init();
+  await first.close();
+  const { DatabaseSync } = await loadSqlite();
+  const raw = new DatabaseSync(file);
+  // Schema 1 is the current tables without sessions.created_at and sign_in_links.
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; PRAGMA user_version=1');
+  raw.prepare('INSERT INTO sessions(sid,user_id,exp) VALUES(?,?,?)').run('old', 'ada', later);
+  raw.close();
+  const s = new SqliteStore(file);
+  await s.init();
+  eq(await s.getSession('old'), { userId: 'ada', exp: later, createdAt: later - 30 * 86_400_000 }, 'a session from schema 1 began 30 days before its expiry');
+  await s.close();
+  const after = new DatabaseSync(file);
+  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 3, 'and the file is at schema 3');
+  after.close();
+}
+
+// ---- a file from 1.8 (schema 1) gets the sign-in links table, keeping its rows ----
+{
+  const file = at(freshDir(), SQLITE_FILE);
+  const first = new SqliteStore(file);
+  await first.init();
+  await first.createUser(ada);
+  await first.close();
+  const { DatabaseSync } = await loadSqlite();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; PRAGMA user_version=1');
+  raw.close();
+  const upgraded = new SqliteStore(file);
+  await upgraded.init();
+  eq((await upgraded.getUser('ada')).email, ada.email, 'the accounts stay');
+  eq(await upgraded.createSignInLink(link), true, 'links can be stored after the upgrade');
+  eq(await upgraded.listSignInLinks('ada'), [link], 'and read back');
+  await upgraded.close();
+  const check2 = new DatabaseSync(file);
+  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 3, 'the file is at schema 3');
+  check2.close();
 }
 
 // ---- ALDINE_DATASTORE ----

@@ -151,7 +151,7 @@ export default function Admin() {
                             ? <span className="admin__status admin__status--off" data-testid="admin-status-disabled" title={`Disabled ${new Date(u.disabledAt).toLocaleString()}`}>Disabled</span>
                             : <span className="admin__status" data-testid="admin-status-active">Active</span>}
                       </td>
-                      <td>{u.signIn}</td>
+                      <td data-testid="admin-sign-in">{(u.signInMethods ?? [u.signIn]).join(', ')}</td>
                       <td title={u.createdAt}>{new Date(u.createdAt).toLocaleDateString()}</td>
                       <td title={u.lastSeenAt}>{ago(u.lastSeenAt, now)}</td>
                       <td className="admin__num">{u.projects}</td>

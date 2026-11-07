@@ -7,6 +7,18 @@ import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from
  *  projects shared with that address stay hidden until it is. */
 export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true }
 export interface OAuthProviderInfo { id: string; label: string }
+/** Account settings, Sign-in methods. `password`: the password signs in
+ *  here; `provider`: the provider a single sign-on account belongs to;
+ *  `links`: providers connected to a password account; `canConnect`: it is
+ *  one; `recent`: connecting needs no password now. */
+export interface SignInMethods {
+  password: boolean;
+  provider: string | null;
+  links: Array<{ provider: string; label: string; createdAt: string; configured: boolean }>;
+  canConnect: boolean;
+  recent: boolean;
+  providers: OAuthProviderInfo[];
+}
 /** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
  *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
 export interface ProjectThumb { branch: string; w: number; h: number; v: string }
@@ -115,6 +127,8 @@ export interface AdminUserRow {
   provider?: string;
   /** How the account signs in: "Password", or the provider's name. */
   signIn: string;
+  /** signIn, then the providers a password account connected (Sign-in methods). */
+  signInMethods?: string[];
   /** A password account: the only kind a reset link serves. */
   password: boolean;
   createdAt: string;
@@ -730,6 +744,12 @@ export const api = {
   register: (email: string, password: string, name?: string, invite?: string) =>
     req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}) }) }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  signInMethods: () => req<SignInMethods>('/api/auth/sign-in-methods'),
+  /** The provider's sign-in page to go to; a 403 with code `reauth-required` asks for the password. */
+  connectSignIn: (provider: string, password?: string) =>
+    req<{ url: string }>(`/api/auth/sign-in-methods/${encodeURIComponent(provider)}`, { method: 'POST', body: JSON.stringify(password ? { password } : {}) }),
+  disconnectSignIn: (provider: string) =>
+    req<{ ok: boolean }>(`/api/auth/sign-in-methods/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
   listTokens: () => req<AccessToken[]>('/api/tokens'),
   createToken: (name: string, projectIds?: string[], expiresAt?: string) =>
     req<AccessToken & { token: string }>('/api/tokens', { method: 'POST', body: JSON.stringify({ name, projectIds, expiresAt }) }),

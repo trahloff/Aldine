@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, AccessToken, ApiError, AuthUser, ProjectSummary, RemoteConnectionRow } from '../api';
+import { api, AccessToken, ApiError, AuthUser, ProjectSummary, RemoteConnectionRow, SignInMethods as Methods } from '../api';
 import { remoteDescriptor } from '../remotes';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
@@ -74,6 +74,105 @@ function ZoteroKey() {
           <button className="btn btn--small" onClick={forget} data-testid="account-zotero-forget">Forget key</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The ways a password account signs in: its password, and the single
+ *  sign-on providers it connected. Connect goes to the provider and comes
+ *  back to this dialog; a session older than ten minutes asks for the
+ *  password first. */
+function SignInMethods({ focus }: { focus: boolean }) {
+  const [m, setM] = useState<Methods | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [asking, setAsking] = useState<{ id: string; label: string } | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
+  const { refresh } = useAuth();
+  const load = () => api.signInMethods().then((r) => { setM(r); setFailed(false); }, () => setFailed(true));
+  useEffect(() => { load(); }, []);
+  useEffect(() => { if (focus && m) ref.current?.scrollIntoView({ block: 'nearest' }); }, [focus, m]);
+  useEffect(() => { if (asking) passwordRef.current?.focus(); }, [asking]);
+
+  if (!failed && (!m || !m.canConnect || (m.providers.length === 0 && m.links.length === 0))) return null;
+
+  const connect = async (p: { id: string; label: string }, typed?: string) => {
+    if (busy) return;
+    setBusy(p.id);
+    setError('');
+    try {
+      const { url } = await api.connectSignIn(p.id, typed);
+      window.location.assign(url);
+      return;
+    } catch (err: any) {
+      if (err instanceof ApiError && err.code === 'reauth-required') {
+        setAsking(p);
+        if (typed !== undefined) setError(err.message);
+      } else {
+        toast(`Could not connect ${p.label}: ${err.message}`, 'error');
+      }
+    }
+    setBusy(null);
+  };
+  const disconnect = async (p: { provider: string; label: string }) => {
+    if (busy) return;
+    setBusy(p.provider);
+    try {
+      await api.disconnectSignIn(p.provider);
+      toast(`Disconnected ${p.label}. It no longer signs in to this account${p.provider === 'orcid' ? '. Invitations and projects shared with your ORCID iD no longer reach it either' : ''}.`, 'ok');
+      await load();
+      await refresh();
+    } catch (err: any) {
+      toast(err.message, 'error');
+    }
+    setBusy(null);
+  };
+
+  const unlinked = m ? m.providers.filter((p) => !m.links.some((l) => l.provider === p.id)) : [];
+  return (
+    <div ref={ref} data-testid="sign-in-methods">
+      <div className="menu__label" style={{ margin: '18px 0 6px' }}>Sign-in methods</div>
+      {failed && <LoadError text="Couldn’t load your sign-in methods." onRetry={load} testId="sign-in-methods-error" />}
+      {m?.password && (
+        <div className="settings__row" data-testid="sign-in-method-password">
+          <span>Email &amp; password</span>
+        </div>
+      )}
+      {m?.links.map((l) => (
+        <div className="settings__row" key={l.provider} data-testid={`sign-in-method-${l.provider}`}>
+          <span style={{ minWidth: 0 }}>
+            {l.label} <span style={{ color: 'var(--text-3)' }}>· connected {friendlyDate(l.createdAt)}{l.configured ? '' : ' · no longer offered here'}</span>
+          </span>
+          <button className="btn btn--small" onClick={() => disconnect(l)} disabled={busy === l.provider} aria-label={`Disconnect ${l.label}`} data-testid={`sign-in-method-${l.provider}-disconnect`}>Disconnect</button>
+        </div>
+      ))}
+      {unlinked.map((p) => (
+        <div className="settings__row" key={p.id} data-testid={`sign-in-method-${p.id}`}>
+          <span style={{ color: 'var(--text-2)' }}>{p.label}</span>
+          <button className="btn btn--small" onClick={() => connect(p)} disabled={busy === p.id} aria-busy={busy === p.id || undefined} aria-label={`Connect ${p.label}`} data-testid={`sign-in-method-${p.id}-connect`}>Connect</button>
+        </div>
+      ))}
+      {asking && (
+        <form className="login__form" style={{ marginTop: 8 }} noValidate data-testid="sign-in-method-reauth"
+          onSubmit={(e) => { e.preventDefault(); connect(asking, password); }}>
+          <div className="login__field">
+            <label className="field__label" htmlFor="sign-in-method-password">Enter your password to connect {asking.label}</label>
+            <input id="sign-in-method-password" ref={passwordRef} className="input login__input" type="password" autoComplete="current-password" value={password}
+              data-testid="sign-in-method-password-input" onChange={(e) => { setPassword(e.target.value); setError(''); }} />
+            <p className="login__hint">You signed in more than 10 minutes ago, so confirm it is you.</p>
+          </div>
+          {error && <p className="login__error" role="alert" data-testid="sign-in-method-reauth-error">{error}</p>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn--small" onClick={() => { setAsking(null); setPassword(''); setError(''); }}>Cancel</button>
+            <button type="submit" className="btn btn--primary btn--small" disabled={!password || !!busy} data-testid="sign-in-method-reauth-submit">Continue to {asking.label}</button>
+          </div>
+        </form>
+      )}
+      <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '6px 0 0' }}>A connected provider signs in to this account, as your password does.</p>
     </div>
   );
 }
@@ -400,7 +499,7 @@ function NameRow({ user }: { user: AuthUser }) {
 }
 
 /** Account settings: identity, agent access, change password (password accounts only). */
-export default function AccountSettings({ user, onClose }: { user: AuthUser; onClose(): void }) {
+export default function AccountSettings({ user, onClose, focus }: { user: AuthUser; onClose(): void; focus?: 'sign-in' }) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [busy, setBusy] = useState(false);
@@ -458,6 +557,8 @@ export default function AccountSettings({ user, onClose }: { user: AuthUser; onC
         <GitHosts />
 
         <ZoteroKey />
+
+        {!isSso && <SignInMethods focus={focus === 'sign-in'} />}
 
         {isSso ? (
           <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', marginTop: 18 }}>

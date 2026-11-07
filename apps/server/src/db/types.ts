@@ -134,7 +134,22 @@ export interface RemoteLink {
   createdByAldine?: boolean;
 }
 
-export interface SessionRow { userId: string; exp: number }
+export interface ResetRow { userId: string; exp: number }
+/** `createdAt` (ms) is the sign-in the session began with; renewing it
+ *  moves `exp` alone (sessions.ts). */
+export interface SessionRow extends ResetRow { createdAt: number }
+/** A session stored before `createdAt` existed began exactly this long
+ *  before its `exp`: nothing renewed sessions then. */
+export const PRE_RENEWAL_SESSION_MS = 30 * 864e5;
+
+/**
+ * A single sign-on identity connected to an account that signs in another
+ * way (a password account): signing in with the provider opens `userId`.
+ * `subject` is the provider-scoped stable id, as on User, never an address.
+ * At most one link per subject and per (account, provider), and a subject is
+ * never both linked and an account's own.
+ */
+export interface SignInLink { subject: string; userId: string; provider: string; createdAt: string }
 
 /**
  * Personal access token (headless agent credential). `hash` is the SHA-256
@@ -294,22 +309,27 @@ export interface DataStore {
    *  that field alone. */
   setDisabled(id: string, disabledAt: string | null): Promise<void>;
   /** Remove the account and every row that exists only for it: sessions,
-   *  reset links, access and refresh tokens, linked connections, its project
-   *  list rows and review marks. Usage seconds stay, they make up the
-   *  instance totals. The projects it owns and the shares naming it are the
-   *  caller's to settle first. The account row goes last, so a removal cut
-   *  short can be run again. */
+   *  reset links, access and refresh tokens, linked connections, sign-in
+   *  links, its project list rows and review marks. Usage seconds stay,
+   *  they make up the instance totals. The projects it owns and the shares
+   *  naming it are the caller's to settle first. The account row goes last,
+   *  so a removal cut short can be run again. */
   deleteUser(id: string): Promise<void>;
 
   // sessions (revocable)
-  createSession(sid: string, userId: string, exp: number): Promise<void>;
+  createSession(sid: string, userId: string, exp: number, createdAt: number): Promise<void>;
   getSession(sid: string): Promise<SessionRow | null>;
+  /** Move the session's expiry to `exp`, writing that field alone, and
+   *  report whether it did. A session deleted meanwhile (sign-out, a
+   *  password change, an administrator's disable) stays deleted, and an
+   *  `exp` no later than the stored one changes nothing. */
+  renewSession(sid: string, exp: number): Promise<boolean>;
   deleteSession(sid: string): Promise<void>;
   deleteSessionsForUser(userId: string): Promise<void>;
 
   // password-reset tokens
   createReset(token: string, userId: string, exp: number): Promise<void>;
-  getReset(token: string): Promise<SessionRow | null>;
+  getReset(token: string): Promise<ResetRow | null>;
   deleteReset(token: string): Promise<void>;
 
   // personal access tokens (looked up by SHA-256 digest on every bearer request)
@@ -417,6 +437,16 @@ export interface DataStore {
   addUsageSeconds(userId: string, month: string, seconds: number): Promise<void>;
   /** Instance-wide compile seconds for a month, across every user. */
   totalUsageSeconds(month: string): Promise<number>;
+
+  // single sign-on identities connected to accounts (Sign-in methods)
+  /** Insert; false, writing nothing, when the subject is linked already or
+   *  the account has a link for that provider. */
+  createSignInLink(l: SignInLink): Promise<boolean>;
+  findSignInLink(subject: string): Promise<SignInLink | null>;
+  /** The account's links, oldest first. */
+  listSignInLinks(userId: string): Promise<SignInLink[]>;
+  /** False when the account had no link for the provider. */
+  deleteSignInLink(userId: string, provider: string): Promise<boolean>;
 
   // per-user external connections (e.g. a GitHub access token). Secrets — kept
   // in the secrets store, never in the compiler-visible projects dir.

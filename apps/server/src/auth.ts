@@ -8,6 +8,7 @@ import { providers, type OAuthProfile } from './oauth.js';
 import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
 import { discardCodesForUser } from './oauth/codes.js';
 import { subkey } from './output-signing.js';
+import { SESSION_DAYS, firstExpiry, renewIfDue } from './sessions.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -72,7 +73,7 @@ export function signupConfigWarnings(env: NodeJS.ProcessEnv = process.env): stri
  * The account waits for an administrator's approval: it was created disabled
  * under ALDINE_SIGNUP=approval and nobody has enabled it since. No column of
  * its own: such an account has disabledAt equal to createdAt, which Disable
- * on /admin never writes (it stamps the moment it runs). Both datastores keep
+ * on /admin never writes (disableAccount stamps a later moment). Both datastores keep
  * the two as the same ISO string.
  */
 export const awaitingApproval = (u: { createdAt: string; disabledAt?: string }) => !!u.disabledAt && u.disabledAt === u.createdAt;
@@ -80,7 +81,6 @@ export const awaitingApproval = (u: { createdAt: string; disabledAt?: string }) 
 export const COOKIE = 'aldine_session';
 // Scoped to the base path so a neighbouring app on the same host never sees it.
 export const COOKIE_PATH = config.basePath || '/';
-const SESSION_DAYS = 30;
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const CONFIRM_TTL_DAYS = 7;
 
@@ -98,6 +98,23 @@ export function pub(u: User): PublicUser {
 /** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
 export function orcidOf(u: { subject?: string }): string | undefined {
   return u.subject?.startsWith('orcid:') ? u.subject.slice('orcid:'.length) : undefined;
+}
+
+/** The account's ORCID iD: its own subject, or the ORCID connected to a
+ *  password account from Sign-in methods. Invitations and share entries
+ *  naming the iD match it while the connection lasts. */
+export async function orcidFor(u: User): Promise<string | undefined> {
+  const own = orcidOf(u);
+  if (own || u.provider) return own;
+  const link = (await db().listSignInLinks(u.id)).find((l) => l.provider === 'orcid');
+  return link ? orcidOf(link) : undefined;
+}
+/** pub(), with a connected ORCID iD as `orcid`. */
+export async function pubFull(u: User): Promise<PublicUser> {
+  const p = pub(u);
+  if (p.orcid || u.provider) return p;
+  const orcid = await orcidFor(u);
+  return orcid ? { ...p, orcid } : p;
 }
 
 // Asynchronous (libuv thread pool): one scrypt call costs tens of
@@ -288,7 +305,7 @@ export async function passwordSignIn(email: string, password: string, confirmTok
     }
   }
   await refuseDisabled(user);
-  return { user: pub(user), emailConfirmed };
+  return { user: await pubFull(user), emailConfirmed };
 }
 
 export function getUser(id: string): Promise<User | null> {
@@ -317,6 +334,13 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
         await db().updateUser(bySubject).catch(() => { bySubject.email = null; });
       }
       return pub(bySubject);
+    }
+    // An identity connected to a password account from its Sign-in methods.
+    const link = await db().findSignInLink(profile.subject);
+    const linked = link ? await db().getUser(link.userId) : null;
+    if (linked) {
+      await refuseDisabled(linked);
+      return pubFull(linked);
     }
   }
   const existing = email ? await db().findUserByEmail(email) : null;
@@ -358,6 +382,115 @@ export async function setName(userId: string, name: unknown): Promise<PublicUser
   user.name = clean;
   await db().updateUser(user);
   return pub(user);
+}
+
+// ---------- sign-in methods: single sign-on connected to a password account ----------
+
+/** How long after signing in a session may connect a provider without the password. */
+export const RECENT_SIGN_IN_MS = 10 * 60 * 1000;
+
+/** Signed in within RECENT_SIGN_IN_MS: the sign-in the session began with,
+ *  which renewals keep. */
+export async function sessionIsRecent(sid: string | undefined, now = Date.now()): Promise<boolean> {
+  const s = sid ? await db().getSession(sid) : null;
+  return !!s && s.exp > now && now - s.createdAt <= RECENT_SIGN_IN_MS;
+}
+
+/** A refused connect that the password, typed again, would allow. */
+export class ReauthRequiredError extends Error { readonly code = 'reauth-required'; }
+
+export interface SignInLinkInfo { provider: string; label: string; createdAt: string; configured: boolean }
+export interface SignInMethods {
+  /** The account signs in with its password here. */
+  password: boolean;
+  /** The provider an account created by single sign-on belongs to. */
+  provider: string | null;
+  links: SignInLinkInfo[];
+  /** Providers can be connected: a password account. */
+  canConnect: boolean;
+  /** Connecting needs no password now (sessionIsRecent). */
+  recent: boolean;
+}
+
+const configured = (id: string) => providers.some((p) => p.id === id && p.configured());
+function refuseSsoLink(user: User): void {
+  if (user.provider) throw new Error(`This account signs in with ${providerLabel(user.provider)} and cannot connect another way to sign in.`);
+}
+
+export async function signInMethods(userId: string, sid: string | undefined): Promise<SignInMethods> {
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  const links = (await db().listSignInLinks(userId)).map((l) => ({
+    provider: l.provider,
+    label: providers.find((p) => p.id === l.provider)?.label ?? l.provider,
+    createdAt: l.createdAt,
+    configured: configured(l.provider),
+  }));
+  return { password: hasPassword(user) && !SSO_ONLY, provider: user.provider ?? null, links, canConnect: hasPassword(user), recent: await sessionIsRecent(sid) };
+}
+
+/**
+ * The check before a connect starts: a session from the last ten minutes, or
+ * the password typed again (as Change password asks for the current one).
+ * Only a password account connects: one created by single sign-on stays
+ * with its provider, for the reasons refuseSsoAccount gives.
+ */
+export async function confirmForLink(userId: string, sid: string | undefined, password: unknown): Promise<void> {
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  refuseSsoLink(user);
+  if (await sessionIsRecent(sid)) return;
+  const again = 'For your security, confirm it is you: enter your password, or sign out and sign in again.';
+  if (typeof password !== 'string' || !password || password.length > 1024 || SSO_ONLY) throw new ReauthRequiredError(again);
+  if (!(await verifyPassword(password, user))) throw new ReauthRequiredError('That password is incorrect.');
+}
+
+/** What binds a connect's state to the session that started it, so a
+ *  callback in another session (or after signing out) cannot link. */
+export function linkBinding(sid: string, provider: string, state: string): string {
+  return crypto.createHmac('sha256', subkey('sign-in-link')).update(JSON.stringify([sid, provider, state])).digest('base64url');
+}
+export function linkBindingMatches(mac: string | undefined, sid: string, provider: string, state: string): boolean {
+  if (!mac) return false;
+  const a = Buffer.from(mac);
+  const b = Buffer.from(linkBinding(sid, provider, state));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Connect the identity the provider just vouched for to the account. Keyed by
+ * the provider's subject, never the address, which an IdP may reassign. An
+ * identity that is another account's (its own or connected) is refused, as
+ * is a second identity at the same provider.
+ */
+export async function linkSignIn(userId: string, provider: string, profile: OAuthProfile): Promise<void> {
+  const label = providers.find((p) => p.id === provider)?.label ?? provider;
+  const user = await db().getUser(userId);
+  if (!user || user.disabledAt) throw new Error('Sign in again, then connect it from Account settings.');
+  refuseSsoLink(user);
+  if (!profile.subject) throw new Error(`${label} did not say which account you signed in with, so it cannot be connected.`);
+  const taken = `This ${label} account already signs in to another account on this server, so it cannot be connected to yours.`;
+  const link = await db().findSignInLink(profile.subject);
+  if (link?.userId === userId) return;
+  if (link || await db().findUserBySubject(profile.subject)) throw new Error(taken);
+  if ((await db().listSignInLinks(userId)).some((l) => l.provider === provider)) {
+    throw new Error(`Your account is connected to a different ${label} account already. Disconnect that one first.`);
+  }
+  if (!(await db().createSignInLink({ subject: profile.subject, userId, provider, createdAt: new Date().toISOString() }))) throw new Error(taken);
+}
+
+/** Disconnect a provider, unless nothing else would sign the account in:
+ *  the password (`passwordSignIn`, off under ALDINE_SSO_ONLY) or another
+ *  connected provider this server still offers. */
+export async function unlinkSignIn(userId: string, provider: string, passwordSignIn = !SSO_ONLY): Promise<void> {
+  const label = providers.find((p) => p.id === provider)?.label ?? provider;
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  const links = await db().listSignInLinks(userId);
+  if (!links.some((l) => l.provider === provider)) throw new Error(`${label} is not connected to this account.`);
+  const others = (passwordSignIn && hasPassword(user) ? 1 : 0) + links.filter((l) => l.provider !== provider && configured(l.provider)).length;
+  if (others === 0) throw new Error(`${label} is the only way to sign in to this account, so it stays connected.`);
+  await db().deleteSignInLink(userId, provider);
 }
 
 /** Returns how many access tokens were revoked with the old password. */
@@ -411,9 +544,10 @@ export async function resetPassword(token: string, next: string): Promise<number
 }
 
 // ---------- sessions (revocable) ----------
-export async function createSession(userId: string): Promise<string> {
+/** `issuedAt` other than now is for the test hooks only. */
+export async function createSession(userId: string, issuedAt = Date.now()): Promise<string> {
   const sid = crypto.randomBytes(24).toString('base64url');
-  await db().createSession(sid, userId, Date.now() + SESSION_DAYS * 864e5);
+  await db().createSession(sid, userId, firstExpiry(issuedAt), issuedAt);
   return sid;
 }
 
@@ -439,11 +573,19 @@ export async function revokeAgentAccess(userId: string): Promise<number> {
 }
 
 export async function verifyToken(sid: string | undefined): Promise<PublicUser | null> {
+  return (await signedIn(sid, false))?.user ?? null;
+}
+
+/** The account of a session, renewing the session when `renew` and it is
+ *  due (sessions.ts). `renewedExp`: the expiry this call stored, if any. */
+async function signedIn(sid: string | undefined, renew: boolean): Promise<{ user: PublicUser; renewedExp: number | null } | null> {
   if (!sid) return null;
+  const now = Date.now();
   const s = await db().getSession(sid);
-  if (!s || s.exp < Date.now()) return null;
+  if (!s || s.exp < now) return null;
   const user = await db().getUser(s.userId);
-  return user && !user.disabledAt ? pub(user) : null;
+  if (!user || user.disabledAt) return null;
+  return { user: await pubFull(user), renewedExp: renew ? await renewIfDue(db(), sid, s, now) : null };
 }
 
 // ---------- account administration (admin.ts decides who may) ----------
@@ -459,7 +601,10 @@ export const hasPassword = (u: User) => !u.provider && !!u.email;
  * good. Collab sockets are the caller's to close.
  */
 export async function disableAccount(userId: string, revokeAgents: boolean): Promise<void> {
-  await db().setDisabled(userId, new Date().toISOString());
+  // A stamp equal to createdAt means "awaiting approval" (awaitingApproval),
+  // and an account disabled in the millisecond it was created would get one.
+  const createdAt = Date.parse((await db().getUser(userId))?.createdAt ?? '');
+  await db().setDisabled(userId, new Date(Math.max(Date.now(), createdAt + 1 || 0)).toISOString());
   await revokeUser(userId);
   discardCodesForUser(userId);
   if (revokeAgents) await revokeAgentAccess(userId);
@@ -594,7 +739,7 @@ export async function userFromToken(authorizationHeader: string | undefined): Pr
     // silently un-revoking the token.
     await db().touchToken(rec.id, new Date().toISOString()).catch(() => {});
   }
-  return { user: pub(user), tokenScope: { tokenId: rec.id, projectIds: rec.projectIds } };
+  return { user: await pubFull(user), tokenScope: { tokenId: rec.id, projectIds: rec.projectIds } };
 }
 
 // ---------- cookies ----------
@@ -618,8 +763,8 @@ function decodeCookieValue(raw: string): string {
     return raw;
   }
 }
-export function sessionCookie(sid: string): string {
-  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${SESSION_DAYS * 86400}${SECURE_COOKIES ? '; Secure' : ''}`;
+export function sessionCookie(sid: string, maxAgeSeconds = SESSION_DAYS * 86400): string {
+  return `${COOKIE}=${sid}; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=${maxAgeSeconds}${SECURE_COOKIES ? '; Secure' : ''}`;
 }
 export function clearCookie(): string {
   return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=${COOKIE_PATH}; Max-Age=0${SECURE_COOKIES ? '; Secure' : ''}`;
@@ -685,4 +830,16 @@ export function sidFromRequest(cookieHeader: string | undefined): string | undef
 export function userFromRequest(cookieHeader: string | undefined): Promise<PublicUser | null> {
   if (!AUTH_ENABLED) return Promise.resolve(null);
   return verifyToken(sidFromRequest(cookieHeader));
+}
+/** userFromRequest for an HTTP request, which renews the session when it is
+ *  due and `renew`. `cookie`: the Set-Cookie its response carries then, so
+ *  the browser keeps the cookie as long as the server keeps the session. A
+ *  collab socket has no response to carry one and uses userFromRequest. */
+export async function resumeSession(cookieHeader: string | undefined, renew = true): Promise<{ user: PublicUser; cookie: string | null } | null> {
+  if (!AUTH_ENABLED) return null;
+  const sid = sidFromRequest(cookieHeader);
+  const r = await signedIn(sid, renew);
+  if (!r) return null;
+  const left = r.renewedExp === null ? 0 : Math.floor((r.renewedExp - Date.now()) / 1000);
+  return { user: r.user, cookie: left > 0 ? sessionCookie(sid!, left) : null };
 }

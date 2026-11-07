@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { check, eq, throws } from './assert.mjs';
+import { firstExpiry, renewIfDue } from '../src/sessions.ts';
 
 const uniq = () => crypto.randomBytes(6).toString('hex');
 
@@ -143,15 +144,78 @@ async function runSuite(store, label) {
 
   // ---- sessions ----
   const sid = `sid-${t}`;
-  const exp = Date.now() + 60_000;
-  await store.createSession(sid, user.id, exp);
-  eq(await store.getSession(sid), { userId: user.id, exp }, `${label}: getSession`);
-  await store.createSession(`sid2-${t}`, user.id, exp);
+  const signedIn = Date.now();
+  const exp = signedIn + 60_000;
+  await store.createSession(sid, user.id, exp, signedIn);
+  eq(await store.getSession(sid), { userId: user.id, exp, createdAt: signedIn }, `${label}: getSession`);
+  await store.createSession(`sid2-${t}`, user.id, exp, signedIn);
   await store.deleteSessionsForUser(user.id);
   check((await store.getSession(sid)) === null, `${label}: deleteSessionsForUser`);
-  await store.createSession(sid, user.id, exp);
+  await store.createSession(sid, user.id, exp, signedIn);
   await store.deleteSession(sid);
   check((await store.getSession(sid)) === null, `${label}: deleteSession`);
+
+  // renewSession writes exp alone, only forward, and never into an ended session.
+  await store.createSession(sid, user.id, exp, signedIn);
+  check(await store.renewSession(sid, exp + 1000), `${label}: renewSession reports the move`);
+  eq(await store.getSession(sid), { userId: user.id, exp: exp + 1000, createdAt: signedIn }, `${label}: renewSession moves exp and keeps the sign-in time`);
+  check(!(await store.renewSession(sid, exp + 1000)), `${label}: renewSession to the same exp writes nothing`);
+  check(!(await store.renewSession(sid, exp)), `${label}: renewSession never moves exp back`);
+  eq((await store.getSession(sid)).exp, exp + 1000, `${label}: an earlier exp is kept out`);
+  await store.deleteSession(sid);
+  check(!(await store.renewSession(sid, exp + 5000)), `${label}: renewSession of a deleted session reports nothing`);
+  check((await store.getSession(sid)) === null, `${label}: and does not bring it back`);
+  check(!(await store.renewSession(`missing-${t}`, exp)), `${label}: renewSession of an unknown session reports nothing`);
+
+  // ---- renewal with use (sessions.ts), on a fake clock ----
+  {
+    const DAY = 864e5;
+    const t0 = Date.now();
+    const rid = `renew-${t}`;
+    let writes = 0;
+    const counting = new Proxy(store, {
+      get(target, key) {
+        const v = target[key];
+        if (key === 'renewSession') return (...a) => { writes++; return v.apply(target, a); };
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    /** A request on `id` at `at`, as auth.ts serves it: the session's expiry after it, null when signed out. */
+    const use = async (at, id = rid) => {
+      const s = await store.getSession(id);
+      if (!s || s.exp < at) return null;
+      return (await renewIfDue(counting, id, s, at)) ?? s.exp;
+    };
+    await store.createSession(rid, user.id, firstExpiry(t0), t0);
+    eq(await use(t0 + DAY / 2), t0 + 30 * DAY, `${label}: a session used within its first day keeps its expiry`);
+    eq(writes, 0, `${label}: and is not written`);
+    // Uses a day and a minute apart.
+    const at = (k) => t0 + k * (DAY + 60_000);
+    eq(await use(at(1)), at(1) + 30 * DAY, `${label}: used more than a day after the sign-in, it lasts 30 days from then`);
+    eq(writes, 1, `${label}: one write`);
+    for (let m = 1; m <= 100; m++) await use(at(1) + m * 10 * 60_000);
+    eq(writes, 1, `${label}: a hundred more uses that day write nothing`);
+    eq((await store.getSession(rid)).exp, at(1) + 30 * DAY, `${label}: and leave the expiry`);
+    for (let k = 2; k <= 89; k++) await use(at(k));
+    eq(writes, 60, `${label}: used daily, it is renewed daily until the cap`);
+    const capped = await store.getSession(rid);
+    eq([capped.exp, capped.createdAt], [t0 + 90 * DAY, t0], `${label}: the cap is 90 days from the sign-in, which renewals keep`);
+    eq(await use(t0 + 90 * DAY - 1), t0 + 90 * DAY, `${label}: in use until the cap`);
+    eq(await use(t0 + 90 * DAY + 1), null, `${label}: and signed out after it`);
+    eq(writes, 60, `${label}: nothing written at the cap`);
+
+    // A sign-out, password change or disable that lands while a request
+    // holds the session it read: the renewal writes nothing, the session stays ended.
+    for (const [why, end] of [['signed out', (id) => store.deleteSession(id)], ['revoked', () => store.deleteSessionsForUser(user.id)]]) {
+      const vid = `${why}-${t}`;
+      await store.createSession(vid, user.id, firstExpiry(t0), t0);
+      const read = await store.getSession(vid);
+      await end(vid);
+      eq(await renewIfDue(counting, vid, read, t0 + 2 * DAY), null, `${label}: a renewal of a session ${why} meanwhile writes nothing`);
+      check((await store.getSession(vid)) === null, `${label}: and it stays ${why}`);
+      eq(await use(t0 + 2 * DAY, vid), null, `${label}: its next request is signed out`);
+    }
+  }
 
   // ---- resets ----
   const token = `tok-${t}`;
@@ -565,13 +629,40 @@ async function runSuite(store, label) {
   await store.deleteConnection(user.id, 'github');
   check((await store.getConnection(user.id, 'github')) === null, `${label}: deleteConnection`);
 
+  // ---- sign-in links: single sign-on identities connected to an account ----
+  const linkSub = `oidc:abc:${t}`;
+  eq(await store.listSignInLinks(user.id), [], `${label}: no sign-in links by default`);
+  check((await store.findSignInLink(linkSub)) === null, `${label}: findSignInLink missing → null`);
+  const oidcLink = { subject: linkSub, userId: user.id, provider: 'oidc', createdAt: '2026-11-06T10:00:00.000Z' };
+  eq(await store.createSignInLink(oidcLink), true, `${label}: createSignInLink inserts`);
+  eq(await store.findSignInLink(linkSub), oidcLink, `${label}: findSignInLink roundtrip`);
+  eq(await store.createSignInLink({ ...oidcLink, userId: signup.id }), false, `${label}: a subject links one account only`);
+  eq((await store.findSignInLink(linkSub)).userId, user.id, `${label}: a refused link changes nothing`);
+  eq(await store.createSignInLink({ ...oidcLink, subject: `oidc:abc:other-${t}` }), false, `${label}: one link per account and provider`);
+  check((await store.findSignInLink(`oidc:abc:other-${t}`)) === null, `${label}: and the refused one is not stored`);
+  const orcidLink = { subject: `orcid:${t}`, userId: user.id, provider: 'orcid', createdAt: '2026-11-06T09:00:00.000Z' };
+  eq(await store.createSignInLink(orcidLink), true, `${label}: another provider links the same account`);
+  eq(await store.listSignInLinks(user.id), [orcidLink, oidcLink], `${label}: listSignInLinks, oldest first`);
+  eq(await store.listSignInLinks(signup.id), [], `${label}: listSignInLinks is per account`);
+  const linkAlias = await store.findSignInLink(linkSub);
+  linkAlias.userId = 'TAMPERED';
+  eq((await store.findSignInLink(linkSub)).userId, user.id, `${label}: findSignInLink result is a copy`);
+  eq(await store.deleteSignInLink(user.id, 'oidc'), true, `${label}: deleteSignInLink removes the link`);
+  eq(await store.deleteSignInLink(user.id, 'oidc'), false, `${label}: deleteSignInLink of a missing link → false`);
+  eq(await store.deleteSignInLink(signup.id, 'orcid'), false, `${label}: deleteSignInLink only removes the account's own link`);
+  check((await store.findSignInLink(linkSub)) === null, `${label}: a removed link is not found`);
+  eq(await store.listSignInLinks(user.id), [orcidLink], `${label}: the other link stays`);
+  eq(await store.createSignInLink({ ...oidcLink, userId: signup.id }), true, `${label}: a removed subject can link again`);
+  await store.deleteSignInLink(signup.id, 'oidc');
+  await store.deleteSignInLink(user.id, 'orcid');
+
   // ---- deleteUser: the account and every row that exists only for it ----
   const gone = { id: `u10-${t}`, email: `g-${t}@example.com`, name: 'Gus', salt: 's', hash: 'h', createdAt: new Date().toISOString() };
   await store.createUser(gone);
   const gp = `pg${t}`;
   const later = Date.now() + 60_000;
-  await store.createSession(`gs-${t}`, gone.id, later);
-  await store.createSession(`ks-${t}`, user.id, later);
+  await store.createSession(`gs-${t}`, gone.id, later, Date.now());
+  await store.createSession(`ks-${t}`, user.id, later, Date.now());
   await store.createReset(`gr-${t}`, gone.id, later);
   const gTok = { ...tok, id: `gpat-${t}`, hash: `digest-gpat-${t}`, userId: gone.id };
   await store.createToken(gTok);
@@ -582,6 +673,7 @@ async function runSuite(store, label) {
   await store.setProjectOpen({ userId: user.id, projectId: gp, at: '2026-10-01T00:00:00.000Z', branch: 'main', hidden: false });
   await store.setProjectVisit({ userId: gone.id, projectId: gp, branch: 'main', head: 'abc', at: '2026-10-01T00:00:00.000Z', promptedHead: null });
   await store.addUsageSeconds(gone.id, month, 7);
+  await store.createSignInLink({ subject: `orcid:gone-${t}`, userId: gone.id, provider: 'orcid', createdAt: '2026-11-06T10:00:00.000Z' });
   await store.deleteUser(gone.id);
   check((await store.getUser(gone.id)) === null, `${label}: deleteUser removes the account`);
   check((await store.findUserByEmail(gone.email)) === null, `${label}: deleteUser frees the address`);
@@ -594,6 +686,7 @@ async function runSuite(store, label) {
   eq(await store.listProjectOpens(gone.id), [], `${label}: deleteUser removes its project list rows`);
   check((await store.getProjectOpen(user.id, gp)) !== null, `${label}: deleteUser leaves another account's project list row`);
   check((await store.getProjectVisit(gone.id, gp, 'main')) === null, `${label}: deleteUser removes its review marks`);
+  check((await store.findSignInLink(`orcid:gone-${t}`)) === null, `${label}: deleteUser removes its sign-in links`);
   eq(await store.getUsageSeconds(gone.id, month), 7, `${label}: deleteUser keeps the usage seconds (instance totals)`);
   await store.updateUser(gone); // a password reset that finished after the delete
   check((await store.getUser(gone.id)) === null, `${label}: updateUser does not bring a deleted account back`);
