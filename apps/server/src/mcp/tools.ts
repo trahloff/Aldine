@@ -13,11 +13,11 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings,
+  inFileLineEndings, protectedProjects,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
-import { isListed, isOwner } from '../authz.js';
+import { canEdit, isListed, isOwner } from '../authz.js';
 import { addReference } from '../references.js';
 import { bibLoadedBySource } from '../bibload.js';
 import { bibIndex, labelIndex, wordCount } from '../indexes.js';
@@ -508,17 +508,17 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('list_projects', {
     ...annotate('List projects', READ),
-    description: 'List the LaTeX projects this token can reach: id, name, branches, rootFile, engine, agentCreated (true for projects made with create_project — the only ones trash_project accepts). Call it when you do not know the project id. A token scoped to one project makes the project argument optional everywhere.',
+    description: 'List the LaTeX projects this token can reach: id, name, branches, rootFile, engine, agentCreated (true for projects made with create_project — the only ones trash_project accepts), canEdit (false when the owner shares the project as view-only: read and typeset it, never write it). Call it when you do not know the project id. A token scoped to one project makes the project argument optional everywhere.',
   }, async () => {
     try {
       const scoped = identity.tokenScope?.projectIds;
       const metas = (await store.listProjects()).filter((m) =>
         !m.deletedAt && (!scoped || scoped.includes(m.id)) && isListed(m, identity.user));
-      const out = [] as Array<{ id: string; name: string; branches: string[]; rootFile: string; engine: string; agentCreated: boolean }>;
+      const out = [] as Array<{ id: string; name: string; branches: string[]; rootFile: string; engine: string; agentCreated: boolean; canEdit: boolean }>;
       for (const m of metas) {
         let branches = ['main'];
         try { branches = (await gitops.listBranches(m.id)).map((b) => b.name); } catch { /* fresh repo — main only */ }
-        out.push({ id: m.id, name: m.name, branches, rootFile: m.rootFile, engine: m.engine, agentCreated: m.createdVia === 'agent' });
+        out.push({ id: m.id, name: m.name, branches, rootFile: m.rootFile, engine: m.engine, agentCreated: m.createdVia === 'agent', canEdit: canEdit(m, identity.user) && !protectedProjects.has(m.id) });
       }
       return ok(out);
     } catch (err) { return toolError(err); }
@@ -592,7 +592,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project, branch = 'main', path: rawPath, edits, base_version, message }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath));
       if (isDirectoryPath(meta.id, branch, rel)) return fail(`"${rel}" is a folder on ${branch} — edit_file changes a file; name one inside it`);
@@ -691,7 +691,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project, branch = 'main', path: rawPath, content, base_version, message }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath), { wholeFile: true });
       assertFileTarget(meta.id, branch, rel);
@@ -739,7 +739,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project, branch = 'main', files: rawFiles, message }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       await gitops.ensureWorktree(meta.id, branch);
       // One entry per path: every entry resolves against the same pre-write
       // snapshot and the write loop is last-writer-wins, so a duplicate path
@@ -974,7 +974,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project, branch = 'main', message }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       await gitops.ensureWorktree(meta.id, branch);
       // One lock span from the flush to the commit: outside it an autosave
       // queued before the flush can stage the agent's delta as
@@ -1019,7 +1019,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project, branch = 'main', query, bibFile }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       // A wrong target would splice an @entry into a .tex source, which the
       // tool would then report as a success (and commit under Claude's name).
       const visible = visiblePath(bibFile || rootSiblingPath(meta.rootFile, 'references.bib'));
@@ -1151,7 +1151,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   }, async ({ project }) => {
     try {
       const meta = await resolveProject(identity, project);
-      assertWritableProject(meta.id);
+      assertWritableProject(meta, identity);
       if (meta.createdVia !== 'agent') return fail('Only projects created through the Agent API can be trashed by it — ask the user to delete this one from their workspace');
       if (!isOwner(meta, identity.user)) return fail('Only the owner of the project can move it to the trash');
       const { remote } = await trashProject(meta);

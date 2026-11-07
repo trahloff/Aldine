@@ -19,10 +19,12 @@ export interface RemoteDescriptor {
   tokenPage(base: string | undefined): string | null;
   /** Follows "Create a token on <host>" when that links to `tokenPage`. */
   tokenPageNote: string;
-  /** A page for a token limited to one repository, where the host has one apart from `tokenPage`. */
-  repoTokenPage?: { url: string; note: string };
+  /** A page for a token limited to one repository on the instance at `base`, where the host has one apart from `tokenPage`. */
+  repoTokenPage?: { page(base: string | undefined): string; note: string };
   /** The host can be self-hosted, so connecting may take a base URL. */
   selfHosted: boolean;
+  /** The connect form's toggle for an instance URL, when "Using a self-hosted <label>?" is not what people call it. */
+  selfHostedQuestion?: string;
   /** No canonical instance: the connect form always asks for the URL. */
   baseUrlRequired: boolean;
   defaultBaseUrl: string;
@@ -49,14 +51,15 @@ export const REMOTES: Record<RemoteProviderId, RemoteDescriptor> = {
     icon: GITHUB_ICON,
     changeRequest: 'pull request',
     tokenPlaceholder: 'GitHub token (needs repo scope)',
-    tokenHelp: 'Create one at github.com → Settings → Developer settings → Personal access tokens, with repo access.',
-    tokenPage: () => 'https://github.com/settings/tokens/new?scopes=repo&description=Aldine',
+    tokenHelp: 'Create one on GitHub under Settings → Developer settings → Personal access tokens, with repo access.',
+    tokenPage: (base) => `${base || 'https://github.com'}/settings/tokens/new?scopes=repo&description=Aldine`,
     tokenPageNote: ' with the repo scope already ticked.',
-    repoTokenPage: { url: 'https://github.com/settings/personal-access-tokens/new', note: ', choose only this repository and give it Contents: read and write.' },
-    selfHosted: false,
+    repoTokenPage: { page: (base) => `${base || 'https://github.com'}/settings/personal-access-tokens/new`, note: ', choose only this repository and give it Contents: read and write.' },
+    selfHosted: true,
+    selfHostedQuestion: 'Using GitHub Enterprise Server?',
     baseUrlRequired: false,
     defaultBaseUrl: 'https://github.com',
-    baseUrlPlaceholder: 'https://github.com',
+    baseUrlPlaceholder: 'https://github.example.edu',
   },
   gitlab: {
     id: 'gitlab',
@@ -104,10 +107,26 @@ export function instanceBase(raw: string | undefined): string | null {
   let u: URL;
   try { u = new URL((raw || '').trim()); } catch { return null; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  return `${u.origin}${u.pathname.replace(/\/+$/, '').replace(/\/api\/v[14]$/, '')}`;
+  return `${u.origin}${u.pathname.replace(/\/+$/, '').replace(/\/api\/v[134]$/, '')}`;
 }
 
 /** "merge request" → "Merge request", for the start of a sentence-case string. */
 export function sentence(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** What a push sends, in the words History uses: checkpoints, or commits on a project that commits by hand. */
+export function pushSummary(info: { pending: number; ahead: number | null }, manual: boolean, host: string): string {
+  const things = (n: number) => manual ? (n === 1 ? 'commit' : 'commits') : (n === 1 ? 'saved checkpoint' : 'saved checkpoints');
+  const files = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+  if (info.pending > 0) {
+    const named = manual
+      ? `Your message names the edits not yet committed (${files(info.pending)}).`
+      : `Your message names only the edits not yet saved as a checkpoint (${files(info.pending)}).`;
+    if (!info.ahead) return named;
+    return info.ahead === 1 ? `${named} The ${things(1)} before them goes as it is.` : `${named} The ${info.ahead} ${things(info.ahead)} before them go as they are.`;
+  }
+  if (info.ahead == null) return `Pushes the ${things(2)} ${host} does not have yet.`;
+  if (info.ahead === 0) return `Nothing new to push: ${host} has every ${manual ? 'commit' : 'saved checkpoint'}.`;
+  return `Pushes ${info.ahead} ${things(info.ahead)} to ${host}.`;
 }

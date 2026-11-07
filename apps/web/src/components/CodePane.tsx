@@ -19,6 +19,7 @@ import { visualExtensions, editAtCursor, publishEditorFocus, recordOwnCopies, ty
 import { agentHighlight } from '../editor/agentHighlight';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
+import { commentTips } from '../editor/commentTips';
 import { closeBeginBrace, closeBeginBraceInput } from '../editor/beginEnv';
 import { documentOutline, OutlineEntry } from '../editor/visual/outline';
 import type { PresenceUser } from './Presence';
@@ -101,9 +102,9 @@ export interface CodePaneHandle {
   editDocument(edit: (text: string) => Array<{ from: number; to: number; insert: string }> | null, done?: (changed: boolean) => void): void;
 }
 
-/** Comment highlight decorations, updatable via an effect and tracking edits. */
-const commentMark = Decoration.mark({ class: 'cm-comment-range' });
-const commentResolvedMark = Decoration.mark({ class: 'cm-comment-range cm-comment-resolved' });
+/** Comment highlight decorations, updatable via an effect and tracking edits.
+ *  Each carries its comment's id, which editor/commentTips and the tests read. */
+const commentMark = (r: CommentRange) => Decoration.mark({ class: r.resolved ? 'cm-comment-range cm-comment-resolved' : 'cm-comment-range', attributes: { 'data-comment-id': r.id } });
 const commentField = StateField.define<DecorationSet>({
   create() { return Decoration.none; },
   update(deco, tr) {
@@ -115,7 +116,7 @@ const commentField = StateField.define<DecorationSet>({
           e.value
             .filter((r) => r.from < r.to && r.to <= docLen)
             .sort((a, b) => a.from - b.from)
-            .map((r) => (r.resolved ? commentResolvedMark : commentMark).range(r.from, r.to)),
+            .map((r) => commentMark(r).range(r.from, r.to)),
           true,
         );
       }
@@ -170,6 +171,13 @@ interface Props {
   readOnly?: boolean;
   /** Whether this file's edits have reached the server; on every change. */
   onSync?(s: SyncState): void;
+  /** What the server lets this socket do, on every (re)connect: a role the
+   *  owner changed while the pane is open shows here first. */
+  onScope?(readOnly: boolean): void;
+  /** "Open in Review" on a commented text's card. */
+  onOpenComment?(id: string): void;
+  /** The comment the caret is in, whenever that changes (null: none). */
+  onCommentCaret?(id: string | null): void;
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -231,11 +239,11 @@ function spellcheckAttrs(spellcheck: boolean, filePath: string) {
   });
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync });
-  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onScope, onOpenComment, onCommentCaret });
+  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onScope, onOpenComment, onCommentCaret };
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -501,6 +509,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           recordOwnCopies,
           // outside the mode compartment: Visual's inline suggestions read it when they mount
           commentRangesField,
+          commentTips((id) => cbRef.current.onOpenComment?.(id), (id) => cbRef.current.onCommentCaret?.(id)),
           flashField,
           aldineTheme,
           EditorView.lineWrapping,
@@ -566,6 +575,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     provider.on('synced', initialStats);
     const onDenied = () => cbRef.current.onAccessDenied?.();
     provider.on('authenticationFailed', onDenied);
+    const onAuthed = () => cbRef.current.onScope?.(provider.authorizedScope === 'readonly');
+    provider.on('authenticated', onAuthed);
+    if (provider.isAuthenticated) onAuthed();
     // The open file's spot, for a reload or the next visit; the others were
     // kept when their panes let go of them.
     const keepSpot = () => {
@@ -602,6 +614,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       provider.off('synced', initialStats);
       provider.off('authenticationFailed', onDenied);
       provider.off('close', onClosed);
+      provider.off('authenticated', onAuthed);
       sync.dispose();
       providerRef.current = null;
       awareness.off('change', reportUsers);

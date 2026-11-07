@@ -109,9 +109,9 @@ test.describe('file tree: rename, drops, view and row menu', () => {
       await dropFiles(page, foot, [{ name: 'notes.txt', text: 'notes' }]);
       await expect(toast(page, 'Uploaded notes.txt')).toBeVisible();
 
-      // an entry that cannot be read (a folder) says so, and the rest still uploads
+      // an entry that cannot be read says so, and the rest still uploads
       await dropFiles(page, '[data-testid="file-tree"]', [{ name: 'figures', text: '', unreadable: true }, { name: 'later.tex', text: 'later' }]);
-      await expect(toast(page, 'Could not read figures: to upload a folder, drop the files in it')).toBeVisible();
+      await expect(toast(page, 'Could not read figures')).toBeVisible();
       await expect(toast(page, 'Uploaded later.tex')).toBeVisible();
       expect(await listing(request, id)).not.toContain('figure.png');
 

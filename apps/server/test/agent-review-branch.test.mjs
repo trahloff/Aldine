@@ -64,7 +64,8 @@ const bobCookie = `aldine_session=${await auth.createSession(bob.id)}`;
 const meta = await store.readMeta(id);
 meta.share = { mode: 'link', collaborators: [] };
 await store.writeMeta(meta);
-eq((await activity('camera-ready', { cookie: bobCookie })).commitCount, 1, "Ada's mark is not copied for Bob, who never reviewed it");
+eq(await store.getProjectVisit(bob.id, id, 'camera-ready'), null, "Ada's mark is not copied for Bob, who never reviewed it");
+eq((await activity('camera-ready', { cookie: bobCookie })).commitCount, 0, "Bob's first open starts his own mark (agent-review-first-open.test.mjs)");
 
 // unreviewed work on the base stays unreviewed on the new branch
 await commitAs('main', 'Claude', 'main.tex', 'Claude wrote this again.\n', 'Refine the opening line');

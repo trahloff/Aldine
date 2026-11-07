@@ -31,6 +31,8 @@ interface Props {
   /** Without accounts: the name this browser writes under, shown to co-authors. */
   yourName?: string;
   onSetYourName?(name: string): void;
+  /** The owner shares the project with this person as "Can view". */
+  viewOnly?: boolean;
 }
 
 /** Saved on Enter and when the field loses focus; a blank field keeps the name. */
@@ -130,7 +132,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName }: Props) {
+export default function ProjectSettings({ project, files, autoTypeset, vim, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -169,7 +171,7 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, impo
 
         <section className="settings__section" data-testid="settings-this-project">
           <div className="menu__label settings__heading">This project</div>
-          {readOnly ? <p className="settings__hint" data-testid="settings-read-only">A read-only showcase keeps its settings. Make a copy to change them.</p> : !canConfigure && <p className="settings__hint" style={{ margin: '2px 0 4px' }} data-testid="settings-project-locked">Only the owner and collaborators can change these.</p>}
+          {readOnly ? <p className="settings__hint" data-testid="settings-read-only">A read-only showcase keeps its settings. Make a copy to change them.</p> : !canConfigure && <p className="settings__hint" style={{ margin: '2px 0 4px' }} data-testid="settings-project-locked">{viewOnly ? 'You can view this project, so its settings are not yours to change.' : 'Only the owner and collaborators can change these.'}</p>}
           <Row label="Name" htmlFor="settings-name">
             <input
               id="settings-name"

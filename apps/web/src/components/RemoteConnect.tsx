@@ -8,9 +8,10 @@ import { useToast } from './Toast';
  *  token. Shared by the import and publish dialogs so both carry the same
  *  `<p>-token` / `<p>-connect` / `<p>-connect-oauth` / `<p>-baseurl` controls.
  *  `returnTo` is the page OAuth comes back to (a project's `/p/<id>`); without
- *  it the host's callback opens the import dialog on Home. */
-export default function RemoteConnectForm({ provider, status, onConnected, returnTo }: {
-  provider: RemoteProviderId; status: RemoteStatus; onConnected(): void | Promise<void>; returnTo?: string;
+ *  it the host's callback opens the import dialog on Home. `reopen` names the
+ *  dialog that page opens again on the way back. */
+export default function RemoteConnectForm({ provider, status, onConnected, returnTo, reopen }: {
+  provider: RemoteProviderId; status: RemoteStatus; onConnected(): void | Promise<void>; returnTo?: string; reopen?: 'publish' | 'access';
 }) {
   const d = remoteDescriptor(provider);
   const [token, setToken] = useState('');
@@ -36,14 +37,14 @@ export default function RemoteConnectForm({ provider, status, onConnected, retur
     <div>
       {status.oauth && (
         <>
-          <a className="btn login__oauth" href={withBase(`/api/remotes/${provider}/oauth${returnTo ? `?return=${encodeURIComponent(returnTo)}` : ''}`)} data-testid={`${provider}-connect-oauth`}>{d.icon} Connect with {d.label}</a>
+          <a className="btn login__oauth" href={withBase(`/api/remotes/${provider}/oauth${returnTo ? `?return=${encodeURIComponent(returnTo)}${reopen ? `&reopen=${reopen}` : ''}` : ''}`)} data-testid={`${provider}-connect-oauth`}>{d.icon} Connect with {d.label}</a>
           <div className="login__or">or use a token</div>
         </>
       )}
       {d.selfHosted && !d.baseUrlRequired && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px', fontSize: 'var(--text-s)', color: 'var(--text-2)', cursor: 'pointer' }}>
           <input type="checkbox" checked={selfHosted} data-testid={`${provider}-selfhosted-toggle`} onChange={(e) => setSelfHosted(e.target.checked)} />
-          Using a self-hosted {d.label}?
+          {d.selfHostedQuestion ?? `Using a self-hosted ${d.label}?`}
         </label>
       )}
       {d.selfHosted && selfHosted && (
@@ -75,7 +76,8 @@ export function TokenHelp({ provider, base, instanceUrl, testId, oneRepo }: {
 }) {
   const d = remoteDescriptor(provider);
   const repoPage = oneRepo ? d.repoTokenPage : undefined;
-  const page = repoPage?.url ?? d.tokenPage(instanceBase(base) ?? instanceBase(instanceUrl) ?? undefined);
+  const at = instanceBase(base) ?? instanceBase(instanceUrl) ?? undefined;
+  const page = repoPage ? repoPage.page(at) : d.tokenPage(at);
   return (
     <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', marginTop: 8 }}>
       {page

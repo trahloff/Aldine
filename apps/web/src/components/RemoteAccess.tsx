@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, RemoteAccess as Access, RemoteStatus } from '../api';
 import { remoteDescriptor, RemoteProviderId } from '../remotes';
 import { useToast } from './Toast';
+import { useDialogs } from './Dialogs';
 import Modal from './Modal';
 import RemoteConnectForm, { TokenHelp } from './RemoteConnect';
 
@@ -27,6 +28,7 @@ export default function RemoteAccess({ projectId, provider, fullName, instance, 
   const [projectToken, setProjectToken] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const dialogs = useDialogs();
 
   const load = async () => {
     const [a, s] = await Promise.all([
@@ -62,6 +64,7 @@ export default function RemoteAccess({ projectId, provider, fullName, instance, 
     setBusy(false);
   };
   const disconnect = async () => {
+    if (!(await confirmDisconnect(provider, dialogs))) return;
     setBusy(true);
     try { await api.remoteDisconnect(provider); await changed(`Disconnected your ${d.label} account`); }
     catch (err: any) { toast(err.message, 'error'); }
@@ -139,7 +142,7 @@ export default function RemoteAccess({ projectId, provider, fullName, instance, 
         </div>
         {status && editing === 'account' && (
           <div style={{ marginTop: 8 }}>
-            <RemoteConnectForm provider={provider} status={status} onConnected={() => changed(`Connected your ${d.label} account`)} returnTo={`/p/${projectId}`} />
+            <RemoteConnectForm provider={provider} status={status} onConnected={() => changed(`Connected your ${d.label} account`)} returnTo={`/p/${projectId}`} reopen="access" />
           </div>
         )}
 
@@ -147,4 +150,25 @@ export default function RemoteAccess({ projectId, provider, fullName, instance, 
       </div>
     </Modal>
   );
+}
+
+/**
+ * Asks before a Disconnect that stops other projects syncing: the ones this
+ * account linked sync through its token for everyone without a connection
+ * of their own, and autopush through it alone. True to go ahead; no
+ * question when nothing depends on the connection, or the list cannot be read.
+ */
+export async function confirmDisconnect(provider: RemoteProviderId, dialogs: ReturnType<typeof useDialogs>): Promise<boolean> {
+  const d = remoteDescriptor(provider);
+  const linked = await api.remoteLinkedProjects(provider).catch(() => []);
+  if (!linked.length) return true;
+  const shown = linked.slice(0, 4).map((x) => x.name);
+  const names = linked.length > shown.length ? `${shown.join(', ')} and ${linked.length - shown.length} more` : shown.join(', ');
+  const auto = linked.filter((x) => x.autopush).length;
+  return dialogs.confirm({
+    title: `Disconnect your ${d.label} account?`,
+    body: `${linked.length === 1 ? 'This project was' : `These ${linked.length} projects were`} linked with it: ${names}. People without their own ${d.label} connection can no longer sync ${linked.length === 1 ? 'it' : 'them'}${auto ? ', and autopush stops' : ''}. A token added in a project's Git access keeps that project syncing.`,
+    confirmLabel: 'Disconnect',
+    danger: true,
+  });
 }

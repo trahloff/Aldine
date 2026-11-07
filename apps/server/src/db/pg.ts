@@ -367,7 +367,7 @@ export class PgStore implements DataStore {
   async addShareEntry(projectId: string, entry: string) {
     if (!PROJECT_ID_RE.test(projectId)) throw new Error('bad project id');
     const { rows } = await this.pool.query(
-      `UPDATE project_meta SET data = jsonb_set(data, '{share}', jsonb_build_object(
+      `UPDATE project_meta SET data = jsonb_set(data, '{share}', COALESCE(data->'share', '{}'::jsonb) || jsonb_build_object(
          'mode', COALESCE(data#>>'{share,mode}', 'private'),
          'collaborators', CASE WHEN COALESCE(data#>'{share,collaborators}', '[]'::jsonb) @> jsonb_build_array($2::text)
            THEN COALESCE(data#>'{share,collaborators}', '[]'::jsonb)

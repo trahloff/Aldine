@@ -43,24 +43,103 @@ export function buildTree(files: TreeEntry[]): TreeNode[] {
 const holdsFile = (n: TreeNode): boolean => n.children.some((c) => c.type === 'file' || holdsFile(c));
 
 /**
- * The Source view: source files, and every folder git can hold (one with a
+ * The Source view: source files, the files in `keep` (the open one, the ones
+ * just added) whatever they are, and every folder git can hold (one with a
  * file anywhere inside, a lone .gitkeep included) even when none of its files
  * is source. A dot-folder (.github, .vscode) and the folders inside it stay
- * only for the source they hold, and a directory with no file at all is left
- * over on disk, not in git.
+ * only for the source and kept files they hold, and a directory with no file
+ * at all is left over on disk, not in git.
  */
-export function sourceTree(nodes: TreeNode[], inDotFolder = false): TreeNode[] {
+export function sourceTree(nodes: TreeNode[], keep: ReadonlySet<string> = new Set(), inDotFolder = false): TreeNode[] {
   const out: TreeNode[] = [];
   for (const n of nodes) {
     if (n.type === 'file') {
-      if (SOURCE_FILE.test(n.name)) out.push(n);
+      if (SOURCE_FILE.test(n.name) || keep.has(n.path)) out.push(n);
       continue;
     }
     const dot = inDotFolder || isDotName(n.name);
-    const kids = sourceTree(n.children, dot);
+    const kids = sourceTree(n.children, keep, dot);
     if (kids.length || (!dot && holdsFile(n))) out.push({ ...n, children: kids });
   }
   return out;
+}
+
+const filePaths = (nodes: TreeNode[]): string[] => nodes.flatMap((n) => (n.type === 'file' ? [n.path] : filePaths(n.children)));
+
+/** How many files `shown` leaves out of `full` that someone may look for: not
+ *  the .gitkeep placeholders, nor dot-files such as the .gitignore every
+ *  project carries, which file browsers hide too. */
+export function hiddenCount(full: TreeNode[], shown: TreeNode[]): number {
+  const seen = new Set(filePaths(shown));
+  return filePaths(full).filter((p) => !seen.has(p) && !p.split('/').some(isDotName)).length;
+}
+
+/** A row the tree shows, in the order it shows them, with what a screen
+ *  reader announces about its place. */
+export interface TreeRow {
+  path: string;
+  name: string;
+  type: 'file' | 'dir';
+  /** 1 at the top level. */
+  level: number;
+  /** The folder it is in; null at the top level. */
+  parent: string | null;
+  setSize: number;
+  posInSet: number;
+  open: boolean;
+}
+
+/** The rows on screen: every node of the top level, and the children of each open folder. */
+export function visibleRows(nodes: TreeNode[], isOpen: (path: string) => boolean, level = 1, parent: string | null = null): TreeRow[] {
+  return nodes.flatMap((n, i): TreeRow[] => {
+    const open = n.type === 'dir' && isOpen(n.path);
+    const row: TreeRow = { path: n.path, name: n.name, type: n.type, level, parent, setSize: nodes.length, posInSet: i + 1, open };
+    return open ? [row, ...visibleRows(n.children, isOpen, level + 1, n.path)] : [row];
+  });
+}
+
+/** What a key on the row `from` does, as a tree view does it: Up and Down go
+ *  to the row above or below, Home and End to the first and last, Right opens
+ *  a folder and then goes into it, Left closes it and then goes up to the
+ *  folder a row is in. Null for a key the tree leaves alone. */
+export function treeKey(rows: readonly TreeRow[], from: string, key: string): { focus?: string; open?: string; close?: string } | null {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowRight', 'ArrowLeft'].includes(key)) return null;
+  const at = rows.findIndex((r) => r.path === from);
+  if (at < 0) return rows.length ? { focus: rows[0].path } : {};
+  const row = rows[at];
+  switch (key) {
+    case 'ArrowDown': return { focus: rows[Math.min(at + 1, rows.length - 1)].path };
+    case 'ArrowUp': return { focus: rows[Math.max(at - 1, 0)].path };
+    case 'Home': return { focus: rows[0].path };
+    case 'End': return { focus: rows[rows.length - 1].path };
+    case 'ArrowRight':
+      if (row.type !== 'dir') return {};
+      if (!row.open) return { open: row.path };
+      return rows[at + 1]?.parent === row.path ? { focus: rows[at + 1].path } : {};
+    default:
+      if (row.type === 'dir' && row.open) return { close: row.path };
+      return row.parent !== null ? { focus: row.parent } : {};
+  }
+}
+
+/** The row typing `text` moves to: the next one whose name starts with it,
+ *  from the row after `from` for a first letter and from `from` itself while
+ *  the name is being typed on, round to the top. */
+export function typeaheadRow(rows: readonly TreeRow[], from: string, text: string): string | null {
+  const t = text.toLowerCase();
+  const at = rows.findIndex((r) => r.path === from);
+  const start = at < 0 ? 0 : t.length > 1 ? at : at + 1;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[(start + i) % rows.length];
+    if (r.name.toLowerCase().startsWith(t)) return r.path;
+  }
+  return null;
+}
+
+/** An entry a folder upload leaves behind: dot-files and dot-folders (.git,
+ *  .DS_Store), except the ones the Source view lists, such as .latexmkrc. */
+export function hiddenUploadName(name: string): boolean {
+  return isDotName(name) && !SOURCE_FILE.test(name);
 }
 
 /** `path` is `entry` itself or lies inside it: what a delete or rename of `entry` takes along. */

@@ -1,5 +1,5 @@
 import { injectToken } from './gitops.js';
-import { jsonResponse, normalizeInstanceUrl, RemoteApiError, type RemoteConnection, type RemoteProvider, type RemoteRepo } from './remote-types.js';
+import { jsonResponse, normalizeInstanceUrl, RemoteApiError, type RemoteConnection, type RemoteOwner, type RemoteProvider, type RemoteRepo } from './remote-types.js';
 
 /**
  * Gitea and Forgejo (Codeberg runs Forgejo) share the Gitea REST API under
@@ -18,7 +18,10 @@ import { jsonResponse, normalizeInstanceUrl, RemoteApiError, type RemoteConnecti
  *  - GET /repos/{owner}/{repo}; GET /repos/{owner}/{repo}/branches?page=&limit=
  *  - POST /user/repos and POST /orgs/{org}/repos with CreateRepoOption {name, private, auto_init}
  *  - POST /repos/{owner}/{repo}/pulls with CreatePullRequestOption {title, head, base, body}
- *    → PullRequest {html_url, number}
+ *    → PullRequest {html_url, number}; GET /repos/{owner}/{repo}/pulls?state=open&page=&limit=
+ *    → PullRequest {html_url, number, head.ref, base.ref}
+ *  - GET /user/orgs?page=&limit= → Organization {name} (`username` is its deprecated alias);
+ *    it sits in the organization scope category, so it needs read:organization
  * Token scopes: read:user (connect), write:repository (everything else),
  * write:user when publishing under the account and write:organization when
  * publishing into an organisation: POST /user/repos and POST
@@ -163,6 +166,18 @@ export const gitea: RemoteProvider = {
       body: JSON.stringify({ title: opts.title, head: opts.head, base: opts.base, body: opts.body || '' }),
     });
     return { url: pr.html_url, number: pr.number };
+  },
+
+  async findChangeRequest(conn, fullName, opts) {
+    const list = (await pageAll(conn, `${repoPath(fullName)}/pulls?state=open`)) as Array<{ html_url: string; number: number; head?: { ref?: string }; base?: { ref?: string } }>;
+    const pr = list.find((p) => p.head?.ref === opts.head && p.base?.ref === opts.base);
+    return pr ? { url: pr.html_url, number: pr.number } : null;
+  },
+
+  async listOwners(conn) {
+    const orgs = (await pageAll(conn, '/user/orgs')) as Array<{ name?: string; username?: string }>;
+    const names = orgs.map((o) => o.name || o.username).filter((n): n is string => !!n);
+    return [{ path: conn.login, kind: 'user' }, ...names.map((path): RemoteOwner => ({ path, kind: 'org' }))];
   },
 
   tokenUrl(cloneUrl, token, login) {

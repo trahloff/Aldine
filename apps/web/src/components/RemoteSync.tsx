@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, PULL_FIRST, RemoteLink, TOKEN_REJECTED } from '../api';
-import { remoteDescriptor, sentence } from '../remotes';
+import { api, CHANGE_REQUEST_OPEN, GIT_ACCESS_CODES, NO_CONNECTION, PULL_FIRST, RemoteLink, TOKEN_REJECTED } from '../api';
+import { pushSummary, remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
 import { useExitGhost } from '../exitGhost';
@@ -22,27 +22,37 @@ import Modal from './Modal';
 // e2e shortens the interval through localStorage; nothing else sets it.
 const REMOTE_POLL_MS = Number(safeStorage.get('aldine.remotePollMs')) || 90_000;
 
-export default function RemoteSync({ projectId, link, autopush, isOwner, current, onSwitch, onChanged, onPulled, onAutopushChange, manual = false }: {
+export default function RemoteSync({ projectId, link, autopush, isOwner, current, manual = false, reopenAccess = false, onSwitch, onChanged, onPulled, onAutopushChange, onOpenSettings, onReopened }: {
   projectId: string;
   link: RemoteLink;
   autopush: boolean;
   isOwner: boolean;
   /** The open branch of this project (local). */
   current: string;
+  /** The project commits by hand ("Commit changes: When I commit"). */
+  manual?: boolean;
+  /** Open Git access once: a host connect started there came back. */
+  reopenAccess?: boolean;
   onSwitch(name: string): void;
   onChanged(): void;
   onPulled(): void;
   onAutopushChange(v: boolean): void;
-  /** The project commits by hand. */
-  manual?: boolean;
+  onOpenSettings?(): void;
+  onReopened?(): void;
 }) {
   const p = link.provider;
   const d = remoteDescriptor(p);
   const [status, setStatus] = useState<{ ahead: number; behind: number } | null>(null);
+  /** Why the last status check failed (token refusals aside): shown instead of "Checking…". */
+  const [statusError, setStatusError] = useState<{ message: string; code?: string } | null>(null);
+  const [autopushPaused, setAutopushPaused] = useState<{ since: string; message: string } | null>(null);
   const [busy, setBusy] = useState<'' | 'push' | 'pull' | 'reset' | 'branch'>('');
   const [showPush, setShowPush] = useState(false);
+  /** What the push dialog sends: edits not yet committed (files) and commits the host lacks (null: unknown). */
+  const [pushInfo, setPushInfo] = useState<{ pending: number; ahead: number | null }>({ pending: 1, ahead: null });
+  const pushConfirm = useRef<HTMLButtonElement>(null);
   const [message, setMessage] = useState('');
-  const [conflicts, setConflicts] = useState<string[] | null>(null);
+  const [conflicts, setConflicts] = useState<{ files: string[]; keepAs: string | null } | null>(null);
   const [autopushBusy, setAutopushBusy] = useState(false);
   const [branchInfo, setBranchInfo] = useState<{ branches: string[]; current: string; default: string } | null>(null);
   const [crTitle, setCrTitle] = useState('');
@@ -70,18 +80,39 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     return true;
   }, []);
   const refresh = useCallback(async () => {
-    try { const s = await api.projectRemoteStatus(projectId); setStatus({ ahead: s.ahead, behind: s.behind }); }
-    catch (err) { noteRejected(err); /* otherwise offline */ }
-  }, [projectId, noteRejected]);
+    try {
+      const s = await api.projectRemoteStatus(projectId);
+      setStatus({ ahead: s.ahead, behind: s.behind });
+      setAutopushPaused(s.autopushPaused ?? null);
+      setStatusError(null);
+    } catch (err: any) {
+      if (noteRejected(err)) return;
+      setStatus(null);
+      setStatusError({ message: err?.status ? err.message : `Could not check ${d.label}: this browser is offline.`, code: err?.code });
+    }
+  }, [projectId, noteRejected, d.label]);
   const loadBranches = useCallback(async () => {
     try { setBranchInfo(await api.remoteBranches(projectId)); } catch (err) { noteRejected(err); }
   }, [projectId, noteRejected]);
-  /** A failed action: the toast says what happened, and a refused token also raises Reconnect. */
+  /** A failed action: the toast says what happened and carries the next step
+   *  when there is one (Reconnect, Pull, Git access, the open request); the
+   *  pill then checks the host again, which has often moved on. */
   const failed = (err: any) => {
+    const code = err?.code;
+    const url = typeof err?.body?.url === 'string' && /^https?:\/\//.test(err.body.url) ? err.body.url as string : null;
     if (noteRejected(err)) toast(err.message, 'error', { label: 'Reconnect', testId: `${p}-reconnect-toast`, key: `${p}-rejected`, onClick: () => setShowAccess(true) });
+    else if (code === PULL_FIRST) toast(err.message, 'error', { label: 'Pull', testId: `${p}-pull-first`, onClick: () => pullRef.current() });
+    else if (code === NO_CONNECTION || GIT_ACCESS_CODES.includes(code)) toast(err.message, 'error', { label: 'Git access…', testId: `${p}-access-toast`, onClick: () => setShowAccess(true) });
+    else if (code === CHANGE_REQUEST_OPEN && url) toast(err.message, 'info', { label: `Open #${err.body.number}`, testId: `${p}-open-existing`, onClick: () => window.open(url, '_blank', 'noopener') });
     else toast(err.message, 'error');
+    void refresh();
   };
   useEffect(() => { refresh(); loadBranches(); }, [refresh, loadBranches]);
+  useEffect(() => {
+    if (!reopenAccess) return;
+    setShowAccess(true);
+    onReopened?.();
+  }, [reopenAccess]);
   useEffect(() => { if (pop.open) { refresh(); loadBranches(); local.load(); } }, [pop.open]);
 
   // Co-authors push from elsewhere: look again while the tab is in view, and
@@ -99,7 +130,21 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     };
   }, [refresh]);
 
-  const openPush = () => { pop.close(); setMessage('Update from Aldine'); setShowPush(true); };
+  // What is waiting decides the dialog: with every edit already in a
+  // checkpoint, a message would name nothing, so there is none.
+  const openPush = async () => {
+    pop.close();
+    setMessage('Update from Aldine');
+    setBusy('push');
+    const [changes, s] = await Promise.all([
+      api.changes(projectId, 'main').catch(() => null),
+      api.projectRemoteStatus(projectId).catch(() => null),
+    ]);
+    if (s) setStatus({ ahead: s.ahead, behind: s.behind });
+    setPushInfo({ pending: changes ? changes.paths.length : 1, ahead: s ? s.ahead : null });
+    setBusy('');
+    setShowPush(true);
+  };
   const doPush = async (msg: string) => {
     setBusy('push'); setShowPush(false);
     try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
@@ -126,15 +171,24 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     setBusy('pull');
     try {
       const r = await api.remotePull(projectId, checkpoint);
-      if (r.conflict) setConflicts(r.conflicts || []);
+      if (r.conflict) setConflicts({ files: r.conflicts || [], keepAs: r.keepAs ?? null });
       else { toast(`Pulled from ${d.label}`, 'ok'); onPulled(); await refresh(); }
     } catch (err: any) { failed(err); }
     setBusy('');
   };
-  const takeRemote = async () => {
+  // The server saves main as a branch only it has before main takes the
+  // host's version, so the one way out keeps both.
+  const keepBoth = async () => {
     setBusy('reset');
-    try { await api.remoteResetToRemote(projectId); toast(`Reset to the ${d.label} version`, 'ok'); setConflicts(null); onPulled(); await refresh(); }
-    catch (err: any) { failed(err); }
+    try {
+      const { kept } = await api.remoteResetToRemote(projectId);
+      setConflicts(null);
+      if (kept) toast(`Kept both: main has ${d.label}'s version, and everyone's changes not yet on ${d.label} are on ${kept}`, 'ok', { label: 'Open', testId: 'conflict-open-kept', onClick: () => onSwitch(kept) });
+      else toast(`Took ${d.label}'s version`, 'ok');
+      onPulled();
+      local.load();
+      await refresh();
+    } catch (err: any) { failed(err); }
     setBusy('');
   };
   // A host branch is always opened through main, the branch that tracks it.
@@ -153,10 +207,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       onPulled();
       await loadBranches();
       await refresh();
-    } catch (err: any) {
-      if (err?.code === PULL_FIRST) toast(err.message, 'error', { label: 'Pull', testId: `${p}-pull-first`, onClick: () => pull() });
-      else failed(err);
-    }
+    } catch (err: any) { failed(err); }
     setBusy('');
   };
   const createOnHost = async (name: string) => {
@@ -205,6 +256,12 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     behind > 0 && `${behind} to pull`,
   ].filter(Boolean).join(' · ');
   const localOnly = local.branches.filter((b) => b.name !== 'main');
+  const noConnection = statusError?.code === NO_CONNECTION;
+  const nobody = `Nobody's ${d.label} account can sync this project`;
+  const stateText = noConnection ? nobody : statusError ? statusError.message : status ? (waiting || 'No commits waiting') : `Checking ${d.label}…`;
+  const openAccess = () => { pop.close(); setShowAccess(true); };
+  // The host's own word for what autopush cannot do: nobody's account reaches it, or the push it last tried failed.
+  const pausedBecause = !autopush ? null : noConnection ? `${nobody}, so nothing is pushed.` : autopushPaused?.message ?? null;
 
   return (
     <div ref={pop.ref} className="branch" data-testid={`${p}-sync`}>
@@ -231,6 +288,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           Reconnect
         </button>
       )}
+      {!rejected && noConnection && (
+        <button className="btn btn--small" onClick={() => setShowAccess(true)} data-testid={`${p}-connect-pill`} title={`${nobody}. ${statusError?.message ?? ''}`.trim()}>
+          Connect
+        </button>
+      )}
       {onMain && behind > 0 && (
         <button className="btn btn--small btn--primary" onClick={pull} disabled={!!busy} data-testid={`${p}-sync-action`} title={`Pull ${behind} new ${behind === 1 ? 'commit' : 'commits'} from ${d.label}`}>
           {busy === 'pull' ? '…' : 'Pull'}
@@ -251,9 +313,15 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           {onMain ? (
             <>
               <div className="branch-menu__sync">
-                <span className="branch-menu__state" data-testid={`${p}-state`}>{status ? (waiting || 'No commits waiting') : `Checking ${d.label}…`}</span>
-                <button className={`btn btn--small ${behind > 0 ? 'btn--primary' : ''}`} onClick={pull} disabled={!!busy} data-testid={`${p}-pull-btn`} title={`Pull from ${d.label}`}>Pull</button>
-                <button className="btn btn--small" onClick={openPush} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Commit what is waiting and push to ${d.label}`}>Push…</button>
+                <span className="branch-menu__state" data-testid={`${p}-state`} style={statusError ? { color: 'var(--error)' } : undefined}>{stateText}</span>
+                {noConnection ? (
+                  <button className="btn btn--small btn--primary" onClick={openAccess} data-testid={`${p}-no-connection-access`} title={statusError?.message}>Git access…</button>
+                ) : (
+                  <>
+                    <button className={`btn btn--small ${behind > 0 ? 'btn--primary' : ''}`} onClick={pull} disabled={!!busy} data-testid={`${p}-pull-btn`} title={`Pull from ${d.label}`}>Pull</button>
+                    <button className="btn btn--small" onClick={openPush} disabled={!!busy} data-testid={`${p}-push-btn`} title={`Commit what is waiting and push to ${d.label}`}>Push…</button>
+                  </>
+                )}
               </div>
               <div className="branch-menu__setting">
                 <span>Autopush</span>
@@ -269,6 +337,12 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
                   {autopush ? 'On' : 'Off'}
                 </button>
               </div>
+              {pausedBecause && (
+                <p className="branch-menu__note" style={{ color: 'var(--warn-text)' }} data-testid={`${p}-autopush-paused`}
+                  title={autopushPaused ? `Not pushed since ${new Date(autopushPaused.since).toLocaleString()}` : undefined}>
+                  <strong>Autopush paused.</strong> {pausedBecause}
+                </p>
+              )}
             </>
           ) : (
             <p className="branch-menu__note" data-testid={`${p}-local-note`}>{current} exists only on this server. Push and pull work on main.</p>
@@ -322,14 +396,23 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
       )}
 
       {showPush && (
-        <Modal onClose={() => setShowPush(false)} label={`Push to ${d.label}`} width={420} testId="push-dialog">
+        <Modal onClose={() => setShowPush(false)} label={`Push to ${d.label}`} width={440} testId="push-dialog" initialFocus={pushInfo.pending > 0 ? 'first' : pushConfirm}>
           <h2 style={{ marginBottom: 8 }}>Push to {d.label}</h2>
           <p className="modal__sub" style={{ marginBottom: 10 }}>{link.fullName} · {tracked}</p>
-          <input className="input" style={{ width: '100%' }} value={message} data-testid="push-message"
-            onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) doPush(message.trim() || 'Update from Aldine'); }} placeholder="Commit message" />
+          {pushInfo.pending > 0 && (
+            <input className="input" style={{ width: '100%' }} value={message} data-testid="push-message"
+              onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) doPush(message.trim() || 'Update from Aldine'); }} placeholder="Commit message" />
+          )}
+          <p className="push-dialog__note" data-testid="push-summary">{pushSummary(pushInfo, manual, d.label)}</p>
+          {!manual && (
+            <p className="push-dialog__note" data-testid="push-commit-mode">
+              Every pause in typing is saved as a checkpoint, and each one reaches {d.label} as a commit of its own. For one commit per push, with your message, set Commit changes to “When I commit” in project settings.
+              {onOpenSettings && <> <button className="btn btn--ghost btn--small push-dialog__link" onClick={() => { setShowPush(false); onOpenSettings(); }} data-testid="push-open-settings">Open project settings</button></>}
+            </p>
+          )}
           <div className="modal__row" style={{ marginTop: 12 }}>
             <button className="btn" onClick={() => setShowPush(false)}>Cancel</button>
-            <button className="btn btn--primary" onClick={() => doPush(message.trim() || 'Update from Aldine')} data-testid="push-confirm">Commit &amp; push</button>
+            <button ref={pushConfirm} className="btn btn--primary" onClick={() => doPush(message.trim() || 'Update from Aldine')} data-testid="push-confirm">{pushInfo.pending > 0 ? 'Commit & push' : 'Push'}</button>
           </div>
         </Modal>
       )}
@@ -361,19 +444,31 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
 
       {local.dialog}
       {conflicts && (
-        <Modal onClose={() => setConflicts(null)} label="Merge conflict" width={460} testId="conflict-dialog">
+        <Modal onClose={() => setConflicts(null)} label="Merge conflict" width={480} testId="conflict-dialog">
           <h2 style={{ marginBottom: 8 }}>Merge conflict</h2>
-          <p className="modal__sub">Your changes and {d.label}'s have diverged{conflicts.length ? ' in:' : '.'}</p>
-          {conflicts.length > 0 && <ul className="conflict__list">{conflicts.map((f) => <li key={f}>{f}</li>)}</ul>}
-          <p style={{ fontSize: 'var(--text-s)', color: 'var(--text-2)', lineHeight: 1.5 }}>
-            Aldine kept your local version. You can discard your local changes and take {d.label}'s version, or cancel and reconcile manually.
-          </p>
+          <p className="modal__sub">Everyone's changes not yet on {d.label} and {d.label}'s newer commits change the same lines{conflicts.files.length ? ' in:' : '.'}</p>
+          {conflicts.files.length > 0 && <ul className="conflict__list">{conflicts.files.map((f) => <li key={f}>{f}</li>)}</ul>}
+          <p className="conflict__note">Nothing has changed yet: main still has everyone's changes not yet on {d.label}.</p>
+          {isOwner ? (
+            <p className="conflict__note" data-testid="conflict-keep-note">
+              Keep both saves them as the branch <strong>{conflicts.keepAs ?? 'my-version'}</strong>, which only this server has, and then main takes {d.label}'s version. Open that branch from the branch menu to copy what you need across.
+            </p>
+          ) : (
+            <p className="conflict__note" data-testid="conflict-owner-note">
+              Only the project owner can settle this, by keeping both versions. Until then your edits stay saved on this server, and Pull stops at this conflict again.
+            </p>
+          )}
           <div className="modal__row" style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => setConflicts(null)}>Cancel</button>
-            <button className="btn btn--danger" onClick={takeRemote} disabled={busy === 'reset'} data-testid="conflict-take-remote">Discard local &amp; take {d.label}'s</button>
+            <button className="btn" onClick={() => setConflicts(null)}>{isOwner ? 'Cancel' : 'Close'}</button>
+            {isOwner && (
+              <>
+                <button className="btn btn--primary" onClick={keepBoth} disabled={busy === 'reset'} data-testid="conflict-keep-both">Keep both</button>
+              </>
+            )}
           </div>
         </Modal>
       )}
     </div>
   );
 }
+

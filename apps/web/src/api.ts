@@ -10,6 +10,7 @@ export interface OAuthProviderInfo { id: string; label: string }
 /** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
  *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
 export interface ProjectThumb { branch: string; w: number; h: number; v: string }
+export type ShareRole = 'edit' | 'view';
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -24,8 +25,13 @@ export interface ProjectSummary {
    *  Gates the affordances the server restricts to members. */
   isMember?: boolean;
   /** `collaborators` is empty unless you are the owner (the server does not
-   *  disclose other people's invite list). */
-  share?: { mode: 'private' | 'link'; collaborators: string[] } | null;
+   *  disclose other people's invite list). `viewers`: the owner's entries,
+   *  people with access or invitations, who can only view; `linkRole`: what
+   *  the link lets visitors do (absent is edit). */
+  share?: { mode: 'private' | 'link'; collaborators: string[]; viewers?: string[]; linkRole?: ShareRole } | null;
+  /** False for someone who can only view: the editor opens read-only, and
+   *  comments stay open. Absent from older servers, which have no roles. */
+  canEdit?: boolean;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
   remote?: RemoteLink | null;
   /** Server-side push after every autosave commit on main (owner-only toggle). */
@@ -71,10 +77,20 @@ export interface RemoteAccess { provider: RemoteProviderId; source: RemoteSource
 export interface RemoteConnectionRow { provider: RemoteProviderId; login: string; baseUrl?: string }
 /** The code a sync route answers with when the host refused the token it used. */
 export const TOKEN_REJECTED = 'token-invalid';
-/** Switching the tracked branch was refused: the host has commits main lacks, and main has commits the host lacks. */
+/** A push or a branch switch was refused: the host has commits main lacks. */
 export const PULL_FIRST = 'pull-first';
 /** Publishing created and linked the repository, but its first push failed. */
 export const LINKED_PUSH_FAILED = 'linked-push-failed';
+/** No connection reaches the linked repository: nobody's token can sync it for this viewer. */
+export const NO_CONNECTION = 'no-connection';
+/** Codes whose remedy is in Git access: a token that may not push or read, or a repository it cannot see. */
+export const GIT_ACCESS_CODES = ['no-access', 'repo-missing'];
+/** Opening a pull or merge request found one already open; the error carries its `url` and `number`. */
+export const CHANGE_REQUEST_OPEN = 'change-request-open';
+/** Publish: the owner already has a repository with that name. */
+export const NAME_TAKEN = 'name-taken';
+/** Somewhere Publish can create the repository; `path` is what it sends as `namespace`. */
+export interface RemoteOwner { path: string; kind: 'user' | 'org' | 'group' }
 /** `instanceUrl`: the instance a token connect without a URL reaches (GitLab's configured one). */
 export interface RemoteStatus { connected: boolean; login?: string; baseUrl?: string; instanceUrl?: string; oauth: boolean; selfHosted: boolean; baseUrlRequired?: boolean }
 /** `createdByAldine` marks a repository Aldine provisioned (deleted with the
@@ -215,6 +231,8 @@ export interface Comment {
   file: string;
   anchor: { from: number; to: number; quote: string };
   author: string;
+  /** The account that wrote it; absent without accounts. */
+  authorId?: string;
   body: string;
   suggestion?: string;
   resolved: boolean;
@@ -274,8 +292,9 @@ export interface ReplaceResult {
 /** `retryAfter`: seconds from a 429's Retry-After header, when it sent one. */
 /** `code` names a refusal a client handles apart from the rest
  *  (`awaiting-approval`: the account waits for an administrator). */
+/** `body`: the rest of the JSON answer, for refusals that carry more than a sentence (a link, a number). */
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string, public readonly body?: Record<string, unknown>) { super(message); }
 }
 
 /** OAuth routes answer in RFC 6749 shape (`error` is a code such as
@@ -326,9 +345,10 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     let msg = `HTTP ${res.status}`;
     let code: string | undefined;
     let reason: unknown;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = (await res.json()) as { error?: string; code?: unknown; reason?: unknown };
-      msg = body.error || msg;
+      body = (await res.json()) as { error?: string; code?: unknown; reason?: unknown };
+      msg = (typeof body.error === 'string' && body.error) || msg;
       if (typeof body.code === 'string') code = body.code;
       reason = body.reason;
     } catch { /* keep */ }
@@ -338,7 +358,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
       for (const fn of signedOutListeners) fn();
     }
     const retryAfter = Number(res.headers.get('retry-after'));
-    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code);
+    throw new ApiError(msg, res.status, retryAfter > 0 ? retryAfter : undefined, code, body);
   }
   return res.json() as Promise<T>;
 }
@@ -499,6 +519,24 @@ export const api = {
   },
   writeFile: (id: string, branch: string, path: string, content: string, encoding: 'utf8' | 'base64' = 'utf8', opts: { createOnly?: boolean; baseVersion?: number } = {}) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}), ...(opts.baseVersion !== undefined ? { baseVersion: opts.baseVersion } : {}) }) }),
+  /** writeFile of base64 content with upload progress: the bytes of the
+   *  request sent so far, of how many. */
+  writeFileWithProgress: (id: string, branch: string, path: string, base64: string, opts: { createOnly?: boolean; onProgress?(sent: number, total: number): void } = {}) =>
+    new Promise<{ ok: boolean }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', withBase(`/api/projects/${id}/file`));
+      xhr.setRequestHeader('content-type', 'application/json');
+      xhr.responseType = 'text';
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total); };
+      xhr.onload = () => {
+        let body: any = null;
+        try { body = JSON.parse(xhr.responseText); } catch { /* not JSON: a proxy's page */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body ?? { ok: true });
+        else reject(new ApiError(body?.error || `HTTP ${xhr.status}`, xhr.status, undefined, typeof body?.code === 'string' ? body.code : undefined));
+      };
+      xhr.onerror = () => reject(new ApiError('The server could not be reached', 0));
+      xhr.send(JSON.stringify({ branch, path, content: base64, encoding: 'base64', ...(opts.createOnly ? { createOnly: true } : {}) }));
+    }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
   /** `commit`: the deletion's own commit, whose revert undoes it; `pending`: it waits for a hand-made commit. */
@@ -571,6 +609,9 @@ export const api = {
   remoteConnect: (p: RemoteProviderId, token: string, baseUrl?: string) =>
     req<{ connected: boolean; login: string; baseUrl?: string }>(`/api/remotes/${p}/connect`, { method: 'POST', body: JSON.stringify({ token, baseUrl }) }),
   remoteDisconnect: (p: RemoteProviderId) => req<{ ok: boolean }>(`/api/remotes/${p}/disconnect`, { method: 'POST' }),
+  /** The projects this account linked to `p`, which a Disconnect stops syncing for people without their own connection. */
+  remoteLinkedProjects: (p: RemoteProviderId) => req<Array<{ id: string; name: string; autopush: boolean }>>(`/api/remotes/${p}/linked`),
+  remoteOwners: (p: RemoteProviderId) => req<{ owners: RemoteOwner[] }>(`/api/remotes/${p}/owners`),
   /** Without `q` the first page of the user's repositories; with it, the host's own search (an exact owner/repo is looked up directly). */
   remoteRepos: async (p: RemoteProviderId, q?: string): Promise<RemoteRepo[]> => {
     const res = await fetch(withBase(`/api/remotes/${p}/repos${q ? `?q=${encodeURIComponent(q)}` : ''}`));
@@ -587,22 +628,24 @@ export const api = {
   setProjectRemoteToken: (id: string, token: string) =>
     req<{ ok: boolean; login: string }>(`/api/projects/${id}/remote/access/token`, { method: 'POST', body: JSON.stringify({ token }) }),
   removeProjectRemoteToken: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/access/token/remove`, { method: 'POST' }),
-  projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number }>(`/api/projects/${id}/remote/status`),
+  projectRemoteStatus: (id: string) => req<RemoteLink & { linked: boolean; ahead: number; behind: number; autopushPaused?: { since: string; message: string } | null }>(`/api/projects/${id}/remote/status`),
   remoteLink: (id: string, provider: RemoteProviderId, name?: string, priv?: boolean, namespace?: string) =>
     req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv, namespace }) }),
   remotePush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean; skipped?: boolean }>(`/api/projects/${id}/remote/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
   // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing.
   // `checkpoint` on these four: the message for the edits waiting on main (manual commits).
-  remotePull: async (id: string, checkpoint?: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
+  /** On a conflict, `keepAs` names the branch "Keep both" would save main as. */
+  remotePull: async (id: string, checkpoint?: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[]; keepAs?: string | null }> => {
     const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), checkpoint
       ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkpoint }) }
       : { method: 'POST' });
     const body = await res.json().catch(() => ({}));
-    if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
-    if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined);
+    if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [], keepAs: typeof body.keepAs === 'string' ? body.keepAs : null };
+    if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined, body);
     return { ok: true };
   },
-  remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
+  /** `kept`: the branch, only on this server, that main was saved as first (null when main had nothing the host lacks). */
+  remoteResetToRemote: (id: string) => req<{ ok: boolean; kept: string | null }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
   remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),
   remoteSwitchBranch: (id: string, branch: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch, checkpoint }) }),
   remoteCreateBranch: (id: string, name: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name, checkpoint }) }),
@@ -696,20 +739,24 @@ export const api = {
     oauthReq<{ redirectTo: string }>('/api/oauth/consent', { method: 'POST', body: JSON.stringify(body) }),
   /** `previous`: the list the dialog started from, so that only what the
    *  owner took off it is removed (someone may have accepted meanwhile). */
-  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[]) =>
-    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous }) }),
+  /** `role`: what the people this save adds may do once they accept. */
+  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[], role?: ShareRole) =>
+    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous, role }) }),
   /** Changes only who the link lets in: without a list the server keeps the
    *  people with access as they are. */
-  shareMode: (id: string, mode: 'private' | 'link') =>
-    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode }) }),
+  shareMode: (id: string, mode: 'private' | 'link', linkRole?: ShareRole) =>
+    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, linkRole }) }),
+  /** "Can edit" or "Can view" for a person with access or an invitation. */
+  setRole: (id: string, entry: string, role: ShareRole) =>
+    req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'PUT', body: JSON.stringify({ role }) }),
   /** Takes one address or ORCID iD off the people with access. */
   removeCollaborator: (id: string, entry: string) =>
     req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'DELETE' }),
   /** The owner's view: open, declined and expired invitations of a project. */
   projectInvitations: (id: string) => req<OwnerInvitation[]>(`/api/projects/${id}/invitations`),
   /** Invite one address or ORCID iD: someone new, or again after a decline or expiry. */
-  invite: (id: string, to: string) =>
-    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify({ to }) }),
+  invite: (id: string, to: string, role?: ShareRole) =>
+    req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify({ to, role }) }),
   resendInvitation: (id: string, invite: string) =>
     req<InviteReport & { invitations: OwnerInvitation[] }>(`/api/projects/${id}/invitations/${invite}/resend`, { method: 'POST' }),
   /** Withdraws an open invitation, or clears a declined or expired one. */

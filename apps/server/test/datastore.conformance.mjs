@@ -341,6 +341,10 @@ async function runSuite(store, label) {
   eq(shared.name, 'Renamed', `${label}: and the rest of the metadata is untouched`);
   await store.addShareEntry(older.id, 'bob@example.org');
   eq((await store.readMeta(older.id)).share.collaborators.length, 3, `${label}: adding an entry twice keeps one`);
+  await store.writeMeta({ ...(await store.readMeta(older.id)), share: { ...(await store.readMeta(older.id)).share, viewers: ['carol@example.org'], linkRole: 'view' } });
+  await store.addShareEntry(older.id, 'carol@example.org');
+  const roles = (await store.readMeta(older.id)).share;
+  eq([roles.viewers, roles.linkRole, roles.collaborators.includes('carol@example.org')], [['carol@example.org'], 'view', true], `${label}: addShareEntry keeps the share's roles`);
   check(!(await store.addShareEntry(`zz${t}`, 'ada@example.org')), `${label}: addShareEntry of a missing project is false`);
   check((await store.readMeta(`zz${t}`)) === null, `${label}: and creates nothing`);
   await throws(() => store.addShareEntry('../evil', 'ada@example.org'), 'bad project id', `${label}: addShareEntry bad id throws`);

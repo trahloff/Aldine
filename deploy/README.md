@@ -61,7 +61,10 @@ OIDC_LABEL=Company login
 
 # GitHub sync (import repos as projects, push/pull) — a SEPARATE OAuth app with
 # repo scope. Callback: <ALDINE_PUBLIC_URL>/api/github/oauth/callback
-# (users can also connect with a Personal Access Token, no app needed).
+# (users can also connect with a Personal Access Token, no app needed, on
+# github.com or any GitHub Enterprise Server). GITHUB_URL moves the OAuth app
+# and the default instance to a GitHub Enterprise Server.
+# GITHUB_URL=https://github.com
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 # GitLab sync — an OAuth application on your instance with scope `api`.
@@ -605,13 +608,14 @@ override file.
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
 | `ALDINE_SIGNUP` | `open` (default) = anyone who reaches the instance can create an account; `approval` = every account created from then on, password or single sign-on, waits until an administrator approves it on `/admin` (see [Approving new accounts](#approving-new-accounts)). Accounts that already exist are not affected. Any other value counts as `approval` and is warned about at boot |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
-| `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login) |
+| `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login), on github.com; `GITHUB_URL` does not move sign-in |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | OpenID Connect SSO with your own identity provider; redirect URI `<ALDINE_PUBLIC_URL>/api/auth/oauth/oidc/callback`. No secret = public client (PKCE only). Setup recipes in [docs/OIDC.md](../docs/OIDC.md) |
 | `OIDC_LABEL`, `OIDC_SCOPES` | Button text (default `Single sign-on`); scopes (default `openid email profile`, `openid` always added) |
 | `OIDC_ALLOWED_GROUPS`, `OIDC_GROUPS_CLAIM` | Comma-separated groups allowed to sign in (unset = everyone the IdP authenticates); the claim holding them (default `groups`) |
 | `OIDC_EMAIL_VERIFIED` | `require` (default): use the IdP's address only when `email_verified` is true; `trust`: always (only if users cannot edit their address at the IdP) |
-| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback` |
+| `GITHUB_URL` | GitHub instance the sync OAuth connect talks to, and the one a token connect without a URL reaches (default `https://github.com`). Set it to a GitHub Enterprise Server (`https://github.example.edu`) whose OAuth app is in `GITHUB_CLIENT_ID/SECRET`; the API is then `<GITHUB_URL>/api/v3`. Users connecting with a personal access token can point the dialog at any GitHub Enterprise Server without it ("Using GitHub Enterprise Server?"). Clone, push and pull go to the clone URL the instance returns, never github.com, and the token is passed inline per operation. Changing it later leaves links made on another instance to connections made there |
+| `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login, registered on `GITHUB_URL`'s instance. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback`. Unset = token connect only |
 | `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
 | `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |
 | `REMOTE_PROVIDERS` | Comma list of remote providers offered in the UI (default `github,gitlab,gitea`; `gitea` is Gitea and Forgejo, Codeberg included, token connect with a mandatory instance URL and no server-side settings); leave one out to hide it |
@@ -678,7 +682,7 @@ away in any release; none of them belongs in a production `.env`.
 | `ALDINE_TEST_HOOKS`, `ALDINE_TEST_ALLOW_LOOPBACK_CIMD` | `1` = test-only routes, and http or loopback URLs for template repositories, venue kits and OAuth client metadata. Never set in production |
 | `GITLAB_API_BASE` | Tests only: replaces `<instance>/api/v4` for every GitLab call and disables the https check on pasted instance URLs. Never set in production |
 | `GITEA_API_BASE` | Tests only: replaces `<instance>/api/v1` for every Gitea/Forgejo call and lets a pasted instance URL be http. Never set in production |
-| `GITHUB_API_BASE`, `ZOTERO_API_BASE`, `OPENALEX_API_BASE`, `DOI_API_BASE`, `ARXIV_API_BASE`, `ORCID_API_BASE`, `ORCID_PUB_API_BASE` | Tests only: point that client at a mock server |
+| `GITHUB_API_BASE` (for an Enterprise Server use `GITHUB_URL` instead), `ZOTERO_API_BASE`, `OPENALEX_API_BASE`, `DOI_API_BASE`, `ARXIV_API_BASE`, `ORCID_API_BASE`, `ORCID_PUB_API_BASE` | Tests only: point that client at a mock server |
 | `ALDINE_AUTOCOMMIT_MS` | Quiet period after an edit before it is committed (default `20000`) |
 | `ALDINE_AGENT_PRESENCE_TTL_MS` | How long Claude's presence in a document outlives its last write (default `60000`) |
 | `REMOTE_STATUS_TTL_MS` | How long one fetch of a remote serves every editor's ahead/behind status (default `30000`) |

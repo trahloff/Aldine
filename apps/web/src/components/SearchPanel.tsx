@@ -43,6 +43,8 @@ interface Props {
   onOpenMatch(path: string, m: SearchMatch, focusEditor: boolean): void;
   /** `deleted`: the replacement was empty. */
   onReplaced(res: ReplaceResult, deleted: boolean): void;
+  /** Nothing may change the files (a showcase, or "Can view"): search only. */
+  readOnly?: boolean;
 }
 
 const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
@@ -52,7 +54,7 @@ type Item =
   | { key: string; kind: 'file'; path: string }
   | { key: string; kind: 'match'; path: string; m: SearchMatch };
 
-export default function SearchPanel({ projectId, branch, rootFile, manual, author, focus, version = 0, onOpenMatch, onReplaced }: Props) {
+export default function SearchPanel({ projectId, branch, rootFile, manual, author, focus, version = 0, onOpenMatch, onReplaced, readOnly = false }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const [query, setQuery] = useState('');
@@ -361,7 +363,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
           <button className="search__toggle search__toggle--mono" aria-pressed={toggles.regex} title="Regular expression" aria-label="Regular expression" data-testid="search-regex" onClick={() => setToggle('regex')}>.*</button>
         </span>
       </div>
-      <div className="search__replace">
+      {!readOnly && <div className="search__replace">
         <input
           ref={replaceRef}
           className="input search__input"
@@ -395,7 +397,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
         >
           <IconTrash />
         </button>
-      </div>
+      </div>}
 
       {query && (searching || (shown && shown.result.files.length > 0)) && (
         <div className="search__status">
@@ -498,7 +500,7 @@ export default function SearchPanel({ projectId, branch, rootFile, manual, autho
                               : <mark>{text.slice(start, end)}</mark>}
                             {text.slice(end)}
                           </span>
-                          {!empty && (
+                          {!readOnly && !empty && (
                             <button
                               className="search__icon-btn search__replace-one"
                               title="Replace this match"

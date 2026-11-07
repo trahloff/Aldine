@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as auth from '../auth.js';
 import { branchDir, readMeta, type ProjectMeta } from '../store.js';
-import { canAccess } from '../authz.js';
+import { canAccess, canEdit } from '../authz.js';
 import { protectedProjects } from '../collab.js';
 import { importPath, isHiddenPath, optionLikePath } from '../util.js';
 import { addressKey } from '../ratelimit.js';
@@ -99,9 +99,11 @@ export async function resolveProject(identity: McpIdentity, project: string | un
 }
 
 /** Showcase (protected) projects are world-readable, nobody-writable — same
- *  set the REST preHandler and the collab read-only hook enforce. */
-export function assertWritableProject(projectId: string): void {
-  if (protectedProjects.has(projectId)) throw new McpDenied('That project is read-only');
+ *  set the REST preHandler and the collab read-only hook enforce — and a
+ *  person the owner shares with as "Can view" reads, never writes. */
+export function assertWritableProject(meta: ProjectMeta, identity: McpIdentity): void {
+  if (protectedProjects.has(meta.id)) throw new McpDenied('That project is read-only');
+  if (!canEdit(meta, identity.user)) throw new McpDenied('You can view this project, not change it: ask its owner for edit access');
 }
 
 /**

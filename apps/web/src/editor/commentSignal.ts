@@ -38,7 +38,9 @@ function useSignalDoc(projectId: string, branch: string, docPath: string, onRemo
       if (v !== last) { last = v; cbRef.current(); }
     };
     map.observe(observer);
-    bumpRef.current = () => { last = Date.now(); map.set('v', last); };
+    // A read-only socket ("Can view") drops the write, and the local value
+    // would then shadow the server's bumps: the server bumps for this client.
+    bumpRef.current = () => { if (provider.authorizedScope === 'readonly') return; last = Date.now(); map.set('v', last); };
 
     return () => {
       map.unobserve(observer);

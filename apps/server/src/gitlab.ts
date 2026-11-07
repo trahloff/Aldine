@@ -1,5 +1,5 @@
 import { injectToken } from './gitops.js';
-import { jsonRequest, normalizeInstanceUrl, RemoteApiError, type RemoteConnection, type RemoteProvider, type RemoteRepo } from './remote-types.js';
+import { jsonRequest, normalizeInstanceUrl, RemoteApiError, type RemoteConnection, type RemoteOwner, type RemoteProvider, type RemoteRepo } from './remote-types.js';
 
 /**
  * GitLab (gitlab.com or self-hosted) over REST v4. Bearer auth works for
@@ -182,6 +182,18 @@ export const gitlab: RemoteProvider = {
       body: JSON.stringify({ title: opts.title, source_branch: opts.head, target_branch: opts.base, description: opts.body || '' }),
     });
     return { url: mr.web_url, number: mr.iid };
+  },
+
+  async findChangeRequest(conn, fullName, opts) {
+    const q = new URLSearchParams({ state: 'opened', source_branch: opts.head, target_branch: opts.base });
+    const list = (await api(conn, `/projects/${encodePath(fullName)}/merge_requests?${q}`)) as Array<{ web_url: string; iid: number }>;
+    return list?.[0] ? { url: list[0].web_url, number: list[0].iid } : null;
+  },
+
+  /** Groups where the account is at least Developer, the level GitLab lets create projects by default. */
+  async listOwners(conn) {
+    const groups = (await api(conn, '/groups?min_access_level=30&per_page=100&order_by=path&sort=asc')) as Array<{ full_path: string }>;
+    return [{ path: conn.login, kind: 'user' }, ...(groups || []).map((g): RemoteOwner => ({ path: g.full_path, kind: 'group' }))];
   },
 
   tokenUrl(cloneUrl, token) {

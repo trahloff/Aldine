@@ -4,6 +4,7 @@
  * and reset the counter on success, the loop gives up after MAX_ATTEMPTS,
  * the real push resolves 'off' (never retries) for an unknown project and for
  * a linked project with autopush !== true, and cancel drops a pending timer.
+ * Why pushes fail is kept on the project as a sentence until one lands.
  *
  * AUTOPUSH_DEBOUNCE_MS is read per call, so the give-up run shortens it.
  */
@@ -103,6 +104,34 @@ eq(autopushStats('p5'), { pending: false, running: false, attempts: 0 }, 'cleare
 await sleep(80);
 eq(calls.length, 0, 'the cancelled push never ran');
 cancelAutopush('never-scheduled');
+
+// ---------- (6) the reason is kept on the project until a push lands ----------
+_setPushImpl(null);
+const kept = await store.createProject('Paused', undefined, 'u2');
+store.setRemoteLink(kept, { provider: 'gitlab', fullName: 'grp/paused', owner: 'grp', repo: 'paused', remoteBranch: 'main', cloneUrl: 'file:///nonexistent/paused.git', connectedBy: 'u2' });
+kept.autopush = true;
+await store.writeMeta(kept);
+scheduleAutopush(kept.id, 0);
+check(await until(() => autopushStats(kept.id).attempts === 1, 2000), 'the push without a connection failed once');
+let failure;
+for (let i = 0; i < 100 && !failure; i++) { failure = (await store.readMeta(kept.id)).autopushFailure; if (!failure) await sleep(10); }
+eq(failure?.message, 'The GitLab account that linked this project can no longer push it. Add a token for this project in Git access.', 'nobody can push: said in a sentence that names the fix');
+check(!Number.isNaN(Date.parse(failure?.since)), 'with the time it started: ' + failure?.since);
+cancelAutopush(kept.id);
+
+let fail = true;
+_setPushImpl(async () => { if (fail) throw new Error('remote hung up\nmore detail'); return 'pushed'; });
+scheduleAutopush(kept.id, 0);
+for (let i = 0; i < 100; i++) { if ((await store.readMeta(kept.id)).autopushFailure?.message !== failure.message) break; await sleep(10); }
+const next = (await store.readMeta(kept.id)).autopushFailure;
+eq(next?.message, 'The push failed: remote hung up', 'a new reason replaces the old, first line only');
+eq(next?.since, failure.since, 'and the streak keeps its start');
+cancelAutopush(kept.id);
+fail = false;
+scheduleAutopush(kept.id, 0);
+for (let i = 0; i < 100; i++) { if (!(await store.readMeta(kept.id)).autopushFailure) break; await sleep(10); }
+eq((await store.readMeta(kept.id)).autopushFailure, undefined, 'a push that lands clears it');
+cancelAutopush(kept.id);
 
 _setPushImpl(null);
 fs.rmSync(tmp, { recursive: true, force: true });

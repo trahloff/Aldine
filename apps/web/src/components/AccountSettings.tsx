@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { api, AccessToken, ApiError, AuthUser, ProjectSummary, RemoteConnectionRow } from '../api';
 import { remoteDescriptor } from '../remotes';
 import { useToast } from './Toast';
+import { useDialogs } from './Dialogs';
+import { confirmDisconnect } from './RemoteAccess';
 import { useAuth } from './Auth';
 import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
@@ -15,9 +17,11 @@ function GitHosts() {
   const [rows, setRows] = useState<RemoteConnectionRow[] | null>(null);
   const [failed, setFailed] = useState(false);
   const toast = useToast();
+  const dialogs = useDialogs();
   const load = () => api.remoteConnections().then((r) => { setRows(r); setFailed(false); }, () => setFailed(true));
   useEffect(() => { load(); }, []);
   const disconnect = async (r: RemoteConnectionRow) => {
+    if (!(await confirmDisconnect(r.provider, dialogs))) return;
     try { await api.remoteDisconnect(r.provider); toast(`Disconnected ${remoteDescriptor(r.provider).label}`, 'ok'); load(); }
     catch (err: any) { toast(err.message, 'error'); }
   };

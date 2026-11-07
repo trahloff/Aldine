@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeAgentBatches, type AgentBatch } from '../agentReview';
+import { mergeAgentBatches, revertSummary, type AgentBatch } from '../agentReview';
 
 const commit = (hash: string, minute: number, files: string[]) =>
   ({ hash: hash.repeat(40).slice(0, 40), date: `2026-11-04T10:${String(minute).padStart(2, '0')}:00+01:00`, message: `commit ${hash}`, files });
@@ -53,5 +53,18 @@ describe('mergeAgentBatches', () => {
     expect(merged.commitCount).toBe(35);
     expect(merged.fileCount).toBe(30);
     expect(merged.truncated).toBe(true);
+  });
+});
+
+describe('revertSummary', () => {
+  const now = Date.parse('2026-11-05T12:00:00Z');
+  it('says whose commits go, when they were made, and whose name the revert carries', () => {
+    expect(revertSummary({ commits: 20, files: 14, branch: 'main', dates: ['2026-08-02T09:00:00Z', '2026-09-04T09:00:00Z', '2026-08-20T09:00:00Z'], author: 'Grace Hopper' }, now))
+      .toBe('This undoes 20 commits Claude made on main between Aug 2 and Sep 4, in 14 files. It adds a new commit under your name, Grace Hopper; the history keeps both, and Undo brings the changes back.');
+  });
+  it('names one day once, and leaves out what it does not know', () => {
+    expect(revertSummary({ commits: 1, files: 1, branch: 'draft', dates: ['2026-11-05T10:00:00Z'], author: null }, now))
+      .toBe('This undoes 1 commit Claude made on draft today, in 1 file. It adds a new commit under your name; the history keeps both, and Undo brings the changes back.');
+    expect(revertSummary({ commits: 2, files: 3, branch: 'main', dates: [], author: 'Ada' }, now)).toMatch(/^This undoes 2 commits Claude made on main, in 3 files\./);
   });
 });

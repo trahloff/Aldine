@@ -106,6 +106,14 @@ test.describe('remote providers on Home', () => {
     const githubSingle = page.getByTestId('github-single-token-page');
     await expect(githubSingle).toHaveAttribute('href', 'https://github.com/settings/personal-access-tokens/new');
     await expect(githubSingle.locator('..')).toContainText('Create a token on github.com, choose only this repository and give it Contents: read and write.');
+    // GitHub Enterprise Server: the same pages, on the instance typed in
+    await page.getByTestId('github-single-baseurl').fill('https://github.example.edu/api/v3');
+    await expect(githubSingle).toHaveAttribute('href', 'https://github.example.edu/settings/personal-access-tokens/new');
+    await page.getByTestId('github-selfhosted-toggle').check();
+    await expect(page.getByTestId('github-selfhosted-toggle').locator('..')).toHaveText('Using GitHub Enterprise Server?');
+    await page.getByTestId('github-baseurl').fill('https://github.example.edu');
+    await expect(link).toHaveText('Create a token on github.example.edu');
+    await expect(link).toHaveAttribute('href', 'https://github.example.edu/settings/tokens/new?scopes=repo&description=Aldine');
 
     link = await connectForm('new-from-gitlab', 'gitlab');
     await expect(link).toHaveAttribute('href', 'https://gitlab.com/-/user_settings/personal_access_tokens?name=Aldine&scopes=api');
@@ -745,5 +753,329 @@ test.describe('GitLab sync', () => {
     await expect(page.locator('.toast').filter({ hasText: 'URL' })).toBeVisible();
     await expect(tokenInput).toBeVisible(); // still disconnected
     await expect(page.getByTestId('gitlab-repos')).toHaveCount(0);
+  });
+});
+
+/** A new project published to the mock GitLab through the API; `bare` is the repository the mock keeps for it. */
+async function publishToGitlab(request: import('@playwright/test').APIRequestContext, name: string) {
+  expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } })).ok()).toBeTruthy();
+  const id: string = (await (await request.post('/api/projects', { data: { name } })).json()).id;
+  const res = await request.post(`/api/projects/${id}/remote/link`, { data: { provider: 'gitlab', name: name.replace(/\s+/g, '-') } });
+  expect(res.ok(), await res.text()).toBeTruthy();
+  const fullName: string = (await res.json()).remote.fullName;
+  return { id, fullName, bare: path.join(GITLAB_DATA, `${fullName}.git`) };
+}
+
+/** A commit on the host's main, as a co-author working elsewhere would push it. */
+function hostCommit(bare: string, file: string, edit: (text: string) => string) {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-e2e-host-'));
+  try {
+    git(['clone', '-q', bare, `${work}/clone`]);
+    const abs = path.join(work, 'clone', file);
+    fs.writeFileSync(abs, edit(fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : ''));
+    git(['add', '-A'], `${work}/clone`);
+    git(['-c', 'user.email=e2e@aldine.dev', '-c', 'user.name=e2e', 'commit', '-q', '-m', `elsewhere: ${file}`], `${work}/clone`);
+    git(['push', '-q', 'origin', 'main'], `${work}/clone`);
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
+}
+
+/** main.tex here, with `mark` at the end of the \begin{document} line: the line hostCommit edits too. */
+async function localEdit(request: import('@playwright/test').APIRequestContext, id: string, mark: string) {
+  const cur = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
+  const res = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: cur.replace(/\\begin\{document\}[^\n]*/, `\\begin{document} % ${mark}`) } });
+  expect(res.ok()).toBeTruthy();
+}
+
+test.describe('sync failures, conflicts and where to publish', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  test.beforeEach(async ({ page }) => {
+    // an auto-typeset shifts the toolbar and closes an open branch menu
+    await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+  });
+
+  test('a pull conflict: the owner keeps both versions, a member is told who can settle it', async ({ page, request }) => {
+    const p = await publishToGitlab(request, `Conflict ${Date.now()}`);
+    const stamp = Date.now();
+    await localEdit(request, p.id, `LOCAL-${stamp}`);
+    hostCommit(p.bare, 'main.tex', (t) => t.replace(/\\begin\{document\}[^\n]*/, `\\begin{document} % REMOTE-${stamp}`));
+
+    await page.goto(`/p/${p.id}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await openFile(page, 'main.tex');
+    const content = page.locator('.cm-content');
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitlab-pull-btn').click();
+    const dialog = page.getByTestId('conflict-dialog');
+    await expect(dialog).toContainText("Everyone's changes not yet on GitLab and GitLab's newer commits change the same lines in:");
+    await expect(dialog.locator('.conflict__list')).toContainText('main.tex');
+    const keepAs = (await page.getByTestId('conflict-keep-note').locator('strong').textContent())!;
+    expect(keepAs).toMatch(/^my-version-\d{4}-\d{2}-\d{2}(-\d+)?$/);
+    // one way out: nothing that drops main without keeping it
+    await expect(page.getByTestId('conflict-take-remote')).toHaveCount(0);
+    await expect(page.getByTestId('conflict-dialog').getByRole('button')).toHaveText(['Cancel', 'Keep both']);
+
+    await page.getByTestId('conflict-keep-both').click();
+    await expect(page.locator('.toast').filter({ hasText: `Kept both: main has GitLab's version, and everyone's changes not yet on GitLab are on ${keepAs}` })).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    await expect(content).toContainText(`REMOTE-${stamp}`);
+    await expect(content).not.toContainText(`LOCAL-${stamp}`);
+    // the version main had is a branch only this server has
+    expect(await (await request.get(`/api/projects/${p.id}/file?branch=${encodeURIComponent(keepAs)}&path=main.tex`)).text()).toContain(`LOCAL-${stamp}`);
+    expect(git(['--git-dir', p.bare, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'])).not.toContain('my-version');
+    await page.getByTestId('branch-menu').click();
+    await expect(page.getByTestId('branch-list')).toContainText('Only on this server');
+    await page.getByTestId(`branch-${keepAs}`).click();
+    await expect(page.getByTestId('branch-menu')).toContainText(keepAs);
+    await expect(content).toContainText(`LOCAL-${stamp}`);
+
+    // a member cannot change main for everyone: a sentence instead of the two buttons
+    await localEdit(request, p.id, `LOCAL2-${stamp}`);
+    hostCommit(p.bare, 'main.tex', (t) => t.replace(/\\begin\{document\}[^\n]*/, `\\begin{document} % REMOTE2-${stamp}`));
+    await page.route('**/api/auth/me', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), authEnabled: true, user: { id: 'member', email: 'member@test.com', name: 'Member' } } });
+    });
+    await page.route(`**/api/projects/${p.id}`, async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), isOwner: false, isMember: true } });
+    });
+    await page.goto(`/p/${p.id}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitlab-pull-btn').click();
+    await expect(page.getByTestId('conflict-owner-note')).toHaveText("Only the project owner can settle this, by keeping both versions. Until then your edits stay saved on this server, and Pull stops at this conflict again.");
+    await expect(page.getByTestId('conflict-keep-both')).toHaveCount(0);
+    await expect(page.getByTestId('conflict-take-remote')).toHaveCount(0);
+    await page.getByTestId('conflict-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(page.getByTestId('conflict-dialog')).toHaveCount(0);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
+  test('the push dialog says what goes: saved checkpoints need no message, edits not yet saved get one', async ({ page, request }) => {
+    const p = await publishToGitlab(request, `Push Dialog ${Date.now()}`);
+    const stamp = Date.now();
+    await localEdit(request, p.id, `SAVED-${stamp}`);
+    expect((await (await request.post(`/api/projects/${p.id}/commit`, { data: { branch: 'main', message: 'e2e checkpoint' } })).json()).committed).toBe(true);
+
+    await page.goto(`/p/${p.id}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitlab-push-btn').click();
+    const dialog = page.getByTestId('push-dialog');
+    await expect(page.getByTestId('push-summary')).toHaveText('Pushes 1 saved checkpoint to GitLab.');
+    await expect(page.getByTestId('push-message')).toHaveCount(0);
+    await expect(page.getByTestId('push-confirm')).toHaveText('Push');
+    await expect(page.getByTestId('push-confirm')).toBeFocused();
+    await expect(page.getByTestId('push-commit-mode')).toContainText('set Commit changes to “When I commit” in project settings');
+    // it points at the setting
+    await page.getByTestId('push-open-settings').click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId('settings-commit-mode')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('settings-commit-mode')).toHaveCount(0);
+
+    // an edit not yet in a checkpoint: the message names that edit alone
+    await localEdit(request, p.id, `WAITING-${stamp}`);
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitlab-push-btn').click();
+    await expect(page.getByTestId('push-message')).toBeFocused();
+    await expect(page.getByTestId('push-summary')).toHaveText('Your message names only the edits not yet saved as a checkpoint (1 file). The saved checkpoint before them goes as it is.');
+    await expect(page.getByTestId('push-confirm')).toHaveText('Commit & push');
+    await page.getByTestId('push-message').fill('Name the waiting edit');
+    await page.getByTestId('push-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Pushed to GitLab' })).toBeVisible();
+    expect(git(['--git-dir', p.bare, 'log', '-2', '--format=%s', 'main']).trim().split('\n')).toEqual(['Name the waiting edit', 'e2e checkpoint']);
+  });
+
+  test('a push the host refuses offers Pull, and an open merge request is linked', async ({ page, request }) => {
+    await page.addInitScript(() => {
+      (window as any).__opened = [];
+      window.open = ((url: string) => { (window as any).__opened.push(url); return null; }) as any;
+    });
+    const p = await publishToGitlab(request, `Refused ${Date.now()}`);
+    const stamp = Date.now();
+    hostCommit(p.bare, 'elsewhere.tex', () => `from elsewhere ${stamp}\n`);
+    await localEdit(request, p.id, `MINE-${stamp}`);
+
+    await page.goto(`/p/${p.id}`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('gitlab-push-btn').click();
+    await page.getByTestId('push-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: 'GitLab has newer commits on main. Pull first, then push.' })).toBeVisible();
+    // the pill looks again at once: Pull, not Push
+    await expect(page.getByTestId('gitlab-sync-action')).toHaveText('Pull');
+    await page.getByTestId('gitlab-pull-first').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Pulled from GitLab' })).toBeVisible();
+    await expect(page.getByTestId('gitlab-sync-action')).toHaveText('Push');
+    await page.getByTestId('gitlab-sync-action').click();
+    await page.getByTestId('push-confirm').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Pushed to GitLab' })).toBeVisible();
+    expect(git(['--git-dir', p.bare, 'show', 'main:main.tex'])).toContain(`MINE-${stamp}`);
+
+    // a merge request already open is linked instead of the host's JSON
+    const branch = `review-${stamp}`;
+    await page.getByTestId('branch-menu').click();
+    await page.getByTestId('new-branch').click();
+    await page.getByTestId('new-branch-name').fill(branch);
+    await page.getByTestId('new-branch-create').click();
+    await expect(page.getByTestId('branch-menu')).toContainText(branch);
+    for (const round of [1, 2]) {
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('gitlab-open-pr').click();
+      await page.getByTestId('pr-title').fill(`E2E review ${round}`);
+      await page.getByTestId('pr-confirm').click();
+    }
+    const open = page.locator('.toast').filter({ hasText: new RegExp(`A merge request from ${branch} into main is already open: #\\d+\\.`) });
+    await expect(open).toBeVisible();
+    await expect(page.locator('.toast').filter({ hasText: 'GitLab API' })).toHaveCount(0);
+    await page.getByTestId('gitlab-open-existing').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__opened)).toEqual([expect.stringContaining('/-/merge_requests/'), expect.stringContaining('/-/merge_requests/')]);
+  });
+
+  test('nobody can sync: the menu says so with Git access, and Disconnect warns first', async ({ page, request }) => {
+    const projectName = `Nobody ${Date.now()}`;
+    const p = await publishToGitlab(request, projectName);
+    expect((await request.post(`/api/projects/${p.id}/remote/autopush`, { data: { enabled: true } })).ok()).toBeTruthy();
+    try {
+      await page.goto(`/p/${p.id}`);
+      await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('gitlab-access').click();
+      await page.getByTestId('gitlab-access-disconnect').click();
+      // the projects linked with this account are named, newest first
+      await expect(page.getByTestId('dialog-title')).toHaveText('Disconnect your GitLab account?');
+      await expect(page.getByTestId('dialog-message')).toContainText(`linked with it: ${projectName}`);
+      await expect(page.getByTestId('dialog-message')).toContainText('People without their own GitLab connection can no longer sync');
+      await expect(page.getByTestId('dialog-message')).toContainText('and autopush stops');
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.locator('.toast').filter({ hasText: 'Disconnected your GitLab account' })).toBeVisible();
+      await page.getByTestId('gitlab-access-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+
+      // instead of "Checking GitLab…" forever
+      await expect(page.getByTestId('gitlab-connect-pill')).toBeVisible();
+      await page.getByTestId('branch-menu').click();
+      await expect(page.getByTestId('gitlab-state')).toHaveText("Nobody's GitLab account can sync this project");
+      await expect(page.getByTestId('gitlab-autopush-paused')).toHaveText("Autopush paused. Nobody's GitLab account can sync this project, so nothing is pushed.");
+      await page.getByTestId('gitlab-no-connection-access').click();
+      await expect(page.getByTestId('gitlab-access-dialog')).toBeVisible();
+      await page.getByTestId('gitlab-access-connect').click();
+      await page.getByTestId('gitlab-token').fill('e2e-token');
+      await page.getByTestId('gitlab-connect').click();
+      // exact: "Disconnected your GitLab account" may still be up and contains these words
+      await expect(page.locator('.toast').filter({ hasText: /^Connected your GitLab account$/ })).toBeVisible();
+      await page.getByTestId('gitlab-access-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(page.getByTestId('gitlab-connect-pill')).toHaveCount(0);
+      await page.getByTestId('branch-menu').click();
+      await expect(page.getByTestId('gitlab-state')).toHaveText('No commits waiting');
+      await expect(page.getByTestId('gitlab-autopush-paused')).toHaveCount(0);
+    } finally {
+      await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } });
+      await request.post(`/api/projects/${p.id}/remote/autopush`, { data: { enabled: false } });
+    }
+  });
+
+  test('back from a host sign-in, the dialog it started from opens again', async ({ page, request }) => {
+    const p = await publishToGitlab(request, `Reopen ${Date.now()}`);
+    await page.goto(`/p/${p.id}?remote=gitlab&reopen=access`);
+    await expect(page.getByTestId('gitlab-access-dialog')).toBeVisible();
+    await expect(page.locator('.toast').filter({ hasText: /^Connected your GitLab account$/ })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).search).toBe('');
+    // a dialog name outside the list opens nothing
+    await page.goto(`/p/${p.id}?remote=gitlab&reopen=settings`);
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    await expect(page.getByTestId('gitlab-access-dialog')).toHaveCount(0);
+    await expect(page.getByTestId('settings-commit-mode')).toHaveCount(0);
+
+    // Publish reopens on the host the sign-in was for
+    const id: string = (await (await request.post('/api/projects', { data: { name: `Reopen Publish ${Date.now()}` } })).json()).id;
+    await page.goto(`/p/${id}?remote=gitlab&reopen=publish`);
+    await expect(page.getByTestId('remote-publish')).toBeVisible();
+    await expect(page.getByTestId('remote-publish-provider-gitlab')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('remote-publish')).toContainText('Publish to GitLab');
+  });
+
+  test('Import says plainly why a repository cannot be cloned', async ({ page, request }) => {
+    const toastWith = (text: string) => page.locator('.toast').filter({ hasText: text });
+    const cloneOne = async (p: 'gitlab' | 'gitea', repo: string) => {
+      await page.getByTestId(`${p}-single-repo`).fill(repo);
+      await page.getByTestId(`${p}-single-token`).fill('e2e-token');
+      await page.getByTestId(`${p}-single-clone`).click();
+    };
+    await page.goto('/');
+    await startFrom(page, 'new-from-gitlab');
+    await expect(page.getByTestId('gitlab-import')).toBeVisible();
+    await page.getByTestId('gitlab-single').click();
+    await cloneOne('gitlab', 'grp/sub/missing');
+    await expect(toastWith('GitLab has no repository grp/sub/missing that this token can see. Check the name, or use a token with access to it.')).toBeVisible();
+    await cloneOne('gitlab', 'grp/sub/locked');
+    await expect(toastWith('This GitLab token cannot read grp/sub/locked. Use a token with access to it.')).toBeVisible();
+    await request.get(`${MOCK}/__down?on=1`);
+    try {
+      await cloneOne('gitlab', 'grp/sub/paper');
+      await expect(toastWith('Could not reach GitLab just now. Try again in a moment.')).toBeVisible();
+    } finally {
+      await request.get(`${MOCK}/__down?on=0`);
+    }
+    // none of it is the host's JSON or git's output
+    await expect(page.locator('.toast').filter({ hasText: /API \d{3}|"message"|fatal:/ })).toHaveCount(0);
+    await expect(page.getByTestId('editor-shell')).toHaveCount(0);
+
+    await page.goto('/');
+    await startFrom(page, 'new-from-gitea');
+    await expect(page.getByTestId('gitea-import')).toBeVisible();
+    await page.getByTestId('gitea-single').click();
+    await page.getByTestId('gitea-single-baseurl').fill(`http://localhost:${GITEA}`);
+    await cloneOne('gitea', 'e2e-user/missing');
+    await expect(toastWith('Gitea / Forgejo has no repository e2e-user/missing that this token can see. Check the name, or use a token with access to it.')).toBeVisible();
+  });
+
+  test('Publish into a GitLab group or a Gitea organisation, and a name in use is said plainly', async ({ page, request }) => {
+    expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } })).ok()).toBeTruthy();
+    const stamp = Date.now();
+    const open = async (name: string, provider: 'gitlab' | 'gitea') => {
+      const id: string = (await (await request.post('/api/projects', { data: { name } })).json()).id;
+      await page.goto(`/p/${id}`);
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('remote-publish-open').click();
+      await page.getByTestId(`remote-publish-provider-${provider}`).click();
+      const nameInput = page.getByTestId('publish-repo-name');
+      await expect(nameInput.or(page.getByTestId(`${provider}-token`))).toBeVisible();
+      if (!(await nameInput.isVisible())) {
+        if (provider === 'gitea') await page.getByTestId('gitea-baseurl').fill(`http://localhost:${GITEA}`);
+        await page.getByTestId(`${provider}-token`).fill('e2e-token');
+        await page.getByTestId(`${provider}-connect`).click();
+      }
+      await expect(nameInput).toBeVisible();
+      return nameInput;
+    };
+
+    let name = await open(`Group Paper ${stamp}`, 'gitlab');
+    const owner = page.getByTestId('publish-owner');
+    await expect(owner).toHaveValue('e2e-user');
+    await expect(owner.locator('option')).toContainText(['e2e-user (you)', 'grp', 'grp/sub']);
+    await owner.selectOption('grp/sub');
+    // grp/sub/paper is the mock's seeded project
+    await name.fill('paper');
+    await expect(page.getByTestId('publish-submit')).toHaveText('Publish to GitLab as grp/sub/paper');
+    await page.getByTestId('publish-submit').click();
+    await expect(page.locator('.toast').filter({ hasText: 'grp/sub already has a repository called paper on GitLab. Pick another name.' })).toBeVisible();
+    await expect(name).toBeFocused();
+    await name.fill(`group-paper-${stamp}`);
+    await page.getByTestId('publish-submit').click();
+    await expect(page.locator('.toast').filter({ hasText: `Published to grp/sub/group-paper-${stamp}` })).toBeVisible();
+    await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+    expect(git(['--git-dir', path.join(GITLAB_DATA, `grp/sub/group-paper-${stamp}.git`), 'show', 'main:main.tex'])).toContain('\\documentclass');
+
+    name = await open(`Org Paper ${stamp}`, 'gitea');
+    await page.getByTestId('publish-owner').selectOption('e2e-org');
+    await name.fill(`org-paper-${stamp}`);
+    await expect(page.getByTestId('publish-submit')).toHaveText(`Publish to Gitea / Forgejo as e2e-org/org-paper-${stamp}`);
+    await page.getByTestId('publish-submit').click();
+    await expect(page.locator('.toast').filter({ hasText: `Published to e2e-org/org-paper-${stamp}` })).toBeVisible();
+    expect(git(['--git-dir', path.join(GITEA_DATA, `e2e-org/org-paper-${stamp}.git`), 'show', 'main:main.tex'])).toContain('\\documentclass');
   });
 });

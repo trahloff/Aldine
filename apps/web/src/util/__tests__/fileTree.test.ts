@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { TreeEntry } from '../../api';
-import { buildTree, entryPathError, filesIn, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, withTexExtension, within, type TreeNode } from '../fileTree';
+import { buildTree, entryPathError, filesIn, hiddenCount, hiddenUploadName, holdsOnlyKeep, moveTarget, normalizeEntryPath, sourceTree, treeKey, typeaheadRow, visibleRows, withTexExtension, within, type TreeNode } from '../fileTree';
 
 const file = (path: string): TreeEntry => ({ path, type: 'file' });
 const dir = (path: string): TreeEntry => ({ path, type: 'dir' });
@@ -77,6 +77,86 @@ describe('sourceTree', () => {
 
   it('keeps a dot-folder for the source inside it', () => {
     expect(paths(sourceTree(buildTree([file('.drafts/old.tex')])))).toEqual(['.drafts/', '.drafts/old.tex']);
+  });
+
+  it('lists the files it is told to keep, whatever they are, a dot-folder\'s too', () => {
+    const kept = paths(sourceTree(buildTree(listing), new Set(['Makefile', 'data/results.xlsx', '.github/workflows/ci.yml'])));
+    expect(kept).toContain('Makefile');
+    expect(kept).toContain('data/results.xlsx');
+    expect(kept).toContain('.github/');
+    expect(kept).toContain('.github/workflows/ci.yml');
+    expect(kept).not.toContain('chapters/notes.docx');
+  });
+});
+
+describe('hiddenCount', () => {
+  it('counts the files the view leaves out, not .gitkeep placeholders or dot-files', () => {
+    const full = buildTree([file('main.tex'), file('Makefile'), file('.gitignore'), file('figures/.gitkeep'), file('data/raw.xlsx'), file('.github/workflows/ci.yml')]);
+    expect(hiddenCount(full, sourceTree(full))).toBe(2);
+    expect(hiddenCount(full, sourceTree(full, new Set(['Makefile'])))).toBe(1);
+    expect(hiddenCount(full, full)).toBe(0);
+  });
+});
+
+describe('visibleRows and treeKey', () => {
+  const tree = buildTree([file('main.tex'), file('chapters/intro.tex'), file('chapters/parts/one.tex'), file('figures/plot.png')]);
+  const open = (dirs: string[]) => visibleRows(tree, (p) => dirs.includes(p));
+
+  it('lists the top level and the inside of open folders, with each row\'s level and place', () => {
+    const rows = open(['chapters']);
+    expect(rows.map((r) => r.path)).toEqual(['chapters', 'chapters/parts', 'chapters/intro.tex', 'figures', 'main.tex']);
+    expect(rows[1]).toMatchObject({ level: 2, parent: 'chapters', posInSet: 1, setSize: 2, open: false });
+    expect(rows[4]).toMatchObject({ level: 1, parent: null, posInSet: 3, setSize: 3 });
+  });
+
+  it('moves up, down, to the ends, and stops at the edges', () => {
+    const rows = open(['chapters']);
+    expect(treeKey(rows, 'chapters/parts', 'ArrowDown')).toEqual({ focus: 'chapters/intro.tex' });
+    expect(treeKey(rows, 'chapters/parts', 'ArrowUp')).toEqual({ focus: 'chapters' });
+    expect(treeKey(rows, 'main.tex', 'ArrowDown')).toEqual({ focus: 'main.tex' });
+    expect(treeKey(rows, 'chapters', 'ArrowUp')).toEqual({ focus: 'chapters' });
+    expect(treeKey(rows, 'chapters/intro.tex', 'Home')).toEqual({ focus: 'chapters' });
+    expect(treeKey(rows, 'chapters', 'End')).toEqual({ focus: 'main.tex' });
+  });
+
+  it('opens a folder with Right and then goes into it; Left closes it and then goes up', () => {
+    const shut = open([]);
+    expect(treeKey(shut, 'chapters', 'ArrowRight')).toEqual({ open: 'chapters' });
+    const rows = open(['chapters']);
+    expect(treeKey(rows, 'chapters', 'ArrowRight')).toEqual({ focus: 'chapters/parts' });
+    expect(treeKey(rows, 'chapters', 'ArrowLeft')).toEqual({ close: 'chapters' });
+    expect(treeKey(rows, 'chapters/intro.tex', 'ArrowLeft')).toEqual({ focus: 'chapters' });
+    expect(treeKey(rows, 'main.tex', 'ArrowLeft')).toEqual({});
+    expect(treeKey(rows, 'main.tex', 'ArrowRight')).toEqual({});
+  });
+
+  it('leaves other keys alone', () => {
+    expect(treeKey(open([]), 'main.tex', 'Enter')).toBeNull();
+    expect(treeKey(open([]), 'main.tex', 'a')).toBeNull();
+  });
+});
+
+describe('typeaheadRow', () => {
+  const rows = visibleRows(buildTree([file('main.tex'), file('macros.sty'), file('appendix.tex'), file('chapters/intro.tex')]), () => false);
+
+  it('goes to the next name starting with a letter, round to the top', () => {
+    expect(typeaheadRow(rows, 'appendix.tex', 'm')).toBe('macros.sty');
+    expect(typeaheadRow(rows, 'macros.sty', 'm')).toBe('main.tex');
+    expect(typeaheadRow(rows, 'main.tex', 'm')).toBe('macros.sty');
+    expect(typeaheadRow(rows, 'main.tex', 'C')).toBe('chapters');
+  });
+
+  it('stays on the row while more of its name is typed', () => {
+    expect(typeaheadRow(rows, 'main.tex', 'ma')).toBe('main.tex');
+    expect(typeaheadRow(rows, 'macros.sty', 'mai')).toBe('main.tex');
+    expect(typeaheadRow(rows, 'main.tex', 'x')).toBeNull();
+  });
+});
+
+describe('hiddenUploadName', () => {
+  it('leaves dot-files and dot-folders out of a folder upload, but not .latexmkrc', () => {
+    for (const name of ['.git', '.DS_Store', '.gitignore', '.vscode', '.gitkeep']) expect(hiddenUploadName(name), name).toBe(true);
+    for (const name of ['.latexmkrc', 'figures', 'plot.png', 'notes.txt']) expect(hiddenUploadName(name), name).toBe(false);
   });
 });
 

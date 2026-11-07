@@ -108,6 +108,8 @@ and reconnect behaviour in the `e2e/c2-shutdown.mjs` and
 - **COLLAB-1** — Two people editing the same file see each other's changes live,
   conflict-free (CRDT), with multiple cursors.
 - **COLLAB-2** — Each collaborator shows a presence indicator with name/color.
+  People in the branch's other files show too, dimmed, with their file;
+  choosing one in the chip's list opens that file.
 - **COLLAB-3** — Concurrent edits at different positions both survive (no lost
   updates).
 - **COLLAB-4** — A collaborator joining mid-session receives the current
@@ -139,10 +141,13 @@ and reconnect behaviour in the `e2e/c2-shutdown.mjs` and
 - **GH-1** — I import a GitHub repo as a project (OAuth or PAT).
 - **GH-2** — I push commits to GitHub with a message; ahead/behind indicators
   update.
-- **GH-3** — I pull remote changes; conflicts are surfaced.
+- **GH-3** — I pull remote changes; conflicts are surfaced. As the owner I
+  keep both versions: main is saved as `my-version-<date>`, a branch only
+  the server has, and takes the host's version. A collaborator is told the
+  owner settles it.
 - **GH-4** — I open a pull request from the editor.
 - **GH-5** — I switch the synced remote branch.
-- **GH-6** — Owner-controlled autopush pushes each autosave from the server; manual push always pushes.
+- **GH-6** — Owner-controlled autopush pushes each autosave from the server; manual push always pushes. When autopush cannot push, the branch menu says why.
 - **GH-7** — Auth tokens never land in the compiler-visible project dir.
 
 ## GitLab sync (GL)
@@ -156,7 +161,8 @@ and in `33-remotes.spec.ts` against `e2e/tests/mock-gitlab.mjs`; provisioning
   https instance, sub-path installs included) or with OAuth.
 - **GL-2** — I import a project from a nested group path
   (`group/subgroup/project`).
-- **GL-3** — I publish a local project to GitLab, optionally into a group.
+- **GL-3** — I publish a local project to GitLab, optionally into a group I
+  pick from the Owner list (an organisation on GitHub and Gitea / Forgejo).
 - **GL-4** — I push, pull and switch branches exactly as with GitHub.
 - **GL-5** — I open a merge request from the editor.
 - **GL-6** — As an operator I hide a provider with `REMOTE_PROVIDERS`;
@@ -249,6 +255,10 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
   click and the text changes.
 - **REV-3** — Comments highlight in the editor; I resolve and reopen them.
 - **REV-4** — Comments sync live between collaborators.
+- **REV-5** — Hovering commented text, or putting the caret in it, shows its
+  comment, with Open in Review; Review lists threads in document order.
+- **REV-6** — A comment or reply the server refuses stays in its box for
+  another try; comments and replies up to 20,000 characters save whole.
 
 ## AI error fix (AI)
 
@@ -287,6 +297,13 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
 - **AUTH-7** — An invitation by email or ORCID iD grants nothing until the
   invited person accepts it; its link opens nothing for another account; on
   a server without email it waits on the invitee's Home page.
+- **AUTH-8** — The owner shares as "Can edit" or "Can view", per person and
+  for the link. Someone who can view reads, typesets and comments; the REST
+  routes, the collab socket and the Agent API refuse their changes, and a
+  role changed while they have the project open applies at once.
+- **AUTH-9** — Opening someone else's project for the first time puts none
+  of Claude's earlier work up for review. Revert asks first, saying whose
+  commits it undoes, and offers Undo.
 
 ## Visual editor (VIS)
 

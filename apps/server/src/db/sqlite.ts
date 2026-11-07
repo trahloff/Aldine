@@ -464,7 +464,7 @@ export class SqliteStore implements DataStore {
       if (!r) return false;
       const meta = parse<ProjectMeta>(r.data);
       const collaborators = meta.share?.collaborators ?? [];
-      meta.share = { mode: meta.share?.mode ?? 'private', collaborators: collaborators.includes(entry) ? collaborators : [...collaborators, entry] };
+      meta.share = { ...meta.share, mode: meta.share?.mode ?? 'private', collaborators: collaborators.includes(entry) ? collaborators : [...collaborators, entry] };
       this.run(`UPDATE project_meta SET data=?2 WHERE id=?1`, projectId, json(meta));
       return true;
     });

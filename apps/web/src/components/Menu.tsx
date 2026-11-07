@@ -451,7 +451,7 @@ type Placement = 'bottom-start' | 'bottom-end';
  * it with nothing highlighted; the arrow keys then start at either end.
  */
 export function MenuButton({
-  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex, sheetTitle, role, selected,
+  items, label, children, className = 'btn', testId, menuTestId, placement = 'bottom-start', title, ariaLabel, disabled, menuClassName, tabIndex, sheetTitle, role, selected, ariaHidden,
 }: {
   items: MenuEntry[] | (() => MenuEntry[]);
   /** The menu's name for assistive tech when the button's own text does not name it. */
@@ -472,6 +472,9 @@ export function MenuButton({
   /** A tab whose menu holds further tabs: `selected` while it shows one of them. */
   role?: 'tab';
   selected?: boolean;
+  /** Out of the accessibility tree, beside an item that opens the same menu
+   *  with Shift+F10 (a tree's row, whose tree may hold nothing but rows). */
+  ariaHidden?: boolean;
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   const btnId = useId();
@@ -496,6 +499,7 @@ export function MenuButton({
         aria-expanded={!!open}
         aria-controls={open ? menuId : undefined}
         aria-label={ariaLabel}
+        aria-hidden={ariaHidden || undefined}
         title={title}
         disabled={disabled}
         tabIndex={tabIndex}

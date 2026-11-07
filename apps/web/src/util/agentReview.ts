@@ -1,4 +1,5 @@
 import type { AgentActivity } from '../api';
+import { dayAgo, shortDate } from './dates';
 
 export type AgentBatch = Omit<AgentActivity, 'sessionActive'>;
 
@@ -26,4 +27,23 @@ export function mergeAgentBatches(older: AgentBatch, newer: AgentBatch, limit: n
     fileCount: Math.max(files.size, older.fileCount, newer.fileCount),
     truncated: older.truncated || newer.truncated,
   };
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+
+/**
+ * What the Revert confirmation says: whose commits go (Claude's), when they
+ * were made, and whose name the undoing commit carries.
+ */
+export function revertSummary(r: { commits: number; files: number; branch: string; dates: string[]; author: string | null }, now = Date.now()): string {
+  const times = r.dates.map((d) => Date.parse(d)).filter((t) => !Number.isNaN(t)).sort((a, b) => a - b);
+  let when = '';
+  if (times.length) {
+    const first = new Date(times[0]).toISOString(), last = new Date(times[times.length - 1]).toISOString();
+    const a = dayAgo(first, now), b = dayAgo(last, now);
+    when = a === b ? ` ${b}` : ` between ${shortDate(first, now)} and ${shortDate(last, now)}`;
+  }
+  const by = r.author ? `under your name, ${r.author}` : 'under your name';
+  return `This undoes ${plural(r.commits, 'commit')} Claude made on ${r.branch}${when}, in ${plural(r.files, 'file')}. `
+    + `It adds a new commit ${by}; the history keeps both, and Undo brings the changes back.`;
 }

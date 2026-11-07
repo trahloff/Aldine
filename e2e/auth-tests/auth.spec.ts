@@ -1,5 +1,7 @@
 import { test, expect } from '../fixtures';
 import AxeBuilder from '@axe-core/playwright';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 /** Unique email per run so re-runs don't collide with the persisted user store. */
 const uniq = () => `u${Date.now()}${Math.floor(Math.random() * 1000)}@test.com`;
@@ -1689,3 +1691,220 @@ test.describe('names and the trash', () => {
   });
 });
 
+test.describe('view-only sharing', () => {
+  test('someone invited as Can view reads and comments, cannot change the files, and edits as soon as the owner lets them', async ({ browser }) => {
+    const headers = { 'x-forwarded-for': '203.0.113.81' };
+    const owner = await browser.newContext({ extraHTTPHeaders: headers });
+    const page = await owner.newPage();
+    await register(page, uniq(), 'password123', 'Olive Owner');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Draft For Readers' } })).json();
+    await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'READER-TEXT stays as it is.\n' } });
+
+    const reader = await browser.newContext({ extraHTTPHeaders: headers });
+    const rEmail = uniq();
+    await reader.request.post('/api/auth/register', { data: { email: rEmail, password: 'password123', name: 'Rhea Reader' } });
+    await confirmEmail(reader.request, rEmail);
+
+    // the owner invites her as Can view
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.locator('.cm-content')).toContainText('READER-TEXT');
+    await page.getByTestId('share-project').click();
+    await page.getByTestId('share-emails').fill(rEmail);
+    await page.getByTestId('share-invite-role').selectOption('view');
+    await page.getByTestId('share-save').click();
+    await expect(page.getByTestId('share-invite-result')).toBeVisible();
+    await expect(page.locator(`[data-testid="invite-row"][data-to="${rEmail}"]`).getByTestId('invite-role')).toHaveValue('view');
+    await page.getByTestId('share-done').click();
+    await acceptInvitation(reader.request, proj.id);
+
+    const rp = await reader.newPage();
+    await rp.goto(`/p/${proj.id}`);
+    await expect(rp.getByTestId('view-only-note')).toContainText('You can view this project and comment on it. To edit it, ask Olive Owner for edit access.');
+    await expect(rp.locator('.cm-content')).toContainText('READER-TEXT');
+    await expect(rp.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    await rp.locator('.cm-content').click();
+    await rp.keyboard.type('TYPED-BY-READER');
+    await expect(rp.locator('.cm-content')).not.toContainText('TYPED-BY-READER');
+    await expect(rp.getByTestId('project-name')).not.toHaveAttribute('contenteditable', 'true');
+    await expect(rp.getByTestId('agent-revert')).toHaveCount(0);
+    // she comments like anyone else
+    const line = await rp.locator('.cm-line').first().boundingBox();
+    await rp.mouse.dblclick(line!.x + 30, line!.y + line!.height / 2);
+    await rp.getByTestId('add-comment').click();
+    await rp.getByTestId('comment-body').fill('A READER NOTE');
+    await rp.getByTestId('comment-submit').click();
+    await expect(rp.getByTestId('review-panel')).toContainText('A READER NOTE');
+    // her socket is read-only, so the server tells the others: the owner sees it live
+    await page.getByTestId('tab-review').click();
+    await expect(page.getByTestId('review-panel')).toContainText('A READER NOTE', { timeout: 15_000 });
+    // and the server holds the line on its own
+    expect((await reader.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'x.tex', content: 'x' } })).status()).toBe(403);
+
+    // Can edit, from the owner's list of people
+    await page.getByTestId('share-project').click();
+    const row = page.locator(`[data-testid="person-row"][data-to="${rEmail}"]`);
+    await expect(row.getByTestId('person-role')).toHaveValue('view');
+    await row.getByTestId('person-role').selectOption('edit');
+    await expect(page.locator('.toast', { hasText: `${rEmail} can edit now` })).toBeVisible();
+    await page.getByTestId('share-close').click();
+
+    // her open editor follows without a reload
+    await expect(rp.getByTestId('view-only-note')).toHaveCount(0, { timeout: 15_000 });
+    await rp.locator('.cm-content').click();
+    await rp.keyboard.press('End');
+    await rp.keyboard.type(' NOW-EDITING');
+    await expect(page.locator('.cm-content')).toContainText('NOW-EDITING', { timeout: 15_000 });
+    await owner.close();
+    await reader.close();
+  });
+
+  test('a view-only link lets a signed-in visitor read and comment; Can edit on the link lets them type', async ({ browser }) => {
+    const headers = { 'x-forwarded-for': '203.0.113.82' };
+    const owner = await browser.newContext({ extraHTTPHeaders: headers });
+    const page = await owner.newPage();
+    await register(page, uniq(), 'password123', 'Lina Link');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Link For Readers' } })).json();
+    await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'LINK-TEXT stays.\n' } });
+    await page.goto(`/p/${proj.id}`);
+    await page.getByTestId('share-project').click();
+    await page.getByTestId('share-link').check();
+    await expect(page.locator('.toast', { hasText: 'Link sharing on: anyone signed in with the link can edit' })).toBeVisible();
+    await page.getByTestId('share-link-role').selectOption('view');
+    await expect(page.locator('.toast', { hasText: 'Anyone signed in with the link can view now' })).toBeVisible();
+    await page.getByTestId('share-close').click();
+
+    const visitor = await browser.newContext({ extraHTTPHeaders: headers });
+    await visitor.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Vic Visitor' } });
+    const vp = await visitor.newPage();
+    await vp.goto(`/p/${proj.id}`);
+    await expect(vp.getByTestId('view-only-note')).toBeVisible();
+    await expect(vp.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    await vp.locator('.cm-content').click();
+    await vp.keyboard.type('TYPED-BY-VISITOR');
+    await expect(vp.locator('.cm-content')).not.toContainText('TYPED-BY-VISITOR');
+    expect((await visitor.request.post(`/api/projects/${proj.id}/comments`, { data: { branch: 'main', file: 'main.tex', anchor: { from: 0, to: 4, quote: 'LINK' }, body: 'visitor note' } })).ok()).toBeTruthy();
+
+    await page.getByTestId('share-project').click();
+    await expect(page.getByTestId('share-link-role')).toHaveValue('view');
+    await page.getByTestId('share-link-role').selectOption('edit');
+    await expect(page.locator('.toast', { hasText: 'Anyone signed in with the link can edit now' })).toBeVisible();
+    await page.getByTestId('share-close').click();
+    await expect(vp.getByTestId('view-only-note')).toHaveCount(0, { timeout: 15_000 });
+    await vp.locator('.cm-content').click();
+    await vp.keyboard.press('End');
+    await vp.keyboard.type(' VISITOR-EDIT');
+    await expect(page.locator('.cm-content')).toContainText('VISITOR-EDIT', { timeout: 15_000 });
+    await owner.close();
+    await visitor.close();
+  });
+
+  test("a viewer's agent reads through the Agent API and is refused every write", async ({ browser, baseURL }) => {
+    const headers = { 'x-forwarded-for': '203.0.113.83' };
+    const owner = await browser.newContext({ extraHTTPHeaders: headers });
+    await owner.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Ori Owner' } });
+    const proj = await (await owner.request.post('/api/projects', { data: { name: 'Agent Reads Only' } })).json();
+    await owner.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'AGENT-READABLE\n' } });
+    const viewer = await browser.newContext({ extraHTTPHeaders: headers });
+    const vEmail = uniq();
+    await viewer.request.post('/api/auth/register', { data: { email: vEmail, password: 'password123', name: 'Val Viewer' } });
+    await confirmEmail(viewer.request, vEmail);
+    expect((await owner.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: vEmail, role: 'view' } })).ok()).toBeTruthy();
+    await acceptInvitation(viewer.request, proj.id);
+    const minted = await (await viewer.request.post('/api/tokens', { data: { name: 'Viewer agent' } })).json();
+
+    const client = new Client({ name: 'aldine-e2e-viewer', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), { requestInit: { headers: { authorization: `Bearer ${minted.token}`, ...headers } } }));
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const res = await client.callTool({ name, arguments: args });
+      const text = (res.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
+      return { isError: res.isError === true, text, body: res.isError ? null : JSON.parse(text) };
+    };
+    try {
+      const listed = (await call('list_projects', {})).body.find((p: { id: string }) => p.id === proj.id);
+      expect(listed.canEdit).toBe(false);
+      expect((await call('read_file', { project: proj.id, path: 'main.tex' })).body.content).toBe('AGENT-READABLE\n');
+      const write = await call('write_file', { project: proj.id, path: 'main.tex', content: 'overwritten\n' });
+      expect(write.isError).toBeTruthy();
+      expect(write.text).toMatch(/can view this project, not change it/);
+      expect((await owner.request.get(`/api/projects/${proj.id}/file?path=main.tex`)).ok()).toBeTruthy();
+      expect(await (await owner.request.get(`/api/projects/${proj.id}/file?path=main.tex`)).text()).toBe('AGENT-READABLE\n');
+    } finally {
+      await client.close().catch(() => {});
+      await owner.close();
+      await viewer.close();
+    }
+  });
+});
+
+test.describe('Claude review for people who join', () => {
+  test("a co-author's first open puts none of Claude's earlier work to them", async ({ browser, baseURL }) => {
+    const headers = { 'x-forwarded-for': '203.0.113.84' };
+    const owner = await browser.newContext({ extraHTTPHeaders: headers });
+    await owner.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Pia PI' } });
+    const proj = await (await owner.request.post('/api/projects', { data: { name: 'Months Of Claude' } })).json();
+    await owner.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Opening line.\n' } });
+    const minted = await (await owner.request.post('/api/tokens', { data: { name: 'PI agent' } })).json();
+    const client = new Client({ name: 'aldine-e2e-pi', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), { requestInit: { headers: { authorization: `Bearer ${minted.token}`, ...headers } } }));
+    try {
+      const res = await client.callTool({ name: 'edit_file', arguments: { project: proj.id, path: 'main.tex', edits: [{ quote: 'Opening line.', replacement: 'Opening line, as Claude wrote it.' }] } });
+      expect(res.isError).toBeFalsy();
+    } finally {
+      await client.close().catch(() => {});
+    }
+    const url = `/api/projects/${proj.id}/agent-activity?branch=main`;
+    expect((await (await owner.request.get(url)).json()).commitCount).toBeGreaterThan(0);
+
+    const coauthor = await browser.newContext({ extraHTTPHeaders: headers });
+    const cEmail = uniq();
+    await coauthor.request.post('/api/auth/register', { data: { email: cEmail, password: 'password123', name: 'Cal Coauthor' } });
+    await confirmEmail(coauthor.request, cEmail);
+    await owner.request.post(`/api/projects/${proj.id}/invitations`, { data: { to: cEmail } });
+    await acceptInvitation(coauthor.request, proj.id);
+    const cp = await coauthor.newPage();
+    await cp.goto(`/p/${proj.id}`);
+    await expect(cp.locator('.cm-content')).toContainText('as Claude wrote it');
+    await expect.poll(async () => (await (await coauthor.request.get(url)).json()).commitCount).toBe(0);
+    await expect(cp.getByTestId('agent-away-review')).toHaveCount(0);
+    await owner.close();
+    await coauthor.close();
+  });
+});
+
+test.describe('share dialog', () => {
+  test('what you change in the dialog stays when its first answers arrive late', async ({ browser }) => {
+    const owner = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.85' } });
+    const page = await owner.newPage();
+    await register(page, uniq(), 'password123', 'Sam Slow');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Slow Answers' } })).json();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.locator('.cm-content')).toBeVisible();
+
+    // The dialog's two reads are answered as of the moment it opened, but late.
+    const late = (ms: number) => async (route: import('@playwright/test').Route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const res = await route.fetch();
+      await new Promise((r) => setTimeout(r, ms));
+      await route.fulfill({ response: res });
+    };
+    await page.route(`**/api/projects/${proj.id}`, late(3000));
+    await page.route(`**/api/projects/${proj.id}/invitations`, late(6000));
+    await page.getByTestId('share-project').click();
+    await page.getByTestId('share-link').check();
+    await expect(page.locator('.toast', { hasText: 'Link sharing on' })).toBeVisible();
+    await page.waitForTimeout(3500);
+    await expect(page.getByTestId('share-link'), 'the old "Invite only" did not come back').toBeChecked();
+    await expect(page.getByTestId('share-url')).toBeVisible();
+
+    const invitee = uniq();
+    await page.getByTestId('share-emails').fill(invitee);
+    await page.getByTestId('share-save').click();
+    const row = page.locator(`[data-testid="invite-row"][data-to="${invitee}"]`);
+    await expect(row).toBeVisible();
+    await page.waitForTimeout(3500);
+    await expect(row, 'the old, empty list did not replace it').toBeVisible();
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    expect((await (await page.request.get(`/api/projects/${proj.id}`)).json()).share.mode, 'the save kept link sharing on').toBe('link');
+    await owner.close();
+  });
+});

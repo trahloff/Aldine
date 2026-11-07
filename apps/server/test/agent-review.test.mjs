@@ -84,14 +84,15 @@ a = await activity();
 eq(a.commitCount, 1, 'the new Claude commit is reported');
 eq(a.commits.map((c) => c.hash), [h2], 'and only that one');
 
-// ---- (5) the mark is per user ----
+// ---- (5) the mark is per user: someone new starts at their first open ----
 const bob = await auth.register('bob@example.com', 'password123', 'Bob');
 const bobCookie = `aldine_session=${await auth.createSession(bob.id)}`;
 const meta = await store.readMeta(id);
 meta.share = { mode: 'link', collaborators: [] };
 await store.writeMeta(meta);
 const bobsAnswer = await activity({ cookie: bobCookie });
-eq(bobsAnswer.commitCount, 2, "Ada's acknowledgement does not mark the batch seen for Bob");
+eq([bobsAnswer.commitCount, bobsAnswer.since?.head], [0, a.head], "Bob's first open puts none of Claude's earlier work to him");
+eq((await activity()).commitCount, 1, "and Ada's own mark is untouched by his");
 
 // ---- (6) an ignored prompt is raised twice, then counts as seen ----
 const headNow = a.head;
@@ -137,23 +138,24 @@ const quietAnswer = (await app.inject({ method: 'GET', url: `/api/projects/${qui
 eq(quietAnswer.commitCount, 0, 'no Claude commits, no prompt');
 check(/^[0-9a-f]{40}$/.test(quietAnswer.head), 'and the head is still reported');
 
-// ---- (12) a person with no mark at all: the first prompt hides nothing ----
+// ---- (12) an owner with no mark at all: the first prompt hides nothing ----
 // The defect this pins: a first sighting stamped "now" bounded the next
 // answer to commits newer than the prompt, so an ignored prompt never
-// returned and the batch counted as seen without anyone looking.
-const cy = await auth.register('cy@example.com', 'password123', 'Cy');
-const cyCookie = `aldine_session=${await auth.createSession(cy.id)}`;
-let cyAnswer = await activity({ cookie: cyCookie });
-check(cyAnswer.since === null && cyAnswer.commitCount === 27, 'a fresh person sees every Claude commit');
-res = await seen({ branch: 'main', head: cyAnswer.head, kind: 'prompted' }, { cookie: cyCookie });
+// returned and the batch counted as seen without anyone looking. (Someone
+// else's first open starts at the head instead: see (5).)
+const { db } = await import('../src/db/index.ts');
+await db().deleteProjectVisits(id);
+let fresh = await activity({ cookie });
+check(fresh.since === null && fresh.commitCount === 27, 'an owner with no mark sees every Claude commit');
+res = await seen({ branch: 'main', head: fresh.head, kind: 'prompted' }, { cookie });
 eq(res.json(), { ok: true, stored: true, acknowledged: false }, 'the first sighting is recorded as a prompt');
-eq((await store.getProjectVisit(cy.id, id, 'main')).at, '', 'and carries no time');
-cyAnswer = await activity({ cookie: cyCookie });
-eq(cyAnswer.commitCount, 27, 'the batch is still reported on the next open');
-check(cyAnswer.since && cyAnswer.since.head === '', 'against an empty mark');
-res = await seen({ branch: 'main', head: cyAnswer.head, kind: 'prompted' }, { cookie: cyCookie });
+eq((await store.getProjectVisit(ada.id, id, 'main')).at, '', 'and carries no time');
+fresh = await activity({ cookie });
+eq(fresh.commitCount, 27, 'the batch is still reported on the next open');
+check(fresh.since && fresh.since.head === '', 'against an empty mark');
+res = await seen({ branch: 'main', head: fresh.head, kind: 'prompted' }, { cookie });
 eq(res.json(), { ok: true, stored: true, acknowledged: true }, 'the second sighting acknowledges');
-eq((await activity({ cookie: cyCookie })).commitCount, 0, 'and the batch is seen');
+eq((await activity({ cookie })).commitCount, 0, 'and the batch is seen');
 
 // ---- (13) a mark is only ever keyed on a branch that exists ----
 res = await seen({ branch: 'no-such-branch', head: a.head, kind: 'prompted' });

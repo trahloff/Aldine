@@ -129,14 +129,31 @@ test.describe('agent presence and audit UI', () => {
       await expect(heading).toHaveCSS('text-transform', 'none');
       await expect(page.getByTestId('agent-review-modal')).not.toContainText('diff --git');
 
+      // Revert asks first, saying whose commits it undoes and when they were
+      // made; Cancel leaves everything as it was.
+      await page.getByTestId('agent-revert').click();
+      await expect(page.getByTestId('dialog-title')).toHaveText('Revert Claude’s changes?');
+      await expect(page.getByTestId('dialog-message')).toContainText('This undoes 1 commit Claude made on main today, in 1 file.');
+      await page.getByTestId('dialog-cancel').click();
+      await expect(page.getByTestId('agent-review-modal')).toBeVisible();
+      await expect(page.locator('.cm-content')).toContainText('AGENT-ADDED-SENTENCE');
+
       // Revert creates a new commit undoing the session; the open editor
       // refreshes in place.
       await page.getByTestId('agent-revert').click();
+      await page.getByTestId('dialog-confirm').click();
       await expect(page.locator('.cm-content')).not.toContainText('AGENT-ADDED-SENTENCE', { timeout: 15_000 });
       await expect(page.locator('.cm-content')).toContainText('Results improve steadily across trials.');
+      // The toast that reports the revert offers Undo; the pointer on it keeps it up.
+      await page.getByTestId('agent-revert-undo').hover();
       // Auto-typeset is on, so the preview stops showing what was just undone.
       await expect.poll(() => page.getByTestId('preview').getAttribute('data-pdf'), { timeout: 60_000 }).not.toBe(shownBefore);
       await expectTypesetOk(page);
+
+      // Undo brings Claude's edit back, as one more commit.
+      await page.getByTestId('agent-revert-undo').click();
+      await expect(page.locator('.toast', { hasText: 'Claude’s edits are back' })).toBeVisible();
+      await expect(page.locator('.cm-content')).toContainText('AGENT-ADDED-SENTENCE', { timeout: 15_000 });
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
@@ -288,6 +305,7 @@ test.describe('agent presence and audit UI', () => {
       await page.getByTestId('agent-session-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
       await page.getByTestId('agent-revert').click();
+      await page.getByTestId('dialog-confirm').click();
       const failed = page.locator('.toast', { hasText: 'Could not revert' });
       await expect(failed).toBeVisible();
       await expect(failed).toContainText(`Could not revert "Add a sentence the person will touch" (${edit.body.commit.slice(0, 7)})`);
@@ -493,6 +511,14 @@ test.describe('agent presence and audit UI', () => {
       await page.locator('.cm-line', { hasText: 'Stable opening line.' }).click();
       await page.keyboard.press('End');
 
+      // The tint lasts 4 s from the edit, and the tool answers only after its
+      // commit: on a loaded machine the tint can be gone by then. It is
+      // watched for while the call runs, and the first sighting is kept.
+      let tinted: string[] = [];
+      const sighting = expect.poll(async () => {
+        if (!tinted.length) tinted = await page.locator('.cm-agent-edit').allTextContents();
+        return tinted.length;
+      }, { timeout: 30_000, intervals: [50] }).toBeGreaterThan(0);
       const batch = await call(client, 'batch_write', {
         project: id,
         files: [
@@ -501,13 +527,13 @@ test.describe('agent presence and audit UI', () => {
         ],
         message: 'Add a discussion and a sentence',
       });
+      await sighting;
       expect(batch.isError).toBeFalsy();
       expect(batch.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       await expect(page.locator('.cm-content')).toContainText('BATCHED-SENTENCE');
       // one tinted range, the inserted one — not the whole document
-      await expect(page.locator('.cm-agent-edit').first()).toBeVisible({ timeout: 3000 });
-      await expect(page.locator('.cm-agent-edit').first()).toContainText('BATCHED-SENTENCE');
-      expect(await page.locator('.cm-agent-edit').count()).toBeLessThanOrEqual(2);
+      expect(tinted.join(' ')).toContain('BATCHED-SENTENCE');
+      expect(tinted.length).toBeLessThanOrEqual(2);
       // the next keystrokes land where the cursor was, not at the top of the file
       await page.keyboard.type(' KEPT-CURSOR');
       await expect(page.locator('.cm-content')).toContainText('Stable opening line. KEPT-CURSOR');

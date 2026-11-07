@@ -108,6 +108,8 @@ test.describe('the editor remembers, refuses and stays out of the way', () => {
       await expect(page.getByTestId('palette-item-new-folder')).toHaveCount(0);
       await page.getByTestId('palette-input').fill('Upload files');
       await expect(page.getByTestId('palette-item-upload-files')).toHaveCount(0);
+      await page.getByTestId('palette-input').fill('Upload a folder');
+      await expect(page.getByTestId('palette-item-upload-folder')).toHaveCount(0);
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('command-palette')).toHaveCount(0);
 

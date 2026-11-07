@@ -40,6 +40,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   it when the last sync is more than an hour old. Plugins can add palette
   commands with `aldine.ui.registerCommand` and cite with
   `aldine.editor.insertCitation(key)`.
+- Share a project with "Can edit" or "Can view", for each person you invite
+  and for the share link. Someone who can view reads the files, typesets,
+  downloads and comments; for them the editor, the file tree, branches,
+  history and settings are read-only, and the server and the Agent API
+  refuse their changes too. Choose the role when you invite, change it later
+  from the list of people or invitations in the Share dialog, and the
+  person's open editor follows at once.
+- The presence chip shows everyone on the branch, not only the people in your
+  file. Co-authors in other files show dimmed, their file is named on hover,
+  and choosing one in the chip's list opens their file.
+- Hovering commented text, or putting the caret in it, shows its comment with
+  Open in Review, and Review marks the thread the caret is in. Typing in the
+  text or Escape puts the card away.
 
 ### Changed
 - In Visual, a `%` or `&` typed into a table cell is written as `\%` or
@@ -209,6 +222,58 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   edits wait asks for a commit message for them first, instead of
   committing them as "aldine: checkpoint before …" or "Local changes before
   pull".
+- The Source view of the file tree always lists the open file and the files
+  you just made or uploaded, whatever their type, and a row below the files
+  says how many it hides, with Show all. Before, a new notes.yaml or an
+  uploaded build.sh did not appear in the tree.
+- New file and New folder start in the open file's folder, and the name is
+  typed in that folder in the tree. The tree's buttons stay at the foot of
+  the sidebar while a long tree scrolls. Before, new files went to the top
+  level and the buttons scrolled away below the last row.
+- Folders can be uploaded: drop one on the file tree, or choose one with
+  Upload a folder, a folder's "Upload folder to folder…" or "Upload a
+  folder…" in the command palette. Its files keep their paths inside it, and
+  dot-files such as .DS_Store and .git are left out.
+- Uploads show their progress at the foot of the file tree ("Uploading 3 of
+  12…") and send three files at a time. Uploading files that already exist
+  asks once for all of them, Replace all or Skip existing, and Enter skips
+  them. Before, each file asked on its own.
+- The file tree works from the keyboard: it is one Tab stop, the arrow keys
+  move through it and open or close folders, Home and End go to the first
+  and last row, typing a name jumps to it, F2 renames and Delete (⌘⌫ on a
+  Mac) deletes. Screen readers hear it as a tree and which file is open.
+- A pull from GitHub, GitLab or Gitea that runs into a conflict offers the
+  owner Keep both instead of "Discard local & take GitHub's": everyone's
+  changes not yet on the host are saved as a branch named my-version-<date>,
+  which only this server has, and main takes the host's version. The branch
+  menu lists that branch under "Only on this server". Collaborators read who
+  can settle the conflict instead of a Discard button that failed for them.
+- The Push dialog says what it sends. When every edit is already in a saved
+  checkpoint, it asks for no message and says "Pushes 3 saved checkpoints to
+  GitHub"; otherwise it says the message names only the edits not yet saved.
+  It points to Commit changes: "When I commit" in project settings, which
+  makes each push one commit with your message.
+- Publish can create the repository in an organisation (GitHub, Gitea /
+  Forgejo) or a group (GitLab) you belong to: an Owner list appears when
+  there is more than your own account to choose from.
+- "Connect with GitHub" (or GitLab) started from Publish or Git access opens
+  that dialog again when the sign-in comes back, now connected.
+- GitHub Enterprise Server works like a self-hosted GitLab: the GitHub
+  connect form asks "Using GitHub Enterprise Server?" and takes the
+  instance URL, and import, publish, push, pull and pull requests then go to
+  that instance instead of github.com. Its token pages are linked on the
+  instance. `GITHUB_URL` points the server's GitHub OAuth app at an
+  Enterprise Server (#250).
+- Review lists threads in the order of the document: the main file first,
+  then the files it includes, each from top to bottom. Before, they came in
+  the order they were started.
+- The first time you open someone else's project, what Claude did there
+  before counts as seen: you are not asked to review, or offered to revert,
+  agent work from before you joined. The owner's first open still shows all
+  of it.
+- Revert these changes asks first, saying how many of Claude's commits it
+  undoes, when they were made and that the revert goes in under your name.
+  The toast after it offers Undo.
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -384,6 +449,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The "publish it to a git host" hint on a new project has a Publish button,
   and the command palette has "Publish to a git host…" for the owner. It
   also answers to GitHub, GitLab, Gitea, Forgejo and Codeberg.
+- Failed pushes, pulls, publishes and pull requests say what happened and
+  what to do next, instead of git's output or the host's JSON: "GitHub has
+  newer commits on main. Pull first, then push." with a Pull button, a token
+  that can read but not push (with Git access), a repository name already in
+  use, a pull request that is already open (with a button that opens it), a
+  protected branch, a host that does not answer. After a refused push the
+  branch pill checks the host again, so it offers Pull instead of Push.
+- When no account can sync a linked project, for example after the account
+  that linked it disconnected, the branch menu says "Nobody's GitHub account
+  can sync this project" with a Git access button, and the pill shows
+  Connect. It used to say "Checking GitHub…" forever. When autopush cannot
+  push, the menu says "Autopush paused" and why, until a push lands; before,
+  it kept saying On. Disconnecting a git host account first names the
+  projects it linked and says their syncing and autopush stop.
 - Renaming or moving a file, or a folder that holds it, keeps its review
   comments with it: the highlights stay on its text, Review opens the file
   where it is now, and Accept edits it. Before, the comments stayed on the old
@@ -519,8 +598,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   in place of Aldine. Dropped on the editor, it is uploaded instead of having
   its text pasted into the document, and the tree takes drops on the whole
   sidebar below its rows.
-- A folder dropped on the file tree says it cannot be read, and the files
-  dropped with it still upload. Before, nothing happened at all.
+- A dropped file that cannot be read says so, and the files dropped with it
+  still upload. Before, nothing happened at all.
 - A file or folder that could not be deleted says so, from the tree and from
   the command palette.
 - The file tree sorts numbered names in number order: chapter2 before
@@ -581,6 +660,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   line that starts with "--" shows instead of being taken for a header.
 - docs/AGENT_API.md no longer lists revert among what Claude can do through
   the MCP tools; it says where a person undoes Claude's work.
+- A comment or reply that fails to save stays in its box with a message, and
+  the button tries again. Before, a reply was cleared before it was sent and
+  lost, and a failed comment closed the composer with its text. Resolve and
+  Delete say when they fail.
+- Comments and replies up to 20,000 characters save whole. Before, a comment
+  over 5,000 characters was always refused and lost, and a long reply or
+  suggestion was cut short without a word. The composer counts near the
+  limit and waits past it. Replies have a Reply button, and Shift+Enter
+  starts a new line in them.
 
 ## [1.8.0] — 2026-11-04
 
