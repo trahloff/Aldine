@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-11-07
+
 ### Added
 - Plugins: `ui.registerSidebarPanel` takes an optional `onShow()`, called
   each time the panel comes into view, and `ui.confirm()` asks in the app's
