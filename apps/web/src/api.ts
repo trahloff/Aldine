@@ -354,6 +354,21 @@ export function onSignedOut(fn: () => void): () => void {
   return () => { signedOutListeners.delete(fn); };
 }
 
+/** Typesetting in the browser, loaded once the server says it hands out TeX. */
+let browserTex: Promise<typeof import('./browsertex/run')> | null = null;
+
+/** Whether the server hands out TeX (GET /api/typeset); asked once. */
+async function browserTexMode(): Promise<boolean> {
+  return !!(await (await import('./browsertex/host')).typesetInfo());
+}
+
+/** The module, when this tab typesets in this browser. */
+async function browserTexHere(): Promise<typeof import('./browsertex/run') | null> {
+  if (!(await browserTexMode())) return null;
+  const mod = await (browserTex ??= import('./browsertex/run'));
+  return (await mod.typesetsHere()) ? mod : null;
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(withBase(url), {
     headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
@@ -563,14 +578,25 @@ export const api = {
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
-  compile: (id: string, branch: string, reason?: 'agent', mode?: 'draft') =>
-    req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) }) }),
+  /** On a server that hands out TeX (browsertex/), a tab that can typesets
+   *  here; one that cannot asks the server, which has an open tab do it. */
+  compile: async (id: string, branch: string, reason?: 'agent', mode?: 'draft') => {
+    const local = await browserTexHere();
+    if (local) return local.typesetHere(id, branch, { draft: mode === 'draft' });
+    return req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) }) });
+  },
   compileStatus: (id: string, branch: string) =>
     req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
-  stopCompile: (id: string, branch: string) =>
-    req<{ ok: true }>(`/api/projects/${id}/compile/stop`, { method: 'POST', body: JSON.stringify({ branch }) }),
-  synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
-    req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
+  stopCompile: async (id: string, branch: string) => {
+    const local = await browserTexHere();
+    // A typeset in this tab is this tab's to end, unless a caller on the server waits for it.
+    if (local && !(await local.stopHere(id, branch))) return { ok: true as const };
+    return req<{ ok: true }>(`/api/projects/${id}/compile/stop`, { method: 'POST', body: JSON.stringify({ branch }) });
+  },
+  synctex: async (id: string, branch: string, payload: Record<string, unknown>) => {
+    if (await browserTexMode()) return (await (browserTex ??= import('./browsertex/run'))).synctexHere(id, branch, payload);
+    return req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) });
+  },
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),
   wordcount: (id: string, branch: string) =>
     req<{ rootFile: string; total: number; files: Record<string, number> }>(`/api/projects/${id}/wordcount?branch=${encodeURIComponent(branch)}`),

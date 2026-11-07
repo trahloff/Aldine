@@ -3382,6 +3382,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
     });
 
+  if (config.typeset === 'browser') {
+    const { registerBrowserTex } = await import('./browsertex/routes.js');
+    await registerBrowserTex(app, reqUser);
+  }
+
   // ---------- plugins ----------
   // The AI fix runs on the server's key: without one its tab would only say
   // so to people who cannot set it.

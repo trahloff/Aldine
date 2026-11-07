@@ -24,8 +24,18 @@ const HINTS: Array<{ re: RegExp; hint: string }> = [
   { re: /Emergency stop/i, hint: 'TeX gave up — fix the first error above; the rest usually follow from it.' },
 ];
 
+/** With TeX in the browser (browsertex/) a missing file is not this server's
+ *  install gap: everything in TeX Live is fetched on demand. */
+const BROWSER_TEX_HINTS: Array<{ re: RegExp; hint: string }> = [
+  { re: /File `?([^']+?)\.sty'? not found/i, hint: 'The package “$1” isn’t in TeX Live, or is misspelled in \\usepackage — this server fetches every TeX Live package on demand, unless it cannot reach its TeX Live mirror. A package from elsewhere: upload its .sty into the project.' },
+  { re: /File `?([^']+?)\.cls'? not found/i, hint: 'The document class “$1” isn’t in TeX Live, or is misspelled — this server fetches every TeX Live class on demand, unless it cannot reach its TeX Live mirror. A class from a publisher: upload its .cls into the project.' },
+];
+let browserTex = false;
+/** Set once the server says it hands out TeX for the browser. */
+export function setBrowserTexHints(on: boolean): void { browserTex = on; }
+
 export function hintFor(message: string): string | null {
-  for (const { re, hint } of HINTS) {
+  for (const { re, hint } of browserTex ? [...BROWSER_TEX_HINTS, ...HINTS] : HINTS) {
     const m = re.exec(message);
     if (m) return hint.replace(/\$(\d)/g, (_, i) => m[Number(i)] ?? '');
   }

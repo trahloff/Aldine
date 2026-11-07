@@ -652,6 +652,7 @@ override file.
 | `META_DIR` | Secrets and metadata: the SQLite datastore (`aldine.db`) or the JSON one (each file with its last-good `.bak`), the Yjs snapshots, the generated signing secret. The image sets `/secrets`. Keep it out of `DATA_DIR`: the compiler must never see it |
 | `CACHE_DIR` | Template-repository checkouts and downloaded venue kits (default `.cache/latex` in the install directory, which in the image is not on a volume: the cache starts empty when the container is recreated) |
 | `COMPILER_URL` | Where the app reaches the compiler (default `http://localhost:4020`; the image sets `http://compiler:4020`) |
+| `ALDINE_TYPESET` | `browser` = no compiler: browsers typeset with TeX Live compiled to WebAssembly, served by the app. Its own settings (`ALDINE_BROWSER_TEX_*`, `ALDINE_TEXLIVE_*`) are in [docs/BROWSER_TEX.md](../docs/BROWSER_TEX.md) |
 | `PORT` | Port inside the container: the app listens on `3000`, the compiler on `4020` |
 | `PLUGINS_DIR` | Folder of plugins the app serves (the image sets `/srv/plugins`, the built-in three) |
 | `ALDINE_MCP_CLIENT_TOKEN` | For the stdio MCP entry point (`dist/mcp/stdio.js`): the value of `ALDINE_MCP_TOKEN`, which it must present when that is set (or pass `--token`) |

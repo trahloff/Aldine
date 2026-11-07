@@ -110,6 +110,8 @@ jobs:
           # The deployed-instance smoke, aimed at a server started below in
           # the shape a deployment has: sign-in on, under a path prefix.
           - { suite: remote, id: remote, config: e2e/playwright.remote.config.ts, data: .data-remote }
+          # ALDINE_TYPESET=browser: no compiler; TeX runs in Chromium.
+          - { suite: browser tex, id: browser-tex, config: e2e/playwright.browser-tex.config.ts, data: .data-browser-tex }
     env:
       PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ github.workspace }}/e2e/playwright-report
       PLAYWRIGHT_HTML_OPEN: never
@@ -120,9 +122,23 @@ jobs:
           node-version: 22
           cache: npm
       - uses: ./.github/actions/e2e-compiler
+        if: matrix.id != 'browser-tex'
         with:
           data-dir: ${{ github.workspace }}/${{ matrix.data }}
       - run: npm ci
+      # The build the browser suite serves, fetched once per pinned manifest.
+      - uses: actions/cache@v4
+        if: matrix.id == 'browser-tex'
+        id: browser-tex
+        with:
+          path: ~/.cache/aldine-browser-tex
+          key: browser-tex-basic-${{ hashFiles('apps/server/src/browsertex/manifest.ts') }}
+      - name: Fetch the browser TeX build
+        if: matrix.id == 'browser-tex' && steps.browser-tex.outputs.cache-hit != 'true'
+        run: npx tsx apps/server/src/browsertex/fetch.ts --into ~/.cache/aldine-browser-tex --profile basic
+      - name: Point the browser suite at it
+        if: matrix.id == 'browser-tex'
+        run: echo "BROWSER_TEX_DIR=$HOME/.cache/aldine-browser-tex" >> "$GITHUB_ENV"
       - name: Playwright version
         id: playwright
         run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
@@ -161,7 +177,7 @@ jobs:
       - name: Compiler and server logs
         if: failure()
         run: |
-          docker logs aldine-compiler-4020 2>&1 | tail -200
+          docker logs aldine-compiler-4020 2>&1 | tail -200 || true
           if [ -f "$RUNNER_TEMP/remote-server.log" ]; then tail -200 "$RUNNER_TEMP/remote-server.log"; fi
       - uses: actions/upload-artifact@v4
         if: failure()

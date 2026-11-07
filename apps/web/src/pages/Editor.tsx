@@ -34,6 +34,7 @@ import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras'
 import { useCommentSignal } from '../editor/commentSignal';
 import { presenceRows } from '../util/presence';
 import { useBranchSignal, type BranchPeer, type BranchSignalHandle, type BranchAgent } from '../editor/branchSignal';
+import { BrowserTexProgress, claimWaitingRun, followsPublished, setPublisher, setTypesetHerePreference, typesetHerePreference, useTypesetsHere } from '../browsertex/editorGlue';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
@@ -329,6 +330,11 @@ export default function Editor() {
   const toggleVim = useCallback(() => setVim((v) => { safeStorage.set(VIM, v ? '0' : '1'); return !v; }), []);
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
   const agentPresenceEnabled = safeStorage.get('aldine.experimental.agentPresence') === '1';
+  // The server hands out TeX and this tab runs it: every typeset happens
+  // here, on every change, and other tabs' PDFs are never adopted.
+  const { offered: texOffered, here: typesetsHere } = useTypesetsHere();
+  const typesetsHereRef = useRef(typesetsHere);
+  typesetsHereRef.current = typesetsHere;
   const [mode, setMode] = useState<EditorMode>(() => {
     return safeStorage.get(EDITOR_MODE) === 'visual' ? 'visual' : 'source';
   });
@@ -608,6 +614,7 @@ export default function Editor() {
   const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean; trigger?: TypesetTrigger }) => {
     const draft = !!opts?.draft;
     const trigger = opts?.trigger ?? 'user';
+    if (trigger !== 'user' && await followsPublished()) return;
     if (compilingRef.current) {
       pendingRef.current = true;
       if (!draft) pendingFullRef.current = true;
@@ -730,7 +737,7 @@ export default function Editor() {
       pendingSource.current = null;
       // Re-read the election here, not at arm time: a tab that closed since
       // the edit must not keep the branch's typeset to itself.
-      if (src === 'agent' && signal.current && !signal.current.electedTypesetter()) return;
+      if (src === 'agent' && !typesetsHereRef.current && signal.current && !signal.current.electedTypesetter()) return;
       if (src === 'agent') ownAgentRun.current = true;
       doCompile(0, src === 'agent' ? { reason: 'agent', trigger: 'auto' } : { draft: draftRef.current, trigger: 'auto' });
     }, delay);
@@ -745,7 +752,9 @@ export default function Editor() {
   const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
-    if (!local) return;
+    // Typesetting in this browser costs the server nothing: a co-author's
+    // edits retypeset here too.
+    if (!local) { if (typesetsHereRef.current) armAutoTypeset('local'); return; }
     lastLocalEditAt.current = Date.now();
     armAutoTypeset('local');
   }, [armAutoTypeset, refreshDocWords]);
@@ -1139,7 +1148,7 @@ export default function Editor() {
     // Read once per finished run, so the flag never outlives the run it names.
     const mine = ownAgentRun.current;
     ownAgentRun.current = false;
-    if (compilingRef.current) return; // our own newer run is coming
+    if (compilingRef.current || typesetsHereRef.current) return; // our own newer run is coming
     let st;
     try { st = await api.compileStatus(id, branch); } catch { return; }
     if (branchRef.current !== branch) return;
@@ -1155,7 +1164,7 @@ export default function Editor() {
   /** A co-author's typeset finished: with auto-typeset on, the preview follows
    *  the text this tab already shows them typing, without a run of its own. */
   const onTypesetFinished = useCallback(async () => {
-    if (!autoRef.current || compilingRef.current) return; // our own run is the newer one
+    if (!autoRef.current || compilingRef.current || typesetsHereRef.current) return; // our own run is the newer one
     let st;
     try { st = await api.compileStatus(id, branch); } catch { return; }
     if (branchRef.current !== branch || !st.result) return;
@@ -1166,10 +1175,14 @@ export default function Editor() {
   const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
   const onCommitted = useCallback(() => { bumpHistory(); refreshUnseen(); }, [bumpHistory, refreshUnseen]);
   const onAgent = useCallback((agent: BranchAgent | null) => setBranchAgent(agent ? { key: `${id}::${branch}`, agent } : null), [id, branch]);
+  const onBrowserJob = useCallback(() => {
+    if (typesetsHereRef.current) claimWaitingRun(id, branch, !!signal.current?.electedTypesetter());
+  }, [id, branch]);
   const onAgentTypesetStarted = useCallback(() => {
     // Auto-typeset off means the preview moves only when this person asks:
-    // no status line, no adoption of Claude's run.
-    if (!autoRef.current) return;
+    // no status line, no adoption of Claude's run. A tab typesetting here
+    // makes its own run of Claude's edits.
+    if (!autoRef.current || typesetsHereRef.current) return;
     setAgentTypesetting(true);
     // The run flushed the branch's docs when it started, so it covers every
     // edit this client has seen; a second run would only rebuild the same PDF.
@@ -1195,12 +1208,16 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted, onRoster: setPeers, onAgent },
-    auto && hasTex,
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted, onRoster: setPeers, onAgent, onBrowserJob },
+    // On a server that hands out TeX, only tabs that typeset here take part:
+    // the election picks the one that publishes for the others and claims
+    // waiting runs, which a tab following published PDFs cannot do.
+    texOffered ? typesetsHere && hasTex : auto && hasTex,
     session,
     { name: identity.name, color: identity.color, file: activeFile },
   );
   signal.current = signalHandle;
+  useEffect(() => setPublisher(() => signal.current?.electedTypesetter() ?? true), []);
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') loadFiles(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -1697,6 +1714,9 @@ export default function Editor() {
           },
         }]
         : []),
+      ...(!texOffered ? [] : typesetHerePreference() !== 'off' && typesetsHere
+        ? [{ id: 'browser-tex-off', group: 'View', title: 'Stop typesetting in this browser (follow published PDFs)', keywords: 'tex wasm local download phone', run: () => { setTypesetHerePreference('off'); location.reload(); } }]
+        : [{ id: 'browser-tex-on', group: 'View', title: 'Typeset in this browser', keywords: 'tex wasm local download phone', run: () => { setTypesetHerePreference('on'); location.reload(); } }]),
       ...(agentPresenceEnabled
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
@@ -1795,7 +1815,7 @@ export default function Editor() {
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown, texOffered, typesetsHere]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -2480,6 +2500,7 @@ export default function Editor() {
           <div className="pane__header">
             {phone && shown === 'pdf' && phoneSwitch}
             <span className="pdf-status" data-testid="pdf-status">
+              <BrowserTexProgress />
               {agentTypesetting && compile.status !== 'compiling' ? (
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
               ) : (compile.status === 'ok' || compile.status === 'error' || (compile.status === 'idle' && compile.outdated)) && compile.result ? (

@@ -9,6 +9,8 @@ dist/
 .data-auth-approval/
 .data-base-path/
 .data-base-path-auth/
+.data-browser-tex/
+.data-browser-tex-auth/
 .data-remote/
 .data-shots/
 .data-demo/
@@ -19,6 +21,8 @@ dist/
 .secrets-auth-approval/
 .secrets-base-path/
 .secrets-base-path-auth/
+.secrets-browser-tex/
+.secrets-browser-tex-auth/
 .secrets-remote/
 .secrets-pb/
 .secrets-shots/

@@ -1,0 +1,34 @@
+# Aldine with TeX in the browser: one service, no compiler. The app hands
+# each browser TeX Live as WebAssembly (TeXlyre's BusyTeX build, fetched into
+# the cache volume on first start, about 270 MB with the default profile) and
+# the TeX Live packages that profile lacks, fetched from a mirror on demand.
+# Typesetting runs in the browser; phones show the PDFs
+# that other people's browsers publish. Same project name and volumes as
+# docker-compose.yml, so switching between the two keeps your data.
+#
+# For a server without internet access, bake the build into the image
+# instead (deploy/browser-tex/Dockerfile) and point ALDINE_TEXLIVE_MIRROR at
+# a TeX Live mirror inside your network, or set ALDINE_TEXLIVE_ONDEMAND=0.
+name: aldine
+
+services:
+  app:
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-1.9.1}
+    ports:
+      - "8080:3000"
+    environment:
+      ALDINE_TYPESET: browser
+      # basic (~125 MB per browser), recommended (~235 MB) or extra (~375 MB).
+      ALDINE_BROWSER_TEX_PROFILE: ${ALDINE_BROWSER_TEX_PROFILE:-recommended}
+      ALDINE_TEXLIVE_MIRROR: ${ALDINE_TEXLIVE_MIRROR:-}
+      ALDINE_TEXLIVE_ONDEMAND: ${ALDINE_TEXLIVE_ONDEMAND:-}
+      CACHE_DIR: /data/cache
+    volumes:
+      - aldine-data:/data
+      - aldine-secrets:/secrets
+    init: true
+    restart: unless-stopped
+
+volumes:
+  aldine-data:
+  aldine-secrets:
