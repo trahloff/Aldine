@@ -59,7 +59,8 @@ test.describe('editor toolbar', () => {
       await openProject(page, id);
       const more = page.getByTestId('tab-more');
       await expect(more).toBeVisible({ timeout: 15_000 });
-      await expect(more).toHaveText(/^More/);
+      // a ⋯ until one of its panels is open
+      await expect(more).toHaveAttribute('aria-label', 'More panels');
       await more.click();
       await expect(page.getByTestId('tab-more-menu')).toBeVisible();
       await page.getByTestId('tab-plugin:zotero').click();

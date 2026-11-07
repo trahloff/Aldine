@@ -160,7 +160,17 @@ export interface CompileStatus {
   agent: boolean;
 }
 export interface BibEntry { key: string; type: string; author?: string; authorLabel?: string; title?: string; year?: string; journal?: string; file: string }
-export interface LogEntry { hash: string; date: string; message: string; author: string }
+export interface LogEntry {
+  hash: string;
+  date: string;
+  message: string;
+  author: string;
+  /** 0 for the first commit, 2 for a merge. */
+  parents?: number;
+  /** The paths it changed (a merge's against its first parent), at most 20; `fileCount` is the full count. */
+  files?: string[];
+  fileCount?: number;
+}
 /** Claude's commits on a branch past the caller's review mark. `commitCount`
  *  and `fileCount` are a floor when `truncated`; `commits` is capped. */
 export interface AgentActivity {
@@ -255,6 +265,8 @@ export interface ReplaceResult {
   commit: string | null;
   /** The edits wait in History for a commit (manual commits). */
   pending: boolean;
+  /** With manual commits: what undoes it through api.undoEdit, null when nothing was kept. */
+  undo?: string | null;
 }
 
 /** Carries the HTTP status so callers can tell a body-limit 413 (proxy or
@@ -489,8 +501,9 @@ export const api = {
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content, encoding, ...(opts.createOnly ? { createOnly: true } : {}), ...(opts.baseVersion !== undefined ? { baseVersion: opts.baseVersion } : {}) }) }),
   createFile: (id: string, branch: string, path: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file`, { method: 'PUT', body: JSON.stringify({ branch, path, content: '', createOnly: true }) }),
-  deleteFile: (id: string, branch: string, path: string) =>
-    req<{ ok: boolean }>(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+  /** `commit`: the deletion's own commit, whose revert undoes it; `pending`: it waits for a hand-made commit. */
+  deleteFile: (id: string, branch: string, path: string, author?: string) =>
+    req<{ ok: boolean; newRoot?: string; commit?: string | null; pending?: boolean; undo?: string | null }>(`/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}${author ? `&author=${encodeURIComponent(author)}` : ''}`, { method: 'DELETE' }),
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
@@ -508,15 +521,17 @@ export const api = {
   labels: (id: string, branch: string) => req<Array<{ label: string; file: string }>>(`/api/projects/${id}/labels?branch=${encodeURIComponent(branch)}`),
 
   branches: (id: string) => req<BranchInfo[]>(`/api/projects/${id}/branches`),
-  createBranch: (id: string, name: string, from: string) =>
-    req<{ ok: boolean }>(`/api/projects/${id}/branches`, { method: 'POST', body: JSON.stringify({ name, from }) }),
+  /** `checkpoint`: the message for the edits still waiting on `from` (manual commits). */
+  createBranch: (id: string, name: string, from: string, checkpoint?: { message: string; author?: string }) =>
+    req<{ ok: boolean }>(`/api/projects/${id}/branches`, { method: 'POST', body: JSON.stringify({ name, from, ...(checkpoint ? { checkpoint: checkpoint.message, author: checkpoint.author } : {}) }) }),
   deleteBranch: (id: string, name: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/branches?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
   unmergedCommits: (id: string, name: string) =>
     req<{ count: number; newest: string | null }>(`/api/projects/${id}/branches/unmerged?name=${encodeURIComponent(name)}`),
   commit: (id: string, branch: string, message: string, author?: string) =>
     req<{ committed: boolean; hash?: string }>(`/api/projects/${id}/commit`, { method: 'POST', body: JSON.stringify({ branch, message, author }) }),
-  log: (id: string, branch: string) => req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}`),
+  log: (id: string, branch: string, page?: { skip?: number; limit?: number }) =>
+    req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}${page?.skip ? `&skip=${page.skip}` : ''}${page?.limit ? `&limit=${page.limit}` : ''}`),
   changes: (id: string, branch: string) => req<{ paths: string[] }>(`/api/projects/${id}/changes?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
@@ -532,13 +547,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ branch, q: query.q, case: query.caseSensitive, word: query.wholeWord, regex: query.regex, replace, ...target, author }),
     }),
-  revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string) =>
-    req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author }) }),
+  /** The undo of a Replace all or a delete that made no commit: `skipped`
+   *  names the files changed since, left as they are. */
+  undoEdit: (id: string, branch: string, token: string) =>
+    req<{ ok: boolean; restored: string[]; skipped: string[] }>(`/api/projects/${id}/undo`, { method: 'POST', body: JSON.stringify({ branch, token }) }),
+  /** `checkpoint`: the message for the edits still waiting (manual commits). */
+  revertCommits: (id: string, branch: string, hashes: string[], message?: string, author?: string, checkpoint?: string) =>
+    req<{ ok: boolean; hash?: string; author?: string | null }>(`/api/projects/${id}/revert`, { method: 'POST', body: JSON.stringify({ branch, hashes, message, author, ...(checkpoint ? { checkpoint } : {}) }) }),
   // The mark travels in the query only without accounts; with a signed-in
   // user the server uses its own row and ignores these.
-  agentActivity: (id: string, branch: string, mark?: { head: string; at: string } | null) =>
+  // `all`: every Claude commit the scan reaches, the mark ignored.
+  agentActivity: (id: string, branch: string, mark?: { head: string; at: string } | null, all = false) =>
     req<AgentActivity>(`/api/projects/${id}/agent-activity?branch=${encodeURIComponent(branch)}`
-      + (mark ? `&sinceHead=${encodeURIComponent(mark.head)}&sinceAt=${encodeURIComponent(mark.at)}` : '')),
+      + (all ? '&all=1' : mark ? `&sinceHead=${encodeURIComponent(mark.head)}&sinceAt=${encodeURIComponent(mark.at)}` : '')),
   markAgentActivitySeen: (id: string, branch: string, head: string, kind: 'prompted' | 'acknowledged') =>
     req<{ ok: boolean; stored: boolean; acknowledged?: boolean }>(`/api/projects/${id}/agent-activity/seen`,
       { method: 'POST', body: JSON.stringify({ branch, head, kind }) }),
@@ -570,9 +591,12 @@ export const api = {
   remoteLink: (id: string, provider: RemoteProviderId, name?: string, priv?: boolean, namespace?: string) =>
     req<{ ok: boolean; remote: RemoteLink }>(`/api/projects/${id}/remote/link`, { method: 'POST', body: JSON.stringify({ provider, name, private: priv, namespace }) }),
   remotePush: (id: string, message?: string, auto?: boolean) => req<{ ok: boolean; skipped?: boolean }>(`/api/projects/${id}/remote/push`, { method: 'POST', body: JSON.stringify({ message, auto }) }),
-  // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing
-  remotePull: async (id: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
-    const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), { method: 'POST' });
+  // conflict-aware: returns { conflict, conflicts } on a 409 instead of throwing.
+  // `checkpoint` on these four: the message for the edits waiting on main (manual commits).
+  remotePull: async (id: string, checkpoint?: string): Promise<{ ok?: boolean; conflict?: boolean; conflicts?: string[] }> => {
+    const res = await fetch(withBase(`/api/projects/${id}/remote/pull`), checkpoint
+      ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkpoint }) }
+      : { method: 'POST' });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409) return { conflict: true, conflicts: body.conflicts || [] };
     if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined);
@@ -580,9 +604,9 @@ export const api = {
   },
   remoteResetToRemote: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
   remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),
-  remoteSwitchBranch: (id: string, branch: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch }) }),
-  remoteCreateBranch: (id: string, name: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name }) }),
-  remoteChangeRequest: (id: string, title?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/remote/change-request`, { method: 'POST', body: JSON.stringify({ title }) }),
+  remoteSwitchBranch: (id: string, branch: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/switch-branch`, { method: 'POST', body: JSON.stringify({ branch, checkpoint }) }),
+  remoteCreateBranch: (id: string, name: string, checkpoint?: string) => req<{ ok: boolean; branch: string }>(`/api/projects/${id}/remote/create-branch`, { method: 'POST', body: JSON.stringify({ name, checkpoint }) }),
+  remoteChangeRequest: (id: string, title?: string, checkpoint?: string) => req<{ url: string; number: number }>(`/api/projects/${id}/remote/change-request`, { method: 'POST', body: JSON.stringify({ title, checkpoint }) }),
   remoteAutopush: (id: string, enabled: boolean) => req<{ ok: boolean; autopush: boolean }>(`/api/projects/${id}/remote/autopush`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   /** Re-runs the provisioning that failed at create time (no provider in the
    *  body: the server takes the namespace from `remotePending`). */
@@ -593,8 +617,10 @@ export const api = {
   gitlabNamespaces: () => req<{ root: string; namespaces: GitlabNamespace[] }>('/api/remotes/gitlab/namespaces'),
   gitlabCreateSubgroup: (parentPath: string | undefined, name: string) =>
     req<GitlabNamespace>('/api/remotes/gitlab/subgroups', { method: 'POST', body: JSON.stringify({ parentPath, name }) }),
-  merge: (id: string, from: string, into: string, author?: string) =>
-    req<{ ok: boolean; conflicts?: string[]; message?: string }>(`/api/projects/${id}/merge`, { method: 'POST', body: JSON.stringify({ from, into, author }) }),
+  /** `keepConflicts` (never into main): a conflicted merge commits with both
+   *  versions marked in each file, which `conflicts` then names. */
+  merge: (id: string, from: string, into: string, author?: string, opts?: { keepConflicts?: boolean; checkpoint?: string }) =>
+    req<{ ok: boolean; conflicts?: string[]; message?: string }>(`/api/projects/${id}/merge`, { method: 'POST', body: JSON.stringify({ from, into, author, ...opts }) }),
 
   zoteroValidate: (apiKey: string) =>
     req<{ userID: number; username?: string; groups: Array<{ id: number; name: string }> }>('/api/zotero/validate', { method: 'POST', body: JSON.stringify({ apiKey }) }),

@@ -179,6 +179,36 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the page into LaTeX.
 - The formula editor saves your change on Enter and when you click outside
   it. Escape discards the change and says so. Done's tooltip names Enter.
+- History has a tab of its own, the clock beside Search, instead of an item
+  in the More menu.
+- History reads as a list of changes. Autosaves in a row fold into one row,
+  "12 autosaves", that names the files they changed and opens to list each.
+  Every row names the files its change touched and shows the time on older
+  days too, checkpoints someone named carry a bookmark, and Aldine's own
+  titles are in words ("Autosave", "Saved before merging"). Show older pages
+  back past the newest 50.
+- Deleting a file or folder lands as its own commit, "Delete notes.tex", and
+  its toast offers Undo, which brings the files back with their latest
+  text. With manual commits the deletion waits for your commit, as before,
+  and its Undo still brings the files and the main document back.
+- With manual commits, Replace all can be undone from its toast too. A file
+  edited again since the replace is left as it is, and the toast names it.
+  Either Undo is on offer until the next commit lands or for a day.
+- With nothing typed in Replace, the rows of project search have no button
+  and Replace all waits for a replacement. Deleting the matches is the trash
+  button beside it, Delete matches, which asks first and can be undone from
+  its toast. Before, the × on a row deleted that text from the paper.
+- A merge into main that runs into conflicting edits opens a dialog listing
+  the files, with "Bring main into <branch>": main's changes come into the
+  branch, both versions marked in each file that conflicts, to settle there
+  before merging again. Other merge failures say what went wrong instead of
+  "Merge failed".
+- With manual commits, starting a branch, merging, bringing main in,
+  undoing a change, pulling from the git host, switching the branch it
+  tracks, starting a branch there or opening a pull or merge request while
+  edits wait asks for a commit message for them first, instead of
+  committing them as "aldine: checkpoint before …" or "Local changes before
+  pull".
 
 ### Fixed
 - Table cells in Visual show `\textbf`, formulas, `\%` and citations as they
@@ -540,6 +570,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   an undefined citation in chapters/intro.tex, name that file and open it
   at their line. Before, they could not be clicked in a project with more
   than one .tex file.
+- Any change in History can be taken back: its diff has Undo this change,
+  which makes a new commit undoing it (a merge against the branch it was
+  merged into), with Redo on the toast. That includes Claude's commits, so a
+  session can still be reverted once its review prompt is gone, and the
+  palette's "Review Claude's recent edits" opens the review of Claude's
+  newest commits on the branch again.
+- A diff marks the words that changed inside an edited line, so a one-word
+  edit to a paragraph no longer reads as two whole paragraphs. A removed
+  line that starts with "--" shows instead of being taken for a header.
+- docs/AGENT_API.md no longer lists revert among what Claude can do through
+  the MCP tools; it says where a person undoes Claude's work.
 
 ## [1.8.0] — 2026-11-04
 

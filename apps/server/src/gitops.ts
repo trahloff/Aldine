@@ -256,6 +256,14 @@ export function commitPaths(id: string, branch: string, paths: string[], message
   return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
 }
 
+/** Commit the removal of `rel` — a file, or a folder with everything git
+ *  tracked inside it — and nothing else that is dirty on the branch. */
+export async function commitRemovalHeld(id: string, branch: string, rel: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+  const dir = await ensureWorktree(id, branch);
+  const gone = (await git(dir).status()).deleted.filter((p) => p === rel || p.startsWith(`${rel}/`));
+  return commitPathsHeld(id, branch, gone, message, author);
+}
+
 /** One git invocation with stdin and extra env — the plumbing below needs
  *  both, which simple-git's raw() does not offer. */
 function gitPlumb(dir: string, args: string[], opts: { input?: string | Buffer; env?: Record<string, string> } = {}): Promise<string> {
@@ -483,19 +491,55 @@ export async function branchShortHead(id: string, branch: string): Promise<strin
   try { return (await git(repoDir(id)).revparse(['--short', branch])).trim(); } catch { return ''; }
 }
 
-export interface LogEntry { hash: string; date: string; message: string; author: string }
+export interface LogEntry {
+  hash: string;
+  date: string;
+  message: string;
+  author: string;
+  /** With `details`: how many parents (0 for the first commit, 2 for a merge). */
+  parents?: number;
+  /** With `details`: the paths the commit changed (a merge's against its first
+   *  parent), at most LOG_FILES_MAX of them; `fileCount` is the full count. */
+  files?: string[];
+  fileCount?: number;
+}
+
+const LOG_FILES_MAX = 20;
 
 /** Fields are split on NUL, the one byte no git field can hold: a commit
  *  subject may carry any other byte, including the control characters a
  *  parser might pick as markers, and simple-git's default parser splits on a
  *  printable one, letting a message move itself into the author field — the
  *  field the History panel and the session review key on. %an, not %aN: a
- *  .mailmap committed into the project would otherwise rename authors. */
-export async function log(id: string, branch: string, limit = 50): Promise<LogEntry[]> {
+ *  .mailmap committed into the project would otherwise rename authors.
+ *  `skip` pages back from the newest commit; `details` adds the parent count
+ *  and the changed paths. */
+export async function log(id: string, branch: string, limit = 50, { skip = 0, details = false }: { skip?: number; details?: boolean } = {}): Promise<LogEntry[]> {
   if (!BRANCH_RE.test(branch) || branch.includes('..')) throw new Error('bad branch name');
-  const raw = await git(repoDir(id)).raw(['log', branch, `--max-count=${limit}`, '--format=%H%x00%aI%x00%an%x00%s%x00', '--']);
-  const f = raw.split('\0');
+  const paging = [`--max-count=${limit}`, ...(skip > 0 ? [`--skip=${skip}`] : [])];
   const out: LogEntry[] = [];
+  if (details) {
+    // The record separator LEADS the format, as in agentActivitySince:
+    // --name-only prints the paths after the header. quotePath off keeps a
+    // non-ASCII name readable instead of octal-escaped.
+    const raw = await git(repoDir(id)).raw(['-c', 'core.quotePath=false', 'log', branch, ...paging,
+      '--format=%x00%H%x00%aI%x00%an%x00%P%x00%s', '--name-only', '--diff-merges=first-parent', '--']);
+    const f = raw.split('\0');
+    for (let i = 1; i + 4 < f.length; i += 5) {
+      const hash = f[i].trim();
+      if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+      const lines = f[i + 4].split('\n');
+      const files = lines.slice(1).map((l) => l.trim()).filter(Boolean);
+      out.push({
+        hash, date: f[i + 1], author: f[i + 2], message: lines[0] ?? '',
+        parents: f[i + 3].split(' ').filter(Boolean).length,
+        files: files.slice(0, LOG_FILES_MAX), fileCount: files.length,
+      });
+    }
+    return out;
+  }
+  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, '--format=%H%x00%aI%x00%an%x00%s%x00', '--']);
+  const f = raw.split('\0');
   for (let i = 0; i + 3 < f.length; i += 4) {
     const hash = f[i].trim(); // the newline git prints after each record leads the next hash
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
@@ -597,18 +641,22 @@ export interface MergeResult { ok: boolean; conflicts?: string[]; message?: stri
 /** `changed`: whether the files of `into` differ from before the merge. */
 export interface BranchMergeResult extends MergeResult { changed?: boolean }
 
-/** Merge `from` into `into`. On conflict: abort and report conflicting files.
+/** Merge `from` into `into`. On conflict: abort and report conflicting files,
+ *  or with `keepConflicts` commit the merge with both versions of each
+ *  conflicted file between git's markers, for the person to settle on `into`
+ *  (the caller keeps that off main). `checkpoint` titles the commit of edits
+ *  still waiting on either branch.
  *  `from` must be a local branch; git gets it fully qualified, so it can be
  *  neither an option nor any other revision. */
-export async function merge(id: string, from: string, into: string, author?: string): Promise<BranchMergeResult> {
+export async function merge(id: string, from: string, into: string, author?: string, { keepConflicts = false, checkpoint = 'aldine: checkpoint before merge' }: { keepConflicts?: boolean; checkpoint?: string } = {}): Promise<BranchMergeResult> {
   if (!BRANCH_RE.test(from) || from.includes('..')) throw new Error('bad branch name');
   const fromRef = `refs/heads/${from}`;
   return withRepoLock(id, async () => {
     const known = await git(repoDir(id)).raw(['rev-parse', '-q', '--verify', fromRef]).then((s) => !!s.trim(), () => false);
     if (!known) return { ok: false, message: `No branch named "${from}"` };
     // commit any pending changes in both branches first so the merge sees latest state
-    await autoCommitHeld(id, from, `aldine: checkpoint before merge`, author).catch(() => {});
-    await autoCommitHeld(id, into, `aldine: checkpoint before merge`, author).catch(() => {});
+    await autoCommitHeld(id, from, checkpoint, author).catch(() => {});
+    await autoCommitHeld(id, into, checkpoint, author).catch(() => {});
     const dir = await ensureWorktree(id, into);
     const g = git(dir);
     // Trees, not heads: the checkpoint commits move heads without changing
@@ -619,6 +667,16 @@ export async function merge(id: string, from: string, into: string, author?: str
     let mergeErr: unknown = null;
     try { await g.raw(['merge', '--no-ff', '-m', `Merge ${from} into ${into}`, fromRef]); } catch (e) { mergeErr = e; }
     const conflicts = (await g.status()).conflicted;
+    if (conflicts.length && keepConflicts) {
+      try {
+        await g.raw(['add', '-A']);
+        await commitArgv(g, `Merge ${from} into ${into}`, author);
+        return { ok: true, changed: true, conflicts };
+      } catch (e) {
+        await g.raw(['merge', '--abort']).catch(() => {});
+        return { ok: false, conflicts, message: String((e as Error)?.message || e) };
+      }
+    }
     if (conflicts.length) {
       await g.raw(['merge', '--abort']).catch(() => {});
       return { ok: false, conflicts };
@@ -636,7 +694,8 @@ export class RevertRefusedError extends Error {}
  * Revert the given commits as ONE new commit — session "undo" is additive
  * history, never a rewrite. Hashes must arrive newest-first so each revert
  * applies against the state it expects. On conflict the revert is aborted and
- * nothing is committed.
+ * nothing is committed. A merge is undone against its first parent: what it
+ * brought into this branch goes, the branch's own line stays.
  */
 export async function revertCommits(id: string, branch: string, hashes: string[], message: string, author?: string): Promise<{ ok: boolean; hash?: string }> {
   if (!hashes.length || hashes.some((h) => !/^[0-9a-f]{4,40}$/.test(h))) throw new Error('bad commit hash');
@@ -659,8 +718,10 @@ export async function revertCommits(id: string, branch: string, hashes: string[]
         ? `Could not revert ${named} — it is not on ${branch}. Open the branch it was made on and revert it there`
         : `Could not revert ${named} and ${foreign.length - 1} more — they are not on ${branch}. Open the branch they were made on and revert them there`);
     }
+    // -m 1 applies to every hash given; git takes it for a non-merge as well.
+    const merges = await g.raw(['rev-list', '--no-walk', '--merges', ...hashes, '--']).then((s) => s.trim() !== '', () => false);
     try {
-      await g.raw(['revert', '--no-commit', ...hashes]);
+      await g.raw(['revert', '--no-commit', ...(merges ? ['-m', '1'] : []), ...hashes]);
     } catch {
       // REVERT_HEAD is the commit the sequencer stopped on: the one a later
       // edit overlaps. Read it before the abort clears it.

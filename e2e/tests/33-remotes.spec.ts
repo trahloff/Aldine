@@ -544,6 +544,58 @@ test.describe('GitLab sync', () => {
     expect(git(['--git-dir', BARE, 'show', `${from}:${external}`])).toContain('from elsewhere');
   });
 
+  test('with manual commits, a pull and a branch switch ask for a message for the waiting edits', async ({ page, request }) => {
+    expect((await request.patch(`/api/projects/${projectId}`, { data: { manualCommits: true } })).ok()).toBeTruthy();
+    try {
+      const from: string = (await (await request.get(`/api/projects/${projectId}/remote/branches`)).json()).current;
+      const to = `manual-${Date.now()}`;
+      const work = fs.mkdtempSync(path.join(os.tmpdir(), 'aldine-e2e-gitlab-'));
+      try {
+        git(['clone', '-q', BARE, `${work}/clone`]);
+        git(['push', '-q', 'origin', `origin/${from}:refs/heads/${to}`], `${work}/clone`);
+      } finally { fs.rmSync(work, { recursive: true, force: true }); }
+
+      await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+      await page.goto(`/p/${projectId}`);
+      await expect(page.getByTestId('gitlab-sync')).toBeVisible();
+      await openFile(page, 'main.tex');
+      const content = page.locator('.cm-content');
+      const typeNote = async (text: string) => {
+        await page.locator('.cm-line').first().click();
+        await page.keyboard.press('End');
+        await page.keyboard.type(` % ${text}`);
+        await expect(content).toContainText(text);
+      };
+      const chip = page.getByTestId('branch-menu');
+
+      await typeNote('WAITING-BEFORE-PULL');
+      await chip.click();
+      await page.getByTestId('gitlab-pull-btn').click();
+      await expect(page.getByTestId('dialog-title')).toHaveText('Commit 1 waiting file before pulling');
+      await page.getByTestId('dialog-input').fill('Note before pulling');
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.locator('.toast').filter({ hasText: 'Pulled from GitLab' })).toBeVisible();
+      const log = await (await request.get(`/api/projects/${projectId}/log?branch=main`)).json() as Array<{ message: string }>;
+      expect(log[0].message).toBe('Note before pulling');
+
+      const marker = `WAITING-BEFORE-SWITCH-${Date.now()}`;
+      await typeNote(marker);
+      await chip.click();
+      await page.getByTestId(`gitlab-branch-${to}`).click();
+      await expect(page.getByTestId('dialog-title')).toHaveText(`Switch the whole project to ${to}?`);
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.getByTestId('dialog-title')).toHaveText('Commit 1 waiting file before switching branch');
+      await page.getByTestId('dialog-input').fill('Note before switching');
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.locator('.toast').filter({ hasText: `Switched to ${to}` })).toBeVisible();
+      await expect(chip).toContainText(to);
+      expect(git(['--git-dir', BARE, 'log', '-1', '--format=%s', from]).trim()).toBe('Note before switching');
+      expect(git(['--git-dir', BARE, 'show', `${from}:main.tex`])).toContain(marker);
+    } finally {
+      await request.patch(`/api/projects/${projectId}`, { data: { manualCommits: false } });
+    }
+  });
+
   test('clone one repository with its own token, which stays with that project', async ({ page, request }) => {
     expect((await request.post('/api/remotes/gitlab/connect', { data: { token: 'e2e-token' } })).ok()).toBeTruthy();
     await page.goto('/');

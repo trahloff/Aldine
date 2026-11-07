@@ -16,6 +16,31 @@ export function friendlyDate(iso: string): string {
   return dateFmt.format(d);
 }
 
+const monthDayFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/** friendlyDate with the time on every day: "Today, 11:55 AM", "Oct 3, 11:55 AM", "Oct 3, 2025, 11:55 AM". */
+export function dateTime(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = timeFmt.format(d);
+  if (d.toDateString() === now.toDateString()) return `Today, ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday, ${time}`;
+  return `${d.getFullYear() === now.getFullYear() ? monthDayFmt.format(d) : dateFmt.format(d)}, ${time}`;
+}
+
+/** "11:55 AM" */
+export function clockTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : timeFmt.format(d);
+}
+
+/** Same calendar day, local time. */
+export function sameDay(a: string, b: string): boolean {
+  return new Date(a).toDateString() === new Date(b).toDateString();
+}
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;

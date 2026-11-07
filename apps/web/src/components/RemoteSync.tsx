@@ -5,6 +5,7 @@ import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
 import { useExitGhost } from '../exitGhost';
 import { BranchIcon, LocalBranchRow, NewBranch, useLocalBranches } from './BranchMenu';
+import { askWaitingCommit } from '../util/waitingCommit';
 import { usePopover } from '../util/usePopover';
 import { safeStorage } from '../util/safeStorage';
 import RemoteAccess from './RemoteAccess';
@@ -21,7 +22,7 @@ import Modal from './Modal';
 // e2e shortens the interval through localStorage; nothing else sets it.
 const REMOTE_POLL_MS = Number(safeStorage.get('aldine.remotePollMs')) || 90_000;
 
-export default function RemoteSync({ projectId, link, autopush, isOwner, current, onSwitch, onChanged, onPulled, onAutopushChange }: {
+export default function RemoteSync({ projectId, link, autopush, isOwner, current, onSwitch, onChanged, onPulled, onAutopushChange, manual = false }: {
   projectId: string;
   link: RemoteLink;
   autopush: boolean;
@@ -32,6 +33,8 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   onChanged(): void;
   onPulled(): void;
   onAutopushChange(v: boolean): void;
+  /** The project commits by hand. */
+  manual?: boolean;
 }) {
   const p = link.provider;
   const d = remoteDescriptor(p);
@@ -53,7 +56,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   const toast = useToast();
   const dialogs = useDialogs();
   const leave = useExitGhost();
-  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close });
+  const local = useLocalBranches({ projectId, current, onSwitch, onChanged, close: pop.close, manual });
 
   const onMain = current === 'main';
   const tracked = branchInfo?.current ?? link.remoteBranch;
@@ -113,11 +116,16 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     } catch (err: any) { toast(err.message, 'error'); }
     setAutopushBusy(false);
   };
+  /** The message for the edits waiting on main, which every sync below commits first; null: cancelled. */
+  const askWaiting = (before: string, confirmLabel: string) =>
+    (manual ? askWaitingCommit(dialogs, projectId, ['main'], { before, confirmLabel }) : Promise.resolve(undefined));
   const pull = async () => {
     pop.close();
+    const checkpoint = await askWaiting('pulling', 'Commit and pull');
+    if (checkpoint === null) return;
     setBusy('pull');
     try {
-      const r = await api.remotePull(projectId);
+      const r = await api.remotePull(projectId, checkpoint);
       if (r.conflict) setConflicts(r.conflicts || []);
       else { toast(`Pulled from ${d.label}`, 'ok'); onPulled(); await refresh(); }
     } catch (err: any) { failed(err); }
@@ -135,9 +143,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     pop.close();
     if (branch === tracked) { if (!onMain) onSwitch('main'); return; }
     if (!(await dialogs.confirm({ title: `Switch the whole project to ${branch}?`, body: "Everyone's open files will change.", confirmLabel: 'Switch branch' }))) return;
+    const checkpoint = await askWaiting('switching branch', 'Commit and switch');
+    if (checkpoint === null) return;
     setBusy('branch');
     try {
-      await api.remoteSwitchBranch(projectId, branch);
+      await api.remoteSwitchBranch(projectId, branch, checkpoint);
       toast(`Switched to ${branch}`, 'ok');
       if (!onMain) onSwitch('main');
       onPulled();
@@ -151,9 +161,11 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   };
   const createOnHost = async (name: string) => {
     pop.close();
+    const checkpoint = await askWaiting('starting the branch', 'Commit and create branch');
+    if (checkpoint === null) return false;
     setBusy('branch');
     try {
-      await api.remoteCreateBranch(projectId, name);
+      await api.remoteCreateBranch(projectId, name, checkpoint);
       toast(`Created branch ${name}`, 'ok');
       await loadBranches();
       await refresh();
@@ -163,8 +175,10 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   };
   const openChangeRequest = async () => {
     setShowCr(false);
+    const checkpoint = await askWaiting(`opening the ${d.changeRequest}`, `Commit and open the ${d.changeRequest}`);
+    if (checkpoint === null) return;
     try {
-      const cr = await api.remoteChangeRequest(projectId, crTitle.trim() || undefined);
+      const cr = await api.remoteChangeRequest(projectId, crTitle.trim() || undefined, checkpoint);
       toast(`Opened ${d.changeRequest} #${cr.number}`, 'ok');
       window.open(cr.url, '_blank', 'noopener');
     } catch (err: any) { failed(err); }
@@ -345,6 +359,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
         />
       )}
 
+      {local.dialog}
       {conflicts && (
         <Modal onClose={() => setConflicts(null)} label="Merge conflict" width={460} testId="conflict-dialog">
           <h2 style={{ marginBottom: 8 }}>Merge conflict</h2>

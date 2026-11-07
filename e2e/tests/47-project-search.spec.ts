@@ -171,8 +171,8 @@ test.describe('project search', () => {
       await expect(a.getByTestId('search-input')).toBeFocused();
       await a.keyboard.type('colour');
       await expect(a.getByTestId('search-summary')).toHaveText('9 results in 3 files');
-      // with nothing to replace with, a row's button deletes, and says so
-      await expect(a.getByTestId('search-replace-one').first()).toHaveAttribute('aria-label', 'Delete this match');
+      // with nothing to replace with, a row has no button: deleting is its own action
+      await expect(a.getByTestId('search-replace-one')).toHaveCount(0);
       await a.getByTestId('search-replace-input').fill('color');
       await expect(a.getByTestId('search-replace-one').first()).toHaveAttribute('aria-label', 'Replace this match');
       // literal mode shows what each row becomes
@@ -293,6 +293,7 @@ test.describe('project search', () => {
         await page.getByTestId('search-input').fill('gadget');
         const row = page.getByTestId('search-match').first();
         await expect(row).toBeVisible();
+        await page.getByTestId('search-replace-input').fill('widget');
         // no hover on a touch screen: the row's replace button is always shown
         await expect(row.getByTestId('search-replace-one')).toHaveCSS('opacity', '1');
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

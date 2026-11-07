@@ -218,18 +218,19 @@ test.describe('dialogs and menus', () => {
       await page.keyboard.press('ArrowDown');
       const menu = page.getByTestId('tab-more-menu');
       await expect(menu).toBeVisible();
-      await expect(menu.getByTestId('tab-history')).toBeFocused();
+      const first = menu.getByRole('menuitemradio').first();
+      await expect(first).toBeFocused();
+      const title = ((await first.textContent()) ?? '').trim();
       await page.keyboard.press('ArrowDown');
-      await expect(menu.getByTestId('tab-history')).not.toBeFocused();
+      await expect(first).not.toBeFocused();
       await page.keyboard.press('Escape');
       await expect(menu).toHaveCount(0);
       await expect(more).toBeFocused();
 
       await page.keyboard.press('Enter');
-      await expect(menu.getByTestId('tab-history')).toBeFocused();
+      await expect(first).toBeFocused();
       await page.keyboard.press('Enter');
-      await expect(page.getByTestId('history-panel')).toBeVisible();
-      await expect(more).toHaveText(/^History/);
+      await expect(more).toHaveText(new RegExp(`^${title}`));
       await expect(more).toHaveAttribute('aria-selected', 'true');
       await expect(more).toBeFocused();
     } finally { await cleanup(request, id); }

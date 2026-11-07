@@ -14,7 +14,10 @@ export interface ConfirmOptions {
 
 export interface PromptOptions {
   title: string;
+  /** A sentence under the title: what the text is for. */
+  body?: string;
   value?: string;
+  placeholder?: string;
   confirmLabel: string;
   /** Where the selection starts, 0 if unset: a file's name, after the folder it is in. */
   selectFrom?: number;
@@ -22,7 +25,7 @@ export interface PromptOptions {
   selectTo?: number;
 }
 
-interface Dialogs {
+export interface Dialogs {
   /** Resolves true when confirmed; false on Cancel, Escape or a click outside. */
   confirm(o: ConfirmOptions): Promise<boolean>;
   /** Resolves the entered text; null on Cancel, Escape or a click outside. */
@@ -72,12 +75,13 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
         <Modal onClose={cancel} label={open.o.title} testId="app-dialog">
           <form onSubmit={(e) => { e.preventDefault(); accept(); }}>
             <h2 data-testid="dialog-title">{open.o.title}</h2>
-            {open.kind === 'confirm' && open.o.body && <p className="modal__sub" data-testid="dialog-message">{open.o.body}</p>}
+            {open.o.body && <p className="modal__sub" data-testid="dialog-message">{open.o.body}</p>}
             {open.kind === 'prompt' && (
               <input
                 className="input"
                 style={{ marginTop: 10 }}
                 value={text}
+                placeholder={open.o.placeholder}
                 aria-label={open.o.title}
                 data-testid="dialog-input"
                 autoComplete="off"

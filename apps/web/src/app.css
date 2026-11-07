@@ -909,9 +909,12 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .sidebar__tab--active { background: var(--bg-active); color: var(--text); font-weight: 600; }
 /* a fourth text tab would not fit the 230px row beside "Review (3)" and More */
 .sidebar__tab--icon { flex: none; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-/* History and the panels that are not pinned share one "More" tab with a menu */
+/* the panels that are not pinned share one "More" tab with a menu: a ⋯ until
+   one of them is open, which leaves the named tabs room for their names */
 .sidebar__more { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
 .sidebar__more > .sidebar__tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.sidebar__more--icon { flex: none; }
+.sidebar__more--icon > .sidebar__tab { width: 28px; padding: 0; }
 .sidebar__more-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sidebar__chev { flex: none; display: inline-flex; color: var(--text-3); transform: rotate(90deg); }
 .sidebar__collapse { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-3); cursor: pointer; }
@@ -1229,6 +1232,10 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 /* text-grade colors: the raw --ok/--error fills sit below 4.5:1 on their tints */
 .diff__add { color: var(--ok-text); background: rgba(40, 167, 69, 0.10); }
 .diff__del { color: color-mix(in srgb, var(--error) 80%, var(--text)); background: var(--error-soft); }
+/* the words that changed inside an edited line: a deeper tint of the line's own */
+.diff .diff__word { text-decoration: none; border-radius: 2px; }
+.diff__del .diff__word { background: color-mix(in srgb, var(--error) 30%, transparent); }
+.diff__add .diff__word { background: rgba(40, 167, 69, 0.32); }
 
 /* log viewer */
 .modal--wide { width: 760px; }
@@ -1536,8 +1543,10 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
    restated here. */
 @media (pointer: coarse) {
   .tree__item { height: 40px; }
-  .sidebar__tab { height: 40px; }
-  .sidebar__tab--icon { width: 40px; }
+  .sidebar__tab { height: 40px; padding: 0 4px; }
+  /* a narrowed sidebar squeezes the icon tabs before it pushes Hide out of the row */
+  .sidebar__tab--icon, .sidebar__more--icon > .sidebar__tab { width: 40px; flex: 0 1 40px; min-width: 28px; }
+  .sidebar__more--icon { flex: 0 1 auto; min-width: 28px; }
   .sidebar__collapse { width: 40px; height: 40px; }
   .sidebar-rail { width: 48px; }
   .sidebar-rail__btn { width: 40px; height: 40px; }
@@ -1683,6 +1692,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .search__toggle--mono { font-family: var(--font-mono); }
 .search__replace { display: flex; align-items: center; gap: 4px; }
 .search__replace .btn { flex: none; height: 28px; }
+.search__replace .search__delete-all { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 /* aria-disabled keeps the button focusable; it looks like .btn:disabled */
 .search__replace .btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
 .search__replace .btn[aria-disabled="true"]:active { transform: none; background: var(--bg-panel); }
@@ -1725,8 +1735,9 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .search__preview del { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); }
 .search__preview ins { background: rgba(40, 167, 69, 0.12); color: var(--ok-text); text-decoration: none; }
 /* an empty replacement deletes: the row shows it once its button is pointed at */
-.search__match:has(.search__replace-one:focus-visible) .search__mark--delete { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); text-decoration: line-through; }
-@media (hover: hover) and (pointer: fine) { .search__match:has(.search__replace-one:hover) .search__mark--delete { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); text-decoration: line-through; } }
+/* Delete matches, while pointed at or focused, shows what it takes out */
+.search:has(.search__delete-all:focus-visible) .search__preview mark { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); text-decoration: line-through; }
+@media (hover: hover) and (pointer: fine) { .search:has(.search__delete-all:hover) .search__preview mark { background: var(--error-soft); color: color-mix(in srgb, var(--error) 80%, var(--text)); text-decoration: line-through; } }
 .search__replace-one { position: absolute; top: 50%; right: 2px; transform: translateY(-50%); background: var(--bg-inset); opacity: 0; }
 .search__match:focus-within .search__replace-one { opacity: 1; }
 @media (hover: hover) and (pointer: fine) { .search__match:hover .search__replace-one { opacity: 1; } }
@@ -1743,6 +1754,7 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   .search__field .search__input { padding-right: 128px; }
   .search__toggle { width: 40px; height: 40px; }
   .search__replace .btn { height: 44px; }
+  .search__replace .search__delete-all { width: 44px; }
   .search__refresh, .search__icon-btn { width: 40px; height: 40px; }
   .search__file-head { height: 40px; }
   .search__file-dismiss { opacity: 1; }
@@ -1760,6 +1772,16 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .history__meta { font-size: var(--text-xs); color: var(--text-2); }
 .history__meta .dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
 .history__pending { font-size: var(--text-xs); color: var(--text-2); padding: 0 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history__item--checkpoint .history__msg { font-weight: 600; }
+.history__item--autosave .history__msg, .history__item--group .history__msg { color: var(--text-2); }
+.history__mark { display: inline-flex; vertical-align: -1px; margin-right: 4px; color: var(--accent); }
+.history__chev { display: inline-flex; vertical-align: -1px; margin-right: 3px; color: var(--text-3); transition: transform 120ms ease; }
+.history__chev--open { transform: rotate(90deg); }
+.history__files { font-size: var(--text-xs); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* each autosave of a folded row, under it */
+.history__sub { margin: 0 0 4px 10px; padding-left: 4px; border-left: 1px solid var(--hairline); }
+.history__older { display: block; margin: 6px auto 4px; }
+@media (prefers-reduced-motion: reduce) { .history__chev { transition: none; } }
 
 /* segmented control (Source | Visual): equal segments, one thumb that
    slides to the selected one. Position and count come from the markup. */
@@ -1953,4 +1975,6 @@ a.btn { text-decoration: none; }
   .tpl--active { outline: 2px solid Highlight; outline-offset: 1px; }
   .seg__btn--active, .tree__item--active, .sidebar__tab--active { outline: 1px solid Highlight; outline-offset: -1px; }
   .dot { forced-color-adjust: none; }
+  .diff__del .diff__word { text-decoration: line-through; }
+  .diff__add .diff__word { text-decoration: underline; }
 }

@@ -12,6 +12,7 @@ import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
+import { pruneImages, restoreImage, saveImage } from './undoImages.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk, signalCommitted, evictDoc, evictTree, scheduleCommit, closeProjectConnections, markPathsChanged, markTreeChanged, contentVersion, fileVersion, versionConflict, applySuggestionToDoc, protectedProjects, agentSessionActive, docView, withCrlf, locateQuote, bumpCommentsSignal } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject, restorableUntil } from './trash.js';
@@ -1702,7 +1703,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return { ok: true, ...(newRoot ? { newRoot } : {}) };
     });
 
-  app.delete<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/file', async (req, reply) => {
+  app.delete<{ Params: { id: string }; Querystring: Q & { author?: string } }>('/api/projects/:id/file', async (req, reply) => {
     const { branch = 'main', path: rel } = req.query;
     if (!rel) return reply.code(400).send({ error: 'path required' });
     if (!namesEntry(rel)) return reply.code(400).send({ error: NOT_AN_ENTRY });
@@ -1710,14 +1711,49 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const wasDir = store.isDirectory(req.params.id, branch, rel);
     const existed = store.fileExists(req.params.id, branch, rel);
     const norm = importPath(rel);
-    // prevent resurrection via pending store
-    if (wasDir && norm) evictTree(req.params.id, branch, norm, store.listFiles(req.params.id, branch).map((f) => f.path));
-    else evictDoc(req.params.id, branch, rel);
-    store.deleteFile(req.params.id, branch, rel);
+    const listed = store.listFiles(req.params.id, branch).map((f) => f.path);
+    // The deletion lands as its own commit, so reverting it is the undo. With
+    // manual commits it waits for the person's commit like any other edit.
+    const manual = await store.readMeta(req.params.id).then((m) => m.manualCommits === true, () => false);
+    const own = existed && !!norm && !manual;
+    const remove = () => {
+      // prevent resurrection via pending store
+      if (wasDir && norm) evictTree(req.params.id, branch, norm, listed);
+      else evictDoc(req.params.id, branch, rel);
+      store.deleteFile(req.params.id, branch, rel);
+    };
+    let commit: string | null = null;
+    let undo: string | null = null;
+    if (existed && norm && manual) {
+      // No commit to revert: what the files held is kept for the undo instead.
+      flushBranchDocs(req.params.id, branch);
+      const files = wasDir ? listed.filter((p) => p.startsWith(`${norm}/`) && !store.isDirectory(req.params.id, branch, p)) : [norm];
+      undo = await saveImage(req.params.id, branch, files.map((p) => ({ path: p, before: store.readFile(req.params.id, branch, p), after: null }))).catch(() => null);
+    }
+    if (own) {
+      // the last typing in these files must be on disk for the checkpoint below
+      flushBranchDocs(req.params.id, branch);
+      await gitops.withRepoLock(req.params.id, async () => {
+        // What the files held a moment ago is committed first, so the undo
+        // brings back their latest text, not the last autosave's.
+        await gitops.checkpointPathsHeld(req.params.id, branch, wasDir ? listed.filter((p) => p.startsWith(`${norm}/`)) : [norm!]).catch(() => {});
+        remove();
+        const r = await gitops.commitRemovalHeld(req.params.id, branch, norm!, `Delete ${wasDir ? `folder ${norm}` : norm}`, commitAuthor(req, req.query.author)).catch(() => null);
+        if (r?.committed && r.hash) commit = r.hash.slice(0, 7);
+      });
+    } else {
+      remove();
+    }
     // a directory delete removes every child, which a single path mark would miss
     if (wasDir) markTreeChanged(req.params.id, branch);
     else markPathsChanged(req.params.id, branch, [rel]);
-    scheduleCommit(req.params.id, branch);
+    // what an autosave of the deletion would have set off
+    if (commit) {
+      signalCommitted(req.params.id, branch);
+      if (branch === 'main') scheduleAutopush(req.params.id);
+    } else {
+      scheduleCommit(req.params.id, branch);
+    }
     if (existed) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
     // If the typeset root was deleted, re-point it at the best remaining .tex
     // so the next compile doesn't fail with "root file not found". With no
@@ -1732,7 +1768,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         newRoot = root || undefined;
       }
     } catch { /* meta unreadable — leave as-is */ }
-    return { ok: true, ...(newRoot ? { newRoot } : {}) };
+    return { ok: true, ...(newRoot ? { newRoot } : {}), commit, pending: existed && manual, ...(manual ? { undo } : {}) };
   });
 
   // ---------- search and replace across the branch ----------
@@ -1957,16 +1993,18 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // ---------- git ----------
   app.get<{ Params: { id: string } }>('/api/projects/:id/branches', async (req) => gitops.listBranches(req.params.id));
 
-  app.post<{ Params: { id: string }; Body: { name: string; from?: string } }>(
+  // `checkpoint`: the person's message for the edits still waiting on `from`
+  // (manual commits), which the new branch starts from.
+  app.post<{ Params: { id: string }; Body: { name: string; from?: string; checkpoint?: string; author?: string } }>(
     '/api/projects/:id/branches', async (req, reply) => {
-      const { name, from = 'main' } = req.body || {};
+      const { name, from = 'main', checkpoint, author: claimed } = req.body || {};
       if (!name) return reply.code(400).send({ error: 'name required' });
       if (!BRANCH_RE.test(name) || name.includes('..') || /^(refs|heads|remotes)\//.test(name) || /^-/.test(name)) {
         return reply.code(400).send({ error: 'Invalid branch name' });
       }
       // capture latest edits so the new branch starts from what the user sees
       flushBranchDocs(req.params.id, from);
-      await gitops.autoCommit(req.params.id, from, 'aldine: checkpoint before branching').catch(() => {});
+      await gitops.autoCommit(req.params.id, from, cleanCommitMessage(String(checkpoint ?? ''), 'aldine: checkpoint before branching'), checkpoint ? commitAuthor(req, claimed) : undefined).catch(() => {});
       try {
         await gitops.createBranch(req.params.id, name, from);
       } catch (err) {
@@ -2026,20 +2064,22 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const r = await gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
       if (r.committed) signalCommitted(req.params.id, branch);
       if (r.committed && branch === 'main') scheduleAutopush(req.params.id);
+      if (r.committed) void pruneImages(req.params.id).catch(() => {});
       return r;
     });
 
   // Revert a set of commits (newest-first) as one new commit — the session
   // toast's "Revert these changes". Additive history only, never a rewrite.
-  app.post<{ Params: { id: string }; Body: { branch?: string; hashes?: string[]; message?: string; author?: string } }>(
+  // `checkpoint` titles the commit of edits still waiting (manual commits).
+  app.post<{ Params: { id: string }; Body: { branch?: string; hashes?: string[]; message?: string; author?: string; checkpoint?: string } }>(
     '/api/projects/:id/revert', async (req, reply) => {
-      const { branch = 'main', hashes, message: rawMessage, author: claimed } = req.body || {};
+      const { branch = 'main', hashes, message: rawMessage, author: claimed, checkpoint } = req.body || {};
       const author = commitAuthor(req, claimed);
       const message = cleanCommitMessage(rawMessage, 'Revert agent changes');
       if (!Array.isArray(hashes) || hashes.length === 0) return reply.code(400).send({ error: 'hashes required' });
       // capture pending edits first so the revert never collides with a dirty tree
       flushBranchDocs(req.params.id, branch);
-      await gitops.autoCommit(req.params.id, branch, 'aldine: checkpoint before revert', author).catch(() => {});
+      await gitops.autoCommit(req.params.id, branch, cleanCommitMessage(String(checkpoint ?? ''), 'aldine: checkpoint before revert'), author).catch(() => {});
       try {
         const result = await gitops.revertCommits(req.params.id, branch, hashes, message, author);
         if (result.ok) {
@@ -2056,8 +2096,31 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
     });
 
-  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/log', async (req) => {
-    return gitops.log(req.params.id, req.query.branch || 'main');
+  // Newest first, `limit` (at most 250) entries after the first `skip`, each
+  // with its parent count and changed paths.
+  // The undo of a Replace all or a delete that made no commit (manual
+  // commits): puts back the files that still hold what the action left.
+  app.post<{ Params: { id: string }; Body: { branch?: string; token?: string } }>('/api/projects/:id/undo', async (req, reply) => {
+    const branch = typeof req.body?.branch === 'string' && req.body.branch ? req.body.branch : 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    const r = await restoreImage(req.params.id, branch, String(req.body?.token ?? ''));
+    if ('gone' in r) {
+      return reply.code(410).send({
+        error: r.gone === 'committed' ? 'This can no longer be undone: a commit landed since'
+          : r.gone === 'expired' ? 'This can no longer be undone: it was more than a day ago'
+            : 'This can no longer be undone',
+      });
+    }
+    if (r.restored.length) noteEdit(req.params.id, branch, editorOf(reqUser(req)));
+    return { ok: true, ...r };
+  });
+
+  app.get<{ Params: { id: string }; Querystring: Q & { skip?: string; limit?: string } }>('/api/projects/:id/log', async (req) => {
+    const int = (v: string | undefined, fallback: number, max: number) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 ? Math.min(n, max) : fallback;
+    };
+    return gitops.log(req.params.id, req.query.branch || 'main', Math.max(1, int(req.query.limit, 50, 250)), { skip: int(req.query.skip, 0, 1_000_000), details: true });
   });
 
   // What the next commit would take. Flushes open docs first, or a change
@@ -2075,7 +2138,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
-  type AgentActivityQ = { branch?: string; sinceHead?: string; sinceAt?: string };
+  /** `all=1`: every Claude commit the scan reaches, whatever the mark says —
+   *  it can only show more than the prompt would, never less. */
+  type AgentActivityQ = { branch?: string; sinceHead?: string; sinceAt?: string; all?: string };
 
   // What Claude changed on this branch since the caller last acknowledged it.
   // Read-only: no flush, no commit, no repo lock (see gitops.agentActivitySince).
@@ -2087,7 +2152,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // client-supplied one would let anything holding a session — or the
     // agent's own token — hide the audit prompt.
     let mark: { head: string; at: string } | null = null;
-    if (auth.AUTH_ENABLED && user) {
+    if (req.query.all === '1') {
+      mark = null;
+    } else if (auth.AUTH_ENABLED && user) {
       const row = await store.getProjectVisit(user.id, req.params.id, branch);
       mark = row ? { head: row.head, at: row.at } : null;
     } else {
@@ -2138,17 +2205,25 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       return { ok: true, stored: true, acknowledged: acknowledge };
     });
 
-  app.post<{ Params: { id: string }; Body: { from: string; into: string; author?: string } }>(
+  // `keepConflicts`: a conflicted merge commits with both versions marked in
+  // each file instead of stopping — only into a branch other than main, where
+  // the person settles them before merging back. `checkpoint` titles the
+  // commit of edits still waiting on either branch (manual commits).
+  app.post<{ Params: { id: string }; Body: { from: string; into: string; author?: string; keepConflicts?: boolean; checkpoint?: string } }>(
     '/api/projects/:id/merge', async (req, reply) => {
-      const { from, into, author: claimed } = req.body || {};
+      const { from, into, author: claimed, keepConflicts, checkpoint } = req.body || {};
       const author = commitAuthor(req, claimed);
       if (!from || !into) return reply.code(400).send({ error: 'from/into required' });
       if ([from, into].some((b) => typeof b !== 'string' || !BRANCH_RE.test(b) || b.includes('..'))) {
         return reply.code(400).send({ error: 'Invalid branch name' });
       }
+      if (keepConflicts === true && into === 'main') return reply.code(400).send({ error: 'Conflicts can only be kept on a branch other than main' });
       flushBranchDocs(req.params.id, from);
       flushBranchDocs(req.params.id, into);
-      const { changed, ...result } = await gitops.merge(req.params.id, from, into, author);
+      const { changed, ...result } = await gitops.merge(req.params.id, from, into, author, {
+        keepConflicts: keepConflicts === true,
+        checkpoint: cleanCommitMessage(String(checkpoint ?? ''), 'aldine: checkpoint before merge'),
+      });
       if (result.ok) {
         refreshBranchDocsFromDisk(req.params.id, into);
         if (changed) noteEdit(req.params.id, into, editorOf(reqUser(req)));
@@ -2787,7 +2862,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   projectRoute('post', 'pull', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main');
-    await gitops.autoCommit(req.params.id, 'main', 'Local changes before pull', reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Local changes before pull'), reqUser(req)?.name).catch(() => {});
     try {
       const before = await gitops.branchHead(req.params.id, 'main');
       const result = await gitops.pullFromRemote(req.params.id, l.remoteBranch, l.url);
@@ -2837,7 +2912,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // The hard reset below drops uncommitted edits and every commit of main
       // the host lacks, so a save that does not land stops the switch, unless
       // main has nothing the host lacks.
-      try { await gitops.autoCommit(req.params.id, 'main', 'Save before switching branch', reqUser(req)?.name); }
+      try { await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Save before switching branch'), reqUser(req)?.name); }
       catch { return reply.code(409).send({ error: 'Could not save the latest edits before switching, so nothing changed. Try again in a moment.', code: 'save-failed' }); }
       try { await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url); }
       catch (err: any) {
@@ -2868,7 +2943,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.autoCommit(req.params.id, 'main', `Start branch ${name}`, reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Start branch ${name}`), reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, name, l.url); // push creates the remote branch
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: name }); await store.writeMeta(l.meta);
       return { ok: true, branch: name };
@@ -2881,7 +2956,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const noun = l.provider.changeRequestLabel;
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.autoCommit(req.params.id, 'main', `Update before ${noun}`, reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Update before ${noun}`), reqUser(req)?.name).catch(() => {});
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       const repo = await l.provider.getRepo(l.conn, l.link.fullName);
       if (l.remoteBranch === repo.defaultBranch) return reply.code(400).send({ error: `You're on the default branch (${repo.defaultBranch}). Create a branch first.` });
