@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-11-07
+
 ### Added
 - Text in the PDF preview can be selected and copied, as plain text. Cmd+F
   while the preview has the focus opens Find over the PDF: it searches every
