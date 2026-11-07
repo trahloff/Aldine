@@ -6,6 +6,8 @@ import { detectRoot } from './root.js';
 import { ensureWorktree } from './gitops.js';
 import { flushBranchDocs, signalAgentTypeset, signalTypesetFinished } from './collab.js';
 import { noteCompile } from './activity.js';
+import { browserRun, settleBrowserJob, stopBrowserJobs, type BrowserOutput } from './browsertex/jobs.js';
+import { browserTexAssets } from './browsertex/build.js';
 
 /** `context`: the source line TeX was reading when it failed (the compiler's
  *  parser reconstructs it from the log's "l.<n>" line). `source`: the tool
@@ -176,6 +178,23 @@ function nextCompileId(): number {
   return lastCompileId;
 }
 
+/** Browser mode: ids handed out with a snapshot (browsertex/routes.ts), so a
+ *  run typeset in a browser and published later keeps its place among the
+ *  branch's runs, and a client can never pick an id of its own. */
+const reservedIds = new Map<number, number>();
+const RESERVED_ID_MS = 60 * 60_000;
+export function reserveRunId(): number {
+  const now = Date.now();
+  for (const [id, until] of reservedIds) if (until < now) reservedIds.delete(id);
+  const id = nextCompileId();
+  reservedIds.set(id, now + RESERVED_ID_MS);
+  return id;
+}
+function takeRunId(reserved: number | undefined): number {
+  if (reserved !== undefined && reservedIds.delete(reserved)) return reserved;
+  return nextCompileId();
+}
+
 /**
  * Drop remembered URLs when the files behind them go: deleting a branch
  * removes its worktree (and .aldine-out), so a branch recreated under the
@@ -218,7 +237,10 @@ export function compilerInfo(): Promise<CompilerInfo> {
   if (compilerInfoInflight) return compilerInfoInflight;
   compilerInfoInflight = (async () => {
     let value: CompilerInfo;
-    try {
+    if (config.typeset === 'browser') {
+      const a = browserTexAssets();
+      value = { ok: a.state().state === 'ready', texlive: { release: a.manifest.texlive, scheme: `browser-${a.profile}` } };
+    } else try {
       const res = await fetch(`${config.compilerUrl}/health`, { signal: AbortSignal.timeout(5_000) });
       const raw = (await res.json()) as { ok?: boolean; texlive?: { release?: unknown; scheme?: unknown } };
       const str = (v: unknown) => (typeof v === 'string' && v ? v : 'unknown');
@@ -232,14 +254,16 @@ export function compilerInfo(): Promise<CompilerInfo> {
   return compilerInfoInflight;
 }
 
-export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean } = {}): Promise<CompileResult> {
+/** `browserOutput` (browser mode): a run a browser already typeset, published;
+ *  without it the run waits for an open tab to claim and typeset it. */
+export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean; browserOutput?: BrowserOutput } = {}): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   // A typeset recreates a missing worktree, so one started while the branch
   // is deleted would bring its directory back or block `branch -D`.
   if (closedBranches.has(key)) return Promise.reject(new Error('This branch is being deleted'));
   const prev = compileChain.get(key) || Promise.resolve();
   const request = ++lastRequest;
-  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft, request));
+  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft, request, opts.browserOutput));
   // The chain tail must never reject (would surface as an unhandled rejection);
   // the caller gets `result` (which may reject and is awaited/handled by the route).
   const tail = result.catch(() => undefined).then(() => {
@@ -256,7 +280,8 @@ export function compileProject(projectId: string, branch: string, opts: { agent?
  */
 export async function stopTypeset(projectId: string, branch: string): Promise<void> {
   stoppedUpTo.set(`${projectId}::${branch}`, lastRequest);
-  await compilerPost('/stop', { projectDir: relProjectDir(projectId, branch) });
+  if (config.typeset === 'browser') stopBrowserJobs(projectId, branch);
+  else await compilerPost('/stop', { projectDir: relProjectDir(projectId, branch) });
 }
 
 /** Whether typesets of the branch are refused because it is being deleted. */
@@ -327,16 +352,20 @@ export function compileStatus(projectId: string, branch: string): CompileStatus 
   };
 }
 
-async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
+async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean, request: number, browserOutput?: BrowserOutput): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   running.set(key, (running.get(key) ?? 0) + 1);
   let finished = false;
   try {
-    const result = await runCompileInner(projectId, branch, agent, draft, request);
+    const result = await runCompileInner(projectId, branch, agent, draft, request, browserOutput);
     lastRun.set(key, { result, finishedAt: Date.now(), agent });
     noteCompile(projectId, branch, result);
     finished = true;
+    if (config.typeset === 'browser') settleBrowserJob(key, result);
     return result;
+  } catch (err) {
+    if (config.typeset === 'browser') settleBrowserJob(key, err, true);
+    throw err;
   } finally {
     const n = (running.get(key) ?? 1) - 1;
     if (n <= 0) running.delete(key); else running.set(key, n);
@@ -349,7 +378,7 @@ async function runCompile(projectId: string, branch: string, agent: boolean, dra
   }
 }
 
-async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
+async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean, request: number, browserOutput?: BrowserOutput): Promise<CompileResult> {
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
@@ -372,6 +401,8 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
   // A stop that came while this run waited for the one before ends it here.
   const raw: Raw = stopped()
     ? { ok: false, stopped: true, log: '', errors: [], durationMs: 0 }
+    : config.typeset === 'browser'
+    ? await browserRun({ projectId, branch, rootFile: meta.rootFile, engine: meta.engine, haltOnError: !!meta.stopOnFirstError, draft }, browserOutput) as Raw
     : await compilerPost<Raw>('/compile', {
       projectDir: relProjectDir(projectId, branch),
       rootFile: meta.rootFile,
@@ -396,7 +427,7 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
     ...(typeof raw.preambleCache === 'string' ? { preambleCache: raw.preambleCache } : {}),
   };
   const key = `${projectId}::${branch}`;
-  const compileId = nextCompileId();
+  const compileId = takeRunId(browserOutput?.runId);
   const runId = compileId;
   // Older compilers report only `ok`; treat their successful output as fresh.
   // The engine's own "no output PDF file produced" / "No pages of output"

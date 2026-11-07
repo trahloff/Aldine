@@ -67,6 +67,9 @@ export const config = {
   /** Shared with compiler service; PDFs land here */
   cacheDir: process.env.CACHE_DIR || path.join(repoRoot, '.cache/latex'),
   compilerUrl: process.env.COMPILER_URL || 'http://localhost:4020',
+  /** 'server': the compiler service typesets. 'browser': each user's browser
+   *  does (browsertex/), and no compiler is needed. */
+  typeset: (process.env.ALDINE_TYPESET === 'browser' ? 'browser' : 'server') as 'server' | 'browser',
   /** Built-in + user plugins */
   pluginsDir: process.env.PLUGINS_DIR || path.join(repoRoot, 'plugins'),
   templatesDir: process.env.TEMPLATES_DIR || path.join(repoRoot, 'templates'),

@@ -9,7 +9,8 @@ import { electTypesetter, type TypesetPeer } from './autoTypeset';
  * keys the server sets — `v` (the file list changed), `a` (an agent wrote),
  * `ts`/`td` (an agent-caused typeset started / finished), `r` (any other
  * typeset finished), `c` (a commit landed; it changes the history only,
- * never the file list). The same doc's
+ * never the file list), `bj` (a typeset waits for a browser to run it, when
+ * the server typesets in browsers). The same doc's
  * awareness is the roster the auto-typeset election runs over (the server's
  * own state there is the agent's session, never eligible), which is why
  * both live in one hook: a second provider on this doc name would make a tab
@@ -25,6 +26,8 @@ export interface BranchSignalHandlers {
   /** A typeset no agent caused finished on the branch, this client's own included. */
   onTypesetFinished(): void;
   onCommitted(): void;
+  /** A typeset nobody's browser asked for waits for one (browsertex/). */
+  onBrowserJob?(): void;
   /** Everyone else on the branch, whenever that changes; [] once it closes. */
   onRoster?(peers: BranchPeer[]): void;
   /** The agent's session on the branch began, changed files, or ended (null). */
@@ -62,7 +65,7 @@ export interface BranchSignalHandle {
   electedTypesetter(): boolean;
 }
 
-type SignalKey = 'v' | 'a' | 'ts' | 'td' | 'r' | 'c';
+type SignalKey = 'v' | 'a' | 'ts' | 'td' | 'r' | 'c' | 'bj';
 
 /** A new `session` (a sign-in since the socket was refused) opens the channel again. */
 export function useBranchSignal(
@@ -117,12 +120,12 @@ export function useBranchSignal(
     });
     providerRef.current = provider;
     const map = ydoc.getMap<number>('signal');
-    const last: Record<SignalKey, number> = { v: 0, a: 0, ts: 0, td: 0, r: 0, c: 0 };
+    const last: Record<SignalKey, number> = { v: 0, a: 0, ts: 0, td: 0, r: 0, c: 0, bj: 0 };
     // A client joining a branch an agent touched an hour ago must not replay
     // that stamp as a fresh edit and typeset on open: until the initial sync
     // has landed, the observer only records what it finds.
     let ready = false;
-    const record = () => { for (const k of ['v', 'a', 'ts', 'td', 'r', 'c'] as SignalKey[]) last[k] = map.get(k) || 0; };
+    const record = () => { for (const k of ['v', 'a', 'ts', 'td', 'r', 'c', 'bj'] as SignalKey[]) last[k] = map.get(k) || 0; };
 
     const observer = () => {
       if (!ready) { record(); return; }
@@ -133,6 +136,7 @@ export function useBranchSignal(
         ['td', () => cbRef.current.onAgentTypesetFinished()],
         ['r', () => cbRef.current.onTypesetFinished()],
         ['c', () => cbRef.current.onCommitted()],
+        ['bj', () => cbRef.current.onBrowserJob?.()],
       ];
       for (const [key, run] of fire) {
         const v = map.get(key) || 0;

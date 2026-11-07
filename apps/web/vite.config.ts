@@ -59,6 +59,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/plugins': 'http://localhost:3000',
+      '/browser-tex': 'http://localhost:3000',
       '/oauth/token': 'http://localhost:3000',
       '/oauth/register': 'http://localhost:3000',
       '/oauth/revoke': 'http://localhost:3000',

@@ -27,12 +27,16 @@ FROM node:22-alpine
 # Alpine's current security fixes; the build stages above stay cached.
 ARG PACKAGES_REFRESH=
 # sqlite: the sqlite3 shell, for an operator looking into /secrets/aldine.db.
-RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" && apk add --no-cache git sqlite
+# tar, xz: unpack the TeX Live packages ALDINE_TYPESET=browser fetches on demand.
+RUN echo "packages as of: ${PACKAGES_REFRESH:-local build}" && apk add --no-cache git sqlite tar xz
 WORKDIR /srv
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
 RUN npm ci --workspace apps/server --include-workspace-root=false --omit=dev
 COPY apps/server apps/server
+# The compiler's log parsers: with ALDINE_TYPESET=browser the app server reads
+# the logs browsers send (src/browsertex/ingest.ts). Zero-dependency files.
+COPY apps/compiler/*.js apps/compiler/
 COPY --from=serverbuild /build/apps/server/dist apps/server/dist
 COPY --from=serverbuild /build/apps/server/assets apps/server/assets
 COPY plugins plugins

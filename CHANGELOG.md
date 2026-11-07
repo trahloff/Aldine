@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- TeX in the browser: with `ALDINE_TYPESET=browser`, Aldine runs as one
+  container without the compiler. The app hands browsers TeX Live 2026
+  compiled to WebAssembly (TeXlyre's BusyTeX build, AGPL-3.0). It is fetched
+  and checksummed on first start, or baked into an image with
+  `deploy/browser-tex/Dockerfile`. Each tab typesets every change itself and
+  shows the PDF at once. Packages the chosen profile lacks are fetched from a
+  TeX Live mirror on demand and cached. Some runs are published to the
+  server for the project list, share links, the agent, and phones, which
+  show those instead of downloading TeX. `docker-compose.browser.yml` runs
+  it; docs/BROWSER_TEX.md says what differs from the compiler.
+
 ## [1.9.1] — 2026-11-07
 
 ### Added

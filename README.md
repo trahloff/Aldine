@@ -242,6 +242,10 @@ what `deploy/backup.sh` looks for.
   is CJK. After the first pull, starts take
   seconds. Ready when `curl localhost:8080/api/health` returns
   `{"ok":true,"name":"aldine"}`.
+- **Rather not run TeX Live on the server?** `docker compose -f
+  docker-compose.browser.yml up -d` runs Aldine as one container: browsers
+  typeset with TeX Live compiled to WebAssembly, and packages are fetched on
+  demand. What that changes is in [docs/BROWSER_TEX.md](docs/BROWSER_TEX.md).
 - **Need a package it does not have?** The missing-package error in the
   editor names it. Two ways to get it, and project settings show which
   image you are on:

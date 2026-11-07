@@ -36,6 +36,7 @@ const app = await buildApp();
 await app.listen({ port: config.port, host: '0.0.0.0' });
 // After listen: reading the shipped previews and hashing checkouts never delays it.
 startTemplatePreviews();
+if (config.typeset === 'browser') (await import('./browsertex/build.js')).prepareBrowserTex();
 
 // Yjs collaboration over WebSocket at <basePath>/collab
 const wss = new WebSocketServer({ noServer: true });
@@ -49,7 +50,7 @@ app.server.on('upgrade', (request, socket, head) => {
   }
 });
 
-console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
+console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} ${config.typeset === 'browser' ? 'typeset=browser' : `compiler=${config.compilerUrl}`}`);
 for (const warning of signupConfigWarnings()) console.warn(warning);
 if (AUTH_ENABLED) {
   for (const warning of oidcConfigWarnings()) console.warn(warning);
