@@ -26,9 +26,13 @@ const citedText = (key, result) => (result === 'added' ? `added ${key} to the ci
 
 export default {
   activate(aldine) {
+    // set once the panel has rendered: what onShow re-reads
+    let reload = () => {};
     aldine.ui.registerSidebarPanel({
       id: 'references',
       title: 'Cite',
+      // references typed into an open .bib since the last file-list change
+      onShow: () => reload(),
       render(root) {
         let busy = false;
         let query = '';
@@ -109,6 +113,7 @@ export default {
         };
         // A Zotero import, an upload or a collaborator's new .bib adds entries.
         aldine.project.onFilesChanged?.(loadBib);
+        reload = loadBib;
         const insertKey = (key) => {
           const cited = citeAtCursor(aldine, key);
           if (cited) aldine.toast(citedText(key, cited).replace(/^./, (c) => c.toUpperCase()), 'ok');

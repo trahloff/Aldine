@@ -186,7 +186,7 @@ const EXPIRY_CHOICES = [
 
 /** Access tokens for agents (Claude connector onboarding lives here). Only
  *  mounted when auth is on — token routes 404 without users. */
-function AgentAccess() {
+function AgentAccess({ onSecret }: { onSecret?: (shown: boolean) => void }) {
   const [tokens, setTokens] = useState<AccessToken[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -196,6 +196,7 @@ function AgentAccess() {
   const [expiry, setExpiry] = useState('');
   const [busy, setBusy] = useState(false);
   const [minted, setMinted] = useState<string | null>(null);
+  useEffect(() => { onSecret?.(!!minted); }, [minted]);
   const [revoking, setRevoking] = useState<AccessToken | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -501,6 +502,7 @@ function NameRow({ user }: { user: AuthUser }) {
 /** Account settings: identity, agent access, change password (password accounts only). */
 export default function AccountSettings({ user, onClose, focus }: { user: AuthUser; onClose(): void; focus?: 'sign-in' }) {
   const [current, setCurrent] = useState('');
+  const [secretShown, setSecretShown] = useState(false);
   const [next, setNext] = useState('');
   const [busy, setBusy] = useState(false);
   const [passwordError, setPasswordError] = useState('');
@@ -532,7 +534,7 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
   };
 
   return (
-    <Modal onClose={onClose} label="Account settings" testId="account-settings">
+    <Modal onClose={onClose} label="Account settings" testId="account-settings" dismissable={!secretShown}>
       <div>
         <h2 style={{ marginBottom: 2 }}>Account</h2>
         <p className="modal__sub" data-testid="account-email">{user.email ?? 'No email address on this account'}</p>
@@ -552,7 +554,7 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         {/* The onboarding funnel comes before the password block: a 70vh
             panel opened at scrollTop 0 must show the connector and the
             Create button, not clip them under the sticky footer. */}
-        <AgentAccess />
+        <AgentAccess onSecret={setSecretShown} />
 
         <GitHosts />
 

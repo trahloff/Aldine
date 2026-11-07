@@ -12,6 +12,19 @@ export interface PluginPanel {
   id: string;
   title: string;
   mount(el: HTMLElement): void;
+  /** Called each time the panel comes into view. */
+  onShow?(): void;
+}
+
+/** A question the app asks in its own dialog; see AldineAPI.ui.confirm. */
+export interface PluginConfirm {
+  title: string;
+  body?: string;
+  /** Names the action: "Unlink", not "OK". */
+  confirmLabel: string;
+  cancelLabel?: string;
+  /** Destroys something or cannot be taken back: a red button, and Enter takes the way out. */
+  danger?: boolean;
 }
 
 /** A button a plugin adds to the header of the errors list. */
@@ -50,6 +63,7 @@ export interface PluginCtx {
   toast(text: string, kind?: 'info' | 'error' | 'ok'): void;
   /** `reveal`: also show a hidden sidebar. */
   showPanel(id: string, reveal?: boolean): void;
+  confirm(o: PluginConfirm): Promise<boolean>;
 }
 
 /** What citing a key did: a new \cite, a key added to the citation at the
@@ -83,7 +97,9 @@ export interface AldineAPI {
   toast(text: string, kind?: 'info' | 'error' | 'ok'): void;
   fetch(url: string, init?: RequestInit): Promise<Response>;
   ui: {
-    registerSidebarPanel(panel: { id: string; title: string; render(el: HTMLElement) : void }): void;
+    /** `render` runs once, when the panel is first shown; `onShow` each time
+     *  it comes into view, which is the moment to re-read what may have changed. */
+    registerSidebarPanel(panel: { id: string; title: string; render(el: HTMLElement): void; onShow?(): void }): void;
     /** Select one of this plugin's panels by the id it registered. A hidden
      *  sidebar is shown too, unless `reveal` is false. */
     showPanel(id: string, opts?: { reveal?: boolean }): void;
@@ -92,6 +108,9 @@ export interface AldineAPI {
     registerErrorsAction(action: { id: string; label: string; title?: string; run(): void }): void;
     /** Add a command to the editor's command palette. */
     registerCommand(command: PluginCommand): void;
+    /** Ask in the app's own dialog. Resolves true when confirmed; false on the
+     *  way out, Escape or a click outside. */
+    confirm(o: PluginConfirm): Promise<boolean>;
   };
 }
 
@@ -141,7 +160,10 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, onCommands, files }
       fetch: (url, init) => fetch(url.startsWith('/') ? withBase(url) : url, init),
       ui: {
         registerSidebarPanel(panel) {
-          panels.push({ id: `plugin:${panel.id}`, title: panel.title, mount: (el) => panel.render(el) });
+          const onShow = typeof panel.onShow === 'function'
+            ? () => { try { panel.onShow!(); } catch (err) { console.error(`[plugins] ${panel.id}: onShow failed`, err); } }
+            : undefined;
+          panels.push({ id: `plugin:${panel.id}`, title: panel.title, mount: (el) => panel.render(el), onShow });
         },
         showPanel: (panelId, opts) => ctxRef.current.showPanel(`plugin:${panelId}`, opts?.reveal !== false),
         registerErrorsAction(action) {
@@ -149,6 +171,10 @@ export function PluginHost({ ctx, onPanels, onErrorsActions, onCommands, files }
         },
         registerCommand(command) {
           if (command && typeof command.run === 'function' && command.id && command.title) commands.push(command);
+        },
+        confirm: (o) => {
+          if (!o || typeof o.title !== 'string' || typeof o.confirmLabel !== 'string') return Promise.reject(new TypeError('confirm needs a title and a confirmLabel'));
+          return ctxRef.current.confirm({ title: o.title, body: o.body, confirmLabel: o.confirmLabel, cancelLabel: o.cancelLabel, danger: !!o.danger });
         },
       },
     };

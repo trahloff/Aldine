@@ -930,14 +930,18 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 @media (hover: hover) and (pointer: fine) { .sidebar__tab:hover { background: var(--bg-hover); } }
 .sidebar__tab:active { background: var(--bg-active); }
 .sidebar__tab--active { background: var(--bg-active); color: var(--text); font-weight: 600; }
-/* a fourth text tab would not fit the 230px row beside "Review (3)" and More */
-.sidebar__tab--icon { flex: none; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-/* the panels that are not pinned share one "More" tab with a menu: a ⋯ until
-   one of them is open, which leaves the named tabs room for their names */
+/* every tab is an icon with its name in the tooltip: the 230px row has no
+   room for names beside the panel toggle. At the narrowest sidebar (180px)
+   the icons give way to 20px so Hide stays in the row. */
+.sidebar__tab--icon { position: relative; flex: 0 1 28px; width: 28px; min-width: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.sidebar__tabs > .sidebar__collapse { margin-left: auto; }
+.sidebar__badge { position: absolute; top: 1px; right: 0; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--accent-fill); color: var(--on-accent); font-size: 9px; font-weight: 700; line-height: 13px; text-align: center; }
+/* the panels that are not pinned share one "More" tab with a menu, a ⋯ that
+   reads as selected while one of them is open */
 .sidebar__more { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
 .sidebar__more > .sidebar__tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
-.sidebar__more--icon { flex: none; }
-.sidebar__more--icon > .sidebar__tab { width: 28px; padding: 0; }
+.sidebar__more--icon { flex: 0 1 auto; min-width: 20px; }
+.sidebar__more--icon > .sidebar__tab { width: 28px; min-width: 20px; padding: 0; }
 .sidebar__more-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sidebar__chev { flex: none; display: inline-flex; color: var(--text-3); transform: rotate(90deg); }
 .sidebar__collapse { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-3); cursor: pointer; }
@@ -1584,10 +1588,11 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 @media (pointer: coarse) {
   .tree__item { height: 40px; }
   .sidebar__tab { height: 40px; padding: 0 4px; }
-  /* a narrowed sidebar squeezes the icon tabs before it pushes Hide out of the row */
-  .sidebar__tab--icon, .sidebar__more--icon > .sidebar__tab { width: 40px; flex: 0 1 40px; min-width: 28px; }
-  .sidebar__more--icon { flex: 0 1 auto; min-width: 28px; }
-  .sidebar__collapse { width: 40px; height: 40px; }
+  /* six icon tabs and Hide at 40px are wider than the 230px row: they share
+     the squeeze, so Hide is never pushed out */
+  .sidebar__tab--icon, .sidebar__more--icon > .sidebar__tab { width: 40px; flex: 0 1 40px; min-width: 20px; }
+  .sidebar__more--icon { flex: 0 1 auto; min-width: 20px; }
+  .sidebar__collapse { width: 40px; height: 40px; flex: 0 1 40px; min-width: 28px; }
   .sidebar-rail { width: 48px; }
   .sidebar-rail__btn { width: 40px; height: 40px; }
   .branch-pill { height: var(--control-h); }

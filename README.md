@@ -535,8 +535,10 @@ plugins/hello/
 └── index.js        # export default { activate(aldine) { ... } }
 ```
 
-The `aldine` API exposes `ui.registerSidebarPanel`, `ui.showPanel` (select
+The `aldine` API exposes `ui.registerSidebarPanel` (with an optional
+`onShow`, called each time the panel comes into view), `ui.showPanel` (select
 one of the plugin's own panels), `ui.registerCommand` (a palette command),
+`ui.confirm` (a question in the app's own dialog),
 `editor.insertAtCursor`, `editor.insertCitation`, `project` context,
 `compile()`, `toast()`, and `fetch()`. See
 `plugins/zotero` for a complete example.

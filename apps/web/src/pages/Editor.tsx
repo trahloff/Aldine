@@ -24,10 +24,10 @@ import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
-import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand } from '../plugins/host';
+import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronLeft, IconChevronRight, IconDownload, IconEllipsis, IconHistory, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -89,6 +89,8 @@ const AGENT_REVIEW_MAX_COMMITS = 20;
 /** The plugin panels with a sidebar tab of their own, beside Files, Search,
  *  History and Review; every other one sits in the More menu. */
 const PINNED_PANELS = ['plugin:references'];
+/** A pinned panel's tab is an icon, like every tab in the row. */
+const PINNED_ICONS: Record<string, typeof IconQuote> = { 'plugin:references': IconQuote };
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
 /** The sidebar's width in px, once someone has dragged it. */
 const SIDEBAR_WIDTH = 'aldine.sidebarWidth';
@@ -1623,7 +1625,13 @@ export default function Editor() {
       setTab(panelId);
       if (reveal && !window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
     },
-  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, insertCitation, loadFiles, loadProject, doCompile, toast]);
+    confirm: (o: PluginConfirm) => dialogs.confirm(o),
+  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, insertCitation, loadFiles, loadProject, doCompile, toast, dialogs]);
+  // A plugin panel coming into view: its tab chosen, or the sidebar shown again.
+  useEffect(() => {
+    if (sidebarHidden) return;
+    pluginPanels.find((p) => p.id === tab)?.onShow?.();
+  }, [tab, sidebarHidden, pluginPanels]);
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
@@ -2030,7 +2038,17 @@ export default function Editor() {
           style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
         >
           <div className="sidebar__tabs" role="tablist">
-            <button className={`sidebar__tab ${tab === 'files' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('files')} role="tab" aria-selected={tab === 'files'} data-testid="tab-files">Files</button>
+            <button
+              className={`sidebar__tab sidebar__tab--icon ${tab === 'files' ? 'sidebar__tab--active' : ''}`}
+              onClick={() => setTab('files')}
+              role="tab"
+              aria-selected={tab === 'files'}
+              aria-label="Files"
+              title="Files"
+              data-testid="tab-files"
+            >
+              <IconFiles />
+            </button>
             <button
               className={`sidebar__tab sidebar__tab--icon ${tab === 'search' ? 'sidebar__tab--active' : ''}`}
               onClick={() => openSearch()}
@@ -2053,35 +2071,43 @@ export default function Editor() {
             >
               <IconHistory />
             </button>
-            {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => (
-              <button key={p.id} className={`sidebar__tab ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} data-testid={`tab-${p.id}`}>
-                {p.title}
-              </button>
-            ))}
-            <button className={`sidebar__tab ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" aria-selected={tab === 'review'} data-testid="tab-review">
-              Review{comments.some((c) => !c.resolved) ? ` (${comments.filter((c) => !c.resolved).length})` : ''}
-            </button>
+            {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => {
+              const Icon = PINNED_ICONS[p.id];
+              return (
+                <button key={p.id} className={`sidebar__tab sidebar__tab--icon ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} aria-label={p.title} title={p.title} data-testid={`tab-${p.id}`}>
+                  {Icon ? <Icon /> : p.title.slice(0, 1)}
+                </button>
+              );
+            })}
+            {(() => {
+              const open = comments.filter((c) => !c.resolved).length;
+              const label = open ? `Review, ${open} open thread${open === 1 ? '' : 's'}` : 'Review';
+              return (
+                <button className={`sidebar__tab sidebar__tab--icon ${tab === 'review' ? 'sidebar__tab--active' : ''}`} onClick={() => setTab('review')} role="tab" aria-selected={tab === 'review'} aria-label={label} title={label} data-testid="tab-review">
+                  <IconComment />
+                  {open > 0 && <span className="sidebar__badge" aria-hidden="true" data-testid="tab-review-count">{open > 99 ? '99+' : open}</span>}
+                </button>
+              );
+            })()}
             {(() => {
               const more = pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id));
               const shown = more.find((p) => p.id === tab);
               if (!more.length) return null;
               return (
-                <div className={`sidebar__more${shown ? '' : ' sidebar__more--icon'}`}>
+                <div className="sidebar__more sidebar__more--icon">
                   <MenuButton
                     className={`sidebar__tab ${shown ? 'sidebar__tab--active' : ''}`}
                     role="tab"
                     selected={!!shown}
                     label="More panels"
-                    ariaLabel={shown ? undefined : 'More panels'}
-                    title={shown ? undefined : 'More panels'}
+                    ariaLabel={shown ? `More panels: ${shown.title}` : 'More panels'}
+                    title={shown ? `More panels: ${shown.title}` : 'More panels'}
                     placement="bottom-end"
                     testId="tab-more"
                     menuTestId="tab-more-menu"
                     items={more.map((p) => ({ id: p.id, label: p.title, checked: tab === p.id, role: 'radio' as const, testId: `tab-${p.id}`, onSelect: () => setTab(p.id) }))}
                   >
-                    {shown
-                      ? <><span className="sidebar__more-label">{shown.title}</span><span className="sidebar__chev" aria-hidden="true"><IconChevronRight /></span></>
-                      : <IconEllipsis />}
+                    <IconEllipsis />
                   </MenuButton>
                 </div>
               );

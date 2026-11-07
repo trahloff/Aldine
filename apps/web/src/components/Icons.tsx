@@ -113,6 +113,29 @@ export const IconReplace = (p: SVGProps<SVGSVGElement>) => (
 );
 
 /** A clock whose rim turns back: History, the earlier versions. */
+export const IconFiles = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M5.5 1.75H10L13 4.75v6.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1Z" />
+    <path d="M10 1.75v3h3" />
+    <path d="M4.5 4.25H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1H9a1 1 0 0 0 1-1v-1" />
+  </svg>
+);
+
+export const IconQuote = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.5 9.5c0-3 1.25-5 3.5-6" />
+    <path d="M2.5 9.5a1.75 1.75 0 1 0 3.5 0 1.75 1.75 0 1 0-3.5 0Z" />
+    <path d="M9 9.5c0-3 1.25-5 3.5-6" />
+    <path d="M9 9.5a1.75 1.75 0 1 0 3.5 0 1.75 1.75 0 1 0-3.5 0Z" />
+  </svg>
+);
+
+export const IconComment = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M2.25 3.25a1 1 0 0 1 1-1h9.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.75a1 1 0 0 1-1-1v-6.5Z" />
+  </svg>
+);
+
 export const IconHistory = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M2.75 8a5.25 5.25 0 1 0 1.54-3.71" />

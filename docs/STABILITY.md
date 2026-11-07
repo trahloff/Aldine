@@ -191,12 +191,16 @@ ES module whose default export has `activate(aldine)`. The `aldine` object says
   citation at the cursor, else a new `\cite{key}`; answers `'inserted'`,
   `'added'`, `'present'`, or `false` with no TeX file open), `compile()`,
   `toast(text, kind?)`, `fetch(url, init?)`
-- `ui.registerSidebarPanel({ id, title, render(el) })`,
+- `ui.registerSidebarPanel({ id, title, render(el), onShow? })` (`render`
+  runs once, when the panel is first shown; `onShow()` each time it comes
+  into view, since 1.9.1),
   `ui.showPanel(id, { reveal? })` (`reveal: false` leaves a hidden sidebar
   hidden), `ui.registerErrorsAction({ id, label, title?, run() })` (a button
   in the errors list's header while the last typeset failed),
   `ui.registerCommand({ id, title, group?, keywords?, run() })` (a command
-  in the editor's palette)
+  in the editor's palette),
+  `ui.confirm({ title, body?, confirmLabel, cancelLabel?, danger? })` (asks
+  in the app's own dialog; resolves `true` or `false`; since 1.9.1)
 
 From 1.0 these keep working across 1.x. A change that breaks a plugin raises
 `aldine.version` and ships in a major release. The routes a plugin reaches

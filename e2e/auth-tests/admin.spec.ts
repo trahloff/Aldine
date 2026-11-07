@@ -171,6 +171,10 @@ test.describe('account actions on the admin page', () => {
     await expect(page.getByTestId('admin-action-message')).toContainText('sends no email');
     await page.getByTestId('admin-action-confirm').click();
     const link = await page.getByTestId('admin-reset-link-value').inputValue();
+    // shown once, so only Done closes it
+    await page.keyboard.press('Escape');
+    await page.mouse.click(5, 5);
+    await expect(page.getByTestId('admin-reset-link-value')).toBeVisible();
     const token = new URL(link).searchParams.get('reset_token');
     expect(token).toBeTruthy();
     expect((await other.request.post('/api/auth/reset', { data: { token, newPassword: 'reset-by-admin' } })).ok()).toBeTruthy();

@@ -304,7 +304,10 @@ export default {
         };
 
         const unlink = async () => {
-          if (!window.confirm('Unlink Zotero from this project? The .bib file stays.')) return;
+          const ok = aldine.ui.confirm
+            ? await aldine.ui.confirm({ title: 'Unlink Zotero from this project?', body: 'The .bib file stays.', confirmLabel: 'Unlink', danger: true })
+            : window.confirm('Unlink Zotero from this project? The .bib file stays.');
+          if (!ok) return;
           try {
             await jfetch(`/api/projects/${aldine.project.id}/zotero`, { method: 'DELETE' });
           } catch (err) {

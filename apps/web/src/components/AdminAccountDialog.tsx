@@ -281,7 +281,7 @@ export default function AdminAccountDialog({ user, accounts, meId, admins, sends
   }
 
   return (
-    <Modal onClose={onClose} label={`Manage ${label}`} testId="admin-account-dialog" width={520}>
+    <Modal onClose={onClose} label={`Manage ${label}`} testId="admin-account-dialog" width={520} dismissable={!(view === 'reset-done' && reset?.link)}>
       {content}
     </Modal>
   );
