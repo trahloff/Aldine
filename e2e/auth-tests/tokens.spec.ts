@@ -42,6 +42,10 @@ test.describe('agent access tokens', () => {
     await expect(page.getByTestId('agent-claude-code-copy')).toBeVisible();
     // Connect connections get their own heading once one exists (oauth.spec); a hand-made token is not one
     await expect(page.getByTestId('agent-connections')).toHaveCount(0);
+    // shown once, so only Done closes it: Escape and a click outside leave it up
+    await page.keyboard.press('Escape');
+    await page.mouse.click(5, 5);
+    await expect(page.getByTestId('agent-token-value')).toBeVisible();
     await page.getByTestId('agent-token-done').click();
     // shown exactly once — dismissing removes the plaintext from the page
     await expect(page.getByTestId('agent-token-value')).toHaveCount(0);

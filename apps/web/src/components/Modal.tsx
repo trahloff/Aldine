@@ -14,6 +14,10 @@ interface Props {
   /** Where focus goes on open: the first control, the panel itself (a sheet opened by touch, where a ring on its
    *  first row would read as a selection), or a given element (an input's text is selected). */
   initialFocus?: 'first' | 'panel' | RefObject<HTMLElement | null>;
+  /** False while the dialog shows something it cannot show again (a token, a
+   *  reset link): Escape and a click outside leave it open, only its own
+   *  buttons close it. */
+  dismissable?: boolean;
 }
 
 /**
@@ -44,7 +48,7 @@ export function useBackdropDismiss(onClose: () => void) {
   };
 }
 
-export default function Modal({ onClose, children, label, wide, width, testId, className, initialFocus = 'first' }: Props) {
+export default function Modal({ onClose, children, label, wide, width, testId, className, initialFocus = 'first', dismissable = true }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const leave = useExitGhost();
   const self = useRef(Symbol('modal'));
@@ -55,7 +59,9 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
   // update) and yank focus back to the first control mid-typing.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  const backdrop = useBackdropDismiss(() => closeRef.current());
+  const dismissRef = useRef(dismissable);
+  dismissRef.current = dismissable;
+  const backdrop = useBackdropDismiss(() => { if (dismissRef.current) closeRef.current(); });
 
   useEffect(() => {
     const id = self.current;
@@ -78,7 +84,7 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
       if (e.target instanceof Element && e.target.closest('.menu--floating')) return;
       // A search field with text clears it on Escape (its own handler); the next Escape closes.
       if (e.key === 'Escape' && e.target instanceof HTMLInputElement && e.target.type === 'search' && e.target.value) return;
-      if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); if (dismissRef.current) closeRef.current(); return; }
       if (e.key !== 'Tab') return;
       const items = focusables();
       if (!items.length) { e.preventDefault(); return; }
