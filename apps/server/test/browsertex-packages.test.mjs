@@ -52,7 +52,7 @@ archives.evil = (() => {
 })();
 
 const entry = (name, files, buf, reloc = true) => [
-  `name ${name}`, 'category Package', ...(reloc ? ['relocated 1'] : []),
+  `name ${name}`, 'category Package', ...(reloc ? ['relocated 1'] : []), 'catalogue-license lppl1.3c', 'catalogue-version 1.0',
   `containersize ${buf.length}`, `containerchecksum ${sha512(buf)}`,
   `runfiles size=${files.length}`, ...files.map((f) => ` ${f}`), '',
 ].join('\n');
@@ -102,6 +102,12 @@ try {
   requests.length = 0;
   eq(await s.resolve(26, 'nothing-like-this.sty'), null, 'and stays one');
   eq(requests, [], 'without asking the mirror again');
+
+  // ---- which package carries a file, with its catalogue entry ----
+  const located = await s.locateFiles(['tikz.sty', 'cmr10.tfm', 'nowhere.cls']);
+  eq(located.get('tikz.sty'), { pkg: 'pgf', license: 'lppl1.3c', version: '1.0', home: null }, 'a runfile names its package and licence');
+  check(!located.has('cmr10.tfm'), 'only files under a tex/ tree count as classes and packages');
+  check(!located.has('nowhere.cls'), 'a file TeX Live lacks is left out');
 
   // ---- a new process reuses the cache ----
   requests.length = 0;

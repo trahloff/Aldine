@@ -212,6 +212,12 @@ function fetchClasses(): Promise<CatalogClass[]> {
   const gen = generation;
   return (async () => {
     try {
+      if (config.typeset === 'browser') {
+        const { browserCatalog } = await import('./browsertex/catalog.js');
+        const classes = await browserCatalog();
+        if (gen === generation) cache = { at: Date.now(), ttl: CACHE_OK_MS, classes };
+        return classes;
+      }
       const res = await fetch(`${config.compilerUrl}/catalog`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`catalog HTTP ${res.status}`);
       const body = (await res.json()) as { ok?: boolean; classes?: CatalogClass[] };

@@ -23,7 +23,7 @@ const SUFFIXES: Record<number, string[]> = {
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$/;
 
-interface Pkg { name: string; size: number; sha512: string; files: string[] }
+interface Pkg { name: string; size: number; sha512: string; files: string[]; license: string | null; version: string | null; home: string | null }
 
 export interface PackageSourceOptions {
   /** A tlnet directory: <mirror>/tlpkg/texlive.tlpdb and <mirror>/archive/<pkg>.tar.xz. */
@@ -47,7 +47,7 @@ export function parseTlpdb(text: string): { release: string | null; packages: Ma
   let inRunfiles = false;
   for (const line of text.split('\n')) {
     if (line.startsWith('name ')) {
-      cur = { name: line.slice(5).trim(), size: 0, sha512: '', files: [] };
+      cur = { name: line.slice(5).trim(), size: 0, sha512: '', files: [], license: null, version: null, home: null };
       inRunfiles = false;
       // Platform binaries (pkg.x86_64-linux) are of no use to a browser.
       if (!cur.name.includes('.')) packages.set(cur.name, cur);
@@ -67,6 +67,9 @@ export function parseTlpdb(text: string): { release: string | null; packages: Ma
     inRunfiles = line.startsWith('runfiles ');
     if (line.startsWith('containersize ')) cur.size = Number(line.slice(14));
     else if (line.startsWith('containerchecksum ')) cur.sha512 = line.slice(18).trim();
+    else if (line.startsWith('catalogue-license ')) cur.license = line.slice(18).trim() || null;
+    else if (line.startsWith('catalogue-version ')) cur.version = line.slice(18).trim() || null;
+    else if (line.startsWith('catalogue-contact-home ')) cur.home = line.slice(23).trim() || null;
     else if (cur.name === '00texlive.config' && line.startsWith('depend release/')) release = line.slice(15).trim();
   }
   return { release, packages, byFile };
@@ -177,6 +180,20 @@ export class PackageSource {
       console.log(`[aldine] TeX Live package ${pkg.name} fetched for the browser's TeX (${Math.round(pkg.size / 1024)} KB)`);
     })().finally(() => { this.fetching.delete(pkg.name); });
     return p;
+  }
+
+  /** For each file name TeX Live carries as a runfile, the package that holds
+   *  it and that package's catalogue entry; names it lacks are left out. */
+  async locateFiles(names: string[]): Promise<Map<string, { pkg: string; license: string | null; version: string | null; home: string | null }>> {
+    await this.loadDb();
+    const db = this.db!;
+    const out = new Map<string, { pkg: string; license: string | null; version: string | null; home: string | null }>();
+    for (const name of names) {
+      const hit = db.byFile.get(name.toLowerCase())?.find((h) => /\/tex\//.test(h.file));
+      const pkg = hit && db.packages.get(hit.pkg);
+      if (pkg) out.set(name, { pkg: pkg.name, license: pkg.license, version: pkg.version, home: pkg.home });
+    }
+    return out;
   }
 
   /** Loads the package database ahead of the first request, which TeX makes

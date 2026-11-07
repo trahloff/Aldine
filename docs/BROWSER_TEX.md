@@ -118,5 +118,9 @@ build and on-demand packages.
 - **The first typeset on a device waits for the download.** The PDF pane
   shows "Loading TeX… n%". Later visits load TeX from the browser's cache in
   a second or two.
-- **The venue gallery is empty and repository template previews are not
-  rendered.** Both come from the compiler image's installed classes.
+- **Venue templates come from TeX Live's package list.** The gallery offers
+  each allowlisted journal class that TeX Live 2026 carries (REVTeX,
+  elsarticle, IEEEtran, acmart, amsart, llncs, MNRAS and others), with a
+  generated starter document rather than the class's own sample. Publisher
+  kits work as with the compiler. Template-repository previews are not
+  rendered.

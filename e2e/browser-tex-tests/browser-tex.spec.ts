@@ -127,6 +127,25 @@ test.describe('typesetting in the browser', () => {
     }
   });
 
+  test('venue templates are offered, and one whose class is not in the profile typesets', async ({ page, request }) => {
+    const templates: Array<{ id: string }> = await (await request.get('/api/templates')).json();
+    const venues = templates.map((t) => t.id).filter((id) => id.startsWith('venue:'));
+    expect(venues).toEqual(expect.arrayContaining(['venue:revtex', 'venue:elsarticle', 'venue:ieeetran', 'venue:acmart']));
+    const res = await request.post('/api/projects', { data: { name: 'Browser TeX REVTeX', template: 'venue:revtex' } });
+    expect(res.ok(), await res.text()).toBe(true);
+    const { id } = await res.json();
+    const seen = watchRequests(page);
+    try {
+      await openProject(page, id);
+      await typeset(page);
+      await expectTypesetOk(page, 150_000);
+      // revtex4-2.cls is not in the basic profile: it came on demand.
+      expect(seen.some((r) => /^GET \/api\/texlive\/\d+\/revtex4-2\.cls$/.test(r))).toBe(true);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('with no tab open, an API caller is told to open one', async ({ request }) => {
     const id = await createPaperProject(request, 'Browser TeX No Tab');
     try {
