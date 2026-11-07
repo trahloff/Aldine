@@ -163,15 +163,8 @@ test.describe('PDF text', () => {
       await expect(hits).toHaveCount(0);
       await expect(pane).toBeFocused();
 
-      // The Find icon above the preview and the palette open it too, the field focused.
-      const icon = page.getByTestId('pdf-find-open');
-      await expect(icon).toHaveAccessibleName('Find in the PDF');
-      await icon.click();
-      await expect(bar).toBeVisible();
-      await expect(input).toBeFocused();
-      await expect(input).toHaveValue('ZANZIBAR');
-      await page.keyboard.press('Escape');
-      await expect(bar).toHaveCount(0);
+      // The palette opens it too, the field focused; the preview has no Find icon of its own.
+      await expect(page.getByTestId('pdf-find-open')).toHaveCount(0);
       await page.locator('.cm-line', { hasText: 'Filler page 3' }).click();
       await page.keyboard.press(`${mod}+k`);
       await page.getByTestId('palette-input').fill('find in the pdf');

@@ -870,17 +870,26 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
    positioned pane they cover the sidebar and toolbar too. */
 .pane--editor { position: relative; }
 
-/* A narrow preview drops the shortcut hint, then "to PDF", then the switch's
-   "Auto" (its tooltip and label stay) before anything wraps; the query is on the pane, not the window, since the pane is
-   resizable. The page number (about 52px with its gap), the Download icon
-   (28px) and the Find icon (32px) are counted in. */
+/* The preview's header stays one row. Short of room it drops, in turn,
+   "Typeset in" (the time stays), the switch's "Auto" (its tooltip and label
+   stay), the word count, then "to PDF"; the shortcut stays. The query is on
+   the pane, not the window, since the pane is resizable. Only a pane too
+   narrow for even that (a phone) wraps. The widths are measured with a
+   two-digit page count and a five-digit word count: all of it needs 656px; the
+   default pane (576px) keeps the word count. */
 .pane--preview { container-type: inline-size; }
-@container (max-width: 664px) { .pane__header .kbd { display: none; } }
-@container (max-width: 614px) { .jump__more { display: none; } }
-@container (max-width: 584px) { .auto-toggle__label { display: none; } }
+@container (min-width: 428px) {
+  .pane--preview > .pane__header { flex-wrap: nowrap; }
+  .pane--preview > .pane__header > * { flex-shrink: 0; }
+  .pane--preview > .pane__header > .pdf-status:not(.pdf-words) { min-width: 24px; flex-shrink: 1; overflow: hidden; white-space: nowrap; }
+  .pane--preview > .pane__header > .toolbar__spacer { flex-shrink: 1; }
+}
+@container (max-width: 660px) { .pdf-status__verb { display: none; } }
+@container (max-width: 596px) { .auto-toggle__label { display: none; } }
+@container (max-width: 562px) { .pane__header > .pdf-words { display: none; } }
+@container (max-width: 472px) { .jump__more { display: none; } }
 .jump__source { width: 24px; padding: 0; justify-content: center; }
 .pdf-download { width: 24px; padding: 0; justify-content: center; }
-.pdf-find-open { width: 24px; padding: 0; justify-content: center; }
 
 .pane__header {
   display: flex;
@@ -1938,16 +1947,6 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
   .typeset-short--ok .typeset-short__text { display: none; }
   .typeset-short { min-width: 24px; text-align: center; }
 }
-/* the main document beside Typeset: a short name, the path in its title.
-   Short of room it moves into the "…" sheet, the toolbar's only button then. */
-@media (max-width: 1100px) {
-  .toolbar__group > .main-doc { display: none; }
-  .toolbar__more--main { display: inline-flex; }
-}
-.main-doc { display: inline-flex; align-items: center; gap: 4px; max-width: 160px; min-width: 0; font-size: var(--text-s); color: var(--text-2); }
-.main-doc__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.main-doc__chev { display: inline-flex; transform: rotate(90deg); opacity: 0.6; }
-.main-doc--fixed { padding: 0 6px; }
 .layout-toggle .seg__btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; }
 @media (pointer: coarse) { .pane__find { width: 40px; height: 40px; } }
 

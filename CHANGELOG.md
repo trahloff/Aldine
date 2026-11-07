@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- The main document is chosen in the project's Settings again, no longer
+  beside Typeset or in the "⋯" menu. Settings lists only the .tex files that
+  typeset on their own, and choosing one typesets it straight away.
+  Right-click a file and "Set as main document" still works too.
+- The bar above the PDF stays on one row. "Jump to PDF" shows its shortcut
+  again. When the pane is narrow, the word count goes first, then the
+  "Auto" label, then "to PDF". The bar only wraps at phone width.
+- The bar above the PDF no longer has its own Find icon, so the editor and the
+  preview don't show two magnifiers side by side. Cmd+F over the preview and
+  "Find in the PDF…" in the command palette still open Find in the PDF.
+
 ## [1.9.0] — 2026-11-07
 
 ### Added

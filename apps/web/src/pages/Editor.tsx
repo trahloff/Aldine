@@ -1229,7 +1229,7 @@ export default function Editor() {
   useEffect(() => {
     if (filesFor === `${id}::${branch}`) setCompletionFiles(id, branch, project?.rootFile, files);
   }, [id, branch, files, filesFor, project?.rootFile]);
-  /** The .tex files that typeset on their own, for the main-document picker. */
+  /** The .tex files that typeset on their own, for the main-document setting. */
   const [mainDocs, setMainDocs] = useState<{ key: string; paths: string[] } | null>(null);
   useEffect(() => {
     const key = `${id}::${branch}`;
@@ -1873,15 +1873,6 @@ export default function Editor() {
   const locked = !!project.readOnly || viewOnly;
 
   // The documents a typeset can start from: the ones with \documentclass, and the main one.
-  const docChoices = [...new Set([...(mainDocs?.key === `${id}::${branch}` ? mainDocs.paths : []), ...(project.rootFile ? [project.rootFile] : [])])].sort((a, b) => a.localeCompare(b));
-  const canPickMain = canSync && !project.readOnly;
-  const chooseMainDoc = (path: string) => { void setRootFile(path, { typeset: true }); };
-  const mainName = project.rootFile ? project.rootFile.split('/').pop()! : 'No main document';
-  /** The picker's rows in the "…" sheet, where it is short of room. */
-  const mainDocRows: MenuEntry[] = canPickMain && docChoices.length > 1 ? [
-    { kind: 'header', title: 'Main document' },
-    ...docChoices.map((p): MenuEntry => ({ id: `main-${p}`, label: p, role: 'radio', checked: p === project.rootFile, onSelect: () => chooseMainDoc(p), testId: `more-main-${p}` })),
-  ] : [];
 
   return (<>
     <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
@@ -1961,23 +1952,6 @@ export default function Editor() {
           })}
         </div>
         <div className="toolbar__group">
-          {canPickMain && docChoices.length > 0 ? (
-            <MenuButton
-              className="btn btn--ghost main-doc toolbar__wide"
-              label="Main document"
-              testId="main-doc-picker"
-              menuTestId="main-doc-menu"
-              placement="bottom-end"
-              title={`Main document: ${project.rootFile || 'none'}. Choose another to typeset it`}
-              items={() => docChoices.map((p) => ({ id: p, label: p, role: 'radio' as const, checked: p === project.rootFile, onSelect: () => chooseMainDoc(p), testId: `main-doc-${p}` }))}
-            >
-              <span className="main-doc__name">{mainName}</span><span className="main-doc__chev" aria-hidden="true"><IconChevronRight /></span>
-            </MenuButton>
-          ) : (
-            <span className="main-doc main-doc--fixed toolbar__wide" title={`Main document: ${project.rootFile || 'none'}`} data-testid="main-doc-picker">
-              <span className="main-doc__name">{mainName}</span>
-            </span>
-          )}
           <button
             className="btn btn--primary"
             onClick={() => doCompile()}
@@ -1991,7 +1965,7 @@ export default function Editor() {
           </button>
         </div>
         <button
-          className={`btn btn--ghost toolbar__more${canPickMain && docChoices.length > 1 ? ' toolbar__more--main' : ''}`}
+          className="btn btn--ghost toolbar__more"
           onClick={(e) => setMoreOpen({ keyboard: e.detail === 0 })}
           aria-label="More"
           aria-haspopup="dialog"
@@ -2007,7 +1981,7 @@ export default function Editor() {
           testId="toolbar-more-sheet"
           keyboard={moreOpen.keyboard}
           onClose={() => setMoreOpen(null)}
-          items={!phone ? mainDocRows : [
+          items={[
             { id: 'palette', label: 'Search files and commands', onSelect: () => setPaletteOpen(true), testId: 'more-palette' },
             { id: 'files', label: sidebarHidden ? 'Show files' : 'Hide files', onSelect: () => setSidebarHidden((h) => !h), testId: 'sidebar-toggle' },
             shown === 'pdf'
@@ -2018,7 +1992,6 @@ export default function Editor() {
             ] : []),
             { kind: 'separator' },
             ...(!project.readOnly ? [{ id: 'comment', label: 'Comment on the selection', onSelect: startComment, testId: 'more-comment' } as MenuEntry] : []),
-            ...(mainDocRows.length ? [{ kind: 'separator' } as MenuEntry, ...mainDocRows, { kind: 'separator' } as MenuEntry] : []),
             { id: 'share', label: 'Share…', onSelect: () => setShareOpen(true), testId: 'more-share' },
             { id: 'settings', label: 'Settings…', onSelect: () => setSettingsOpen(true), testId: 'more-settings' },
             ...(users.length > 1 ? [{ kind: 'hint', label: `Here now: ${users.map((u) => u.name).join(', ')}`, testId: 'more-presence' } as MenuEntry] : []),
@@ -2488,7 +2461,7 @@ export default function Editor() {
                 // problems panel to hold the button.
                 <button className="pdf-status__log" onClick={() => setShowLog(true)} title="View the typesetting log" data-testid="pdf-status-log">
                   {compile.status === 'idle' && <><span className="dot dot--warn" /> Out of date</>}
-                  {compile.status === 'ok' && <><span className="dot dot--ok" /> Typeset in {((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
+                  {compile.status === 'ok' && <><span className="dot dot--ok" /> <span className="pdf-status__verb">Typeset in </span>{((compile.wallMs ?? compile.result.durationMs) / 1000).toFixed(1)}s{compile.result.needsFullRun && (
                     <span className="pdf-status__draft" data-testid="draft-pending" title="A quick single pass while you type. References and the bibliography settle in a full typeset a few seconds after you stop, or when you press Typeset."> · draft, references next</span>
                   )}</>}
                   {compile.status === 'error' && (compile.result.stopped
@@ -2540,17 +2513,6 @@ export default function Editor() {
                 data-testid="jump-to-pdf"
               >
                 Jump<span className="jump__more"> to PDF</span> <span className="kbd">{keys.jump}</span>
-              </button>
-            )}
-            {hasPdf && (
-              <button
-                className="btn btn--ghost btn--small pdf-find-open"
-                onClick={() => pdfRef.current?.openFind()}
-                title={`Find in the PDF (${formatChord({ mod: true, shift: false, alt: false, key: 'f' })})`}
-                aria-label="Find in the PDF"
-                data-testid="pdf-find-open"
-              >
-                <IconSearch />
               </button>
             )}
             <PdfPageNav store={pdfPages} onGo={(page) => pdfRef.current?.goToPage(page)} />
@@ -2668,7 +2630,8 @@ export default function Editor() {
           viewOnly={viewOnly}
           onClose={() => setSettingsOpen(false)}
           onRename={saveName}
-          onSetRoot={setRootFile}
+          onSetRoot={(path: string) => setRootFile(path, { typeset: true })}
+          mainDocs={mainDocs?.key === `${id}::${branch}` ? mainDocs.paths : undefined}
           onSetEngine={setEngine}
           onSetStopOnFirstError={setStopOnFirstError}
           onSetManualCommits={setManualCommits}
