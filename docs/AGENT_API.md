@@ -318,9 +318,9 @@ configuration file, using the command from the previous section.
 | `list_projects` | Projects the credential can reach, with branches, root file and engine, and `canEdit`: false where the owner shares the project as "Can view", whose write tools are refused. | read-only |
 | `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `contentVersion` for conflict-safe writes (Versions and conflicts, below). | read-only |
 | `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line (`from_line`/`to_line`, echoed back; a window past the end or running backwards is an error). Text is decided by content, not extension. Returns `contentVersion` and `fileVersion`. | read-only |
-| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`). | destructive |
-| `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). Folders come into being with the first file written inside them; the first `.tex` written into a project with no main document becomes it (`newRoot`). | destructive |
-| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. An `edits` entry on a document someone has open lands per span like `edit_file`; only a `content` entry replaces the file. | destructive |
+| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`); a quote holding someone's cursor or selection applies nothing and names them (`user_editing`). | destructive |
+| `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). In a document someone has open only the lines that differ are replaced, so their cursor stays where it was. Folders come into being with the first file written inside them; the first `.tex` written into a project with no main document becomes it (`newRoot`). | destructive |
+| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. An `edits` entry on a document someone has open lands per span like `edit_file`, and is refused like it under someone's cursor (`user_editing`); only a `content` entry replaces the file. | destructive |
 | `compile` | Typesets with latexmk: errors before warnings (file, line, message, the source line as `context`, the tool behind a warning as `source`; every engine row names a file, a biber row names the `.bib` and its line; `errorsTotal` and `warningsTotal` count them), on failure 4 KB of the log around the first error, page count, a signed PDF link, a deep link into the editor; a missing package or a character pdflatex cannot typeset is reported as a `hint`. A project with no `.tex` file is told so. | additive |
 | `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling, whoever typeset it; it does not contain edits made since, so Claude is told to `compile` when it has written since its last run. | read-only |
 | `commit` | Commits any agent work still waiting on the branch (a write whose own commit git refused), as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Every write commits on its own as it lands, so the normal answer is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | additive |
@@ -343,7 +343,7 @@ Every tool that works inside a project takes `project` (optional for a
 single-project token) and `branch` (default `main`) — `ping`, `list_projects`
 and `create_project` take neither, and `trash_project` takes a required
 `project` and no `branch`. Every structured result — the error
-bodies `version_conflict`, `stale_anchor` and `ambiguous_anchor` included —
+bodies `version_conflict`, `stale_anchor`, `ambiguous_anchor` and `user_editing` included —
 echoes `branch` and `head` (after a write, the commit that write made), and
 a file tool's result names its `path`; a plain refusal is one sentence of text. The exact argument names live in the
 tool schema, which Claude reads; for a script author the schema is the
@@ -400,7 +400,13 @@ Quote-anchored edits have two errors of their own, also with nothing applied:
 `stale_anchor` (the quote is not in the file; `candidates` show the region
 around the nearest match — re-read, re-anchor, retry) and `ambiguous_anchor`
 (the quote matches several places; each candidate carries the `occurrence`
-that picks it — resend with it, no re-read needed). Error results carry the
+that picks it — resend with it, no re-read needed). A third keeps Claude out
+of the sentence someone is typing: `user_editing`, when a person's cursor or
+selection in the open document touches an edit's quote (its ends included).
+`edit_index` names the edit and `editors` the people, nothing is applied, and
+Claude is told to edit other parts first or retry after a moment, at most
+twice, then ask the user whether to hold off. A person whose editor shows
+another file has no cursor in this one. Error results carry the
 same `path`, `branch`, `head` and `contentVersion` as a success.
 
 ## How attribution and review work
@@ -411,7 +417,10 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
   optional `message` and are otherwise titled by file ("Edit main.tex",
   "Update notes.tex"); `references_add` is titled "Add reference <key>".
   Every call is one commit, so a
-  commit's title always names what it holds. Before a write, whatever a
+  commit's title always names what it holds. With accounts, each Claude
+  commit ends with an `On-behalf-of: <name>` trailer naming the owner of
+  the access token; the author stays "Claude", which History and the review
+  prompts key on, and a message cannot carry a trailer of its own. Before a write, whatever a
   person had typed into that file and not yet committed is checkpointed
   separately, and the commit is built from the text the tool held while it
   applied the edit — not from the working tree — so a Claude commit's diff
@@ -444,12 +453,25 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
 - **Presence.** While Claude edits a document that is open in someone's
   editor, it appears in the presence strip as a violet spark glyph (never an
   initial; the violet is reserved for agents) and leaves about a minute after
-  its last call. The session is kept on the server, so reloading the page
-  mid-session shows it again with its original start time, and the away
-  prompt below waits for it to end. With the experimental flag
+  its last call. With accounts it is named for the token's owner, "Claude
+  (for Ada)", there, in History and in the review prompt. The file tree
+  shows the spark on every file Claude is writing, whichever file you have
+  open. The session is the branch's, kept on the server: it lasts across
+  file switches and while a typeset Claude asked for runs, reloading the
+  page mid-session shows it again with its original start time, and the
+  away prompt below waits for it to end. With the experimental flag
   `aldine.experimental.agentPresence` (command palette: "Enable experimental
-  agent edit highlights"), incoming agent edits — the first one included —
-  get a violet tint that fades over a few seconds.
+  agent edit highlights"), text Claude writes — the first edit included, and
+  nothing a co-author types — gets a violet tint that fades over a few
+  seconds.
+- **Marks until reviewed.** Every span an agent write changes is recorded in
+  the document itself, so the editor marks it whoever has the file open and
+  wherever people edit around it: a violet bar in the gutter beside each
+  line Claude wrote, a notch where it only removed text, and a violet dot on
+  each file in the tree it changed. A file nobody had open when Claude wrote
+  it opens with its marks too. The marks stay across reloads until you
+  review or dismiss the "Claude edited N files" prompt (the same per-person
+  mark the prompts use), and each person sees their own.
 - **The preview follows Claude.** With auto-typeset on, an agent write arms
   the same debounce a keystroke arms, so an open editor typesets without
   anyone touching the keyboard. Only one tab per branch runs it (the others

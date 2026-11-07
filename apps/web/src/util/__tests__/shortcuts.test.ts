@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, matchesChord, setChord } from '../shortcuts';
+import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, isFindKey, isTypesetEnter, matchesChord, setChord } from '../shortcuts';
 
 const key = (k: string, code: string, mods: Partial<Record<'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey', boolean>> = {}, altGraph = false) =>
   ({ key: k, code, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods, getModifierState: (m: string) => m === 'AltGraph' && altGraph }) as unknown as KeyboardEvent;
@@ -75,6 +75,18 @@ describe('matching a keydown', () => {
     expect(matchesChord(key('@', 'KeyQ', { ctrlKey: true, altKey: true }, true), recorded, false)).toBe(false);
   });
 
+  it('typesets on Mod+Enter and finds on Mod+F, with only ⌘ as Mod on a Mac', () => {
+    expect(isTypesetEnter(key('Enter', 'Enter', { metaKey: true }), true)).toBe(true);
+    expect(isTypesetEnter(key('Enter', 'NumpadEnter', { ctrlKey: true }), false)).toBe(true);
+    expect(isTypesetEnter(key('Enter', 'Enter', { ctrlKey: true }), true)).toBe(false);
+    expect(isTypesetEnter(key('Enter', 'Enter', { metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isTypesetEnter(key('Enter', 'Enter'), true)).toBe(false);
+    expect(isFindKey(key('f', 'KeyF', { metaKey: true }), true)).toBe(true);
+    expect(isFindKey(key('f', 'KeyF', { ctrlKey: true }), false)).toBe(true);
+    expect(isFindKey(key('F', 'KeyF', { metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isFindKey(key('f', 'KeyF', { ctrlKey: true }), true)).toBe(false);
+  });
+
   it('waits while only modifiers are held', () => {
     expect(chordFromEvent(key('Shift', 'ShiftLeft', { shiftKey: true }))).toBeNull();
     expect(chordFromEvent(key('Meta', 'MetaLeft', { metaKey: true }))).toBeNull();
@@ -89,6 +101,11 @@ describe('choosing a chord', () => {
     expect(chordProblem({ mod: true, shift: false, alt: false, key: 'k' }, 'comment', true)).toBe('⌘K is already Command palette');
     expect(chordProblem({ mod: true, shift: false, alt: false, key: 'e' }, 'comment', true)).toBeNull();
     expect(chordProblem({ mod: false, shift: false, alt: false, key: 'F2', code: 'F2' }, 'comment', true)).toBeNull();
+  });
+
+  it('lets Mod+Enter be chosen: the editor no longer keeps it for a blank line', () => {
+    expect(chordProblem({ mod: true, shift: false, alt: false, key: 'Enter', code: 'Enter' }, 'typeset', true)).toBeNull();
+    expect(chordProblem({ mod: true, shift: false, alt: false, key: 'Enter', code: 'Enter' }, 'comment', false)).toBeNull();
   });
 
   it('keeps a change until it is reset, and a reset is the default again', () => {

@@ -1,6 +1,6 @@
 import { EditorSelection, EditorState, type Extension, type StateEffect } from '@codemirror/state';
-import { EditorView, showDialog, type Command, type KeyBinding } from '@codemirror/view';
-import { gotoLine, search, searchKeymap, SearchQuery, setSearchQuery } from '@codemirror/search';
+import { EditorView, ViewPlugin, showDialog, type Command, type KeyBinding, type ViewUpdate } from '@codemirror/view';
+import { getSearchQuery, gotoLine, openSearchPanel, search, searchKeymap, searchPanelOpen, SearchQuery, setSearchQuery } from '@codemirror/search';
 import { safeStorage } from '../util/safeStorage';
 
 /** Match case, whole word and regex: the project search panel's key, so both finds share them. */
@@ -90,6 +90,11 @@ const findTheme = EditorView.theme({
     color: 'var(--text-2)', fontSize: '18px', lineHeight: '28px', cursor: 'pointer',
   },
   '.cm-panel.cm-search [name=close]:focus-visible': { outline: '2px solid var(--accent)', outlineOffset: '1px' },
+  '.cm-search-status': {
+    display: 'inline-block', minWidth: '7em', margin: '3px 6px 3px 0', verticalAlign: 'middle',
+    fontSize: 'var(--text-s)', color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+  },
+  '.cm-search-status--none': { color: 'var(--error)' },
   '.cm-searchMatch': { backgroundColor: 'var(--warn-soft)', borderRadius: '2px' },
   // the selected match is the editor's selection too, drawn beneath it
   '.cm-searchMatch-selected': { backgroundColor: 'transparent', outline: '1px solid var(--accent)' },
@@ -107,9 +112,102 @@ const findTheme = EditorView.theme({
   },
 });
 
+/** Counting stops here, and the status says "1000+". */
+const COUNT_CAP = 1000;
+
+export interface MatchCount { total: number; current: number | null; capped: boolean }
+
+/** How many matches `query` has, up to `cap`, and which of them (1-based) the main selection is. */
+export function countMatches(state: EditorState, query: SearchQuery, cap = COUNT_CAP): MatchCount {
+  const sel = state.selection.main;
+  let total = 0, current: number | null = null;
+  const cursor = query.getCursor(state);
+  for (let m = cursor.next(); !m.done; m = cursor.next()) {
+    total++;
+    if (m.value.from === sel.from && m.value.to === sel.to) current = total;
+    if (total >= cap) return { total, current, capped: !cursor.next().done };
+  }
+  return { total, current, capped: false };
+}
+
+/** The line beside the Find field: '' for an empty query, `replaced` right after Replace all. */
+export function findStatusText(query: SearchQuery, count: MatchCount | null, replaced: number | null = null): string {
+  if (replaced != null) return `Replaced ${replaced} ${replaced === 1 ? 'match' : 'matches'}`;
+  if (!query.search) return '';
+  if (!query.valid) return 'Not a valid regular expression';
+  if (!count || count.total === 0) return 'No matches';
+  const total = `${count.total}${count.capped ? '+' : ''}`;
+  if (count.current != null) return `${count.current} of ${total}`;
+  return `${total} ${count.total === 1 && !count.capped ? 'match' : 'matches'}`;
+}
+
+/**
+ * The match count beside the Find field: "3 of 12", "No matches", and
+ * what Replace all replaced, which otherwise only a screen reader hears.
+ * The panel is CodeMirror's, so the status is written into its DOM once
+ * the update that opened or changed it has been drawn.
+ */
+const findStatus = ViewPlugin.fromClass(class {
+  count: MatchCount | null = null;
+  replaced: number | null = null;
+  query: SearchQuery | null = null;
+
+  constructor(readonly view: EditorView) {
+    if (searchPanelOpen(view.state)) this.recount(view.state);
+  }
+
+  update(u: ViewUpdate) {
+    if (!searchPanelOpen(u.state)) { this.query = null; this.count = null; this.replaced = null; return; }
+    const query = getSearchQuery(u.state);
+    const replaceAll = u.transactions.find((tr) => tr.isUserEvent('input.replace.all'));
+    if (replaceAll) {
+      let n = 0;
+      replaceAll.changes.iterChanges(() => { n++; }, true);
+      this.replaced = n;
+    } else if (u.docChanged || (this.query && !query.eq(this.query))) {
+      this.replaced = null;
+    }
+    if (u.docChanged || u.selectionSet || !this.query || !query.eq(this.query) || !searchPanelOpen(u.startState)) this.recount(u.state);
+  }
+
+  recount(state: EditorState) {
+    const query = getSearchQuery(state);
+    this.query = query;
+    this.count = query.search && query.valid ? countMatches(state, query) : null;
+    this.view.requestMeasure({ read: () => null, write: () => this.draw() });
+  }
+
+  draw() {
+    const panel = this.view.dom.querySelector('.cm-panel.cm-search');
+    const field = panel?.querySelector('input[name=search]');
+    if (!panel || !field || !this.query) return;
+    let status = panel.querySelector<HTMLElement>('.cm-search-status');
+    if (!status) {
+      status = document.createElement('span');
+      status.className = 'cm-search-status';
+      status.setAttribute('role', 'status');
+      status.dataset.testid = 'find-status';
+      field.insertAdjacentElement('afterend', status);
+    }
+    status.textContent = findStatusText(this.query, this.count, this.replaced);
+    status.classList.toggle('cm-search-status--none', this.replaced == null && !!this.query.search && (!this.query.valid || this.count?.total === 0));
+  }
+});
+
 /** In-file Find (Mod-F): above the text, literal, and with the toggles project search uses. */
 export function findPanel(): Extension {
-  return [search({ top: true, literal: true, ...storedToggles() }), literalQueries, rememberQuery, findPhrases, findTheme];
+  return [search({ top: true, literal: true, ...storedToggles() }), literalQueries, rememberQuery, findPhrases, findTheme, findStatus];
+}
+
+/** Find opened from outside the text (the palette, the pane's Find button), its field focused. */
+export function openFind(view: EditorView, field: 'search' | 'replace' = 'search'): boolean {
+  openSearchPanel(view);
+  const input = view.dom.querySelector<HTMLInputElement>(`.cm-panel.cm-search input[name=${field}]`)
+    ?? view.dom.querySelector<HTMLInputElement>('.cm-panel.cm-search input[name=search]');
+  if (!input) return false;
+  input.focus();
+  input.select();
+  return true;
 }
 
 /**

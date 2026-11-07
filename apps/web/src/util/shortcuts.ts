@@ -31,8 +31,23 @@ const TAKEN: Record<string, string> = {
   'mod+c': 'Copy', 'mod+x': 'Cut', 'mod+v': 'Paste', 'mod+a': 'Select all',
   'mod+f': 'Find', 'mod+g': 'Find next', 'mod+shift+g': 'Find previous', 'mod+d': 'Select next match',
   'mod+b': 'Bold', 'mod+i': 'Italic', 'mod+/': 'Comment out lines',
-  'mod+enter': 'New line below', 'mod+[': 'Outdent', 'mod+]': 'Indent', 'mod+shift+k': 'Delete line',
+  'mod+[': 'Outdent', 'mod+]': 'Indent', 'mod+shift+k': 'Delete line',
 };
+
+/**
+ * Typeset's second keys, Overleaf's: not one of the changeable chords, so a
+ * chord chosen in settings for the same keys is the one they run.
+ */
+export const TYPESET_ENTER: Chord = { mod: true, shift: false, alt: false, key: 'Enter' };
+
+export function isTypesetEnter(e: KeyboardEvent, mac = isMac): boolean {
+  return matchesChord(e, { ...TYPESET_ENTER, key: 'enter' }, mac);
+}
+
+/** Opens the code editor's Find from anywhere on the page. */
+export function isFindKey(e: KeyboardEvent, mac = isMac): boolean {
+  return matchesChord(e, { mod: true, shift: false, alt: false, key: 'f' }, mac);
+}
 
 const STORE = 'aldine.shortcuts';
 const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Shift', 'Alt', 'AltGraph', 'CapsLock', 'Fn', 'FnLock', 'OS', 'Hyper', 'Super']);

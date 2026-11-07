@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, phoneMore } from './helpers';
 
 /** The command palette has a visible door, in the editor and on the project list. */
 test.describe('palette trigger', () => {
@@ -43,15 +43,20 @@ test.describe('palette trigger', () => {
     }
   });
 
-  test('on a phone the field shrinks to its icon', async ({ page, request }) => {
+  test('in a narrow window the field shrinks to its icon, and on a phone it is in the … sheet', async ({ page, request }) => {
     const id = await createProject(request, 'Palette Phone');
     try {
-      await page.setViewportSize({ width: 390, height: 844 });
+      await page.setViewportSize({ width: 800, height: 844 });
       await openProject(page, id);
       const trigger = page.getByTestId('palette-open');
       await expect(trigger).toBeVisible();
       await expect(trigger.locator('.palette-trigger__label')).toBeHidden();
       expect((await trigger.boundingBox())!.width).toBeLessThan(44);
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(trigger).toBeHidden();
+      await phoneMore(page, 'more-palette');
+      await expect(page.getByTestId('palette-input')).toBeFocused();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow).toBeLessThanOrEqual(0);
     } finally {

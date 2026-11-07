@@ -53,10 +53,10 @@ const ARGUMENTS: Record<string, number> = {
 /**
  * Accepting a command inserts its braces with the caret in the first pair;
  * one whose argument has its own completions (a citation key, a label, a
- * package) lists them at once. Renaming the command of an existing one
+ * package, a file) lists them at once. Renaming the command of an existing one
  * (`\textb|{x}`, `\ci|[p.~3]{key}`) inserts the name alone.
  */
-function applyCommand(name: string, args: number, list: boolean) {
+export function applyCommand(name: string, args: number, list: boolean) {
   return (view: EditorView, completion: Completion, from: number, to: number): void => {
     const bare = /^[{[*]/.test(view.state.sliceDoc(to, to + 1));
     view.dispatch({
@@ -69,7 +69,10 @@ function applyCommand(name: string, args: number, list: boolean) {
   };
 }
 
-const commandApplies = new Map(Object.entries(ARGUMENTS).map(([name, args]) => [name, applyCommand(name, args, name === '\\usepackage')]));
+/** Commands whose first argument has a list of its own: packages, and the project's files. */
+const LISTED_ARGUMENT = new Set(['\\usepackage', '\\includegraphics', '\\input', '\\include', '\\includeonly', '\\bibliography']);
+
+const commandApplies = new Map(Object.entries(ARGUMENTS).map(([name, args]) => [name, applyCommand(name, args, LISTED_ARGUMENT.has(name))]));
 
 /** The package's command (or `\section{...}` snippet) with an apply that brings its braces. */
 function withArguments(option: Completion): Completion {
@@ -82,7 +85,7 @@ function withArguments(option: Completion): Completion {
  * The caret's backslash ends an even run: `\\` is a line break, and what
  * follows it is no command name (`a & b \\` and Enter ends the row).
  */
-function afterLineBreak(ctx: CompletionContext): boolean {
+export function afterLineBreak(ctx: CompletionContext): boolean {
   const run = ctx.matchBefore(/\\+[a-zA-Z]*$/);
   return !!run && /^\\+/.exec(run.text)![0].length % 2 === 0;
 }

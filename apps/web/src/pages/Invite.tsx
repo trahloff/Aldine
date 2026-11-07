@@ -150,7 +150,7 @@ function AnswerStep({ view }: { view: InvitationView }) {
     }
   };
   const decline = async () => {
-    if (!(await dialogs.confirm({ title: `Decline the invitation to “${name}”?`, body: `You can’t accept it afterwards. ${owner} can invite you again.`, confirmLabel: 'Decline' }))) return;
+    if (!(await dialogs.confirm({ title: `Decline the invitation to “${name}”?`, body: `You can’t accept it afterwards. ${owner} can invite you again.`, confirmLabel: 'Decline', danger: true }))) return;
     setBusy('decline');
     setError(null);
     try {

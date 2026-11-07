@@ -1,49 +1,24 @@
 /**
- * Fade highlight for agent edits: ranges inserted by remote Yjs transactions
- * while an agent session is active get an agent-violet background tint that
- * decays over ~4 s. Pure decoration — it never touches document bytes (the
- * visual editor's byte-stability contract also binds this layer).
+ * Fade highlight for agent edits: text Claude just wrote gets an
+ * agent-violet background tint that decays over ~4 s. Pure decoration — it
+ * never touches document bytes (the visual editor's byte-stability contract
+ * also binds this layer).
  *
- * Attribution note: Yjs transaction origins do not cross the wire (the server
- * stamps AGENT_ORIGIN, but every remote update arrives here with the provider
- * as origin), so agent edits are identified by correlating remote transactions
- * with the agent's broadcast awareness state (`user.isAgent`). While an agent
- * session is live, a human collaborator's concurrent remote edits can pick up
- * the tint too — accepted for this experimental affordance.
+ * Attribution is explicit: the server marks every span an agent write
+ * changes in the document's side map (editor/agentMarks.ts), in the same
+ * update as the change, and only spans that arrive that way are tinted —
+ * never a co-author's typing, whatever else is in awareness.
  */
 import { EditorView, Decoration, DecorationSet, ViewPlugin } from '@codemirror/view';
 import { StateField, StateEffect, Extension } from '@codemirror/state';
 import type * as Y from 'yjs';
-
-type AwarenessLike = { getStates(): Map<number, Record<string, unknown>> };
+import { AGENT_EDITS_KEY, resolveMarks } from './agentMarks';
 
 const FADE_MS = 4000;
 
-/**
- * Inserted ranges of a Y.Text delta, in NEW-document coordinates — after the
- * y-sync plugin applies the same delta, these offsets are valid in the editor.
- */
-export function insertedRanges(delta: Array<{ retain?: number; insert?: string | object; delete?: number }>): Array<{ from: number; to: number }> {
-  const ranges: Array<{ from: number; to: number }> = [];
-  let pos = 0;
-  for (const d of delta) {
-    if (d.retain != null) pos += d.retain;
-    else if (d.insert != null) {
-      const len = typeof d.insert === 'string' ? d.insert.length : 1;
-      ranges.push({ from: pos, to: pos + len });
-      pos += len;
-    }
-    // deletes consume old content only — no new-doc movement
-  }
-  return ranges;
-}
-
-/** True when any awareness state carries the agent identity. */
-export function agentActive(awareness: AwarenessLike): boolean {
-  for (const s of awareness.getStates().values()) {
-    if ((s as { user?: { isAgent?: boolean } }).user?.isAgent) return true;
-  }
-  return false;
+/** Keys a transaction added to the side map: the agent writes it carried. */
+export function addedKeys(event: { changes: { keys: Map<string, { action: string }> } }): string[] {
+  return [...event.changes.keys].filter(([, c]) => c.action === 'add').map(([key]) => key);
 }
 
 const addFade = StateEffect.define<{ ranges: Array<{ from: number; to: number }>; at: number }>({
@@ -72,18 +47,26 @@ const fadeField = StateField.define<DecorationSet>({
 });
 
 /**
- * Must sit AFTER yCollab in the extension list: the observer below has to
- * register after y-sync's so it fires once the editor already reflects the
- * remote change (offsets valid, dispatch legal).
+ * `live()`: whether the doc has had its first sync. The marks that sync
+ * brings are old ones; only those arriving afterwards are being written now.
  */
-export function agentHighlight(ytext: Y.Text, awareness: AwarenessLike): Extension {
+export function agentHighlight(ydoc: Y.Doc, ytext: Y.Text, live: () => boolean): Extension {
   return [
     fadeField,
     ViewPlugin.define((view) => {
       const timers = new Set<ReturnType<typeof setTimeout>>();
-      const observer = (event: Y.YTextEvent, tr: { local: boolean }) => {
-        if (tr.local || !agentActive(awareness)) return;
-        const ranges = insertedRanges(event.delta as Array<{ retain?: number; insert?: string; delete?: number }>);
+      const map = ydoc.getMap(AGENT_EDITS_KEY);
+      let fresh: string[] = [];
+      const onMap = (event: Y.YMapEvent<unknown>, tr: Y.Transaction) => {
+        if (!tr.local && live()) fresh.push(...addedKeys(event));
+      };
+      // Tinted once the transaction is through: y-sync applies the text from
+      // its own observer, and the ranges hold in the view only after it.
+      const onAfter = () => {
+        if (!fresh.length) return;
+        const keys = fresh;
+        fresh = [];
+        const ranges = resolveMarks(ydoc, ytext, keys).filter((m) => m.kind === 'ins').map(({ from, to }) => ({ from, to }));
         if (!ranges.length) return;
         const at = Date.now();
         view.dispatch({ effects: addFade.of({ ranges, at }) });
@@ -93,10 +76,12 @@ export function agentHighlight(ytext: Y.Text, awareness: AwarenessLike): Extensi
         }, FADE_MS + 100);
         timers.add(t);
       };
-      ytext.observe(observer);
+      map.observe(onMap);
+      ydoc.on('afterTransaction', onAfter);
       return {
         destroy() {
-          ytext.unobserve(observer);
+          map.unobserve(onMap);
+          ydoc.off('afterTransaction', onAfter);
           timers.forEach(clearTimeout);
         },
       };

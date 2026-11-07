@@ -102,8 +102,8 @@ test.describe('file tree: rename, drops, view and row menu', () => {
       const onPdf = await dropFiles(page, '[data-testid="pdf-pane"]', [{ name: 'figure.png', text: 'png' }]);
       expect(onPdf).toEqual({ overTaken: true, dropTaken: true });
 
-      // the tree fills the sidebar: the space at its foot takes a drop to the top level
-      const box = (await page.getByTestId('sidebar').boundingBox())!;
+      // the tree fills the sidebar above the outline: the space at its foot takes a drop to the top level
+      const box = (await page.getByTestId('file-tree').boundingBox())!;
       const foot = { x: box.x + box.width / 2, y: box.y + box.height - 12 };
       expect(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-testid="file-tree"]'), foot)).toBe(true);
       await dropFiles(page, foot, [{ name: 'notes.txt', text: 'notes' }]);

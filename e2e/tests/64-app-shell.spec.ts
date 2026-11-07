@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures';
 import type { Locator, Page } from '@playwright/test';
-import { createProject, createPaperProject, openProject, cleanup, expectTypesetOk } from './helpers';
+import { createProject, createPaperProject, openProject, cleanup, expectTypesetOk, phoneMore } from './helpers';
 
 /**
  * The app shell around the editor: the sidebar and the branch menu on a
@@ -39,9 +39,8 @@ test.describe('app shell on a phone', () => {
       await put(request, id, 'chapter2.tex', 'Chapter two.\n');
       await openProject(page, id);
       await expect(page.getByTestId('sidebar')).toBeHidden();
-      await expect(page.getByTestId('sidebar-toggle')).toHaveText('Files');
 
-      await page.getByTestId('sidebar-toggle').tap();
+      await phoneMore(page, 'sidebar-toggle', 'tap');
       const sidebar = page.getByTestId('sidebar');
       await expect(sidebar).toBeVisible();
       // the overlay ends at the bottom of the screen, and the page does not scroll
@@ -54,15 +53,15 @@ test.describe('app shell on a phone', () => {
       await expect(page.getByTestId('active-file')).toHaveText('chapter2.tex');
 
       // a tap on the strip of editor beside the overlay folds it
-      await page.getByTestId('sidebar-toggle').tap();
+      await phoneMore(page, 'sidebar-toggle', 'tap');
       await expect(sidebar).toBeVisible();
       await page.touchscreen.tap(PHONE.width - 15, PHONE.height / 2);
       await expect(sidebar).toBeHidden();
       await expect(page.getByTestId('active-file')).toHaveText('chapter2.tex');
 
       // and so does a file opened from the palette
-      await page.getByTestId('sidebar-toggle').tap();
-      await page.getByTestId('palette-open').tap();
+      await phoneMore(page, 'sidebar-toggle', 'tap');
+      await phoneMore(page, 'more-palette', 'tap');
       await page.getByTestId('palette-input').fill('main.tex');
       await page.keyboard.press('Enter');
       await expect(page.getByTestId('active-file')).toHaveText('main.tex');
@@ -77,7 +76,7 @@ test.describe('app shell on a phone', () => {
       await put(request, id, 'main.tex', MAIN);
       expect((await request.post(`/api/projects/${id}/branches`, { data: { name: branch, from: 'main' } })).ok()).toBeTruthy();
       await openProject(page, id);
-      await page.getByTestId('sidebar-toggle').tap();
+      await phoneMore(page, 'sidebar-toggle', 'tap');
       await expect(page.getByTestId('sidebar')).toBeVisible();
       await page.getByTestId('branch-menu').tap();
       const menu = page.getByTestId('branch-list');
@@ -101,7 +100,7 @@ test.describe('app shell on a phone', () => {
     try {
       await put(request, id, 'main.tex', MAIN);
       await openProject(page, id);
-      await page.getByTestId('sidebar-toggle').tap();
+      await phoneMore(page, 'sidebar-toggle', 'tap');
       await expect(page.getByTestId('file-main.tex')).toBeVisible();
       expect(await height(page.getByTestId('file-main.tex'))).toBeGreaterThanOrEqual(40);
       for (const t of ['tab-files', 'tab-review', 'tab-more']) expect(await height(page.getByTestId(t))).toBeGreaterThanOrEqual(40);
@@ -110,7 +109,7 @@ test.describe('app shell on a phone', () => {
         expect(await width(page.getByTestId(t))).toBeGreaterThanOrEqual(40);
       }
       expect(await height(page.getByTestId('branch-menu'))).toBeGreaterThanOrEqual(44);
-      expect(await height(page.getByTestId('palette-open'))).toBeGreaterThanOrEqual(44);
+      for (const t of ['toolbar-more', 'typeset-button']) expect(await height(page.getByTestId(t))).toBeGreaterThanOrEqual(44);
     } finally { await cleanup(request, id); }
   });
 
@@ -121,7 +120,7 @@ test.describe('app shell on a phone', () => {
       await page.goto(`/p/${id}?file=missing.tex`);
       const toast = page.locator('.toast', { hasText: 'is not in this project' });
       await expect(toast).toBeVisible();
-      await page.getByTestId('project-settings-open').tap();
+      await phoneMore(page, 'more-settings', 'tap');
       const close = page.getByTestId('settings-close');
       await expect(close).toBeVisible();
       await expect.poll(async () => (await toast.boundingBox())!.y).toBeLessThan(PHONE.height / 3);
@@ -146,6 +145,9 @@ test.describe('app shell on a tablet', () => {
     const id = await createPaperProject(request, 'Tablet Shell');
     try {
       await openProject(page, id);
+      // portrait is narrower than 800px: the editor alone until both are chosen
+      await expect(page.getByTestId('layout-editor')).toHaveAttribute('aria-pressed', 'true');
+      await page.getByTestId('layout-both').tap();
       await expectTypesetOk(page);
       for (const t of ['sidebar-resizer', 'pane-resizer']) await expect(page.getByTestId(t)).toBeVisible();
       // each one moves the editor's edge
@@ -171,7 +173,7 @@ test.describe('app shell on a tablet', () => {
       expect(await height(expand)).toBeGreaterThanOrEqual(40);
       expect(await width(expand)).toBeGreaterThanOrEqual(40);
     } finally {
-      await page.evaluate(() => localStorage.removeItem('aldine.sidebarHidden')).catch(() => {});
+      await page.evaluate(() => { localStorage.removeItem('aldine.sidebarHidden'); localStorage.removeItem('aldine.layout'); }).catch(() => {});
       await cleanup(request, id);
     }
   });

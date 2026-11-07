@@ -16,6 +16,10 @@ const PAGE = 50;
 const RELOAD_MAX = 200;
 /** The repository's own committer name: an autosave has no person behind it. */
 const NO_PERSON = 'Aldine';
+import { agentName } from '../util/agentReview';
+
+/** The commit's author as History names it: an agent commit says for whom. */
+const authorLabel = (c: LogEntry) => (c.author === 'Claude' ? agentName([c.onBehalfOf]) : c.author);
 
 /** `version` bumps whenever the branch changed elsewhere (the files signal,
  *  a revert, an agent session ending); `live` polls while an agent is present,
@@ -171,7 +175,7 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
     }
   };
 
-  const person = (c: LogEntry) => (c.author && c.author !== NO_PERSON ? c.author : '');
+  const person = (c: LogEntry) => (c.author && c.author !== NO_PERSON ? authorLabel(c) : '');
   const span = (from: string, to: string) => {
     if (!sameDay(from, to)) return `${dateTime(from)} – ${dateTime(to)}`;
     return clockTime(from) === clockTime(to) ? dateTime(from) : `${dateTime(from)} – ${clockTime(to)}`;

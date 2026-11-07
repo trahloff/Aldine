@@ -273,6 +273,27 @@ export const IconMonitor = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** The editor's layouts: the code alone, code and PDF side by side, the PDF alone. */
+export const IconLayoutEditor = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M6 4.5 2.75 8 6 11.5M10 4.5 13.25 8 10 11.5" />
+  </svg>
+);
+
+export const IconLayoutBoth = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+    <path d="M8 2.75v10.5M4 6h2M4 8.5h2M10 6h2M10 8.5h2" />
+  </svg>
+);
+
+export const IconLayoutPdf = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 1.75h5.5L13 5.25v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10.5a1 1 0 0 1 1-1Z" />
+    <path d="M9.5 1.75v3.5H13M5.5 8.5h5M5.5 11h3" />
+  </svg>
+);
+
 /** Icon for a file path. */
 export function fileIcon(path: string, isRoot: boolean) {
   if (isRoot) return <IconStar style={{ color: 'var(--warn)' }} />;

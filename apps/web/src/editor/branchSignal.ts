@@ -10,7 +10,8 @@ import { electTypesetter, type TypesetPeer } from './autoTypeset';
  * `ts`/`td` (an agent-caused typeset started / finished), `r` (any other
  * typeset finished), `c` (a commit landed; it changes the history only,
  * never the file list). The same doc's
- * awareness is the roster the auto-typeset election runs over, which is why
+ * awareness is the roster the auto-typeset election runs over (the server's
+ * own state there is the agent's session, never eligible), which is why
  * both live in one hook: a second provider on this doc name would make a tab
  * elect its own other socket and freeze the branch's auto-typeset. The same
  * roster says who is on the branch and in which file (`user`, `file`): the
@@ -26,6 +27,26 @@ export interface BranchSignalHandlers {
   onCommitted(): void;
   /** Everyone else on the branch, whenever that changes; [] once it closes. */
   onRoster?(peers: BranchPeer[]): void;
+  /** The agent's session on the branch began, changed files, or ended (null). */
+  onAgent?(agent: BranchAgent | null): void;
+}
+
+/** The agent's session as the server publishes it in this doc's awareness
+ *  (collab.ts publishBranchAgent), whichever file this tab shows: `files`
+ *  are the ones it wrote in the last minute. */
+export interface BranchAgent { name: string; startedAt?: number; files: string[] }
+
+export function branchAgentOf(states: Map<number, unknown>): BranchAgent | null {
+  for (const state of states.values()) {
+    const s = state as { user?: { name?: unknown; isAgent?: unknown; startedAt?: unknown }; files?: unknown } | null;
+    if (!s?.user?.isAgent) continue;
+    return {
+      name: typeof s.user.name === 'string' ? s.user.name : 'Claude',
+      ...(typeof s.user.startedAt === 'number' ? { startedAt: s.user.startedAt } : {}),
+      files: Array.isArray(s.files) ? s.files.filter((f): f is string => typeof f === 'string') : [],
+    };
+  }
+  return null;
 }
 
 /** Someone else's tab on the branch, and the file it shows (null: none). */
@@ -146,8 +167,9 @@ export function useBranchSignal(
       const peers: BranchPeer[] = [];
       awareness.getStates().forEach((state, clientId) => {
         if (clientId === awareness.clientID) return;
-        const { user, file } = state as { user?: { name?: unknown; color?: unknown }; file?: unknown };
-        if (typeof user?.name !== 'string' || !user.name) return;
+        const { user, file } = state as { user?: { name?: unknown; color?: unknown; isAgent?: unknown }; file?: unknown };
+        // the server's own state here is the agent's session (onAgent), not a tab
+        if (typeof user?.name !== 'string' || !user.name || user.isAgent) return;
         peers.push({ clientId, name: user.name, color: typeof user.color === 'string' ? user.color : 'var(--text-3)', file: typeof file === 'string' ? file : null });
       });
       cbRef.current.onRoster?.(peers);
@@ -156,6 +178,15 @@ export function useBranchSignal(
 
     const onSynced = () => { record(); ready = true; publish(); publishSelf(); };
     provider.on('synced', onSynced);
+    let agentSeen = 'null';
+    const onAwareness = () => {
+      const agent = provider.awareness ? branchAgentOf(provider.awareness.getStates()) : null;
+      const key = JSON.stringify(agent);
+      if (key === agentSeen) return;
+      agentSeen = key;
+      cbRef.current.onAgent?.(agent);
+    };
+    provider.awareness?.on('change', onAwareness);
     const onVisibility = () => publish();
     document.addEventListener('visibilitychange', onVisibility);
     publish();
@@ -167,6 +198,7 @@ export function useBranchSignal(
       cbRef.current.onRoster?.([]);
       selfPublishRef.current = () => {};
       provider.off('synced', onSynced);
+      provider.awareness?.off('change', onAwareness);
       document.removeEventListener('visibilitychange', onVisibility);
       providerRef.current = null;
       bumpRef.current = () => {};

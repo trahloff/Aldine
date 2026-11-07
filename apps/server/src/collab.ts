@@ -13,6 +13,7 @@ import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './au
 import { canAccess, canEdit } from './authz.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 import { noteEdit, AGENT_EDITOR, editorOf } from './activity.js';
+import { diffSpans } from './textdiff.js';
 
 /**
  * Document naming: `${projectId}/${branch}/${filePath}`
@@ -222,6 +223,91 @@ function dropCarriageReturns(text: Y.Text, held: string): void {
     if (held[i] !== '\r') continue;
     text.delete(i, 1);
     if (held[i + 1] !== '\n') text.insert(i, '\n');
+  }
+}
+
+/**
+ * Edit `text` from `before` (what it holds from offset `base` on) to `after`
+ * by the changed spans only, back to front so each span's offsets still
+ * hold. A whole-text delete and insert would move every collaborator's
+ * cursor to the top and orphan keystrokes in flight. Returns the inserted
+ * spans in the new text's offsets (empty ones where text only went).
+ */
+function applyTextDiff(text: Y.Text, before: string, after: string, base = 0): Array<{ from: number; to: number }> {
+  const spans = diffSpans(before, after);
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const s = spans[i];
+    if (s.to > s.from) text.delete(base + s.from, s.to - s.from);
+    if (s.insert) text.insert(base + s.from, s.insert);
+  }
+  let shift = base;
+  return spans.map((s) => {
+    const from = s.from + shift;
+    shift += s.insert.length - (s.to - s.from);
+    return { from, to: from + s.insert.length };
+  });
+}
+
+/**
+ * Where Claude changed a document: a side map in the doc itself, so the
+ * marks travel with its updates and snapshot and stay on the text they
+ * were made on while people edit around them (Yjs relative positions).
+ * `ins` spans text Claude wrote, `del` is the point where it removed text.
+ * The key and the entry shape are a wire format the web editor reads
+ * (editor/agentMarks.ts).
+ */
+export const AGENT_EDITS_KEY = 'agentEdits';
+interface AgentMark { k: 'ins' | 'del'; a: unknown; b?: unknown; t: number }
+/** Marks a doc keeps: the newest, and none older than this. Each person sees
+ *  the ones newer than their review mark, which the server cannot bound. */
+const AGENT_MARKS_MAX = 400;
+const AGENT_MARKS_MAX_AGE_MS = 30 * 24 * 3600_000;
+let agentMarkSeq = 0;
+
+function markAgentSpans(doc: Y.Doc, spans: Array<{ from: number; to: number }>): void {
+  if (!spans.length) return;
+  const text = doc.getText(TEXT_KEY);
+  const marks = doc.getMap<AgentMark>(AGENT_EDITS_KEY);
+  const t = Date.now();
+  const rel = (index: number, assoc?: number) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, index, assoc));
+  for (const s of spans) {
+    const key = `${t.toString(36)}.${(agentMarkSeq++).toString(36)}`;
+    // The end sticks to the last character written, so typing right after
+    // the span does not grow it.
+    marks.set(key, s.to > s.from ? { k: 'ins', a: rel(s.from), b: rel(s.to, -1), t } : { k: 'del', a: rel(s.from), t });
+  }
+  const kept = [...marks.entries()].sort((x, y) => y[1].t - x[1].t);
+  kept.forEach(([key, m], i) => { if (i >= AGENT_MARKS_MAX || t - m.t > AGENT_MARKS_MAX_AGE_MS) marks.delete(key); });
+}
+
+/**
+ * An agent write to a file no editor has loaded: its marks go into the
+ * snapshot the doc will load from, built from the text before the write
+ * (`before`, the file's bytes then; null for a new file). A snapshot that
+ * lags that text (a pull or a REST write while the file was closed) is
+ * brought up to it first, unmarked: that change is not Claude's.
+ */
+function markClosedDoc(name: string, before: string | Buffer | null, afterRaw: string): void {
+  if (tombstoned.has(name)) return;
+  const base = before === null ? '' : docView(typeof before === 'string' ? before : before.toString('utf8')).text;
+  const after = docView(afterRaw).text;
+  const scratch = new Y.Doc();
+  try {
+    const snap = readSnapshot(name);
+    if (snap) Y.applyUpdate(scratch, snap);
+    const text = scratch.getText(TEXT_KEY);
+    const held = text.toString();
+    if (held.includes('\r')) return; // an old snapshot onLoadDocument migrates first
+    scratch.transact(() => {
+      if (held !== base) applyTextDiff(text, held, base);
+      markAgentSpans(scratch, applyTextDiff(text, base, after));
+    });
+    fs.mkdirSync(YJS_DIR, { recursive: true });
+    replaceFileDurable(snapPath(name), Y.encodeStateAsUpdate(scratch));
+  } catch (err) {
+    console.error('[collab] marking an agent write failed', (err as Error).message);
+  } finally {
+    scratch.destroy();
   }
 }
 
@@ -476,7 +562,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
         if (held !== content) {
           document.transact(() => {
             if (held.replace(/\r\n?/g, '\n') === content) dropCarriageReturns(text, held);
-            else { text.delete(0, text.length); if (content.length) text.insert(0, content); }
+            else applyTextDiff(text, held, content);
           });
           writeSnapshot(documentName, document);
         }
@@ -498,7 +584,10 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // A sole viewer's reload unloads the doc (unloadImmediately) and with it the
   // awareness the agent's presence rode on; the session itself is still live
   // in agentPresence, so the reloaded doc gets it back before the client syncs.
+  // The branch's signal doc carries the session for every file.
   async afterLoadDocument({ documentName, document }: { documentName: string; document: AwarenessDoc }) {
+    const parsed = parseDocName(documentName);
+    if (parsed?.filePath === FILES_SIGNAL) { publishBranchAgent(parsed.projectId, parsed.branch); return; }
     const live = agentPresence.get(documentName);
     if (live && live.expiresAt > Date.now()) setAgentAwareness(document, live);
   },
@@ -731,8 +820,8 @@ export function applySuggestionToDoc(
   const { from, to } = at;
   const insert = replacement.replace(/\r\n?/g, '\n');
   doc.transact(() => {
-    ytext.delete(from, to - from);
-    if (insert) ytext.insert(from, insert);
+    const spans = applyTextDiff(ytext, ytext.toString().slice(from, to), insert, from);
+    if (origin === AGENT_ORIGIN) markAgentSpans(doc, spans);
   }, origin);
   writeDocToDisk(name, doc); // suggestion is on disk immediately, like a manual flush
   return 'applied';
@@ -778,7 +867,7 @@ export function openDocContent(projectId: string, branch: string, filePath: stri
 
 /** Yjs transaction origin stamped on agent (MCP) edits. Origins do not cross
  *  the wire — remote clients see the provider as origin — so this serves
- *  server-side attribution; the web fade-highlight needs another signal. */
+ *  server-side attribution; clients read the doc's AGENT_EDITS_KEY marks. */
 export const AGENT_ORIGIN = 'aldine-agent';
 
 /** Reserved agent awareness identity (UX.md): the violet is kept OUT of the
@@ -786,59 +875,188 @@ export const AGENT_ORIGIN = 'aldine-agent';
  *  collapse. Field shape mirrors what CodePane.tsx sets for humans. */
 export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
 
+/** "Claude (for Ada)": the people whose tokens the session's calls ran under. */
+export function agentDisplayName(owners: Iterable<string>): string {
+  const names = [...new Set(owners)].filter(Boolean);
+  return names.length ? `${AGENT_AWARENESS_USER.name} (for ${names.join(', ')})` : AGENT_AWARENESS_USER.name;
+}
+
 /** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
 const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS || '') || 60_000;
 
-/** A live agent session per doc: when it began and when it lapses without
- *  another tool call. Kept apart from the loaded docs on purpose — Hocuspocus
- *  unloads a doc with its last connection (a sole viewer's reload), and the
- *  session must outlive that so the reloaded doc shows it again and the away
- *  check stays quiet while it runs. */
-interface AgentPresence { startedAt: number; expiresAt: number; timer: NodeJS.Timeout }
+/** The agent in one doc: until ~60 s after its last write there, and for
+ *  whom. Kept apart from the loaded docs on purpose — Hocuspocus unloads a
+ *  doc with its last connection (a sole viewer's reload), and the presence
+ *  must outlive that so the reloaded doc shows it again. */
+interface AgentPresence { expiresAt: number; timer: NodeJS.Timeout; owners: Set<string>; session: string }
 const agentPresence = new Map<string, AgentPresence>();
-type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void } };
+
+/**
+ * The agent's session on a branch, across its files: from the first write
+ * until ~60 s after the last, and held open while a typeset it asked for
+ * runs (a long one would otherwise end the session in the middle). The
+ * editor's session end, its review prompt and the away check key on this,
+ * not on one file's presence: a person who switches files, or never opens
+ * the one Claude is in, must not see a session end that has not.
+ */
+interface AgentSession { startedAt: number; expiresAt: number; holds: number; timer: NodeJS.Timeout | null; owners: Set<string> }
+const agentSessions = new Map<string, AgentSession>();
+type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void; getLocalState(): unknown } };
+
+const sessionLive = (s: AgentSession | undefined, now = Date.now()): boolean => !!s && (s.holds > 0 || s.expiresAt > now);
 
 function setAgentAwareness(doc: AwarenessDoc | undefined, live: AgentPresence): void {
+  const session = agentSessions.get(live.session);
   // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
   // local state at doc creation, and y-protocols' setLocalStateField is a
   // silent no-op on a null state — the agent would never appear.
-  doc?.awareness?.setLocalState({ user: { ...AGENT_AWARENESS_USER, startedAt: live.startedAt } });
+  doc?.awareness?.setLocalState({ user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(live.owners), startedAt: session?.startedAt ?? Date.now() } });
 }
 
 /**
- * Show the agent in a doc's presence while a tool session is active. MCP
- * writes run in-process with no Hocuspocus connection, so presence rides the
- * loaded doc's own awareness instance (the server relays its local state to
- * clients). Call it BEFORE the write's first transaction: the client tints
- * a remote change only if the agent is already in awareness when it arrives.
- * Expires ~60 s after the last tool call so an idle agent doesn't permanently
- * haunt the presence chip; the start time survives re-marks so a session's
- * first commit is still the session's after a reload.
+ * The session on the branch's signal doc, which every open editor of the
+ * branch is connected to whatever file it shows: the agent's identity with
+ * `files`, the paths it wrote within the last ~60 s. Null once the session
+ * is over.
  */
-export function markAgentPresence(projectId: string, branch: string, filePath: string): void {
-  const name = docName(projectId, branch, filePath);
+function publishBranchAgent(projectId: string, branch: string): void {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, FILES_SIGNAL)) as AwarenessDoc | undefined;
+  if (!doc?.awareness) return;
+  const key = changesKey(projectId, branch);
+  const session = agentSessions.get(key);
+  if (!session || !sessionLive(session)) {
+    if (doc.awareness.getLocalState() !== null) doc.awareness.setLocalState(null);
+    return;
+  }
   const now = Date.now();
+  const prefix = `${key}::`;
+  const files: string[] = [];
+  for (const [name, live] of agentPresence) if (name.startsWith(prefix) && live.expiresAt > now) files.push(name.slice(prefix.length));
+  try {
+    doc.awareness.setLocalState({ user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(session.owners), startedAt: session.startedAt }, files: files.sort() });
+  } catch { /* doc unloaded meanwhile */ }
+}
+
+/** Ends the session TTL after its last call, unless a typeset holds it. */
+function armSession(key: string, session: AgentSession): void {
+  if (session.timer) clearTimeout(session.timer);
+  session.timer = null;
+  if (session.holds > 0) return;
+  session.timer = setTimeout(() => {
+    session.timer = null;
+    if (agentSessions.get(key) !== session || sessionLive(session)) return;
+    agentSessions.delete(key);
+    const [projectId, branch] = key.split('::');
+    publishBranchAgent(projectId, branch);
+  }, Math.max(0, session.expiresAt - Date.now()));
+  session.timer.unref?.();
+}
+
+/**
+ * Show the agent in a doc's presence, and in its branch's session, while
+ * it writes. MCP writes run in-process with no Hocuspocus connection, so
+ * presence rides the loaded docs' own awareness instances (the server
+ * relays its local state to clients). `owner` is whom the token belongs to,
+ * shown as "Claude (for Ada)". Expires ~60 s after the last tool call so an
+ * idle agent doesn't permanently haunt the presence chip; the session's
+ * start time survives re-marks, so its first commit is still the session's
+ * after a reload.
+ */
+export function markAgentPresence(projectId: string, branch: string, filePath: string, owner?: string | null): void {
+  const name = docName(projectId, branch, filePath);
+  const key = changesKey(projectId, branch);
+  const now = Date.now();
+  let session = agentSessions.get(key);
+  if (!session || !sessionLive(session, now)) {
+    if (session?.timer) clearTimeout(session.timer);
+    session = { startedAt: now, expiresAt: 0, holds: 0, timer: null, owners: new Set() };
+    agentSessions.set(key, session);
+  }
+  session.expiresAt = now + AGENT_PRESENCE_TTL_MS;
+  if (owner) session.owners.add(owner);
+  armSession(key, session);
   const prev = agentPresence.get(name);
   if (prev) clearTimeout(prev.timer);
   const timer = setTimeout(() => {
     agentPresence.delete(name);
     const d = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
     try { d?.awareness?.setLocalState(null); } catch { /* doc unloaded meanwhile */ }
+    publishBranchAgent(projectId, branch);
   }, AGENT_PRESENCE_TTL_MS);
   timer.unref?.();
-  const live: AgentPresence = { startedAt: prev?.startedAt ?? now, expiresAt: now + AGENT_PRESENCE_TTL_MS, timer };
+  const owners = new Set(prev && prev.expiresAt > now ? prev.owners : []);
+  if (owner) owners.add(owner);
+  const live: AgentPresence = { expiresAt: now + AGENT_PRESENCE_TTL_MS, timer, owners, session: key };
   agentPresence.set(name, live);
   setAgentAwareness(hocuspocus.documents.get(name) as AwarenessDoc | undefined, live);
+  publishBranchAgent(projectId, branch);
 }
 
-/** Whether an agent session is live on any doc of the branch — what the away
- *  check asks, so a prompt is never raised for work a running session will
+/**
+ * Keep a live session on the branch open until the returned release runs,
+ * then for the usual ~60 s: an agent's typeset. Starts nothing when no
+ * session is live — a typeset alone is not an edit to review.
+ */
+export function holdAgentSession(projectId: string, branch: string): () => void {
+  const key = changesKey(projectId, branch);
+  const session = agentSessions.get(key);
+  if (!session || !sessionLive(session)) return () => {};
+  session.holds++;
+  armSession(key, session);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    session.holds--;
+    session.expiresAt = Math.max(session.expiresAt, Date.now() + AGENT_PRESENCE_TTL_MS);
+    if (agentSessions.get(key) === session) armSession(key, session);
+  };
+}
+
+/** Whether an agent session is live on the branch — what the away check
+ *  asks, so a prompt is never raised for work a running session will
  *  report itself when it ends. */
 export function agentSessionActive(projectId: string, branch: string): boolean {
-  const prefix = `${projectId}::${branch}::`;
-  const now = Date.now();
-  for (const [name, live] of agentPresence) if (name.startsWith(prefix) && live.expiresAt > now) return true;
-  return false;
+  return sessionLive(agentSessions.get(changesKey(projectId, branch)));
+}
+
+/**
+ * The people whose caret or selection in the open doc touches one of
+ * `ranges`, ends included, with the first such range: an agent edit there
+ * would land in the sentence they are typing (UX.md conflict etiquette).
+ * Panes publish their cursor as Yjs relative positions; a pane parked on
+ * another file publishes none. Null when nobody is there.
+ */
+export function peopleEditingRanges(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>): { index: number; names: string[] } | null {
+  const doc = hocuspocus.documents.get(docName(projectId, branch, filePath)) as (Y.Doc & { awareness?: { clientID: number; getStates(): Map<number, any> } }) | undefined;
+  if (!doc?.awareness || !ranges.length) return null;
+  const text = doc.getText(TEXT_KEY);
+  const at = (json: unknown): number | null => {
+    try {
+      const pos = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(json), doc);
+      return pos && pos.type === text ? pos.index : null;
+    } catch { return null; }
+  };
+  let first = -1;
+  const names = new Map<number, Set<string>>();
+  for (const [clientId, state] of doc.awareness.getStates()) {
+    if (clientId === doc.awareness.clientID) continue;
+    const user = state?.user;
+    const cursor = state?.cursor;
+    if (!user || user.isAgent || !cursor?.anchor || !cursor?.head) continue;
+    const anchor = at(cursor.anchor);
+    const head = at(cursor.head);
+    if (anchor === null || head === null) continue;
+    const lo = Math.min(anchor, head), hi = Math.max(anchor, head);
+    ranges.forEach((r, i) => {
+      if (lo > r.to || hi < r.from) return;
+      if (first === -1 || i < first) first = i;
+      const set = names.get(i) ?? new Set<string>();
+      set.add(typeof user.name === 'string' && user.name.trim() ? user.name.trim() : 'Someone');
+      names.set(i, set);
+    });
+  }
+  return first === -1 ? null : { index: first, names: [...names.get(first)!] };
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */
@@ -870,18 +1088,24 @@ function shownInEditor(doc: Y.Doc): boolean {
 /**
  * After files changed on disk behind the docs (a REST/tool write, git
  * merge/revert/pull), push new content into loaded docs so connected editors
- * update in place. `changed` = the paths the caller rewrote; omitted means
- * git rewrote the tree and every path counts as changed — the conservative
- * default, so a caller that forgets its paths gets spurious conflicts, never
- * missed ones.
+ * update in place: only the changed spans, never the whole text, so a
+ * person typing elsewhere in the file keeps their cursor and keystrokes.
+ * `changed` = the paths the caller rewrote; omitted means git rewrote the
+ * tree and every path counts as changed — the conservative default, so a
+ * caller that forgets its paths gets spurious conflicts, never missed ones.
+ * `agent` = an agent write: each path with its content before the write,
+ * whose changed spans are marked as Claude's (AGENT_EDITS_KEY), in the
+ * loaded doc or, for a file no editor has loaded, in its snapshot.
  */
-export function refreshBranchDocsFromDisk(projectId: string, branch: string, changed?: string[]): void {
+export function refreshBranchDocsFromDisk(projectId: string, branch: string, changed?: string[], opts: { agent?: Map<string, string | Buffer | null> } = {}): void {
   bumpFilesSignal(projectId, branch); // every caller just changed the branch on disk
   if (changed) markPathsChanged(projectId, branch, changed);
   else markTreeChanged(projectId, branch);
+  const loaded = new Set<string>();
   hocuspocus.documents.forEach((doc: Y.Doc & { name: string }, name: string) => {
     const parsed = parseDocName(name);
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;
+    loaded.add(parsed.filePath);
     const abs = safeJoin(branchDir(projectId, branch), parsed.filePath);
     let raw: string | null = null;
     try { raw = fs.readFileSync(abs, 'utf8'); } catch { raw = null; }
@@ -902,11 +1126,19 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
     const text = doc.getText(TEXT_KEY);
     const content = adoptLineEndings(name, raw);
     lastWritten.set(name, sha1(diskText(name, content))); // disk now holds `raw`; keep tracking in sync
-    if (text.toString() === content) return;
+    const held = text.toString();
+    if (held === content) return;
+    const agent = opts.agent?.has(parsed.filePath);
     doc.transact(() => {
-      text.delete(0, text.length);
-      text.insert(0, content);
-    });
+      const spans = applyTextDiff(text, held, content);
+      if (agent) markAgentSpans(doc, spans);
+    }, agent ? AGENT_ORIGIN : undefined);
     writeSnapshot(name, doc); // the doc's ops changed → keep the reconnect snapshot current
   });
+  for (const [filePath, before] of opts.agent ?? []) {
+    if (loaded.has(filePath) || !isProjectFile(filePath)) continue;
+    let raw: string;
+    try { raw = fs.readFileSync(safeJoin(branchDir(projectId, branch), filePath), 'utf8'); } catch { continue; }
+    markClosedDoc(docName(projectId, branch, filePath), before, raw);
+  }
 }

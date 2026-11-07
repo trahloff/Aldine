@@ -12,11 +12,14 @@ import { yCollab, yUndoManagerKeymap, ySyncFacet, YRange } from 'y-codemirror.ne
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
-import { findKeymap, findPanel, restoreFind } from '../editor/findPanel';
+import { findKeymap, findPanel, gotoLineTop, openFind, restoreFind } from '../editor/findPanel';
+import { everydayCompletionSource, macroCompletionSource, pathCompletionSource } from '../editor/completions';
+import { spellcheckExtension } from '../editor/spellcheck';
 import { latexNewlineIndent } from '../editor/newlineIndent';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, publishEditorFocus, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
+import { agentMarks, setAgentSeen } from '../editor/agentMarks';
 import { toggleStyle, setSectionLevel, toggleItemize } from '../editor/visual/commands';
 import { commentRangesField } from '../editor/visual/suggestions';
 import { commentTips } from '../editor/commentTips';
@@ -100,6 +103,10 @@ export interface CodePaneHandle {
   reconnect(): void;
   /** Changes the open document as `edit` says once it has synced, in one undo step of its own; `done` says whether anything changed. */
   editDocument(edit: (text: string) => Array<{ from: number; to: number; insert: string }> | null, done?: (changed: boolean) => void): void;
+  /** In-file Find, its search (or replace) field focused; false without an editor to find in. */
+  openFind(field?: 'search' | 'replace'): boolean;
+  /** The Go to line prompt above the text. */
+  gotoLinePrompt(): void;
 }
 
 /** Comment highlight decorations, updatable via an effect and tracking edits.
@@ -156,6 +163,10 @@ interface Props {
   onDocChanged?(local: boolean): void;
   onStats?(stats: { words: number; selWords: number | null }): void;
   spellcheck?: boolean;
+  /** The spellcheck dictionary's language; '' follows the browser. */
+  spellLang?: string;
+  /** The open .tex file's headings and the one the caret is under (-1: none), when either changes. */
+  onOutline?(outline: { entries: OutlineEntry[]; current: number }): void;
   /** Vim keybindings (this browser's choice). */
   vim?: boolean;
   /** Vim's :w, :wq and :x. */
@@ -178,6 +189,9 @@ interface Props {
   onOpenComment?(id: string): void;
   /** The comment the caret is in, whenever that changes (null: none). */
   onCommentCaret?(id: string | null): void;
+  /** This person's agent review mark (server ms): Claude's changes after it
+   *  are marked in the gutter. Null while unknown. */
+  agentSeenAt?: number | null;
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -230,20 +244,21 @@ const aldineTheme = EditorView.theme({
   '.cm-panels': { backgroundColor: 'var(--bg-inset)', color: 'var(--text)', borderColor: 'var(--hairline)' },
 });
 
-/** Spellcheck is presentation config, swapped at runtime via a Compartment. */
-function spellcheckAttrs(spellcheck: boolean, filePath: string) {
-  return EditorView.contentAttributes.of({
-    spellcheck: spellcheck && /\.(tex|md|txt)$/i.test(filePath) ? 'true' : 'false',
-    autocorrect: 'off',
-    autocapitalize: 'off',
-  });
+/** The heading `line` is under: the last one at or above it, -1 above the first. */
+function headingAt(entries: OutlineEntry[], line: number): number {
+  let at = -1;
+  for (let i = 0; i < entries.length && entries[i].line <= line; i++) at = i;
+  return at;
 }
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret }, ref) {
+const sameOutline = (a: OutlineEntry[], b: OutlineEntry[]) =>
+  a.length === b.length && a.every((h, i) => h.line === b[i].line && h.level === b[i].level && h.title === b[i].title && h.pos === b[i].pos);
+
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onScope, onOpenComment, onCommentCaret });
-  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onScope, onOpenComment, onCommentCaret };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret });
+  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret };
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -252,6 +267,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; deps: VisualDeps } | null>(null);
   const readOnlyRef = useRef<{ comp: Compartment; ydoc: Y.Doc; on: boolean } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
+  const agentSeenRef = useRef(agentSeenAt);
+  agentSeenRef.current = agentSeenAt;
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
     | { kind: 'line'; line: number; flash: boolean; onClamped?: (lines: number) => void }
@@ -374,6 +391,14 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       if (viewRef.current && syncedRef.current) run();
       else pendingEdits.current.push(run);
     },
+    openFind(field) {
+      const view = viewRef.current;
+      return view ? openFind(view, field) : false;
+    },
+    gotoLinePrompt() {
+      const view = viewRef.current;
+      if (view) gotoLineTop(view);
+    },
   }), []);
 
   // A layout effect: the view is in place before the browser paints the
@@ -382,6 +407,18 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   useLayoutEffect(() => {
     if (!hostRef.current) return;
     let statsTimer: ReturnType<typeof setTimeout> | null = null;
+    let outlineTimer: ReturnType<typeof setTimeout> | null = null;
+    let outline: { entries: OutlineEntry[]; current: number } | null = null;
+    // Read again only after the typing stops: the whole file is parsed for it.
+    const reportOutline = (reparse: boolean) => {
+      const view = viewRef.current;
+      if (!view || !cbRef.current.onOutline || !/\.tex$/i.test(filePath)) return;
+      const entries = reparse || !outline ? documentOutline(view.state) : outline.entries;
+      const current = headingAt(entries, view.state.doc.lineAt(view.state.selection.main.head).number);
+      if (outline && outline.current === current && sameOutline(outline.entries, entries)) return;
+      outline = { entries: outline && sameOutline(outline.entries, entries) ? outline.entries : entries, current };
+      cbRef.current.onOutline(outline);
+    };
     warmBib(projectId, branch); // so \cite hover tooltips have data immediately
     const docName = `${projectId}::${branch}::${filePath}`;
     // A file left recently comes back from editor/docCache already synced,
@@ -462,6 +499,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             override: [
               latexPackageCompletions(latexCompletionSource(true)),
               keyCommandCompletionSource,
+              everydayCompletionSource,
+              macroCompletionSource(projectId, branch, () => filePath),
+              pathCompletionSource(projectId, branch, () => filePath),
               citeCompletionSource(projectId, branch),
               refCompletionSource(projectId, branch, () => filePath),
             ],
@@ -484,7 +524,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           findPanel(),
           keymap.of([
             ...closeBracketsKeymap,
-            ...defaultKeymap,
+            // Mod-Enter typesets (the editor page's keys), after Visual's formula and table editors
+            ...defaultKeymap.filter((b) => b.key !== 'Mod-Enter'),
             ...findKeymap,
             ...yUndoManagerKeymap,
             ...completionKeymap,
@@ -503,6 +544,12 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
                 });
               }, 350);
             }
+            if (u.docChanged) {
+              if (outlineTimer) clearTimeout(outlineTimer);
+              outlineTimer = setTimeout(() => { outlineTimer = null; reportOutline(true); }, 400);
+            } else if (u.selectionSet && !outlineTimer) {
+              reportOutline(false);
+            }
           }),
           commentField,
           // outside the mode compartment: a copy in Source pastes as source in Visual
@@ -514,16 +561,16 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           aldineTheme,
           EditorView.lineWrapping,
           // browser-native spellcheck on prose (only meaningful for .tex/.md)
-          spellComp.of(spellcheckAttrs(spellcheck, filePath)),
+          spellComp.of(spellcheckExtension(spellcheck, spellLang, filePath)),
           EditorView.contentAttributes.of({ 'aria-label': `Text of ${filePath}` }),
           readOnlyComp.of(readOnly ? readOnlyDoc(ydoc) : []),
           loadGate.of(provider.isSynced ? [] : readOnlyDoc(ydoc)),
           modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
           yCollab(ytext, awareness, { undoManager }),
           publishEditorFocus(awareness),
-          // after yCollab on purpose — see agentHighlight's ordering contract
+          agentMarks(ydoc, ytext, agentSeenRef.current),
           ...(safeStorage.get('aldine.experimental.agentPresence') === '1'
-            ? [agentHighlight(ytext, awareness)]
+            ? [agentHighlight(ydoc, ytext, () => provider.isSynced)]
             : []),
         ],
       }),
@@ -565,6 +612,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       }
       for (const run of pendingEdits.current.splice(0)) run();
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
+      reportOutline(true);
       // Re-anchor comments against the now-populated doc: a push that arrived
       // before the Yjs sync ran against an empty document.
       if (lastCommentRanges.current.length) {
@@ -605,6 +653,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
 
     return () => {
       if (statsTimer) clearTimeout(statsTimer);
+      if (outlineTimer) clearTimeout(outlineTimer);
       if (flashTimer.current) { clearTimeout(flashTimer.current); flashTimer.current = null; }
       pendingGoto.current = null;
       document.removeEventListener('visibilitychange', keepSpot);
@@ -635,6 +684,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     };
   }, [projectId, branch, filePath]);
 
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setAgentSeen.of(agentSeenAt) });
+  }, [agentSeenAt]);
+
   // Mode and spellcheck are presentation-only: swap them at runtime through
   // compartments so the Yjs doc, collab socket, scroll, and cursor survive.
   useEffect(() => {
@@ -645,8 +698,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   useEffect(() => {
     const view = viewRef.current, rc = reconfRef.current;
     if (!view || !rc) return;
-    view.dispatch({ effects: rc.spellComp.reconfigure(spellcheckAttrs(spellcheck, filePath)) });
-  }, [spellcheck, filePath]);
+    view.dispatch({ effects: rc.spellComp.reconfigure(spellcheckExtension(spellcheck, spellLang, filePath)) });
+  }, [spellcheck, spellLang, filePath]);
   // Vim is keybindings only: switching it changes how keys move and edit,
   // never the document, so it swaps in place like the two above.
   useEffect(() => {

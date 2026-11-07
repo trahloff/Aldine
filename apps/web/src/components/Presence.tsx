@@ -12,11 +12,12 @@ export interface PresenceUser {
   startedAt?: number;
 }
 
+/** The name may carry its own parentheses: "Claude (for Ada)". */
 function agentTitle(u: PresenceUser): string {
-  if (!u.startedAt) return `${u.name} (agent)`;
+  if (!u.startedAt) return `${u.name}, agent`;
   const d = new Date(u.startedAt);
   const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return `${u.name} (agent session started ${hhmm})`;
+  return `${u.name}, agent session started ${hhmm}`;
 }
 
 /** Where a row's person is, in words. */

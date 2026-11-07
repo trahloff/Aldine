@@ -27,13 +27,13 @@ import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronLeft, IconChevronRight, IconDownload, IconEllipsis, IconHistory, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconDownload, IconEllipsis, IconHistory, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
 import { presenceRows } from '../util/presence';
-import { useBranchSignal, type BranchPeer, type BranchSignalHandle } from '../editor/branchSignal';
+import { useBranchSignal, type BranchPeer, type BranchSignalHandle, type BranchAgent } from '../editor/branchSignal';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
 import RemotePublish from '../components/RemotePublish';
@@ -44,16 +44,18 @@ import Modal from '../components/Modal';
 import DiffView from '../components/DiffView';
 import { filesInPatch } from '../util/patch';
 import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
-import { mergeAgentBatches, revertSummary, type AgentBatch } from '../util/agentReview';
+import { mergeAgentBatches, revertSummary, agentName, type AgentBatch } from '../util/agentReview';
 import { askWaitingCommit } from '../util/waitingCommit';
+import { useAgentUnseen } from '../editor/agentUnseen';
+import type { AgentTreeMark } from '../components/FileTree';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
 import { appearanceCommands } from '../components/Appearance';
 import { useDocumentTitle } from '../util/documentTitle';
-import { formatChord, matchesShortcut, useShortcutLabel } from '../util/shortcuts';
+import { formatChord, isFindKey, isTypesetEnter, matchesShortcut, TYPESET_ENTER, useShortcutLabel } from '../util/shortcuts';
 import { shortcut } from '../platform';
-import { MenuButton } from '../components/Menu';
+import { MenuButton, type MenuEntry } from '../components/Menu';
 import ProjectSettings from '../components/ProjectSettings';
 import { ENGINES } from '../util/engines';
 import { loadIgnored, saveIgnored, warningKey } from '../util/warnings';
@@ -65,6 +67,12 @@ import type { SyncState } from '../editor/syncStatus';
 import { documentTitle } from '../util/documentTitle';
 import { useLeaveGuard } from '../editor/leaveGuard';
 import { errorsFoldAfter, fileLabel, NO_ERRORS, projectFileFor, runErrorKeys, strongerTrigger, toggleErrors, type ErrorsFold, type TypesetTrigger } from '../util/problems';
+import ActionSheet from '../components/ActionSheet';
+import Outline from '../components/Outline';
+import type { OutlineEntry } from '../editor/visual/outline';
+import { mainDocuments, setCompletionFiles } from '../editor/completions';
+import { SPELLCHECK, SPELLCHECK_LANG, spellLangKnown } from '../editor/spellcheck';
+import { LAYOUTS, readLayout, rememberLayout, revealLayout, shownLayout, type Layout } from '../util/layout';
 
 type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 /** `outdated`: the branch's last run, shown on open until a typeset brings
@@ -100,6 +108,10 @@ const pdfDefault = () => Math.max(360, Math.round(window.innerWidth * 0.4));
 const EDITOR_MODE = 'aldine.editorMode';
 /** Vim keybindings in the code editor, '1' when on. */
 const VIM = 'aldine.vim';
+/** The outline under the file tree, '0' when folded. */
+const OUTLINE_OPEN = 'aldine.outlineOpen';
+const PHONE = '(max-width: 640px)';
+const LAYOUT_ICONS = { editor: IconLayoutEditor, both: IconLayoutBoth, pdf: IconLayoutPdf };
 
 /** A text field that is not the code editor. */
 function inTextField(target: EventTarget | null): boolean {
@@ -110,7 +122,7 @@ function inTextField(target: EventTarget | null): boolean {
 }
 
 /** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
-const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder']);
+const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder', 'replace-in-file']);
 /** Palette commands someone who can only view would see refused (with the engine and remote ones): what the showcase refuses, less commenting. */
 const VIEWER_REFUSES = new Set([...SHOWCASE_REFUSES].filter((c) => c !== 'comment'));
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
@@ -241,6 +253,8 @@ export default function Editor() {
     if (showLog) logHit.current?.scrollIntoView({ block: 'center' });
   }, [showLog]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** The phone toolbar's "…" sheet; opened from the keyboard, its first row takes the focus. */
+  const [moreOpen, setMoreOpen] = useState<{ keyboard: boolean } | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   /** The host Publish selects first, and whether Git access opens once: a connect started there came back. */
   const [publishProvider, setPublishProvider] = useState<RemoteProviderId | undefined>();
@@ -274,11 +288,41 @@ export default function Editor() {
     setSidebarHidden(hidden);
     try { if (!window.matchMedia('(max-width: 640px)').matches) safeStorage.set(SIDEBAR_HIDDEN, hidden ? '1' : '0'); } catch { /* no matchMedia: this visit only */ }
   }, []);
+  // The editor, the PDF or both: chosen with the toolbar's toggle and
+  // remembered; until then a narrow window opens on the editor alone. A
+  // phone has room for one, switched from the panes' headers for this visit.
+  const [chosenLayout, setLayout] = useState<Layout | null>(readLayout);
+  const [winWidth, setWinWidth] = useState(() => window.innerWidth);
+  const [phone, setPhone] = useState(() => { try { return window.matchMedia(PHONE).matches; } catch { return false; } });
+  const [phoneView, setPhoneView] = useState<'editor' | 'pdf'>('editor');
+  useEffect(() => {
+    const onResize = () => {
+      setWinWidth(window.innerWidth);
+      try { setPhone(window.matchMedia(PHONE).matches); } catch { /* no matchMedia: as it was */ }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const shown: Layout = phone ? phoneView : shownLayout(chosenLayout, winWidth);
+  const chooseLayout = (l: Layout) => { setLayout(l); rememberLayout(l); };
+  /** Shows the pane a jump lands in when it is hidden: for now, not as the remembered choice. */
+  const revealRef = useRef<(want: 'editor' | 'pdf') => void>(() => {});
+  revealRef.current = (want) => {
+    if (phone) setPhoneView(want);
+    else if (revealLayout(shown, want) !== shown) setLayout(revealLayout(shown, want));
+  };
   const openFile = useCallback((path: string) => {
     setActiveFile(path);
     if (window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
+    revealRef.current('editor');
   }, []);
-  const [spellcheck, setSpellcheck] = useState(() => safeStorage.get('aldine.spellcheck') === '1');
+  const [spellcheck, setSpellcheck] = useState(() => safeStorage.get(SPELLCHECK) !== '0');
+  const toggleSpellcheck = useCallback(() => setSpellcheck((s) => { safeStorage.set(SPELLCHECK, s ? '0' : '1'); return !s; }), []);
+  const [spellLang, setSpellLangState] = useState(() => { const l = safeStorage.get(SPELLCHECK_LANG); return spellLangKnown(l) ? l : ''; });
+  const setSpellLang = useCallback((l: string) => {
+    setSpellLangState(l);
+    if (l) safeStorage.set(SPELLCHECK_LANG, l); else safeStorage.remove(SPELLCHECK_LANG);
+  }, []);
   const [vim, setVim] = useState(() => safeStorage.get(VIM) === '1');
   const toggleVim = useCallback(() => setVim((v) => { safeStorage.set(VIM, v ? '0' : '1'); return !v; }), []);
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
@@ -306,6 +350,10 @@ export default function Editor() {
   const leaving = useLeaveGuard(() => !!(sync?.key === paneKey && sync.state.unsynced));
   // The Zotero sync rewrites its .bib whole: a hand edit there would be lost.
   const zoteroBib = !!activeFile && project?.zotero?.bibFile === activeFile;
+  /** The open .tex file's headings and the one the caret is under, from the pane `key`. */
+  const [outline, setOutline] = useState<{ key: string; entries: OutlineEntry[]; current: number } | null>(null);
+  const [outlineOpen, setOutlineOpen] = useState(() => safeStorage.get(OUTLINE_OPEN) !== '0');
+  const toggleOutline = () => setOutlineOpen((o) => { safeStorage.set(OUTLINE_OPEN, o ? '0' : '1'); return !o; });
   const [comments, setComments] = useState<Comment[]>([]);
   // The thread Review marks: the caret is in its text, or "Open in Review" asked for it.
   const [activeComment, setActiveComment] = useState<{ id: string; n: number } | null>(null);
@@ -708,7 +756,18 @@ export default function Editor() {
   }, []);
 
   // ---- agent session review (UX.md "Audit and undo") ----
-  const agentPresent = users.some((u) => u.isAgent);
+  /** The agent's session on the branch, whichever file is open (the branch signal's awareness). */
+  const [branchAgent, setBranchAgent] = useState<{ key: string; agent: BranchAgent } | null>(null);
+  const liveAgent = branchAgent?.key === `${id}::${branch}` ? branchAgent.agent : null;
+  const agentPresent = !!liveAgent || users.some((u) => u.isAgent);
+  const unseen = useAgentUnseen(id, branch, authEnabled);
+  const refreshUnseen = unseen.refresh;
+  const agentTreeMarks = useMemo(() => {
+    const marks = new Map<string, AgentTreeMark>();
+    for (const p of unseen.paths) marks.set(p, 'changed');
+    for (const f of liveAgent?.files ?? []) marks.set(f, 'live');
+    return marks;
+  }, [unseen.paths, liveAgent]);
   const agentPresentRef = useRef(agentPresent);
   agentPresentRef.current = agentPresent;
   const agentSessionStart = useRef<number | null>(null);
@@ -736,12 +795,14 @@ export default function Editor() {
     if (!head) return;
     if (!authEnabled) {
       if (kind === 'acknowledged') markAcknowledged(id, branch, head); else markPrompted(id, branch, head);
+      refreshUnseen();
       return;
     }
     // A failed write just means the prompt returns on the next open — the
     // audit surface fails open, never closed.
     await api.markAgentActivitySeen(id, branch, head, kind).catch(() => {});
-  }, [id, branch, authEnabled]);
+    refreshUnseen();
+  }, [id, branch, authEnabled, refreshUnseen]);
 
   /** One dialog for both prompts: the live session and the away check. */
   const openAgentReview = useCallback(async (entries: Array<{ hash: string; message: string; date?: string }>, total: number, onBranch: string): Promise<boolean> => {
@@ -761,7 +822,7 @@ export default function Editor() {
 
   // The server's start time, when awareness carries one: after a reload
   // mid-session the toast must still cover the commits made before it.
-  const agentStartedAt = users.find((u) => u.isAgent)?.startedAt;
+  const agentStartedAt = liveAgent?.startedAt ?? users.find((u) => u.isAgent)?.startedAt;
   useEffect(() => {
     if (agentPresent) {
       if (agentEndTimer.current) { clearTimeout(agentEndTimer.current); agentEndTimer.current = null; }
@@ -769,8 +830,8 @@ export default function Editor() {
       return;
     }
     if (agentSessionStart.current == null) return;
-    // Awareness rides the open file's doc, so a file switch or reconnect blips
-    // the agent out momentarily — only a sustained absence ends the session.
+    // The session rides the branch's channel, whichever file is open; a
+    // reconnect blips it out momentarily — only a sustained absence ends it.
     agentEndTimer.current = setTimeout(async () => {
       agentEndTimer.current = null;
       if (agentPresentRef.current || agentSessionStart.current == null) return;
@@ -788,7 +849,7 @@ export default function Editor() {
         const n = batch.fileCount;
         const scope = batch.commitCount > batch.commits.length ? ` in ${batch.commitCount}${batch.truncated ? '+' : ''} commits` : '';
         reviewShown.current = batch;
-        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
+        toast(`${agentName(batch.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
           key: 'agent-review',
@@ -842,7 +903,7 @@ export default function Editor() {
         const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
         const when = res.since ? 'while you were away' : 'in this project';
         reviewShown.current = res;
-        toast(`Claude edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
+        toast(`${agentName(res.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
           // One review prompt at a time: a session ending replaces this one.
@@ -964,8 +1025,10 @@ export default function Editor() {
     await saveName(name).catch(() => { el.textContent = project.name; });
   };
 
-  const setRootFile = useCallback(async (path: string) => {
-    if (!project || path === project.rootFile) return;
+  /** `typeset`: run one now, not only when a PDF is on screen. */
+  const setRootFile = useCallback(async (path: string, opts?: { typeset?: boolean }) => {
+    if (!project) return;
+    if (path === project.rootFile) { if (opts?.typeset) doCompile(); return; }
     const before = project.rootFile;
     // The select is controlled: follow the choice now, roll back if refused.
     setProject((prev) => (prev ? { ...prev, rootFile: path } : prev));
@@ -973,7 +1036,7 @@ export default function Editor() {
       await api.patchProject(id, { rootFile: path });
       toast(`Main document is now ${path}`, 'ok');
       // A PDF on screen was typeset from the old main document.
-      if (compile.result) doCompile();
+      if (opts?.typeset || compile.result) doCompile();
       loadProject();
     } catch (err: any) {
       setProject((prev) => (prev ? { ...prev, rootFile: before } : prev));
@@ -1099,6 +1162,8 @@ export default function Editor() {
     setCompile({ status: st.result.ok ? 'ok' : 'error', result: st.result, trigger: 'adopted' });
   }, [id, branch]);
   const onAgentWrite = useCallback(() => armAutoTypeset('agent'), [armAutoTypeset]);
+  const onCommitted = useCallback(() => { bumpHistory(); refreshUnseen(); }, [bumpHistory, refreshUnseen]);
+  const onAgent = useCallback((agent: BranchAgent | null) => setBranchAgent(agent ? { key: `${id}::${branch}`, agent } : null), [id, branch]);
   const onAgentTypesetStarted = useCallback(() => {
     // Auto-typeset off means the preview moves only when this person asks:
     // no status line, no adoption of Claude's run.
@@ -1128,7 +1193,7 @@ export default function Editor() {
   }, [adoptLatestRun, clearAgentWatchdog]);
   const signalHandle = useBranchSignal(
     id, branch,
-    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted: bumpHistory, onRoster: setPeers },
+    { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted, onRoster: setPeers, onAgent },
     auto && hasTex,
     session,
     { name: identity.name, color: identity.color, file: activeFile },
@@ -1160,6 +1225,19 @@ export default function Editor() {
   }, [id, branch, files]);
   // a paste in Visual writes Unicode math as commands for pdfLaTeX
   useEffect(() => { setVisualEngine(project?.engine ?? null); }, [project?.engine]);
+  // \includegraphics{ and \input{ complete these paths, and the macros come from these files
+  useEffect(() => {
+    if (filesFor === `${id}::${branch}`) setCompletionFiles(id, branch, project?.rootFile, files);
+  }, [id, branch, files, filesFor, project?.rootFile]);
+  /** The .tex files that typeset on their own, for the main-document picker. */
+  const [mainDocs, setMainDocs] = useState<{ key: string; paths: string[] } | null>(null);
+  useEffect(() => {
+    const key = `${id}::${branch}`;
+    if (filesFor !== key) return;
+    let live = true;
+    mainDocuments(id, branch).then((paths) => { if (live) setMainDocs({ key, paths }); }, () => {});
+    return () => { live = false; };
+  }, [id, branch, files, filesFor]);
 
   // The docs kept for files left earlier (editor/docCache) are this branch's
   // files only: a kept doc of a file the branch no longer has goes to disk
@@ -1261,6 +1339,7 @@ export default function Editor() {
 
   const openMatch = useCallback((path: string, m: SearchMatch, focusEditor: boolean) => {
     if (activeFile !== path) setActiveFile(path);
+    revealRef.current('editor');
     // The phone's sidebar is an overlay over the code the match is in. Enter
     // in the list keeps focus on the row, so the sidebar stays.
     if (focusEditor && window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
@@ -1426,6 +1505,7 @@ export default function Editor() {
         ?? files.find((f) => file.endsWith('/' + f.path))
         ?? files.find((f) => f.path.endsWith('/' + file));
       if (match) file = match.path;
+      revealRef.current('editor');
       if (file && files.some((f) => f.path === file)) setActiveFile(file);
       if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 80));
     } catch (err: any) {
@@ -1444,6 +1524,8 @@ export default function Editor() {
       const res = await api.synctex(id, branch, { direction: 'forward', file: activeFile, line, column: 0 });
       const rec = res.records?.find((r) => r.page != null && (r.y != null || r.v != null));
       if (!rec) { toast('No PDF location for this line — typeset first', 'error'); return; }
+      // A hidden preview keeps its width, so its pages are where they will show.
+      revealRef.current('pdf');
       pdfRef.current?.showForward(Number(rec.page), Number(rec.y ?? rec.v));
     } catch {
       toast('Jump unavailable for this file', 'error');
@@ -1493,6 +1575,19 @@ export default function Editor() {
         // from there is noise.
         e.preventDefault();
         jumpToPdf();
+      } else if (isTypesetEnter(e) && !e.defaultPrevented && !inTextField(e.target) && !dialogOpen()
+        && !(e.target instanceof Element && e.target.closest('math-field, .vis-math-popover'))) {
+        // After the editor's own Mod-Enter (Visual's formula and table
+        // editors), which takes the key where it opens one.
+        e.preventDefault();
+        doCompile();
+      } else if (isFindKey(e) && !e.defaultPrevented && !inTextField(e.target) && !dialogOpen()) {
+        // Pressed in the text, the editor opened Find itself. Anywhere else
+        // the browser's find would search only the lines drawn on screen.
+        if (codeRef.current?.openFind()) {
+          e.preventDefault();
+          revealRef.current('editor');
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -1545,15 +1640,25 @@ export default function Editor() {
       { id: 'comment', group: 'Actions', title: 'Comment on the selected text', hint: keys.comment, run: startComment },
       { id: 'search', group: 'Actions', title: 'Search the project…', hint: keys.search, run: () => openSearch() },
       { id: 'replace', group: 'Actions', title: 'Replace in the project…', run: () => openSearch(undefined, 'replace') },
+      ...(activeFile && !previewing ? [
+        { id: 'find-in-file', group: 'Actions', title: 'Find in this file…', hint: formatChord({ mod: true, shift: false, alt: false, key: 'f' }), keywords: 'search', run: () => { if (codeRef.current?.openFind()) revealRef.current('editor'); } },
+        { id: 'replace-in-file', group: 'Actions', title: 'Replace in this file…', keywords: 'find', run: () => { if (codeRef.current?.openFind('replace')) revealRef.current('editor'); } },
+        { id: 'goto-line', group: 'Actions', title: 'Go to line…', hint: formatChord({ mod: true, shift: false, alt: true, key: 'g' }), keywords: 'jump line number', run: () => { revealRef.current('editor'); codeRef.current?.gotoLinePrompt(); } },
+      ] : []),
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Actions', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
       { id: 'stop-on-error', group: 'Actions', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Actions', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
-      { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: () => setSpellcheck((s) => { safeStorage.set('aldine.spellcheck', s ? '0' : '1'); return !s; }) },
+      { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: toggleSpellcheck },
       { id: 'vim', group: 'Actions', title: vim ? 'Turn Vim keybindings off' : 'Turn Vim keybindings on', run: () => { toggleVim(); requestAnimationFrame(() => codeRef.current?.focus()); } },
       ...appearanceCommands(appearance),
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
       { id: 'shortcuts', group: 'View', title: 'Change keyboard shortcuts…', run: () => setSettingsOpen('shortcuts') },
       { id: 'sidebar', group: 'View', title: sidebarHidden ? 'Show the sidebar' : 'Hide the sidebar', run: () => setSidebar(!sidebarHidden) },
+      ...(phone
+        ? [shown === 'pdf'
+          ? { id: 'layout-editor', group: 'View', title: 'Show the editor', keywords: 'layout code source', run: () => setPhoneView('editor') }
+          : { id: 'layout-pdf', group: 'View', title: 'Show the PDF', keywords: 'layout preview', run: () => setPhoneView('pdf') }]
+        : LAYOUTS.filter((l) => l.id !== shown).map((l) => ({ id: `layout-${l.id}`, group: 'View', title: l.title, keywords: 'layout preview pane split', run: () => chooseLayout(l.id) }))),
       { id: 'download-zip', group: 'Project', title: `Download the project source as ZIP (${branch})`, run: () => { window.location.assign(api.archiveUrl(id, branch)); } },
       {
         id: 'make-copy', group: 'Project', title: 'Make a copy of this project', keywords: 'duplicate copy fork', run: async () => {
@@ -1682,7 +1787,7 @@ export default function Editor() {
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1739,6 +1844,25 @@ export default function Editor() {
     requestAnimationFrame(() => codeRef.current?.focus());
   };
 
+  /** Editor or PDF on a phone, which has room for one: in the header of the pane on screen. */
+  const phoneSwitch = (
+    <div className="seg phone-switch" role="group" aria-label="Show" data-testid="phone-switch">
+      <button aria-pressed={shown !== 'pdf'} className={`seg__btn ${shown !== 'pdf' ? 'seg__btn--active' : ''}`} onClick={() => setPhoneView('editor')} data-testid="phone-show-editor">Editor</button>
+      <button aria-pressed={shown === 'pdf'} className={`seg__btn ${shown === 'pdf' ? 'seg__btn--active' : ''}`} onClick={() => setPhoneView('pdf')} data-testid="phone-show-pdf">PDF</button>
+    </div>
+  );
+  /** The typeset's state where the preview is not on screen; a click shows it. */
+  const busy = compile.status === 'compiling' || agentTypesetting;
+  const shortKind = busy ? 'busy' : compile.status === 'ok' && compile.result ? 'ok' : compile.status === 'error' ? 'error' : null;
+  const shortText = shortKind === 'busy' ? 'Typesetting…'
+    : shortKind === 'ok' ? `Typeset in ${((compile.wallMs ?? compile.result!.durationMs) / 1000).toFixed(1)}s`
+      : errCount > 0 ? `${errCount} error${errCount === 1 ? '' : 's'}` : 'Failed';
+  const typesetShort = shortKind ? (
+    <button className={`typeset-short typeset-short--${shortKind}`} onClick={() => revealRef.current('pdf')} title={`${shortText} · Show the PDF`} aria-label={`${shortText}. Show the PDF`} data-testid="typeset-status-short">
+      <span className={`dot dot--${shortKind}`} /> <span className="typeset-short__text">{shortText}</span>
+    </button>
+  ) : null;
+
   // Without auth everyone is owner and member; with it, trust the server's word.
   const isProjectOwner = !authEnabled || !!project.isOwner;
   const canSync = !authEnabled || !!project.isMember;
@@ -1748,6 +1872,17 @@ export default function Editor() {
   const viewOnly = authEnabled && project.canEdit === false && !project.readOnly;
   const locked = !!project.readOnly || viewOnly;
 
+  // The documents a typeset can start from: the ones with \documentclass, and the main one.
+  const docChoices = [...new Set([...(mainDocs?.key === `${id}::${branch}` ? mainDocs.paths : []), ...(project.rootFile ? [project.rootFile] : [])])].sort((a, b) => a.localeCompare(b));
+  const canPickMain = canSync && !project.readOnly;
+  const chooseMainDoc = (path: string) => { void setRootFile(path, { typeset: true }); };
+  const mainName = project.rootFile ? project.rootFile.split('/').pop()! : 'No main document';
+  /** The picker's rows in the "…" sheet, where it is short of room. */
+  const mainDocRows: MenuEntry[] = canPickMain && docChoices.length > 1 ? [
+    { kind: 'header', title: 'Main document' },
+    ...docChoices.map((p): MenuEntry => ({ id: `main-${p}`, label: p, role: 'radio', checked: p === project.rootFile, onSelect: () => chooseMainDoc(p), testId: `more-main-${p}` })),
+  ] : [];
+
   return (<>
     <div className="editor-shell" data-testid="editor-shell" inert={sessionEnded || undefined}>
       <PluginHost ctx={pluginCtx} onPanels={setPluginPanels} onErrorsActions={setPluginActions} onCommands={setPluginCommands} files={files} />
@@ -1756,11 +1891,17 @@ export default function Editor() {
         <span
           className="toolbar__name"
           contentEditable={(canSync && !locked) || undefined}
+          role={canSync && !locked ? 'textbox' : undefined}
+          aria-label={canSync && !locked ? 'Project name' : undefined}
           title={viewOnly ? 'You can view this project, not rename it' : canSync ? undefined : 'Only the owner and collaborators can rename this project'}
           suppressContentEditableWarning
           data-testid="project-name"
           onBlur={(e) => renameProject(e.currentTarget, e.currentTarget.textContent || '')}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+            // the name as it was, and nothing for the blur to save
+            if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.textContent = project.name; e.currentTarget.blur(); }
+          }}
         >
           {project.name}
         </span>
@@ -1794,38 +1935,96 @@ export default function Editor() {
           />
         )}
         {visualFile && (
-          <div className="seg" role="group" aria-label="Editing mode" data-testid="mode-toggle">
+          <div className="seg toolbar__wide" role="group" aria-label="Editing mode" data-testid="mode-toggle">
             <button aria-pressed={mode === 'source'} className={`seg__btn ${mode === 'source' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('source')} data-testid="mode-source">Source</button>
             <button aria-pressed={mode === 'visual'} className={`seg__btn ${mode === 'visual' ? 'seg__btn--active' : ''}`} onClick={() => switchMode('visual')} data-testid="mode-visual">Visual</button>
           </div>
         )}
         <div className="toolbar__spacer" />
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
-        <button className="btn" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
-        <button className="btn" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
+        <button className="btn toolbar__wide" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
+        <button className="btn toolbar__wide" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
         {!project.readOnly && (
-          <button className="btn" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
+          <button className="btn toolbar__wide" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
             Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
           </button>
         )}
         <Presence rows={presenceRows(users, peers, activeFile, identity)} onOpenFile={openFile} />
-        <button className="btn btn--ghost sidebar-toggle" onClick={() => setSidebarHidden((h) => !h)} aria-pressed={!sidebarHidden} data-testid="sidebar-toggle" title="Show or hide the file tree">
-          {sidebarHidden ? 'Files' : 'Hide files'}
-        </button>
+        <div className="seg layout-toggle toolbar__wide" role="group" aria-label="Layout" data-testid="pane-layout">
+          {LAYOUTS.map((l) => {
+            const Icon = LAYOUT_ICONS[l.id];
+            return (
+              <button key={l.id} aria-pressed={shown === l.id} aria-label={l.label} className={`seg__btn ${shown === l.id ? 'seg__btn--active' : ''}`} onClick={() => chooseLayout(l.id)} title={l.title} data-testid={`layout-${l.id}`}>
+                <Icon />
+              </button>
+            );
+          })}
+        </div>
         <div className="toolbar__group">
+          {canPickMain && docChoices.length > 0 ? (
+            <MenuButton
+              className="btn btn--ghost main-doc toolbar__wide"
+              label="Main document"
+              testId="main-doc-picker"
+              menuTestId="main-doc-menu"
+              placement="bottom-end"
+              title={`Main document: ${project.rootFile || 'none'}. Choose another to typeset it`}
+              items={() => docChoices.map((p) => ({ id: p, label: p, role: 'radio' as const, checked: p === project.rootFile, onSelect: () => chooseMainDoc(p), testId: `main-doc-${p}` }))}
+            >
+              <span className="main-doc__name">{mainName}</span><span className="main-doc__chev" aria-hidden="true"><IconChevronRight /></span>
+            </MenuButton>
+          ) : (
+            <span className="main-doc main-doc--fixed toolbar__wide" title={`Main document: ${project.rootFile || 'none'}`} data-testid="main-doc-picker">
+              <span className="main-doc__name">{mainName}</span>
+            </span>
+          )}
           <button
             className="btn btn--primary"
             onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
             aria-busy={compile.status === 'compiling' || undefined}
             data-testid="typeset-button"
-            title={`Typeset (${keys.typeset})`}
+            title={`Typeset (${keys.typeset === formatChord(TYPESET_ENTER) ? keys.typeset : `${keys.typeset} or ${formatChord(TYPESET_ENTER)}`})`}
           >
             {compile.status === 'compiling' ? <span className="spinner" /> : null}
             Typeset
           </button>
         </div>
+        <button
+          className={`btn btn--ghost toolbar__more${canPickMain && docChoices.length > 1 ? ' toolbar__more--main' : ''}`}
+          onClick={(e) => setMoreOpen({ keyboard: e.detail === 0 })}
+          aria-label="More"
+          aria-haspopup="dialog"
+          title="More"
+          data-testid="toolbar-more"
+        >
+          <IconEllipsis width={16} height={16} />
+        </button>
       </header>
+      {moreOpen && (
+        <ActionSheet
+          label="More"
+          testId="toolbar-more-sheet"
+          keyboard={moreOpen.keyboard}
+          onClose={() => setMoreOpen(null)}
+          items={!phone ? mainDocRows : [
+            { id: 'palette', label: 'Search files and commands', onSelect: () => setPaletteOpen(true), testId: 'more-palette' },
+            { id: 'files', label: sidebarHidden ? 'Show files' : 'Hide files', onSelect: () => setSidebarHidden((h) => !h), testId: 'sidebar-toggle' },
+            shown === 'pdf'
+              ? { id: 'show-editor', label: 'Show the editor', onSelect: () => revealRef.current('editor'), testId: 'more-show-editor' }
+              : { id: 'show-pdf', label: 'Show the PDF', onSelect: () => revealRef.current('pdf'), testId: 'more-show-pdf' },
+            ...(visualFile ? [
+              { id: 'mode', label: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', onSelect: () => switchMode(mode === 'visual' ? 'source' : 'visual'), testId: 'more-mode' } as MenuEntry,
+            ] : []),
+            { kind: 'separator' },
+            ...(!project.readOnly ? [{ id: 'comment', label: 'Comment on the selection', onSelect: startComment, testId: 'more-comment' } as MenuEntry] : []),
+            ...(mainDocRows.length ? [{ kind: 'separator' } as MenuEntry, ...mainDocRows, { kind: 'separator' } as MenuEntry] : []),
+            { id: 'share', label: 'Share…', onSelect: () => setShareOpen(true), testId: 'more-share' },
+            { id: 'settings', label: 'Settings…', onSelect: () => setSettingsOpen(true), testId: 'more-settings' },
+            ...(users.length > 1 ? [{ kind: 'hint', label: `Here now: ${users.map((u) => u.name).join(', ')}`, testId: 'more-presence' } as MenuEntry] : []),
+          ]}
+        />
+      )}
 
       {/* Only the owner can retry (the route is owner-only); once a link
           exists the banner has nothing left to say. */}
@@ -1920,7 +2119,8 @@ export default function Editor() {
             {/* Files, History and Review stay mounted too, like Search below:
                 the tree's view, a half-typed reply or commit message and each
                 panel's scroll survive a trip to another tab. */}
-            <div className="sidebar__panel" style={{ display: tab === 'files' ? 'block' : 'none' }}>
+            <div className="sidebar__panel sidebar__panel--files" style={{ display: tab === 'files' ? 'flex' : 'none' }}>
+              <div className="sidebar__tree">
               <FileTree
                 files={files}
                 active={activeFile}
@@ -1933,6 +2133,7 @@ export default function Editor() {
                 onNewFileHandled={() => { setNewFileRequest(0); setNewEntryKind('file'); }}
                 hidden={tab !== 'files'}
                 readOnly={locked}
+                agentMarks={agentTreeMarks}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);
@@ -1989,6 +2190,20 @@ export default function Editor() {
                 }}
                 onSetRoot={canSync && !locked ? setRootFile : undefined}
               />
+              </div>
+              {activeFile && !previewing && /\.tex$/i.test(activeFile) && (
+                <Outline
+                  entries={outline?.key === paneKey ? outline.entries : null}
+                  current={outline?.key === paneKey ? outline.current : -1}
+                  open={outlineOpen}
+                  onToggle={toggleOutline}
+                  onPick={(h) => {
+                    revealRef.current('editor');
+                    if (phone) setSidebarHidden(true);
+                    codeRef.current?.revealPos(h.pos);
+                  }}
+                />
+              )}
             </div>
             <div className="sidebar__panel" style={{ display: tab === 'history' ? 'block' : 'none' }}><HistoryPanel projectId={id} branch={branch} version={historyVersion} live={agentPresent} manual={!!project?.manualCommits} focusRequest={commitFocusRequest} onFocusHandled={() => setCommitFocusRequest(0)} readOnly={locked} onReverted={() => onDocChanged(true)} hidden={tab !== 'history'} /></div>
             <div className="sidebar__panel" style={{ display: tab === 'review' ? 'block' : 'none' }}>
@@ -2045,7 +2260,7 @@ export default function Editor() {
           />
         )}
 
-        <main className="pane pane--editor" aria-label="Editor" style={{ flex: 1 }}>
+        <main className={`pane pane--editor${shown === 'pdf' ? ' pane--away' : ''}`} aria-label="Editor" style={{ flex: 1 }}>
           {activeFile && previewing ? (
             <FilePreview key={`${id}::${branch}::${activeFile}`} projectId={id} branch={branch} path={activeFile} entry={activeEntry} />
           ) : activeFile ? (
@@ -2053,7 +2268,19 @@ export default function Editor() {
               <div className="pane__header">
                 <span className="statusbar__file" data-testid="active-file">{activeFile}</span>
                 {paneMode === 'visual' && <FormatToolbar target={codeRef} />}
+                <span className="toolbar__spacer" />
                 {sync?.key === paneKey && <SyncStatus state={sync.state} readOnly={locked} />}
+                {shown === 'editor' && typesetShort}
+                <button
+                  className="btn btn--ghost btn--small pane__find"
+                  onClick={() => codeRef.current?.openFind()}
+                  title={`Find in this file (${formatChord({ mod: true, shift: false, alt: false, key: 'f' })})`}
+                  aria-label="Find in this file"
+                  data-testid="find-open"
+                >
+                  <IconSearch />
+                </button>
+                {phone && shown !== 'pdf' && phoneSwitch}
               </div>
               {zoteroBib && (
                 <div className="remote-pending" role="status" data-testid="zotero-bib-banner">
@@ -2072,6 +2299,8 @@ export default function Editor() {
                 onDocChanged={onDocChanged}
                 onStats={setStats}
                 spellcheck={spellcheck}
+                spellLang={spellLang}
+                onOutline={(o) => setOutline({ key: paneKey, ...o })}
                 vim={vim}
                 onWrite={doCompile}
                 onAccessDenied={onAccessDenied}
@@ -2082,6 +2311,7 @@ export default function Editor() {
                 identity={identity}
                 readOnly={locked || zoteroBib}
                 onSync={(state) => setSync({ key: paneKey, state })}
+                agentSeenAt={unseen.seenAt}
               />
             </>
           ) : filesLoaded && !hasFiles ? (
@@ -2224,21 +2454,32 @@ export default function Editor() {
           })()}
         </main>
 
-        <Splitter
-          value={pdfWidth}
-          min={280}
-          max={pdfMax}
-          side={-1}
-          label="Resize preview"
-          testId="pane-resizer"
-          onResize={resizePdf}
-          onReset={() => { pdfChosen.current = pdfDefault(); setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4))); safeStorage.remove(PDF_WIDTH); }}
-          onDragging={setResizing}
-        />
+        {shown === 'both' && (
+          <Splitter
+            value={pdfWidth}
+            min={280}
+            max={pdfMax}
+            side={-1}
+            label="Resize preview"
+            testId="pane-resizer"
+            onResize={resizePdf}
+            onReset={() => { pdfChosen.current = pdfDefault(); setPdfWidth(clampPdfWidth(Math.round(window.innerWidth * 0.4))); safeStorage.remove(PDF_WIDTH); }}
+            onDragging={setResizing}
+          />
+        )}
 
         {/* data-pdf: the run on screen, for tests that follow it across typesets */}
-        <section className="pane pane--preview" aria-label="PDF preview" style={{ width: pdfWidth, flex: 'none' }} data-testid="preview" data-pdf={compile.result?.pdfUrl || undefined} onKeyDown={zoomKeys(zoomPdf)}>
+        {/* Out of the layout it keeps its width, so it shows again at once, where it was. */}
+        <section
+          className={`pane pane--preview${shown === 'editor' ? ' pane--away' : ''}`}
+          aria-label="PDF preview"
+          style={phone || shown === 'pdf' ? { flex: 1, minWidth: 0 } : { width: pdfWidth, flex: 'none' }}
+          data-testid="preview"
+          data-pdf={compile.result?.pdfUrl || undefined}
+          onKeyDown={zoomKeys(zoomPdf)}
+        >
           <div className="pane__header">
+            {phone && shown === 'pdf' && phoneSwitch}
             <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (
                 <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
@@ -2328,6 +2569,7 @@ export default function Editor() {
               onClick={toggleAuto}
               title={auto ? 'Auto-typeset is on — typesets shortly after you stop typing' : 'Auto-typeset is off'}
               aria-label="Auto-typeset"
+              aria-pressed={auto}
               data-testid="auto-toggle"
             >
               <span className="auto-toggle__knob" />
@@ -2357,6 +2599,7 @@ export default function Editor() {
             hasTex={hasTex}
             onFirstOpen={() => { if (autoRef.current && hasTexRef.current) openTypeset(); }}
             onInverse={onPdfInverse}
+            onShowErrors={shown === 'pdf' ? () => revealRef.current('editor') : undefined}
             pages={pdfPages}
             onZoom={setZoom}
           />
@@ -2416,6 +2659,10 @@ export default function Editor() {
           files={files}
           autoTypeset={auto}
           vim={vim}
+          spellcheck={spellcheck}
+          spellLang={spellLang}
+          onToggleSpellcheck={toggleSpellcheck}
+          onSetSpellLang={setSpellLang}
           importNote={imported && imported.engineReason && imported.engine === project.engine ? `Set on import because of ${imported.engineReason}` : undefined}
           canConfigure={canSync && !viewOnly}
           viewOnly={viewOnly}

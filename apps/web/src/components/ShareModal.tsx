@@ -92,6 +92,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
           ? 'The addresses you typed have not been invited. To invite them, go back and press Save.'
           : 'The collaborator list you typed has not been saved. To keep it, go back and press Save.',
         confirmLabel: 'Discard and close',
+        danger: true,
       });
       if (!ok) return;
     }
