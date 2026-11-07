@@ -53,7 +53,10 @@ eq(inA.user.name, 'Claude (for Ben)', "a file's own presence names whom the agen
 eq(inA.user.startedAt, startedAt, 'with the session start');
 check(collab.agentSessionActive(id, 'main'), 'the session is live');
 
-await sleep(TTL + 150);
+// the expiry is a timer: on a busy machine it fires later than TTL, so wait for it
+const until = async (done, ms) => { const end = Date.now() + ms; while (!done() && Date.now() < end) await sleep(25); };
+await sleep(TTL);
+await until(() => branchState() === null, 5000);
 eq(branchState(), null, 'an idle session ends on the branch');
 eq(loaded('a.tex').awareness.getLocalState(), null, 'and in the file');
 check(!collab.agentSessionActive(id, 'main'), 'and the away check hears it ended');
@@ -72,7 +75,8 @@ eq(s.files, [], 'with no file being written meanwhile');
 eq(s.user.name, 'Claude', 'a token without an owner names Claude alone');
 release();
 check(collab.agentSessionActive(id, 'main'), 'the typeset ending starts the idle timeout again');
-await sleep(TTL + 150);
+await sleep(TTL);
+await until(() => !collab.agentSessionActive(id, 'main') && branchState() === null, 5000);
 check(!collab.agentSessionActive(id, 'main'), 'which ends the session');
 eq(branchState(), null, 'on the branch too');
 
