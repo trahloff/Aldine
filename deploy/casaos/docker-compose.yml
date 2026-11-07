@@ -161,7 +161,7 @@ x-casaos:
   update_at: "2026-11-07"
   release_notes:
     en_US: |-
-      
+      Offline status, a main-document picker, view-only sharing, searchable PDF text, table editing, GitHub Enterprise and a long list of fixes from a UX review.
   website: https://aldine.dev/
   repo: https://github.com/trahloff/Aldine
   support: https://github.com/trahloff/Aldine/issues
