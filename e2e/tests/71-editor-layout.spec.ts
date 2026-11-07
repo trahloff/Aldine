@@ -141,32 +141,22 @@ async function seedDocs(request: APIRequestContext, name: string): Promise<strin
 
 const rootFile = async (request: APIRequestContext, id: string) => (await (await request.get(`/api/projects/${id}`)).json()).rootFile;
 
-test.describe('main document picker', () => {
-  test('beside Typeset, it lists the documents and typesets the one chosen', async ({ page, request }) => {
+test.describe('main document', () => {
+  test('is chosen in Settings, which lists the documents and typesets the one chosen', async ({ page, request }) => {
     const id = await seedDocs(request, 'Two Documents');
     try {
       await openProject(page, id);
       const preview = page.getByTestId('preview');
       await expect(preview).toHaveAttribute('data-pdf', /main\.pdf/, { timeout: 120_000 });
-      const picker = page.getByTestId('main-doc-picker');
-      await expect(picker).toHaveText('main.tex');
-      await picker.click();
-      const menu = page.getByTestId('main-doc-menu');
-      await expect(menu.getByRole('menuitemradio')).toHaveText(['main.tex', 'supplement.tex']);
-      await expect(page.getByTestId('main-doc-main.tex')).toHaveAttribute('aria-checked', 'true');
-      await page.getByTestId('main-doc-supplement.tex').click();
-      await expect(picker).toHaveText('supplement.tex');
+      await expect(page.getByTestId('main-doc-picker')).toHaveCount(0);
+      await page.getByTestId('project-settings-open').click();
+      const select = page.getByTestId('settings-root-file');
+      await expect(select).toHaveValue('main.tex');
+      // a file input by the manuscript does not typeset on its own
+      await expect(select.locator('option')).toHaveText(['main.tex', 'supplement.tex']);
+      await select.selectOption('supplement.tex');
       await expect(preview).toHaveAttribute('data-pdf', /supplement\.pdf/, { timeout: 120_000 });
       expect(await rootFile(request, id)).toBe('supplement.tex');
-
-      // short of room, it is in the … sheet
-      await page.setViewportSize({ width: 1000, height: 800 });
-      await expect(picker).toBeHidden();
-      await page.getByTestId('toolbar-more').click();
-      await expect(page.getByTestId('more-main-supplement.tex')).toHaveAttribute('aria-pressed', 'true');
-      await page.getByTestId('more-main-main.tex').click();
-      await expect(preview).toHaveAttribute('data-pdf', /main\.pdf/, { timeout: 120_000 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
     } finally {
       await cleanup(request, id);
     }
@@ -210,23 +200,6 @@ test.describe('layout on a phone', () => {
       await expect(page.locator('.pane--editor')).toBeVisible();
       await expect(page.getByTestId('errors-panel')).toBeVisible();
       await expect(page.getByTestId('phone-show-editor')).toHaveAttribute('aria-pressed', 'true');
-    } finally {
-      await cleanup(request, id);
-    }
-  });
-
-  test('the main document is chosen in the … sheet, and typesets', async ({ page, request }) => {
-    const id = await seedDocs(request, 'Phone Documents');
-    try {
-      await openProject(page, id);
-      await expect(page.getByTestId('main-doc-picker')).toBeHidden();
-      await page.getByTestId('toolbar-more').tap();
-      const sheet = page.getByTestId('toolbar-more-sheet');
-      await expect(sheet.getByTestId('more-main-main.tex')).toHaveAttribute('aria-pressed', 'true');
-      await expect(sheet.getByTestId('more-main-chapter.tex')).toHaveCount(0);
-      await sheet.getByTestId('more-main-supplement.tex').tap();
-      await expect(page.getByTestId('preview')).toHaveAttribute('data-pdf', /supplement\.pdf/, { timeout: 120_000 });
-      expect(await rootFile(request, id)).toBe('supplement.tex');
     } finally {
       await cleanup(request, id);
     }

@@ -18,6 +18,8 @@ interface Props {
   spellLang: string;
   onToggleSpellcheck(): void;
   onSetSpellLang(lang: string): void;
+  /** The .tex files that typeset on their own (a \documentclass); every .tex file until they are known. */
+  mainDocs?: string[];
   /** Shown under the compiler picker right after an import: where the choice came from. */
   importNote?: string;
   /** The owner or a collaborator: only they may change what is stored with the project. */
@@ -140,7 +142,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, autoTypeset, vim, spellcheck, spellLang, onToggleSpellcheck, onSetSpellLang, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
+export default function ProjectSettings({ project, files, mainDocs, autoTypeset, vim, spellcheck, spellLang, onToggleSpellcheck, onSetSpellLang, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -157,7 +159,8 @@ export default function ProjectSettings({ project, files, autoTypeset, vim, spel
   const texFiles = files.filter((f) => f.type === 'file' && /\.tex$/i.test(f.path)).map((f) => f.path);
   // A root that is not in the tree (deleted on this branch, or not a .tex
   // file) must still be selectable, or the select would show the wrong file.
-  const rootOptions = texFiles.includes(project.rootFile) ? texFiles : [project.rootFile, ...texFiles];
+  const choices = mainDocs?.length ? mainDocs : texFiles;
+  const rootOptions = choices.includes(project.rootFile) ? choices : [project.rootFile, ...choices];
   const engine = ENGINES.some((e) => e.id === project.engine) ? project.engine : 'pdf';
 
   // Escape unmounts the dialog without a blur, so the close path commits too;
