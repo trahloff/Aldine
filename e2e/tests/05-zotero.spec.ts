@@ -127,16 +127,23 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.getByTestId('cite-shannon1948')).toBeVisible();
 
       // an unlink the server refuses says so, and the link stays on screen
-      page.on('dialog', (d) => d.accept());
       const unlinkRoute = `**/api/projects/${id}/zotero`;
       await page.route(unlinkRoute, (route) => route.request().method() === 'DELETE'
         ? route.fulfill({ status: 403, json: { error: 'Only the owner can unlink the Zotero library' } })
         : route.fallback());
       await page.getByTestId('zotero-unlink').click();
+      // the app's own dialog asks, not the browser's
+      await expect(page.getByTestId('dialog-title')).toHaveText('Unlink Zotero from this project?');
+      await page.getByTestId('dialog-confirm').click();
       await expect(page.locator('.toast', { hasText: 'Unlink failed: Only the owner can unlink the Zotero library' })).toBeVisible();
       await expect(page.getByTestId('zotero-linked')).toBeVisible();
       await page.unroute(unlinkRoute);
+      // the way out leaves the link
       await page.getByTestId('zotero-unlink').click();
+      await page.getByTestId('dialog-cancel').click();
+      await expect(page.getByTestId('zotero-linked')).toBeVisible();
+      await page.getByTestId('zotero-unlink').click();
+      await page.getByTestId('dialog-confirm').click();
       // the key stays with the account: a new link starts at the library
       await expect(page.getByTestId('zotero-library')).toBeVisible();
       await page.getByTestId('zotero-other-key').click();

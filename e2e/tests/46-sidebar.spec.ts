@@ -184,6 +184,25 @@ test.describe('sidebar', () => {
     } finally { await cleanup(request, id); }
   });
 
+  test('Cite re-reads the bibliography each time it comes into view', async ({ page, request }) => {
+    const id = await createProject(request, 'Cite On Show');
+    try {
+      await put(request, id, 'references.bib', '@book{knuth,\n  title = {The {\\TeX}book},\n  author = {Knuth, Donald E.},\n  year = {1984}\n}\n');
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      await expect(page.getByTestId('cite-bib-knuth')).toBeAttached({ timeout: 15_000 });
+      // an entry typed into the open .bib changes no file list
+      await page.getByTestId('tab-files').click();
+      await page.getByTestId('file-references.bib').click();
+      await page.locator('.cm-content').click();
+      await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+End`);
+      await page.keyboard.insertText('\n@article{lamport,\n  title = {LaTeX},\n  author = {Lamport, Leslie},\n  year = {1986}\n}\n');
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}/file?branch=main&path=references.bib`)).text()).includes('lamport'), { timeout: 15_000 }).toBe(true);
+      await openPluginTab(page, 'references');
+      await expect(page.getByTestId('cite-bib-lamport')).toBeAttached({ timeout: 15_000 });
+    } finally { await cleanup(request, id); }
+  });
+
   test('file rows line up with folders, level by level', async ({ page, request }) => {
     const id = await createProject(request, 'Tree Indent');
     try {

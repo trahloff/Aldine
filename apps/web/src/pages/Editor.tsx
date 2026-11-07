@@ -24,7 +24,7 @@ import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
-import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand } from '../plugins/host';
+import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
 import { IconChevronLeft, IconChevronRight, IconDownload, IconEllipsis, IconHistory, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
@@ -1623,7 +1623,13 @@ export default function Editor() {
       setTab(panelId);
       if (reveal && !window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(false);
     },
-  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, insertCitation, loadFiles, loadProject, doCompile, toast]);
+    confirm: (o: PluginConfirm) => dialogs.confirm(o),
+  }), [id, branch, activeFile, compile.result, compile.trigger, insertAtCursor, insertCitation, loadFiles, loadProject, doCompile, toast, dialogs]);
+  // A plugin panel coming into view: its tab chosen, or the sidebar shown again.
+  useEffect(() => {
+    if (sidebarHidden) return;
+    pluginPanels.find((p) => p.id === tab)?.onShow?.();
+  }, [tab, sidebarHidden, pluginPanels]);
 
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
