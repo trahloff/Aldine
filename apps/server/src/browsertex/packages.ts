@@ -22,6 +22,7 @@ const SUFFIXES: Record<number, string[]> = {
 };
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$/;
+const DB_MAX_AGE_MS = 24 * 60 * 60_000;
 
 interface Pkg { name: string; size: number; sha512: string; files: string[]; license: string | null; version: string | null; home: string | null }
 
@@ -80,6 +81,7 @@ const unpackedAt = (dir: string, file: string) => path.join(dir, file.startsWith
 
 export class PackageSource {
   private db: ReturnType<typeof parseTlpdb> | null = null;
+  private dbAt = 0;
   private dbLoading: Promise<void> | null = null;
   private mirrorBase = '';
   private fetching = new Map<string, Promise<void>>();
@@ -91,37 +93,56 @@ export class PackageSource {
   private get fetchImpl() { return this.opts.fetchImpl ?? fetch; }
   private get pkgDir() { return path.join(this.opts.cacheDir, this.opts.release, 'packages'); }
 
-  /** The package database, fetched once; the mirror a redirect picked is kept,
-   *  so archives come from the same mirror (and sync state) as the database. */
-  private loadDb(): Promise<void> {
-    if (this.db) return Promise.resolve();
+  /**
+   * The package database, from the cache while it is under a day old, else
+   * from the mirror; a cached copy stands in when the mirror cannot be read.
+   * tlnet updates packages daily, so an old database names archives no
+   * mirror serves any more.
+   */
+  private loadDb(force = false): Promise<void> {
+    if (this.db && !force && Date.now() - this.dbAt < DB_MAX_AGE_MS) return Promise.resolve();
     this.dbLoading ??= (async () => {
       const dir = path.join(this.opts.cacheDir, this.opts.release);
       fs.mkdirSync(dir, { recursive: true });
       const cached = path.join(dir, 'texlive.tlpdb');
       const mirrorFile = path.join(dir, 'mirror');
-      let text: string;
-      if (fs.existsSync(cached) && fs.existsSync(mirrorFile)) {
-        text = fs.readFileSync(cached, 'utf8');
-        this.mirrorBase = fs.readFileSync(mirrorFile, 'utf8').trim();
-      } else {
-        const url = `${this.opts.mirror.replace(/\/+$/, '')}/tlpkg/texlive.tlpdb`;
+      const haveCache = fs.existsSync(cached) && fs.existsSync(mirrorFile);
+      const cacheAge = haveCache ? Date.now() - fs.statSync(cached).mtimeMs : Infinity;
+      if (!force && cacheAge < DB_MAX_AGE_MS) {
+        this.useDb(fs.readFileSync(cached, 'utf8'), fs.readFileSync(mirrorFile, 'utf8').trim());
+        return;
+      }
+      try {
+        const url = `${this.configuredMirror}/tlpkg/texlive.tlpdb`;
         const res = await this.fetchImpl(url, { redirect: 'follow' });
         if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
-        text = await res.text();
-        this.mirrorBase = (res.url || url).replace(/\/tlpkg\/texlive\.tlpdb$/, '');
-        const parsed = parseTlpdb(text);
-        if (parsed.release !== this.opts.release) {
-          throw new Error(`${this.opts.mirror} carries TeX Live ${parsed.release ?? 'of an unknown release'}, the browser's TeX is ${this.opts.release} — set ALDINE_TEXLIVE_MIRROR to a ${this.opts.release} tlnet (after its release year, a historic archive's tlnet-final)`);
+        const text = await res.text();
+        const release = parseTlpdb(text).release;
+        if (release !== this.opts.release) {
+          throw new Error(`${this.opts.mirror} carries TeX Live ${release ?? 'of an unknown release'}, the browser's TeX is ${this.opts.release} — set ALDINE_TEXLIVE_MIRROR to a ${this.opts.release} tlnet (after its release year, a historic archive's tlnet-final)`);
         }
+        const base = (res.url || url).replace(/\/tlpkg\/texlive\.tlpdb$/, '');
         fs.writeFileSync(`${cached}.tmp`, text);
         fs.renameSync(`${cached}.tmp`, cached);
-        fs.writeFileSync(mirrorFile, this.mirrorBase);
+        fs.writeFileSync(mirrorFile, base);
+        this.useDb(text, base);
+      } catch (err) {
+        if (this.db) return;
+        if (!haveCache) throw err;
+        console.warn(`[aldine] TeX Live package database not refreshed, using the cached one: ${(err as Error).message}`);
+        this.useDb(fs.readFileSync(cached, 'utf8'), fs.readFileSync(mirrorFile, 'utf8').trim());
       }
-      this.db = parseTlpdb(text);
     })().finally(() => { this.dbLoading = null; });
     return this.dbLoading;
   }
+
+  private useDb(text: string, base: string): void {
+    this.db = parseTlpdb(text);
+    this.dbAt = Date.now();
+    this.mirrorBase = base;
+  }
+
+  private get configuredMirror() { return this.opts.mirror.replace(/\/+$/, ''); }
 
   /** The package and runfile for a kpathsea request, or null. */
   private locate(name: string, format: number): { pkg: Pkg; file: string } | null {
@@ -154,21 +175,45 @@ export class PackageSource {
     return n;
   }
 
-  /** Downloads, checks and unpacks a package once; concurrent callers share it. */
-  private ensurePackage(pkg: Pkg): Promise<void> {
-    const dir = path.join(this.pkgDir, pkg.name);
+  /** One archive, checked against the database's sha512. */
+  private async download(base: string, pkg: Pkg): Promise<Buffer> {
+    const url = `${base}/archive/${pkg.name}.tar.xz`;
+    const res = await this.fetchImpl(url, { redirect: 'follow' });
+    if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
+    const archive = Buffer.from(await res.arrayBuffer());
+    const sum = crypto.createHash('sha512').update(archive).digest('hex');
+    if (pkg.sha512 && sum !== pkg.sha512) throw new Error(`${url} does not match the package database's checksum`);
+    return archive;
+  }
+
+  /**
+   * Downloads, checks and unpacks a package once; concurrent callers share
+   * it. The mirror the database came from is tried first, then the configured
+   * one (a redirector picks a live mirror per request); when neither has the
+   * archive the database names, the database is refreshed and both are tried
+   * once more.
+   */
+  private ensurePackage(name: string): Promise<void> {
+    const dir = path.join(this.pkgDir, name);
     if (fs.existsSync(path.join(dir, '.complete'))) return Promise.resolve();
-    let p = this.fetching.get(pkg.name);
+    let p = this.fetching.get(name);
     if (p) return p;
     p = (async () => {
-      if (pkg.size > this.opts.maxPackageBytes) throw new Error(`package ${pkg.name} is ${pkg.size} bytes, over the per-package limit`);
-      if (this.usedBytes() + pkg.size * 4 > this.opts.maxCacheBytes) throw new Error('the package cache is full');
-      const url = `${this.mirrorBase}/archive/${pkg.name}.tar.xz`;
-      const res = await this.fetchImpl(url, { redirect: 'follow' });
-      if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}`);
-      const archive = Buffer.from(await res.arrayBuffer());
-      const sum = crypto.createHash('sha512').update(archive).digest('hex');
-      if (pkg.sha512 && sum !== pkg.sha512) throw new Error(`${url} does not match the package database's checksum`);
+      let archive: Buffer | null = null;
+      let pkg = this.db!.packages.get(name)!;
+      let lastError: Error | null = null;
+      for (let round = 0; round < 2 && !archive; round++) {
+        if (round > 0) {
+          await this.loadDb(true);
+          pkg = this.db!.packages.get(name) ?? pkg;
+        }
+        if (pkg.size > this.opts.maxPackageBytes) throw new Error(`package ${pkg.name} is ${pkg.size} bytes, over the per-package limit`);
+        if (this.usedBytes() + pkg.size * 4 > this.opts.maxCacheBytes) throw new Error('the package cache is full');
+        for (const base of new Set([this.mirrorBase, this.configuredMirror])) {
+          try { archive = await this.download(base, pkg); break; } catch (err) { lastError = err as Error; }
+        }
+      }
+      if (!archive) throw lastError ?? new Error(`package ${name} could not be fetched`);
       const tmp = `${dir}.${process.pid}.tmp`;
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.mkdirSync(tmp, { recursive: true });
@@ -178,7 +223,7 @@ export class PackageSource {
       fs.renameSync(tmp, dir);
       this.cacheBytes = -1;
       console.log(`[aldine] TeX Live package ${pkg.name} fetched for the browser's TeX (${Math.round(pkg.size / 1024)} KB)`);
-    })().finally(() => { this.fetching.delete(pkg.name); });
+    })().finally(() => { this.fetching.delete(name); });
     return p;
   }
 
@@ -213,7 +258,7 @@ export class PackageSource {
       if (this.misses.size < 100_000) this.misses.add(key);
       return null;
     }
-    await this.ensurePackage(hit.pkg);
+    await this.ensurePackage(hit.pkg.name);
     const file = unpackedAt(path.join(this.pkgDir, hit.pkg.name), hit.file);
     const root = path.join(this.pkgDir, hit.pkg.name) + path.sep;
     try {

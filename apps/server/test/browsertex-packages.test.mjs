@@ -128,6 +128,25 @@ try {
   check(await s.resolve(26, 'real.sty'), 'while the package\'s real files are');
   await throws(() => s.resolve(26, 'huge.sty'), 'per-package limit', 'a package over the size limit is not fetched');
 
+  // ---- the mirror the database came from goes away ----
+  const deadDir = path.join(tmp, 'cache-dead');
+  fs.mkdirSync(path.join(deadDir, '2026'), { recursive: true });
+  fs.writeFileSync(path.join(deadDir, '2026', 'texlive.tlpdb'), tlpdb('2026'));
+  fs.writeFileSync(path.join(deadDir, '2026', 'mirror'), 'http://127.0.0.1:9/tlnet');
+  const orphaned = source(deadDir);
+  check(await orphaned.resolve(26, 'tikz.sty'), 'a dead remembered mirror falls back to the configured one');
+
+  // ---- a package changed upstream since the database was cached ----
+  const staleDir = path.join(tmp, 'cache-stale');
+  fs.mkdirSync(path.join(staleDir, '2026'), { recursive: true });
+  // The cached database names other bytes for pgf than the mirror now serves.
+  fs.writeFileSync(path.join(staleDir, '2026', 'texlive.tlpdb'), tlpdb('2026').replace(sha512(archives.pgf), sha512(Buffer.from('an older pgf'))));
+  fs.writeFileSync(path.join(staleDir, '2026', 'mirror'), base);
+  requests.length = 0;
+  const stale = source(staleDir);
+  check(await stale.resolve(26, 'tikz.sty'), 'an archive newer than the cached database is fetched after a refresh');
+  check(requests.includes('/tlnet/tlpkg/texlive.tlpdb'), 'the refresh read the database again');
+
   // ---- the cache limit ----
   const full = source(path.join(tmp, 'cache-full'), { maxCacheBytes: 10 });
   await throws(() => full.resolve(26, 'tikz.sty'), 'cache is full', 'a full cache fetches nothing more');
