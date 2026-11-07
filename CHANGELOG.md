@@ -7,7 +7,21 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Plugins: `ui.registerSidebarPanel` takes an optional `onShow()`, called
+  each time the panel comes into view, and `ui.confirm()` asks in the app's
+  own dialog. Cite uses `onShow()`, so a reference typed into an open .bib
+  shows up when you switch to Cite. Zotero's Unlink now asks in the app's
+  dialog, not the browser's. Both are in docs/STABILITY.md.
+
 ### Changed
+- A new access token or an admin's reset link can only be closed with its
+  own button. Escape and a click outside used to close the dialog, and with
+  it the only copy of the secret.
+- The sidebar's tabs are all icons now, with their names in the tooltip:
+  Files, Search, History, Cite, Review and More. The names no longer get cut
+  off at the default width. Review shows its open threads as a count on the
+  icon, and More stays a ⋯ whose tooltip names the panel it has open.
 - The main document is chosen in the project's Settings again, no longer
   beside Typeset or in the "⋯" menu. Settings lists only the .tex files that
   typeset on their own, and choosing one typesets it straight away.

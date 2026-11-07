@@ -15,14 +15,31 @@ test.describe('sidebar', () => {
     try {
       await openProject(page, id);
       await expect(page.getByTestId('tab-plugin:references')).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByTestId('tab-plugin:references')).toHaveText('Cite');
+      // every tab is an icon named in its label and tooltip
+      for (const [t, name] of [['tab-files', 'Files'], ['tab-search', 'Search'], ['tab-history', 'History'], ['tab-plugin:references', 'Cite'], ['tab-review', 'Review']]) {
+        await expect(page.getByTestId(t)).toHaveAttribute('aria-label', name);
+        await expect(page.getByTestId(t)).toHaveText('');
+      }
+      // nothing in the row is cut at the default width
+      const cut = await page.locator('.sidebar__tabs > *').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+      expect(cut).toBe(0);
+      // at the narrowest sidebar the icons give way and Hide stays in the row
+      await page.evaluate(() => localStorage.setItem('aldine.sidebarWidth', '180'));
+      await page.reload();
+      await expect(page.getByTestId('tab-files')).toBeVisible({ timeout: 15_000 });
+      const row = (await page.locator('.sidebar__tabs').boundingBox())!;
+      const hide = (await page.getByTestId('sidebar-collapse').boundingBox())!;
+      expect(hide.x + hide.width).toBeLessThanOrEqual(row.x + row.width);
+      await page.evaluate(() => localStorage.removeItem('aldine.sidebarWidth'));
+      await page.reload();
+      await expect(page.getByTestId('tab-plugin:references')).toBeVisible({ timeout: 15_000 });
       // History is one click away, where Overleaf people look for it
       await expect(page.getByTestId('tab-history')).toBeVisible();
       await expect(page.getByTestId('tab-history')).toHaveAttribute('aria-label', 'History');
       // one row: every tab at the same height
       const tops = await page.locator('.sidebar__tabs > *').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
       expect(new Set(tops).size).toBe(1);
-      // More is a ⋯ until one of its panels is open
+      // More is a ⋯ that names the panel it holds open
       await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels');
 
       await page.getByTestId('tab-history').click();
@@ -34,6 +51,9 @@ test.describe('sidebar', () => {
       const menu = page.getByTestId('tab-more-menu');
       await expect(menu.getByTestId('tab-plugin:zotero')).toBeVisible();
       await expect(menu.getByTestId('tab-history')).toHaveCount(0);
+      await menu.getByTestId('tab-plugin:zotero').click();
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels: Zotero');
     } finally { await cleanup(request, id); }
   });
 

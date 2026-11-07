@@ -66,8 +66,8 @@ test.describe('editor toolbar', () => {
       await page.getByTestId('tab-plugin:zotero').click();
       await expect(page.getByTestId('tab-more-menu')).toHaveCount(0);
       await expect(page.getByTestId('zotero-panel')).toBeVisible();
-      // the tab names the panel it shows
-      await expect(more).toHaveText(/^Zotero/);
+      // the tab names the panel it shows, in its label and tooltip
+      await expect(more).toHaveAttribute('aria-label', 'More panels: Zotero');
       await expect(more).toHaveAttribute('aria-selected', 'true');
     } finally { await cleanup(request, id); }
   });

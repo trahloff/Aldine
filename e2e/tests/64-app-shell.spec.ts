@@ -232,7 +232,7 @@ test.describe('dialogs and menus', () => {
       await page.keyboard.press('Enter');
       await expect(first).toBeFocused();
       await page.keyboard.press('Enter');
-      await expect(more).toHaveText(new RegExp(`^${title}`));
+      await expect(more).toHaveAttribute('aria-label', `More panels: ${title}`);
       await expect(more).toHaveAttribute('aria-selected', 'true');
       await expect(more).toBeFocused();
     } finally { await cleanup(request, id); }

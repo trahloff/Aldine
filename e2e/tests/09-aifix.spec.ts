@@ -83,7 +83,7 @@ test.describe('AI error fix (plugin)', () => {
 
       await page.getByTestId('typeset-button').click();
       await expect(page.getByTestId('pdf-status')).toContainText(/error/i, { timeout: 120_000 });
-      await expect(page.getByTestId('tab-more')).toHaveText(/^Fix/, { timeout: 10_000 });
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels: Fix', { timeout: 10_000 });
       await expect(page.getByTestId('aifix-explanation')).toContainText(/not defined/, { timeout: 20_000 });
       await expect(page.getByTestId('aifix-auto')).toBeVisible();
       expect(diagnoses).toBe(1);
@@ -145,7 +145,7 @@ test.describe('AI error fix (plugin)', () => {
       await expect(action).toHaveText('Diagnose with AI', { timeout: 120_000 });
       await action.click();
       await expect(page.getByTestId('sidebar-expand')).toHaveCount(0);
-      await expect(page.getByTestId('tab-more')).toHaveText(/^Fix/);
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels: Fix');
       await expect(page.getByTestId('aifix-explanation')).toContainText(/not defined/, { timeout: 20_000 });
     } finally {
       await cleanup(request, id);
