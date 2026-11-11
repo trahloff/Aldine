@@ -489,7 +489,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
   const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
   const fileActions = (path: string): MenuEntry[] => [
-    ...(onSetRoot ? [{ id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' } as MenuEntry] : []),
+    ...(onSetRoot && /\.tex$/i.test(path) ? [{ id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' } as MenuEntry] : []),
     { id: 'rename', label: 'Rename…', testId: 'file-menu-rename', onSelect: () => { void renameFile(path); } },
     { kind: 'separator' },
     { id: 'delete', label: 'Delete…', danger: true, testId: 'file-menu-delete', onSelect: () => { void deleteFile(path); } },

@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- The file menu offers "Set as main document" on `.tex` files only, not on
+  a `.bib` file or an image.
+
 ## [1.9.1] — 2026-11-07
 
 ### Added

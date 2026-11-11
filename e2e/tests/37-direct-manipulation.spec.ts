@@ -88,4 +88,20 @@ test.describe('direct manipulation', () => {
       await expect(toast).toHaveCount(0, { timeout: 4000 });
     } finally { await cleanup(request, id); }
   });
+
+  test('Set as main document is offered on .tex files only', async ({ page, request }) => {
+    const id = await createPaperProject(request, 'Main Document Menu');
+    try {
+      const put = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'other.tex', content: '\\section{Other}' } });
+      expect(put.ok()).toBeTruthy();
+      await openProject(page, id);
+      await page.getByTestId('file-references.bib').click({ button: 'right' });
+      await expect(page.getByTestId('file-menu')).toBeVisible();
+      await expect(page.getByTestId('file-menu-root')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await page.getByTestId('file-other.tex').click({ button: 'right' });
+      await page.getByTestId('file-menu-root').click();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}`)).json()).rootFile).toBe('other.tex');
+    } finally { await cleanup(request, id); }
+  });
 });

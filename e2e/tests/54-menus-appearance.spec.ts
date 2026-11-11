@@ -136,8 +136,10 @@ test.describe('menu', () => {
   test('the file context menu: right-click, Shift+F10, typeahead, Rename', async ({ page, request }) => {
     const id = await createPaperProject(request, 'Context Menu Paper');
     try {
+      const put = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'other.tex', content: '\\section{Other}' } });
+      expect(put.ok()).toBeTruthy();
       await openProject(page, id);
-      const row = page.getByTestId('file-references.bib');
+      const row = page.getByTestId('file-other.tex');
       await row.click({ button: 'right' });
       const menu = page.getByTestId('file-menu');
       await expect(menu).toBeVisible();
