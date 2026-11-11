@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-11-11
+
 ### Added
 - Profile pictures. With single sign-on, the picture your identity provider
   sends (the OIDC `picture` claim, your Google or GitHub picture) replaces
