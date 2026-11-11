@@ -608,7 +608,6 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         <p className="modal__sub" data-testid="account-email">{user.email ?? 'No email address on this account'}</p>
 
         <NameRow user={user} />
-        <CommitEmailRow user={user} />
         {user.orcid && (
           <div className="settings__row">
             <span className="settings__label">ORCID iD</span>
@@ -626,6 +625,8 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         <AgentAccess onSecret={setSecretShown} />
 
         <GitHosts />
+        {/* Below the agent card, which must open above the sticky footer. */}
+        <CommitEmailRow user={user} />
 
         <ZoteroKey />
 
