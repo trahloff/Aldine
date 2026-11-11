@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
+import { instance } from './instance.js';
 import { buildApp, isCollabUpgrade } from './app.js';
 import { hocuspocus, shutdownFlushSet, closeProjectConnections, closeUserConnections, onAutoCommit } from './collab.js';
 import { scheduleAutopush } from './autopush.js';
@@ -51,6 +52,7 @@ app.server.on('upgrade', (request, socket, head) => {
 
 console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
 for (const warning of signupConfigWarnings()) console.warn(warning);
+for (const warning of instance.warnings) console.warn(warning);
 if (AUTH_ENABLED) {
   for (const warning of oidcConfigWarnings()) console.warn(warning);
   const line = oidcBootLine();

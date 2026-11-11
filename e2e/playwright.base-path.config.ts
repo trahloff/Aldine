@@ -11,7 +11,8 @@ import { defineConfig } from '@playwright/test';
  * A second, auth-enabled server under the same prefix (E2E_BASE_PATH_AUTH_PORT)
  * signs in through mock-oidc (E2E_BASE_PATH_OIDC_PORT); a second checkout
  * overrides both. It serves the web build the first server made, so it must
- * stay after that one in the list.
+ * stay after that one in the list. It also names an operator
+ * (ALDINE_INSTANCE_*, ALDINE_SUPPORT) for operator.spec.ts.
  */
 const PORT = Number(process.env.E2E_BASE_PATH_PORT || 3300);
 const BASE = process.env.ALDINE_BASE_PATH_URL || `http://localhost:${PORT}`;
@@ -41,7 +42,7 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: `PORT=${AUTH_PORT} AUTH_ENABLED=1 ALDINE_BASE_PATH=/internal/aldine ALDINE_PUBLIC_URL=http://localhost:${AUTH_PORT}/internal/aldine DATA_DIR=$(pwd)/.data-base-path-auth META_DIR=$(pwd)/.secrets-base-path-auth CACHE_DIR=$(pwd)/.data-base-path-auth/cache OIDC_ISSUER=http://localhost:${OIDC_PORT}/application/o/aldine/ OIDC_CLIENT_ID=aldine-e2e OIDC_CLIENT_SECRET=aldine-e2e-secret npx tsx apps/server/src/index.ts`,
+      command: `PORT=${AUTH_PORT} AUTH_ENABLED=1 ALDINE_BASE_PATH=/internal/aldine ALDINE_PUBLIC_URL=http://localhost:${AUTH_PORT}/internal/aldine DATA_DIR=$(pwd)/.data-base-path-auth META_DIR=$(pwd)/.secrets-base-path-auth CACHE_DIR=$(pwd)/.data-base-path-auth/cache OIDC_ISSUER=http://localhost:${OIDC_PORT}/application/o/aldine/ OIDC_CLIENT_ID=aldine-e2e OIDC_CLIENT_SECRET=aldine-e2e-secret ALDINE_INSTANCE_NAME='Example University Computing Centre' ALDINE_INSTANCE_URL=https://example.org/ ALDINE_INSTANCE_LOGO=$(pwd)/e2e/fixtures/operator/logo.svg ALDINE_INSTANCE_LOGO_DARK=$(pwd)/e2e/fixtures/operator/logo-dark.svg ALDINE_SUPPORT=latex-help@example.org npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: AUTH_PORT,
       reuseExistingServer: true,

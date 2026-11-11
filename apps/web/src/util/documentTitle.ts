@@ -1,7 +1,10 @@
 import { useEffect } from 'react';
+import { INSTANCE } from '../instance';
 
-export function documentTitle(page?: string | null): string {
-  return page ? `${page} – Aldine` : 'Aldine';
+/** "Projects – Aldine", or "Projects – Aldine · Kiel University" when the operator named itself. */
+export function documentTitle(page?: string | null, operator: string | null | undefined = INSTANCE?.name): string {
+  const app = operator ? `Aldine · ${operator}` : 'Aldine';
+  return page ? `${page} – ${app}` : app;
 }
 
 /** The browser tab says which page this is: "Projects – Aldine". */

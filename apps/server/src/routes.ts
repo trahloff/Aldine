@@ -37,6 +37,7 @@ import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import { issuerIsLoopback } from './oidc.js';
 import { readAvatar, syncAvatar } from './avatars.js';
+import { instance } from './instance.js';
 import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
@@ -311,6 +312,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       .header('x-content-type-options', 'nosniff')
       .header('content-security-policy', "default-src 'none'; sandbox")
       .send(a.bytes);
+  });
+
+  // The operator's logo (instance.ts), for the sign-in page too: no sign-in needed.
+  app.get<{ Params: { theme?: string } }>('/api/instance/logo/:theme?', async (req, reply) => {
+    if (req.params.theme !== undefined && req.params.theme !== 'dark') return reply.code(404).send({ error: 'not found' });
+    const logo = (req.params.theme === 'dark' && instance.logoDark) || instance.logo;
+    if (!logo) return reply.code(404).send({ error: 'No logo' });
+    return reply
+      .header('content-type', logo.type)
+      .header('cache-control', 'public, max-age=86400')
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+      .send(logo.bytes);
   });
 
   // The account's display name. Session only: an access token is the

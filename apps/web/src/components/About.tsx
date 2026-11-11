@@ -1,4 +1,6 @@
 import Modal from './Modal';
+import { INSTANCE } from '../instance';
+import { SupportLink } from './Operator';
 
 declare const __ALDINE_VERSION__: string;
 declare const __ALDINE_REV__: string;
@@ -28,6 +30,12 @@ export default function About({ onClose }: { onClose: () => void }) {
         . You are entitled to the complete source of the version running here,
         including any changes this instance&rsquo;s operator has made to it.
       </p>
+      {INSTANCE && (INSTANCE.name || INSTANCE.support) && (
+        <p className="modal__sub" data-testid="about-operator">
+          {INSTANCE.name && <>This instance is run by {INSTANCE.url ? <a href={INSTANCE.url} target="_blank" rel="noreferrer">{INSTANCE.name}</a> : INSTANCE.name}. </>}
+          {INSTANCE.support && <>For help, contact <SupportLink />.</>}
+        </p>
+      )}
       <div className="modal__row">
         <button className="btn" onClick={onClose}>Close</button>
         <a

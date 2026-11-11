@@ -34,6 +34,52 @@ async function orcidPersona(): Promise<{ code: string }> {
 }
 
 test.describe('server admin', () => {
+  test('the support contact set on /admin reaches the sign-in page and the account menu (#288)', async ({ page, browser }) => {
+    await signIn(page, ADMIN_EMAIL, 'Admin');
+    try {
+      await page.goto('/admin');
+      const card = page.getByTestId('admin-support');
+      await expect(card).toBeVisible();
+      await card.getByTestId('admin-support-input').fill('javascript:alert(1)');
+      await card.getByTestId('admin-support-save').click();
+      await expect(card.getByTestId('admin-support-message')).toHaveText('Enter an email address or a link that starts with https://');
+
+      await card.getByTestId('admin-support-input').fill('mailto:latex-help@example.org');
+      await card.getByTestId('admin-support-save').click();
+      await expect(card.getByTestId('admin-support-message')).toHaveText('Saved. People see latex-help@example.org after their next page load.');
+      await expect(card.getByTestId('admin-support-input')).toHaveValue('latex-help@example.org');
+
+      const visitor = await browser.newContext();
+      const anon = await visitor.newPage();
+      await anon.goto('/');
+      await expect(anon.getByTestId('operator-support')).toHaveAttribute('href', 'mailto:latex-help@example.org');
+      await expect(anon.getByTestId('operator-name')).toHaveCount(0);
+      await expect(anon.getByTestId('wordmark').first()).toBeVisible();
+      await visitor.close();
+
+      await page.goto('/');
+      await page.getByTestId('account-menu').click();
+      await expect(page.getByTestId('get-help')).toBeVisible();
+      await page.keyboard.press('Escape');
+
+      const plain = await browser.newContext();
+      const other = await plain.newPage();
+      await signIn(other, uniq('plain-support'), 'Plain');
+      expect((await other.request.put('/api/admin/instance', { data: { support: 'evil@example.org' } })).status()).toBe(403);
+      await plain.close();
+
+      await page.goto('/admin');
+      await page.getByTestId('admin-support-clear').click();
+      await expect(page.getByTestId('admin-support-message')).toHaveText('Cleared. People see no support contact.');
+    } finally {
+      await page.request.put('/api/admin/instance', { data: { support: '' } });
+    }
+    await page.goto('/');
+    await page.getByTestId('account-menu').click();
+    await expect(page.getByTestId('open-about')).toBeVisible();
+    await expect(page.getByTestId('get-help')).toHaveCount(0);
+  });
+
   test('a regular account gets no link, no page, and 403 from the API', async ({ page }) => {
     await signIn(page, uniq('plain'), 'Plain');
     await expect(page.getByTestId('account-menu')).toBeVisible();
