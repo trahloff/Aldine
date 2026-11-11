@@ -2,6 +2,7 @@ import { forwardRef, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { AuthUser, RemoteInfo, RemoteProviderId } from '../../api';
 import { MenuButton, type MenuEntry } from '../Menu';
+import { AvatarFace } from '../AvatarFace';
 import { IconChevronDown, IconEllipsis, IconFile, IconPlus, IconSearch, IconX } from '../Icons';
 import Wordmark from '../Wordmark';
 import { REMOTES } from '../../remotes';
@@ -77,7 +78,9 @@ export function AccountButton(a: AccountActions) {
   if (a.accounts && a.user) {
     return (
       <MenuButton items={items} label="Account" ariaLabel={`Account: ${a.user.name}`} title={a.user.name} className="home-avatar" testId="account-menu" menuTestId="account-menu-list" placement="bottom-end">
-        <span className="home-avatar__face" aria-hidden="true">{initials(a.user.name)}</span>
+        <span className="home-avatar__face" aria-hidden="true">
+          <AvatarFace avatar={a.user.avatar ? `${a.user.id}/${a.user.avatar}` : undefined}>{initials(a.user.name)}</AvatarFace>
+        </span>
       </MenuButton>
     );
   }

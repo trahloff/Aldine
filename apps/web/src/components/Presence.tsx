@@ -1,11 +1,14 @@
 import { IconSpark } from './Icons';
 import { initials } from '../util/homeList';
+import { AvatarFace } from './AvatarFace';
 import { MenuButton, type MenuEntry } from './Menu';
 import type { PresenceRow } from '../util/presence';
 
 export interface PresenceUser {
   name: string;
   color: string;
+  /** "<account id>/<version>" of the person's profile picture (api.avatarSrc). */
+  avatar?: string;
   /** Agent (MCP) sessions — rendered with a glyph avatar, never an initial. */
   isAgent?: boolean;
   /** First time this client saw the agent's awareness state (epoch ms). */
@@ -35,7 +38,7 @@ function Avatar({ r }: { r: PresenceRow }) {
     </span>
   ) : (
     <span className={`presence__avatar${r.here ? '' : ' presence__avatar--elsewhere'}`} style={{ background: r.color }} data-testid="presence-user" data-name={r.name} {...common}>
-      {initials(r.name)}
+      <AvatarFace avatar={r.avatar}>{initials(r.name)}</AvatarFace>
     </span>
   );
 }

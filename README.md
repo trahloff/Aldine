@@ -415,6 +415,9 @@ OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
 OIDC_LABEL=
 OIDC_ALLOWED_GROUPS=
+# Profile pictures from SSO (OIDC `picture`, Google, GitHub) are fetched and served
+# by Aldine itself; 0 keeps initials and fetches nothing
+# ALDINE_AVATARS=0
 # GitHub repo sync: a separate OAuth app with repo scope; GITHUB_URL points
 # it at a GitHub Enterprise Server (PAT connect works without these)
 # GITHUB_URL=https://github.com

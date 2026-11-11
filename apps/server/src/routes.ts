@@ -35,6 +35,8 @@ import { aiAutoFix, aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
+import { issuerIsLoopback } from './oidc.js';
+import { readAvatar, syncAvatar } from './avatars.js';
 import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
@@ -292,6 +294,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
       mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
     };
+  });
+
+  // A signed-in person's profile picture, the server's own copy (avatars.ts).
+  // Any account may load any other's: ids are random, and co-authors on a
+  // project see each other's pictures through presence.
+  app.get<{ Params: { userId: string } }>('/api/users/:userId/avatar', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'not found' });
+    if (!reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
+    const a = readAvatar(req.params.userId);
+    if (!a) return reply.code(404).send({ error: 'No picture' });
+    return reply
+      .header('content-type', a.type)
+      .header('cache-control', 'private, max-age=86400')
+      .header('etag', `"${a.v}"`)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .send(a.bytes);
   });
 
   // The account's display name. Session only: an access token is the
@@ -627,6 +646,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         const callback = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string'));
         const profile = await provider.exchange(q.code, callbackUrl(req, provider.id), oauth.attemptFrom(secret), callback);
         const user = await auth.findOrCreateOAuth(profile, provider.id);
+        syncAvatar(user.id, provider.id, profile.picture, { allowLoopbackHttp: provider.id === 'oidc' && issuerIsLoopback() }).catch(() => {});
         reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {

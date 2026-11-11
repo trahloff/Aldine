@@ -50,10 +50,10 @@ export function branchAgentOf(states: Map<number, unknown>): BranchAgent | null 
 }
 
 /** Someone else's tab on the branch, and the file it shows (null: none). */
-export interface BranchPeer { clientId: number; name: string; color: string; file: string | null }
+export interface BranchPeer { clientId: number; name: string; color: string; avatar?: string; file: string | null }
 
 /** What this tab tells the branch about itself. */
-export interface BranchSelf { name: string; color: string; file: string | null }
+export interface BranchSelf { name: string; color: string; avatar?: string; file: string | null }
 
 export interface BranchSignalHandle {
   /** Tell the branch this client changed the file list. */
@@ -156,7 +156,7 @@ export function useBranchSignal(
       const me = selfRef.current;
       if (!me) return;
       try {
-        provider.setAwarenessField('user', { name: me.name, color: me.color });
+        provider.setAwarenessField('user', { name: me.name, color: me.color, ...(me.avatar ? { avatar: me.avatar } : {}) });
         provider.setAwarenessField('file', me.file);
       } catch { /* not connected yet; the synced handler publishes again */ }
     };
@@ -167,10 +167,10 @@ export function useBranchSignal(
       const peers: BranchPeer[] = [];
       awareness.getStates().forEach((state, clientId) => {
         if (clientId === awareness.clientID) return;
-        const { user, file } = state as { user?: { name?: unknown; color?: unknown; isAgent?: unknown }; file?: unknown };
+        const { user, file } = state as { user?: { name?: unknown; color?: unknown; avatar?: unknown; isAgent?: unknown }; file?: unknown };
         // the server's own state here is the agent's session (onAgent), not a tab
         if (typeof user?.name !== 'string' || !user.name || user.isAgent) return;
-        peers.push({ clientId, name: user.name, color: typeof user.color === 'string' ? user.color : 'var(--text-3)', file: typeof file === 'string' ? file : null });
+        peers.push({ clientId, name: user.name, color: typeof user.color === 'string' ? user.color : 'var(--text-3)', ...(typeof user.avatar === 'string' ? { avatar: user.avatar } : {}), file: typeof file === 'string' ? file : null });
       });
       cbRef.current.onRoster?.(peers);
     };

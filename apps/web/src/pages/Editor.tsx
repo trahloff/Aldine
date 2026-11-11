@@ -1198,7 +1198,7 @@ export default function Editor() {
     { onFilesChanged, onAgentWrite, onAgentTypesetStarted, onAgentTypesetFinished, onTypesetFinished, onCommitted, onRoster: setPeers, onAgent },
     auto && hasTex,
     session,
-    { name: identity.name, color: identity.color, file: activeFile },
+    { name: identity.name, color: identity.color, avatar: 'avatar' in identity ? identity.avatar : undefined, file: activeFile },
   );
   signal.current = signalHandle;
   useEffect(() => {

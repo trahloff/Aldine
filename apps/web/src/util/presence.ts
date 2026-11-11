@@ -26,8 +26,9 @@ export function presenceRows(inFile: readonly PresenceUser[], peers: readonly Br
   for (const p of peers) {
     if (isSelf(p)) continue;
     const here = !!activeFile && p.file === activeFile;
-    if (here) add({ name: p.name, color: p.color, here, file: p.file });
-    else elsewhere.push({ name: p.name, color: p.color, here, file: p.file });
+    const row: PresenceRow = { name: p.name, color: p.color, ...(p.avatar ? { avatar: p.avatar } : {}), here, file: p.file };
+    if (here) add(row);
+    else elsewhere.push(row);
   }
   elsewhere.sort((a, b) => (a.file ?? '￿').localeCompare(b.file ?? '￿') || a.name.localeCompare(b.name));
   for (const r of elsewhere) add(r);
