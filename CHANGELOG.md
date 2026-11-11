@@ -7,6 +7,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Profile pictures. With single sign-on, the picture your identity provider
+  sends (the OIDC `picture` claim, your Google or GitHub picture) replaces
+  the initials on the account button and in the editor's list of people.
+  Aldine fetches it once at sign-in and serves its own copy, so co-authors'
+  browsers never contact the provider. `ALDINE_AVATARS=0` turns it off.
+  Details in docs/OIDC.md. Refs #277.
+
 ## [1.9.1] — 2026-11-07
 
 ### Added

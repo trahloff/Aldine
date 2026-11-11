@@ -9,6 +9,7 @@ import { DEFAULT_LABEL as OIDC_DEFAULT_LABEL } from './oidc.js';
 import { discardCodesForUser } from './oauth/codes.js';
 import { subkey } from './output-signing.js';
 import { SESSION_DAYS, firstExpiry, renewIfDue } from './sessions.js';
+import { avatarVersion, removeAvatar } from './avatars.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -87,13 +88,15 @@ export const CONFIRM_TTL_DAYS = 7;
 export type { User } from './db/types.js';
 /** `emailPending` is present (true) only while a password sign-up has not
  *  confirmed its address; isMember and isAdmin then ignore the address. */
-export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true }
+/** `avatar`: version of the stored profile picture, served at /api/users/:id/avatar. */
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';
 
 export function pub(u: User): PublicUser {
-  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}) };
+  const avatar = avatarVersion(u.id);
+  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}), ...(avatar ? { avatar } : {}) };
 }
 /** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
 export function orcidOf(u: { subject?: string }): string | undefined {
@@ -645,6 +648,7 @@ export async function issueReset(userId: string): Promise<{ token: string; user:
 export async function deleteAccount(userId: string): Promise<void> {
   discardCodesForUser(userId);
   await db().deleteUser(userId);
+  removeAvatar(userId);
 }
 
 // ---------- personal access tokens (headless agent credentials) ----------

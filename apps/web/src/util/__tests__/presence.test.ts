@@ -27,3 +27,16 @@ describe('presenceRows', () => {
     expect(rows.map((r) => [r.name, r.file])).toEqual([['Cy', 'a.tex'], ['Bob', 'b.tex'], ['Cy', null]]);
   });
 });
+
+describe('avatar refs', () => {
+  it('build only this server\'s avatar route, never a URL a peer chose', async () => {
+    const { avatarSrc } = await import('../../api');
+    expect(avatarSrc('KQJrqeGCtGxo/19a7f3c2b10')).toBe('/api/users/KQJrqeGCtGxo/avatar?v=19a7f3c2b10');
+    for (const bad of ['https://tracker.example/p.png', '../x/1', 'a/b/c', 'id/NOTHEX', '', 42, undefined]) expect(avatarSrc(bad)).toBeNull();
+  });
+
+  it('carry a peer\'s picture onto its row', () => {
+    const rows = presenceRows([], [{ clientId: 1, ...bob, avatar: 'bob1/ab', file: 'a.tex' }], 'a.tex', me);
+    expect(rows[0].avatar).toBe('bob1/ab');
+  });
+});

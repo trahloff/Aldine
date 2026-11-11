@@ -177,7 +177,7 @@ interface Props {
   mode?: EditorMode;
   /** Who this client is to collaborators (awareness): the account when
    *  signed in; without one the browser's anonymous "Writer N". */
-  identity?: { name: string; color: string };
+  identity?: { name: string; color: string; avatar?: string };
   /** A read-only showcase: nothing typed or inserted here changes the text. */
   readOnly?: boolean;
   /** Whether this file's edits have reached the server; on every change. */
@@ -432,7 +432,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const onYChange = (_e: unknown, tr: { local: boolean }) => cbRef.current.onDocChanged?.(tr.local);
     ytext.observe(onYChange);
     const user = identity ?? localUser();
-    provider.setAwarenessField('user', { name: user.name, color: user.color, colorLight: user.color + '55' });
+    provider.setAwarenessField('user', { name: user.name, color: user.color, colorLight: user.color + '55', ...('avatar' in user && user.avatar ? { avatar: user.avatar } : {}) });
 
     const awareness = provider.awareness!;
     const modeComp = new Compartment();
@@ -716,8 +716,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   }, [vim, projectId, branch, filePath]);
   // A name changed while the file is open reaches co-authors' avatars at once.
   useEffect(() => {
-    if (identity) providerRef.current?.setAwarenessField('user', { name: identity.name, color: identity.color, colorLight: identity.color + '55' });
-  }, [identity?.name, identity?.color]);
+    if (identity) providerRef.current?.setAwarenessField('user', { name: identity.name, color: identity.color, colorLight: identity.color + '55', ...(identity.avatar ? { avatar: identity.avatar } : {}) });
+  }, [identity?.name, identity?.color, identity?.avatar]);
   // The project's details load again while its pane is open, and the
   // showcase flag in them can have changed.
   useEffect(() => {

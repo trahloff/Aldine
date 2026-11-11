@@ -126,6 +126,8 @@ export function oidcSubject(iss: string, sub: string): string {
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 const isLoopback = (raw: string) => { try { return LOOPBACK.has(new URL(raw).hostname); } catch { return false; } };
+/** The `picture` URL may be plain http to this machine when the issuer is on it, as for its other endpoints. */
+export const issuerIsLoopback = (): boolean => { const c = oidcConfig(); return !!c && isLoopback(c.issuer); };
 /**
  * https, or plain http to this machine when the issuer itself is on this
  * machine (a local IdP, the test suites). A remote issuer's discovery document
@@ -347,7 +349,9 @@ export function profileFrom(idClaims: Claims, info: Claims | null, c: OidcConfig
   const email = verified && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rawEmail) ? rawEmail : null;
   const pick = (k: string) => clean(idClaims[k], 100) || clean(info?.[k], 100);
   const name = pick('name') || pick('preferred_username') || (email ? email.split('@')[0] : '') || sub.slice(0, 100);
-  return { email, name, subject: oidcSubject(iss, sub) };
+  // Uncut: a data: URI runs far past clean()'s lengths; avatars.ts caps the decoded image.
+  const picture = [idClaims.picture, info?.picture].find((v): v is string => typeof v === 'string' && v.length > 0 && v.length <= 1_500_000);
+  return { email, name, subject: oidcSubject(iss, sub), ...(picture ? { picture } : {}) };
 }
 
 /** Throws the sign-in refusal when OIDC_ALLOWED_GROUPS is set and the person is in none of them. */
@@ -419,6 +423,7 @@ export const oidc: OAuthProvider = {
     const access = typeof tok.access_token === 'string' ? tok.access_token : undefined;
     const needsInfo = typeof claims.email !== 'string'
       || (!claims.name && !claims.preferred_username)
+      || typeof claims.picture !== 'string'
       || (c.allowedGroups.length > 0 && groupsOf(claims[c.groupsClaim]) === null);
     const info = needsInfo ? await userinfo(d, access, claims.sub as string) : null;
     checkGroups(claims, info, c);

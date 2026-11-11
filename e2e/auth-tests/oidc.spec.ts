@@ -66,6 +66,41 @@ test.describe('OIDC sign-in', () => {
     await expect(page.getByTestId('project-grid')).toContainText(name, { timeout: 15_000 });
   });
 
+  test('the picture claim shows on the account button and to co-authors, served by Aldine', async ({ page, browser }) => {
+    const ada = await persona({ picture: `${OIDC}/media/avatar.png` });
+    await signIn(page, ada);
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    // The picture is fetched after the redirect; the next load of /me carries it.
+    await expect(async () => {
+      await page.reload();
+      await expect(page.getByTestId('account-menu').getByTestId('avatar-img')).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 15_000 });
+    const own = page.getByTestId('account-menu').getByTestId('avatar-img');
+    expect(await own.getAttribute('src')).toMatch(/^\/api\/users\/[\w-]+\/avatar\?v=[0-9a-f]+$/);
+    expect(await own.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(2);
+
+    const proj = await (await page.request.post('/api/projects', { data: { name: `Avatar paper ${uid()}` } })).json();
+    expect((await page.request.post(`/api/projects/${proj.id}/share`, { data: { mode: 'link', collaborators: [] } })).ok()).toBeTruthy();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+
+    const bobCtx = await browser.newContext();
+    try {
+      const bob = await bobCtx.newPage();
+      const bobPersona = await persona();
+      await signIn(bob, bobPersona);
+      await expect(bob.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+      // No picture claim: initials, no image.
+      await expect(bob.getByTestId('account-menu').getByTestId('avatar-img')).toHaveCount(0);
+      await bob.goto(`/p/${proj.id}`);
+      const adaThere = bob.getByTestId('presence').locator(`[data-name="${ada.claims.name}"]`);
+      await expect(adaThere.getByTestId('avatar-img')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('presence').locator(`[data-name="${bobPersona.claims.name}"]`)).toHaveText('O1');
+    } finally {
+      await bobCtx.close();
+    }
+  });
+
   test('an unverified email does not link to an existing account with that address', async ({ page, browser }) => {
     const address = `victim${uid()}@example.org`;
     const victim = await browser.newContext();

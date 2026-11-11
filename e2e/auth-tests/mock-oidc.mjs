@@ -26,6 +26,9 @@ const sha256 = (s) => crypto.createHash('sha256').update(s).digest('base64url');
  * @param {string[]} [opts.authMethods] token_endpoint_auth_methods_supported
  * @param {string[]} [opts.algs] id_token_signing_alg_values_supported (undefined = omitted)
  */
+/** A 2×2 PNG, solid #2e62e9. */
+export const AVATAR_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPQS3oJRAwQCgAmXgXlTZmj9QAAAABJRU5ErkJggg==', 'base64');
+
 export function createMockOidc(opts = {}) {
   const issuerPath = opts.issuerPath ?? '/application/o/aldine/';
   const clientId = opts.clientId ?? 'aldine-e2e';
@@ -177,6 +180,17 @@ export function createMockOidc(opts = {}) {
       const persona = m && tokens.get(m[1]);
       if (!persona) return json(401, { error: 'invalid_token' });
       return json(200, { sub: persona.tamper === 'userinfo-other-sub' ? 'someone-else' : persona.sub, ...persona.claims, ...(persona.userinfo || {}) });
+    }
+
+    // Profile pictures a persona's `picture` claim can point at, as Authentik serves uploads.
+    if (url.pathname === '/media/avatar.png') {
+      state.avatarHits = (state.avatarHits || 0) + 1;
+      res.writeHead(200, { 'content-type': 'image/png' });
+      return res.end(AVATAR_PNG);
+    }
+    if (url.pathname === '/media/avatar.svg') {
+      res.writeHead(200, { 'content-type': 'image/svg+xml' });
+      return res.end('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
     }
 
     if (url.pathname === '/__personas' && req.method === 'POST') {

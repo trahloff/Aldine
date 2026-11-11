@@ -216,6 +216,30 @@ change it there with `UPDATE sign_in_links SET subject = '<new subject>' WHERE
 subject = '<old subject>';`, or let the person disconnect and connect it again
 from Account settings.
 
+## Profile pictures
+
+When the IdP sends a `picture` claim (in the ID token, or from userinfo when
+the ID token has none), Aldine shows that picture instead of the initials: on
+the account button and to co-authors in the editor's list of people. Google
+and GitHub sign-in do the same with their profile pictures.
+
+Aldine fetches the picture itself, once per sign-in and at most once a day
+while the URL stays the same, and keeps a copy in `META_DIR/meta/avatars/`.
+Browsers load it from Aldine (`/api/users/<id>/avatar`, signed-in accounts
+only), never from the IdP. So co-authors' addresses don't reach the IdP, and
+a picture that only signed-in IdP users may load still shows.
+
+- Accepted: PNG, JPEG, GIF and WebP up to 1 MB, from an `https` URL (plain
+  `http` only when the issuer is on `localhost`) or a base64 `data:` URI.
+  SVG is refused, because it can carry script. Redirects are not followed.
+- A picture that cannot be fetched is logged
+  (`[aldine] profile picture from oidc for account … not stored: …`) and
+  sign-in goes on; the account keeps its earlier picture or its initials.
+- When the IdP stops sending `picture`, the next sign-in removes the copy.
+  Deleting the account removes it too.
+- `ALDINE_AVATARS=0` turns all of this off: Aldine fetches nothing and shows
+  initials.
+
 ## Access control
 
 - Accounts created by single sign-on never have a password. Aldine refuses to

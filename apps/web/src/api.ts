@@ -5,7 +5,8 @@ import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from
 /** email is null for accounts whose provider shared none (ORCID); orcid is the iD when signed in that way. */
 /** `emailPending`: a password sign-up whose address is not confirmed yet;
  *  projects shared with that address stay hidden until it is. */
-export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true }
+/** `avatar`: version of the profile picture the server keeps for the account, absent without one. */
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string }
 export interface OAuthProviderInfo { id: string; label: string }
 /** Account settings, Sign-in methods. `password`: the password signs in
  *  here; `provider`: the provider a single sign-on account belongs to;
@@ -824,8 +825,21 @@ export function setLocalName(name: string): string {
 
 /** Presence identity of a signed-in person: the account name, with a colour
  *  that is the same in every browser they open the project from. */
-export function accountIdentity(user: { id: string; name: string; email?: string | null }): { name: string; color: string } {
+export function accountIdentity(user: { id: string; name: string; email?: string | null; avatar?: string }): { name: string; color: string; avatar?: string } {
   let h = 0;
   for (const ch of user.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return { name: user.name || user.email || 'Signed in', color: PRESENCE_PALETTE[h % PRESENCE_PALETTE.length] };
+  return {
+    name: user.name || user.email || 'Signed in',
+    color: PRESENCE_PALETTE[h % PRESENCE_PALETTE.length],
+    ...(user.avatar ? { avatar: `${user.id}/${user.avatar}` } : {}),
+  };
+}
+
+const AVATAR_REF = /^([\w-]{1,64})\/([0-9a-f]{1,16})$/;
+/** The image URL for an identity's `avatar` ("<account id>/<version>"), or
+ *  null. Peers set it in their own awareness state, so only this server's
+ *  avatar route is ever built from it: never a URL a peer chose. */
+export function avatarSrc(ref: unknown): string | null {
+  const m = typeof ref === 'string' ? AVATAR_REF.exec(ref) : null;
+  return m ? withBase(`/api/users/${m[1]}/avatar?v=${m[2]}`) : null;
 }
