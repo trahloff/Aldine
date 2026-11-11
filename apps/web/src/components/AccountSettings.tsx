@@ -499,6 +499,74 @@ function NameRow({ user }: { user: AuthUser }) {
   );
 }
 
+/** The author email on commits Aldine makes for this account (push,
+ *  checkpoints, branch switches); the author name stays the account name. */
+function CommitEmailRow({ user }: { user: AuthUser }) {
+  const { setUser } = useAuth();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(user.commitEmail ?? '');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    const commitEmail = value.trim();
+    if (commitEmail === (user.commitEmail ?? '')) { setEditing(false); return; }
+    setBusy(true);
+    try {
+      const r = await api.updateMe({ commitEmail });
+      setUser(r.user);
+      setEditing(false);
+      setError('');
+      toast(r.user.commitEmail ? `Your commits now use ${r.user.commitEmail}` : 'Your commits no longer use a commit email', 'ok');
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setBusy(false);
+  };
+  if (!editing) {
+    return (
+      <div className="settings__row" data-testid="account-commit-email-row">
+        <span className="settings__label">Commit email</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span data-testid="account-commit-email" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: user.commitEmail ? undefined : 'var(--text-2)' }}>{user.commitEmail || 'Not set'}</span>
+          <button type="button" className="link-button" onClick={() => { setValue(user.commitEmail ?? ''); setError(''); setEditing(true); }} aria-label={user.commitEmail ? 'Change your commit email' : 'Set a commit email'} data-testid="account-commit-email-edit">{user.commitEmail ? 'Change' : 'Set'}</button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={save} noValidate data-testid="account-commit-email-form">
+      <div className="settings__row">
+        <label className="settings__label" htmlFor="account-commit-email-input">Commit email</label>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <input
+            id="account-commit-email-input"
+            className="input"
+            type="email"
+            value={value}
+            maxLength={254}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            placeholder="12345+name@users.noreply.github.com"
+            aria-describedby="account-commit-email-hint"
+            aria-invalid={error ? true : undefined}
+            onChange={(e) => { setValue(e.target.value); setError(''); }}
+            data-testid="account-commit-email-input"
+          />
+          <button type="button" className="btn btn--small" onClick={() => { setEditing(false); setError(''); }} data-testid="account-commit-email-cancel">Cancel</button>
+          <button type="submit" className="btn btn--small btn--primary" disabled={busy} aria-busy={busy || undefined} data-testid="account-commit-email-save">{busy ? 'Saving…' : 'Save'}</button>
+        </span>
+      </div>
+      {error
+        ? <p className="field__error" role="alert" data-testid="account-commit-email-error">{error}</p>
+        : <p className="login__hint" id="account-commit-email-hint">Commits Aldine makes for you carry this address, so GitHub or GitLab can link them to your profile. Use your host’s noreply address to keep your own private. Leave it empty to stop.</p>}
+    </form>
+  );
+}
+
 /** Account settings: identity, agent access, change password (password accounts only). */
 export default function AccountSettings({ user, onClose, focus }: { user: AuthUser; onClose(): void; focus?: 'sign-in' }) {
   const [current, setCurrent] = useState('');
@@ -557,6 +625,8 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         <AgentAccess onSecret={setSecretShown} />
 
         <GitHosts />
+        {/* Below the agent card, which must open above the sticky footer. */}
+        <CommitEmailRow user={user} />
 
         <ZoteroKey />
 

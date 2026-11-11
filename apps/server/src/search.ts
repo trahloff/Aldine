@@ -302,7 +302,7 @@ function writeDisk(projectId: string, branch: string, rel: string, text: string)
  * collaborator touched meanwhile. The named commit is built from the held
  * before/after texts, so its diff is exactly the replacements.
  */
-export async function replaceInProject(projectId: string, branch: string, body: ReplaceBody, author: string | undefined, gateKey: string): Promise<ReplaceResponse> {
+export async function replaceInProject(projectId: string, branch: string, body: ReplaceBody, author: gitops.CommitAuthor | undefined, gateKey: string): Promise<ReplaceResponse> {
   const opts: SearchOptions = { caseSensitive: body.case === true, wholeWord: body.word === true, regex: body.regex === true };
   if (typeof body.replace !== 'string') throw new SearchError(400, { error: 'Send the replacement text as replace' });
   // A document holds LF only; a CRLF file gets its CRs back when it is written.

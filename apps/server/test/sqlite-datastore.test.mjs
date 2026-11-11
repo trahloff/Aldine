@@ -277,8 +277,8 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  // Schema 1 is the current tables without sessions.created_at and sign_in_links.
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; PRAGMA user_version=1');
+  // Schema 1 is the current tables without sessions.created_at, sign_in_links and users.commit_email.
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
   raw.prepare('INSERT INTO sessions(sid,user_id,exp) VALUES(?,?,?)').run('old', 'ada', later);
   raw.close();
   const s = new SqliteStore(file);
@@ -286,7 +286,7 @@ async function readAll(s) {
   eq(await s.getSession('old'), { userId: 'ada', exp: later, createdAt: later - 30 * 86_400_000 }, 'a session from schema 1 began 30 days before its expiry');
   await s.close();
   const after = new DatabaseSync(file);
-  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 3, 'and the file is at schema 3');
+  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 4, 'and the file is at schema 4');
   after.close();
 }
 
@@ -299,7 +299,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; PRAGMA user_version=1');
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -308,8 +308,28 @@ async function readAll(s) {
   eq(await upgraded.listSignInLinks('ada'), [link], 'and read back');
   await upgraded.close();
   const check2 = new DatabaseSync(file);
-  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 3, 'the file is at schema 3');
+  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 4, 'the file is at schema 4');
   check2.close();
+}
+
+// ---- a file from 1.10 (schema 3) gets users.commit_email, keeping its rows ----
+{
+  const file = at(freshDir(), SQLITE_FILE);
+  const first = new SqliteStore(file);
+  await first.init();
+  await first.createUser(ada);
+  await first.close();
+  const { DatabaseSync } = await loadSqlite();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=3');
+  raw.close();
+  const upgraded = new SqliteStore(file);
+  await upgraded.init();
+  const kept = await upgraded.getUser('ada');
+  eq([kept.email, kept.commitEmail], [ada.email, undefined], 'the account stays, without a commit email');
+  await upgraded.updateUser({ ...kept, commitEmail: 'ada@users.noreply.github.com' });
+  eq((await upgraded.getUser('ada')).commitEmail, 'ada@users.noreply.github.com', 'and can store one after the upgrade');
+  await upgraded.close();
 }
 
 // ---- ALDINE_DATASTORE ----

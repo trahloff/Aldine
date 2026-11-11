@@ -110,6 +110,18 @@ function reqUser(req: any): auth.PublicUser | null {
   return req._user ?? null;
 }
 
+/** A commit identity under `name`, with the account's own commit email when
+ *  it set one. Never looked up by name: names are not unique. */
+function accountAuthor(u: auth.PublicUser, name: string): gitops.CommitAuthor {
+  return u.commitEmail ? { name, email: u.commitEmail } : name;
+}
+
+/** The signed-in person as the author of a commit their request makes. */
+function reqAuthor(req: any): gitops.CommitAuthor | undefined {
+  const u = reqUser(req);
+  return u?.name ? accountAuthor(u, u.name) : undefined;
+}
+
 /** Validate an email/password body before it reaches auth (avoids leaking
  *  internal TypeErrors on malformed requests, and caps lengths). Returns an
  *  error message, or null when the shape is acceptable. */
@@ -327,16 +339,22 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       .send(logo.bytes);
   });
 
-  // The account's display name. Session only: an access token is the
-  // agent's, not the person.
-  app.patch<{ Body: { name?: unknown } }>('/api/auth/me', async (req, reply) => {
+  // The account's display name and commit email. Session only: an access
+  // token is the agent's, not the person.
+  app.patch<{ Body: { name?: unknown; commitEmail?: unknown } }>('/api/auth/me', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot change the account — sign in to do this' });
     const user = reqUser(req);
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
     if (!(await visitLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
     try {
-      return { user: await auth.setName(user.id, req.body?.name) };
+      const body = req.body || {};
+      // Validated before either write, so a bad address cannot leave a renamed account behind.
+      if ('commitEmail' in body) auth.cleanCommitEmail(body.commitEmail);
+      let out: auth.PublicUser | null = null;
+      if ('name' in body || !('commitEmail' in body)) out = await auth.setName(user.id, body.name);
+      if ('commitEmail' in body) out = await auth.setCommitEmail(user.id, body.commitEmail);
+      return { user: out };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
 
@@ -344,9 +362,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
    *  whenever there is one — the browser's anonymous "Writer N" identity is
    *  only right without accounts, and the audit trail must name the person
    *  who undid Claude's work. */
-  const commitAuthor = (req: any, fallback?: string): string | undefined => {
+  const commitAuthor = (req: any, fallback?: string): gitops.CommitAuthor | undefined => {
     const u = reqUser(req);
-    return (auth.AUTH_ENABLED && u && (u.name || u.email)) || fallback;
+    const name = auth.AUTH_ENABLED && u && (u.name || u.email);
+    return name ? accountAuthor(u!, name) : fallback;
   };
 
   /** 403 when password sign-in is disabled (SSO-only mode). */
@@ -1800,7 +1819,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // tree, and the uncommitted edits stay uncommitted.
     let tree = branch;
     if (meta.manualCommits) tree = await gitops.workingTreeId(req.params.id, branch);
-    else await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqUser(req)?.name).catch(() => {});
+    else await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqAuthor(req)).catch(() => {});
     const folder = archiveFolderName(meta.name);
     const zip = await gitops.archiveZip(req.params.id, branch, tree);
     return reply
@@ -2299,7 +2318,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
           const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === gitops.AGENT_COMMIT_AUTHOR).length;
           if (agentCommits) console.log(`[metric] agent_revert user=${reqUser(req)?.id ?? 'operator'} project=${req.params.id} commits=${agentCommits}`);
         }
-        return { ...result, author: author ?? null };
+        return { ...result, author: gitops.authorName(author) ?? null };
       } catch (err) {
         return reply.code(err instanceof gitops.RevertRefusedError ? 400 : 409).send({ error: (err as Error).message });
       }
@@ -3145,7 +3164,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
     flushBranchDocs(req.params.id, 'main');
-    await gitops.autoCommit(req.params.id, 'main', `aldine: publish to ${p.label}`, reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', `aldine: publish to ${p.label}`, reqAuthor(req)).catch(() => {});
     const link: store.RemoteLink = { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch: 'main', cloneUrl: info.cloneUrl, ...(conn.baseUrl ? { baseUrl: conn.baseUrl } : {}), connectedBy: remoteUserId(req) };
     store.setRemoteLink(meta, link);
     await store.writeMeta(meta);
@@ -3170,7 +3189,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing
     const message = cleanCommitMessage(req.body?.message, 'Update from Aldine');
-    const commit = await gitops.autoCommit(req.params.id, 'main', message, reqUser(req)?.name).catch(() => ({ committed: false, hash: undefined as string | undefined }));
+    const commit = await gitops.autoCommit(req.params.id, 'main', message, reqAuthor(req)).catch(() => ({ committed: false, hash: undefined as string | undefined }));
     // HEAD is the commit hash we just made (when we committed), else look it up.
     const head = commit.committed ? commit.hash ?? null : await gitops.headCommit(req.params.id).catch(() => null);
     // Auto-sync (client sends auto:true, fires ~every 20s) skips the full git-push
@@ -3191,7 +3210,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   projectRoute('post', 'pull', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main');
-    await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Local changes before pull'), reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Local changes before pull'), reqAuthor(req)).catch(() => {});
     try {
       const before = await gitops.branchHead(req.params.id, 'main');
       const result = await gitops.pullFromRemote(req.params.id, l.remoteBranch, l.url);
@@ -3210,7 +3229,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!(await requireOwner(req, reply, 'discard local changes'))) return;
     const l = await linkedRemote(req, reply); if (!l) return;
     flushBranchDocs(req.params.id, 'main');
-    await gitops.autoCommit(req.params.id, 'main', `Local changes before taking ${l.provider.label}'s version`, reqUser(req)?.name).catch(() => {});
+    await gitops.autoCommit(req.params.id, 'main', `Local changes before taking ${l.provider.label}'s version`, reqAuthor(req)).catch(() => {});
     try {
       const { changed, kept } = await gitops.keepThenResetToRemote(req.params.id, l.remoteBranch, l.url, keepName());
       if (kept) markTreeChanged(req.params.id, kept);
@@ -3246,7 +3265,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       // The hard reset below drops uncommitted edits and every commit of main
       // the host lacks, so a save that does not land stops the switch, unless
       // main has nothing the host lacks.
-      try { await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Save before switching branch'), reqUser(req)?.name); }
+      try { await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Save before switching branch'), reqAuthor(req)); }
       catch { return reply.code(409).send({ error: 'Could not save the latest edits before switching, so nothing changed. Try again in a moment.', code: 'save-failed' }); }
       try { await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url); }
       catch (err: any) {
@@ -3277,7 +3296,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
     flushBranchDocs(req.params.id, 'main');
     try {
-      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Start branch ${name}`), reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Start branch ${name}`), reqAuthor(req)).catch(() => {});
       await gitops.pushToRemote(req.params.id, name, l.url); // push creates the remote branch
       store.setRemoteLink(l.meta, { ...l.link, remoteBranch: name }); await store.writeMeta(l.meta);
       return { ok: true, branch: name };
@@ -3293,7 +3312,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     let base = '';
     try {
       flushBranchDocs(req.params.id, 'main'); // capture unsaved editor content before committing (parity with push/pull/switch/create)
-      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Update before ${noun}`), reqUser(req)?.name).catch(() => {});
+      await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), `Update before ${noun}`), reqAuthor(req)).catch(() => {});
       await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
       const repo = await l.provider.getRepo(l.conn, l.link.fullName);
       base = repo.defaultBranch;

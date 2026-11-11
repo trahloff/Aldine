@@ -89,14 +89,16 @@ export type { User } from './db/types.js';
 /** `emailPending` is present (true) only while a password sign-up has not
  *  confirmed its address; isMember and isAdmin then ignore the address. */
 /** `avatar`: version of the stored profile picture, served at /api/users/:id/avatar. */
-export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string }
+/** `commitEmail`: the account's own commit author address. Only for the
+ *  person themself (their /api/auth/me) and the commits their requests make. */
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';
 
 export function pub(u: User): PublicUser {
   const avatar = avatarVersion(u.id);
-  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}), ...(avatar ? { avatar } : {}) };
+  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}), ...(avatar ? { avatar } : {}), ...(u.commitEmail ? { commitEmail: u.commitEmail } : {}) };
 }
 /** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
 export function orcidOf(u: { subject?: string }): string | undefined {
@@ -385,6 +387,35 @@ export async function setName(userId: string, name: unknown): Promise<PublicUser
   user.name = clean;
   await db().updateUser(user);
   return pub(user);
+}
+
+/** Longest address RFC 5321 lets through a mail path. */
+export const COMMIT_EMAIL_MAX = 254;
+/** One @, no whitespace, control characters, angle brackets, quotes or
+ *  commas: the value goes into `--author=Name <email>` and GIT_AUTHOR_EMAIL,
+ *  where any of those would end or corrupt the ident. */
+const COMMIT_EMAIL_RE = /^[^\u0000-\u0020\u007f<>@,"]+@[^\u0000-\u0020\u007f<>@,"]+$/;
+
+/** The validated commit email, or null for an empty value (clears it). */
+export function cleanCommitEmail(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') throw new Error('Enter an email address');
+  const clean = v.trim();
+  if (!clean) return null;
+  if (clean.length > COMMIT_EMAIL_MAX) throw new Error(`Use an email address of at most ${COMMIT_EMAIL_MAX} characters`);
+  if (!COMMIT_EMAIL_RE.test(clean)) throw new Error('Enter an email address like name@example.com');
+  return clean;
+}
+
+/** The author email on commits this account's requests make; empty clears it. */
+export async function setCommitEmail(userId: string, value: unknown): Promise<PublicUser> {
+  const clean = cleanCommitEmail(value);
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  if (clean) user.commitEmail = clean;
+  else delete user.commitEmail;
+  await db().updateUser(user);
+  return pubFull(user);
 }
 
 // ---------- sign-in methods: single sign-on connected to a password account ----------

@@ -172,6 +172,23 @@ function byIntent(paths: Map<string, string>): Array<{ message: string; paths: s
   return [...groups].map(([message, ps]) => ({ message, paths: ps }));
 }
 
+const authorEmail = (author: string) => `${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local`;
+
+/** Who a commit is by: a display name, or a name with the account's own
+ *  commit email (auth.cleanCommitEmail vetted it). History, session review
+ *  and the agent checks compare the name only. */
+export type CommitAuthor = string | { name: string; email?: string };
+export const authorName = (a: CommitAuthor | undefined): string | undefined => (typeof a === 'string' ? a : a?.name);
+function authorIdent(a: CommitAuthor): { name: string; email: string } {
+  const name = authorName(a)!;
+  return { name, email: (typeof a === 'object' && a.email) || authorEmail(name) };
+}
+function authorArg(a: CommitAuthor | undefined): string[] {
+  if (!a || !authorName(a)) return [];
+  const { name, email } = authorIdent(a);
+  return [`--author=${name} <${email}>`];
+}
+
 /**
  * `git commit` as one argv with `--` before the pathspec and the author
  * before it: simple-git's commit(message, files, opts) appends options after
@@ -186,22 +203,19 @@ function byIntent(paths: Map<string, string>): Array<{ message: string; paths: s
  * prefixes still match. Argv, not GIT_LITERAL_PATHSPECS in the child env:
  * simple-git refuses a supplied env that carries the operator's GIT_EDITOR.
  */
-const authorEmail = (author: string) => `${author.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@aldine.local`;
-
-async function commitArgv(g: ReturnType<typeof git>, message: string, author: string | undefined, paths?: string[]): Promise<string> {
-  const args = ['--literal-pathspecs', 'commit', '-m', message];
-  if (author) args.push(`--author=${author} <${authorEmail(author)}>`);
+async function commitArgv(g: ReturnType<typeof git>, message: string, author: CommitAuthor | undefined, paths?: string[]): Promise<string> {
+  const args = ['--literal-pathspecs', 'commit', '-m', message, ...authorArg(author)];
   if (paths?.length) args.push('--', ...paths);
   await g.raw(args);
   return (await g.revparse(['HEAD'])).trim();
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
-export function commitAll(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+export function commitAll(id: string, branch: string, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string }> {
   return withRepoLock(id, () => commitAllHeld(id, branch, message, author));
 }
 
-export async function commitAllHeld(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+export async function commitAllHeld(id: string, branch: string, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string }> {
   const dir = await ensureWorktree(id, branch);
   const g = git(dir);
   ensureOutputExcluded(id);
@@ -231,7 +245,7 @@ export async function commitAllHeld(id: string, branch: string, message: string,
  * human deleted before the debounce fired) stages NOTHING, which would push
  * every other agent path in the window into the anonymous sweep.
  */
-export async function commitPathsHeld(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export async function commitPathsHeld(id: string, branch: string, paths: string[], message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   if (!paths.length) return { committed: false, files: [] };
   const dir = await ensureWorktree(id, branch);
   const g = git(dir);
@@ -252,13 +266,13 @@ export async function commitPathsHeld(id: string, branch: string, paths: string[
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
-export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
 }
 
 /** Commit the removal of `rel` — a file, or a folder with everything git
  *  tracked inside it — and nothing else that is dirty on the branch. */
-export async function commitRemovalHeld(id: string, branch: string, rel: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export async function commitRemovalHeld(id: string, branch: string, rel: string, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   const dir = await ensureWorktree(id, branch);
   const gone = (await git(dir).status()).deleted.filter((p) => p === rel || p.startsWith(`${rel}/`));
   return commitPathsHeld(id, branch, gone, message, author);
@@ -297,7 +311,7 @@ export interface FileSnapshot { path: string; content: string | Buffer }
  * is pointed at the committed blobs so status does not read them as staged
  * reversals. An unborn branch (no HEAD) falls back to a working-tree commit.
  */
-export async function commitSnapshotHeld(id: string, branch: string, files: FileSnapshot[], message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export async function commitSnapshotHeld(id: string, branch: string, files: FileSnapshot[], message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   if (!files.length) return { committed: false, files: [] };
   const dir = await ensureWorktree(id, branch);
   const head = await gitPlumb(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']).then((h) => h.trim(), () => '');
@@ -327,7 +341,8 @@ export async function commitSnapshotHeld(id: string, branch: string, files: File
     await gitPlumb(dir, ['read-tree', head], { env });
     for (const s of staged) await gitPlumb(dir, ['update-index', '--add', '--cacheinfo', `${s.mode},${s.blob},${s.path}`], { env });
     const tree = (await gitPlumb(dir, ['write-tree'], { env })).trim();
-    const ident: Record<string, string> = author ? { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: authorEmail(author) } : {};
+    const who = author && authorName(author) ? authorIdent(author) : null;
+    const ident: Record<string, string> = who ? { GIT_AUTHOR_NAME: who.name, GIT_AUTHOR_EMAIL: who.email } : {};
     const hash = (await gitPlumb(dir, ['commit-tree', tree, '-p', head, '-m', message], { env: ident })).trim();
     // The worktree's HEAD is the branch ref; the old value guards against a
     // ref that moved underneath (impossible under the repo lock, fatal if not).
@@ -348,7 +363,7 @@ export async function commitSnapshotHeld(id: string, branch: string, files: File
  * write's delta and nothing else, whatever lands on disk meanwhile. `before`
  * null = the file did not exist. Callers hold the repo lock.
  */
-export async function commitWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string, author?: string): Promise<{ committed: boolean; hash?: string; files: string[] }> {
+export async function commitWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   const typed = files.filter((f) => f.before !== null).map((f) => ({ path: f.path, content: f.before as string | Buffer }));
   if (typed.length) await commitSnapshotHeld(id, branch, typed, 'aldine: autosave');
   return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, author);
@@ -407,7 +422,7 @@ const RETRY_INTENT = 'aldine: agent edit';
  *  are put back (the failed one under RETRY_INTENT) and the sweep is skipped
  *  (sweeping would sign the agent's delta anonymously, or under the person);
  *  the next edit re-arms the debounce. */
-export async function autoCommitHeld(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string, sweep = true): Promise<{ committed: boolean; hash?: string }> {
+export async function autoCommitHeld(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: CommitAuthor, sweep = true): Promise<{ committed: boolean; hash?: string }> {
   const attributed = takeAttributedPaths(id, branch);
   let last: { committed: boolean; hash?: string } = { committed: false };
   if (attributed) {
@@ -448,7 +463,7 @@ export async function uncommittedPaths(id: string, branch: string): Promise<stri
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
-export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: string): Promise<{ committed: boolean; hash?: string }> {
+export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: autosave', sweepAuthor?: CommitAuthor): Promise<{ committed: boolean; hash?: string }> {
   return withRepoLock(id, () => autoCommitHeld(id, branch, sweepMessage, sweepAuthor));
 }
 
@@ -460,12 +475,12 @@ export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: a
  * the editor's change marks would never clear. Not with manual commits,
  * where the head is the baseline.
  */
-export function checkpoint(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+export function checkpoint(id: string, branch: string, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string }> {
   return withRepoLock(id, async () => {
     const r = await autoCommitHeld(id, branch, message, author);
     // A commit under this title would not be a baseline either (a client
     // that asks for an autosave, or Claude's name): nothing to add.
-    if (!mayBeBaseline(author, message)) return r;
+    if (!mayBeBaseline(authorName(author), message)) return r;
     const manual = await readMeta(id).then((m) => m.manualCommits === true, () => false);
     const base = await diffBaselineCommit(id, branch, manual);
     const head = await branchHead(id, branch);
@@ -473,8 +488,7 @@ export function checkpoint(id: string, branch: string, message: string, author?:
     const g = git(await ensureWorktree(id, branch));
     const tree = (rev: string) => g.revparse([`${rev}^{tree}`]).then((t) => t.trim());
     if ((await tree(base)) === (await tree(head))) return r;
-    const args = ['commit', '--allow-empty', '-m', message];
-    if (author) args.push(`--author=${author} <${authorEmail(author)}>`);
+    const args = ['commit', '--allow-empty', '-m', message, ...authorArg(author)];
     await g.raw(args);
     return { committed: true, hash: (await g.revparse(['HEAD'])).trim() };
   });
@@ -787,7 +801,7 @@ export interface BranchMergeResult extends MergeResult { changed?: boolean }
  *  still waiting on either branch.
  *  `from` must be a local branch; git gets it fully qualified, so it can be
  *  neither an option nor any other revision. */
-export async function merge(id: string, from: string, into: string, author?: string, { keepConflicts = false, checkpoint = 'aldine: checkpoint before merge' }: { keepConflicts?: boolean; checkpoint?: string } = {}): Promise<BranchMergeResult> {
+export async function merge(id: string, from: string, into: string, author?: CommitAuthor, { keepConflicts = false, checkpoint = 'aldine: checkpoint before merge' }: { keepConflicts?: boolean; checkpoint?: string } = {}): Promise<BranchMergeResult> {
   if (!BRANCH_RE.test(from) || from.includes('..')) throw new Error('bad branch name');
   const fromRef = `refs/heads/${from}`;
   return withRepoLock(id, async () => {
@@ -836,7 +850,7 @@ export class RevertRefusedError extends Error {}
  * nothing is committed. A merge is undone against its first parent: what it
  * brought into this branch goes, the branch's own line stays.
  */
-export async function revertCommits(id: string, branch: string, hashes: string[], message: string, author?: string): Promise<{ ok: boolean; hash?: string }> {
+export async function revertCommits(id: string, branch: string, hashes: string[], message: string, author?: CommitAuthor): Promise<{ ok: boolean; hash?: string }> {
   if (!hashes.length || hashes.some((h) => !/^[0-9a-f]{4,40}$/.test(h))) throw new Error('bad commit hash');
   return withRepoLock(id, async () => {
     const dir = await ensureWorktree(id, branch);
