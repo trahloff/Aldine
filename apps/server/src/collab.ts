@@ -944,7 +944,10 @@ function armSession(key: string, session: AgentSession): void {
   if (session.holds > 0) return;
   session.timer = setTimeout(() => {
     session.timer = null;
-    if (agentSessions.get(key) !== session || sessionLive(session)) return;
+    if (agentSessions.get(key) !== session) return;
+    // Node may fire a timer a millisecond before its delay is up: still live
+    // then, so wait again rather than leave the session open for good.
+    if (sessionLive(session)) { armSession(key, session); return; }
     agentSessions.delete(key);
     const [projectId, branch] = key.split('::');
     publishBranchAgent(projectId, branch);
