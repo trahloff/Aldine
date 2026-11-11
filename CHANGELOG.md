@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- The Cite panel's paper search says "No papers match that search." when
+  nothing comes back, and "Search failed: …" with the server's reason when the
+  request fails, instead of showing nothing.
+
 ## [1.9.1] — 2026-11-07
 
 ### Added

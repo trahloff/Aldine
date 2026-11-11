@@ -39,6 +39,7 @@ export default {
         let searchTerm = '';
         let results = [];
         let searching = false;
+        let searchStatus = '';
         let searchSeq = 0;
 
         const addQuery = async (q, label) => {
@@ -73,17 +74,27 @@ export default {
         let searchTimer = null;
         const runSearch = () => {
           const q = searchTerm.trim();
-          if (q.length < 3) { results = []; searching = false; draw(); return; }
+          if (q.length < 3) { results = []; searchStatus = ''; searching = false; draw(); return; }
           const seq = ++searchSeq;
-          searching = true; draw();
+          searching = true; searchStatus = ''; draw();
           aldine.fetch(`/api/references/search?q=${encodeURIComponent(q)}`)
-            .then((r) => r.json())
-            .then((body) => {
+            .then(async (r) => {
+              const body = await r.json().catch(() => null);
+              return { ok: r.ok, status: r.status, body };
+            })
+            .then(({ ok, status, body }) => {
               if (seq !== searchSeq) return;
-              results = Array.isArray(body) ? body : [];
+              results = ok && Array.isArray(body) ? body : [];
+              if (!ok || !Array.isArray(body)) searchStatus = `Search failed: ${(body && body.error) || `the server answered ${status}`}`;
+              else if (!results.length) searchStatus = 'No papers match that search.';
               searching = false; draw();
             })
-            .catch(() => { if (seq === searchSeq) { searching = false; draw(); } });
+            .catch((err) => {
+              if (seq !== searchSeq) return;
+              results = [];
+              searchStatus = `Search failed: ${err.message}`;
+              searching = false; draw();
+            });
         };
         const onSearchInput = (v) => {
           searchTerm = v;
@@ -185,6 +196,7 @@ export default {
 
         function draw() {
           hits.replaceChildren(...(searching ? [h('div', { class: 'spinner', style: { margin: '6px auto' } })] : []),
+            ...(searchStatus ? [h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 }, role: 'status', dataset: { testid: 'reference-search-status' } }, searchStatus)] : []),
             ...results.slice(0, 12).map((hit) => h('button', {
               class: 'tree__item',
               style: { height: 'auto', padding: '6px 8px', display: 'block' },
@@ -195,7 +207,7 @@ export default {
               h('div', { style: line1 }, hit.title),
               h('div', { style: line2 }, [hit.authors, hit.year, hit.venue].filter(Boolean).join(' · ')),
             )));
-          hits.style.display = searching || results.length ? 'flex' : 'none';
+          hits.style.display = searching || searchStatus || results.length ? 'flex' : 'none';
           queryInput.value = query;
           addButton.disabled = busy;
           addButton.textContent = busy ? 'Fetching…' : 'Add & cite';
