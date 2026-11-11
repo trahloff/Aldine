@@ -453,6 +453,34 @@ export function autoCommit(id: string, branch: string, sweepMessage = 'aldine: a
 }
 
 /**
+ * A person's named checkpoint (History's Save): autoCommit, then, when the
+ * branch still differs from its diff baseline, an empty commit under the
+ * message. The autosaves may already hold every edit, leaving the sweep
+ * nothing; without the empty commit the checkpoint would never be made and
+ * the editor's change marks would never clear. Not with manual commits,
+ * where the head is the baseline.
+ */
+export function checkpoint(id: string, branch: string, message: string, author?: string): Promise<{ committed: boolean; hash?: string }> {
+  return withRepoLock(id, async () => {
+    const r = await autoCommitHeld(id, branch, message, author);
+    // A commit under this title would not be a baseline either (a client
+    // that asks for an autosave, or Claude's name): nothing to add.
+    if (!mayBeBaseline(author, message)) return r;
+    const manual = await readMeta(id).then((m) => m.manualCommits === true, () => false);
+    const base = await diffBaselineCommit(id, branch, manual);
+    const head = await branchHead(id, branch);
+    if (!base || base === head) return r;
+    const g = git(await ensureWorktree(id, branch));
+    const tree = (rev: string) => g.revparse([`${rev}^{tree}`]).then((t) => t.trim());
+    if ((await tree(base)) === (await tree(head))) return r;
+    const args = ['commit', '--allow-empty', '-m', message];
+    if (author) args.push(`--author=${author} <${authorEmail(author)}>`);
+    await g.raw(args);
+    return { committed: true, hash: (await g.revparse(['HEAD'])).trim() };
+  });
+}
+
+/**
  * Commit ONLY the agent work the ledger holds for this branch, as one commit
  * under `message`: the named checkpoint the MCP `commit` tool makes. The
  * caller is stating the intent of the checkpoint, so the per-path intents the
@@ -565,6 +593,92 @@ export async function branchHead(id: string, branch: string): Promise<string> {
 /** Author string every agent write commits under; the History dot, the
  *  session review and this answer all key on it. */
 export const AGENT_COMMIT_AUTHOR = 'Claude';
+
+const AUTOSAVE_SUBJECT = /^aldine: autosave( on shutdown)?$/;
+/** search.ts replaceCommitMessage: commits only the files it changed. */
+const REPLACE_SUBJECT = /^(Replace|Delete) (".*"|\/.*\/) (with ".*" )?in .+$/;
+/** Commits read per `git log` while looking for the baseline. */
+const BASELINE_PAGE = 500;
+/** Past this many commits the oldest one read is the baseline: a branch of
+ *  nothing but autosaves must not walk its whole history on every request. */
+const BASELINE_SCAN_MAX = 20_000;
+
+/** Whether a commit by `author` titled `subject` can be the diff baseline,
+ *  short of what its files say (isRemovalCommit). */
+function mayBeBaseline(author: string | undefined, subject: string): boolean {
+  return !AUTOSAVE_SUBJECT.test(subject) && author !== AGENT_COMMIT_AUTHOR && !REPLACE_SUBJECT.test(subject);
+}
+
+/** The file route's removal commit (`Delete <path>`, `Delete folder <path>`),
+ *  which holds only that removal. */
+async function isRemovalCommit(id: string, hash: string, subject: string): Promise<boolean> {
+  const raw = await git(repoDir(id)).raw(['-c', 'core.quotePath=false', 'show', '--name-only', '--no-renames', '--format=', hash, '--']).catch(() => '');
+  const files = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!files.length) return false;
+  if (subject.startsWith('Delete folder ')) {
+    const dir = subject.slice('Delete folder '.length);
+    return files.every((f) => f.startsWith(`${dir}/`));
+  }
+  return files.length === 1 && subject === `Delete ${files[0]}`;
+}
+
+/**
+ * The commit the editor's change marks compare against, the same for every
+ * collaborator on the branch. With manual commits it is the branch head.
+ * Otherwise the head moves on every autosave, so it is the newest commit on
+ * the branch's own line (first parents) that a person made of the whole
+ * tree: a checkpoint, merge, revert, sync or the save before one. Skipped:
+ * autosaves, Claude's commits, and the commits that hold only some paths (a
+ * file's removal, a project-wide replace), whose other files are still at
+ * the autosave before them — any of those as the baseline would fold typing
+ * nobody checkpointed into it. '' when the branch has no commit.
+ */
+export async function diffBaselineCommit(id: string, branch: string, manual: boolean): Promise<string> {
+  const head = await branchHead(id, branch);
+  if (!head || manual) return head;
+  const g = git(repoDir(id));
+  let oldest = head;
+  for (let skip = 0; skip < BASELINE_SCAN_MAX; skip += BASELINE_PAGE) {
+    const raw = await g.raw(['log', '--first-parent', `--max-count=${BASELINE_PAGE}`, `--skip=${skip}`, '--format=%H%x00%an%x00%s%x00', head, '--']);
+    const f = raw.split('\0');
+    let n = 0;
+    for (let i = 0; i + 2 < f.length; i += 3) {
+      const hash = f[i].trim(); // the newline after each record leads the next hash
+      if (!/^[0-9a-f]{40}$/.test(hash)) continue;
+      n++;
+      oldest = hash;
+      const author = f[i + 1], subject = f[i + 2];
+      if (!mayBeBaseline(author, subject)) continue;
+      if (subject.startsWith('Delete ') && await isRemovalCommit(id, hash, subject)) continue;
+      return hash;
+    }
+    if (n < BASELINE_PAGE) break;
+  }
+  return oldest;
+}
+
+/** Past this size a file's baseline is not sent: the editor compares lines
+ *  on every pause in typing. */
+export const DIFF_BASELINE_MAX_BYTES = 2 * 1024 * 1024;
+
+/** `rel` as it was at `commit`: null when it was not a file there; `large`
+ *  past DIFF_BASELINE_MAX_BYTES, or when it is binary. */
+export async function fileAtCommit(id: string, commit: string, rel: string): Promise<{ content: string | null; large?: boolean }> {
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('bad commit hash');
+  const g = git(repoDir(id));
+  // ls-tree, not `show <commit>:<path>`: the path stays a literal name, never
+  // revision syntax.
+  const raw = await g.raw(['--literal-pathspecs', 'ls-tree', '-z', '--full-tree', commit, '--', rel]);
+  const entry = raw.split('\0').find((e) => e.slice(e.indexOf('\t') + 1) === rel);
+  if (!entry) return { content: null };
+  const [type, oid] = entry.slice(0, entry.indexOf('\t')).split(' ').slice(1);
+  if (type !== 'blob' || !/^[0-9a-f]{40,64}$/.test(oid ?? '')) return { content: null };
+  const size = Number((await g.raw(['cat-file', '-s', oid])).trim());
+  if (!(size <= DIFF_BASELINE_MAX_BYTES)) return { content: null, large: true };
+  const content = await g.raw(['cat-file', 'blob', oid]);
+  if (content.includes('\0')) return { content: null, large: true };
+  return { content };
+}
 
 /** Trailer naming whose access token an agent commit was made with: the
  *  author stays AGENT_COMMIT_AUTHOR, which everything that tells Claude's

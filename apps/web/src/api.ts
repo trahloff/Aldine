@@ -598,6 +598,12 @@ export const api = {
   log: (id: string, branch: string, page?: { skip?: number; limit?: number }) =>
     req<LogEntry[]>(`/api/projects/${id}/log?branch=${encodeURIComponent(branch)}${page?.skip ? `&skip=${page.skip}` : ''}${page?.limit ? `&limit=${page.limit}` : ''}`),
   changes: (id: string, branch: string) => req<{ paths: string[] }>(`/api/projects/${id}/changes?branch=${encodeURIComponent(branch)}`),
+  /** What the editor's change marks compare `path` against. `since`: the
+   *  baseline commit already held, answered `unchanged` while it stands. */
+  diffBaseline: (id: string, branch: string, path: string, since?: string) =>
+    req<{ commit: string | null; content?: string | null; large?: boolean; unchanged?: boolean }>(
+      `/api/projects/${id}/diff-baseline?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}${since ? `&since=${since}` : ''}`,
+    ),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ branch, q: query.q });

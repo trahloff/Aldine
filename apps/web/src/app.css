@@ -1717,6 +1717,24 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 .cm-agent-mark--ins { background: var(--agent); }
 .cm-agent-mark--del { align-self: center; width: 0; height: 0; border-left: 4px solid var(--agent); border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-radius: 0; }
 
+/* Change marks since the last checkpoint: a bar beside added (green) and
+   changed (blue) lines, a notch on the line boundary where lines were
+   removed (red). Violet stays Claude's. */
+.cm-diff-gutter .cm-gutterElement { padding: 0 2px 0 1px; display: flex; align-items: stretch; }
+.cm-diff-mark { display: block; width: 3px; border-radius: 1px; }
+.cm-diff-mark--add, .cm-diff-mark--mod, .cm-diff-mark--del, .cm-diff-mark--del-end { cursor: pointer; }
+.cm-diff-mark--add { background: var(--ok); }
+.cm-diff-mark--mod { background: var(--accent); }
+.cm-diff-mark--del, .cm-diff-mark--del-end { width: 0; height: 0; border-left: 5px solid var(--error); border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-radius: 0; }
+.cm-diff-mark--del { align-self: flex-start; margin-top: -4px; }
+.cm-diff-mark--del-end { align-self: flex-end; margin-bottom: -4px; }
+.cm-diff-peek { margin: 2px 0 4px; border: 1px solid var(--hairline); border-left: 3px solid var(--accent); border-radius: 4px; background: var(--bg-inset); }
+.cm-diff-peek--add { border-left-color: var(--ok); }
+.cm-diff-peek--del { border-left-color: var(--error); }
+.cm-diff-peek__head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; color: var(--text-2); font-family: var(--font-ui); font-size: 12px; }
+.cm-diff-peek__label { flex: 1; min-width: 0; }
+.cm-diff-peek__old { padding: 2px 8px 4px; white-space: pre-wrap; overflow-wrap: anywhere; color: color-mix(in srgb, var(--error) 80%, var(--text)); background: var(--error-soft); }
+
 /* Deep-link flash (?file=&line=): the line decoration is removed after ~1.6 s,
    the animation fades the accent tint out before that. */
 .cm-deeplink-flash { animation: deeplink-flash 1.6s var(--ease) forwards; }
