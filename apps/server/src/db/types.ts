@@ -34,6 +34,9 @@ export interface User {
    *  which every account from before the field is. A disabled account has no
    *  session and no credential that works. Only setDisabled changes it. */
   disabledAt?: string;
+  /** Author email on the commits this account's requests make; absent means
+   *  the derived `…@aldine.local` address. Never shown to anyone else. */
+  commitEmail?: string;
 }
 
 /** The one-time confirmation link of a pending address: `hash` is the

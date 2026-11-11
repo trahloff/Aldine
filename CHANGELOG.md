@@ -7,6 +7,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Commit email in Account settings. Commits Aldine makes for you
+  (checkpoints, merges, reverts, publish and pull, switching branch) used
+  `<name>@aldine.local` as the author address, which no git host can link
+  to an account. Set the field to your host's noreply address
+  (`…@users.noreply.github.com`) and those commits carry it, so GitHub or
+  GitLab shows them on your profile. The author name stays your account
+  name, Aldine stays the committer, and only you see the address. Stored in
+  every datastore (SQLite migrates to schema 4). See "Commit authors" in the
+  README. Refs #294.
+
 ## [1.10.0] — 2026-11-11
 
 ### Added

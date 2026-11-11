@@ -540,6 +540,21 @@ Two separate concerns, behind two seams:
 For how this scales past one box (and what the remaining walls are), see
 [docs/SCALING.md](docs/SCALING.md).
 
+### Commit authors
+
+Commits Aldine makes for a signed-in person (checkpoints, merges, reverts,
+publish and pull, switching branch) are authored under the account name with
+a made-up address, `jane.smith@aldine.local`; Aldine itself is the committer.
+GitHub, GitLab, Gitea and Forgejo link a commit to a profile by its author
+email, so that address links to nobody. To have the commits show up on your
+profile, set **Commit email** in Account settings to an address your git
+host knows. The host's noreply address keeps your own private:
+`12345+name@users.noreply.github.com` on GitHub (Settings → Emails),
+`12345-name@users.noreply.gitlab.com` on GitLab. Only the commits your own
+requests make carry it, the author name stays your account name, and
+nobody else sees the address in Aldine. Claude's commits keep their own
+identity. Leave the field empty to go back to the `@aldine.local` address.
+
 ## Plugins
 
 A plugin is a folder in `plugins/`:

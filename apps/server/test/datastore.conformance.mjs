@@ -49,6 +49,18 @@ async function runSuite(store, label) {
   await store.updateUser({ ...user, name: 'Ada L.' });
   eq((await store.getUser(user.id)).name, 'Ada L.', `${label}: updateUser`);
 
+  // ---- commitEmail: the account's own author address for commits ----
+  check((await store.getUser(user.id)).commitEmail === undefined, `${label}: commitEmail absent by default`);
+  await store.updateUser({ ...(await store.getUser(user.id)), commitEmail: 'ada@users.noreply.github.com' });
+  eq((await store.getUser(user.id)).commitEmail, 'ada@users.noreply.github.com', `${label}: updateUser writes commitEmail`);
+  eq((await store.findUserByEmail(user.email)).commitEmail, 'ada@users.noreply.github.com', `${label}: findUserByEmail carries commitEmail`);
+  const { commitEmail: _cleared, ...withoutCommitEmail } = await store.getUser(user.id);
+  await store.updateUser(withoutCommitEmail);
+  check((await store.getUser(user.id)).commitEmail === undefined, `${label}: updateUser without it clears commitEmail`);
+  const committer = { id: `uc-${t}`, email: `c-${t}@example.com`, name: 'Cy', salt: 's', hash: 'h', createdAt: new Date().toISOString(), commitEmail: 'cy@example.org' };
+  await store.createUser(committer);
+  eq(await store.getUser(committer.id), committer, `${label}: commitEmail roundtrips through createUser/getUser`);
+
   // touchUser writes only lastSeenAt: a concurrent password change must survive.
   check((await store.getUser(user.id)).lastSeenAt === undefined, `${label}: lastSeenAt absent by default`);
   await store.updateUser({ ...user, name: 'Ada L.', hash: 'h2' });

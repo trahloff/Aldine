@@ -6,7 +6,8 @@ import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from
 /** `emailPending`: a password sign-up whose address is not confirmed yet;
  *  projects shared with that address stay hidden until it is. */
 /** `avatar`: version of the profile picture the server keeps for the account, absent without one. */
-export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string }
+/** `commitEmail`: author address on the commits Aldine makes for this account; only ever the person's own. */
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string }
 export interface OAuthProviderInfo { id: string; label: string }
 /** The support contact on /admin: `source` says whether it was set there or comes from ALDINE_SUPPORT (`env`). */
 export interface SupportSetting {
@@ -727,7 +728,7 @@ export const api = {
   zoteroKey: () => req<{ saved: boolean; userID?: number; username?: string | null }>('/api/zotero/key'),
   forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),
   /** The account's display name: what co-authors see on avatars, comments and commits. */
-  updateMe: (patch: { name: string }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
+  updateMe: (patch: { name?: string; commitEmail?: string }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
   confirmEmail: (token: string) =>
     req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
   /** `invite`: asked from that invitation's page, whose link the mail then leads back to. */
