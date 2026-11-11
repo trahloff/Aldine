@@ -33,6 +33,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   already holds every edit; it used to say there were no changes.
   Refs #289.
 
+### Fixed
+- Claude's editing session could stay open after Claude went idle, so its
+  presence never cleared and the review prompt never appeared, when the
+  server's end-of-session timer fired a moment early.
+
 ## [1.9.1] — 2026-11-07
 
 ### Added
