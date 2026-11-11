@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- The merge and delete buttons in the branch menu are named for a screen
+  reader: "Merge revision into main" and "Delete branch revision".
+
 ## [1.9.1] — 2026-11-07
 
 ### Added
