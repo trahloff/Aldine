@@ -22,6 +22,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   browser tab, in About, and as **Get help…** in the account menu. Aldine's
   own name and logo stay. Administrators can also change the support
   contact on `/admin` without a restart. See docs/BRANDING.md. Refs #288.
+- Change marks in the editor's gutter: a green bar beside lines added since
+  the branch's last checkpoint, a blue bar beside changed lines, and a red
+  notch where lines were removed. With manual commits they compare against
+  the last commit instead. Autosaves and Claude's commits do not count as a
+  checkpoint, so the marks stay until someone saves one in History; then
+  they clear in every open editor. Click a mark to see the earlier text and
+  put it back with Revert these lines. Turn the marks off from the command
+  palette. Save in History now makes a checkpoint even when an autosave
+  already holds every edit; it used to say there were no changes.
+  Refs #289.
 
 ## [1.9.1] — 2026-11-07
 

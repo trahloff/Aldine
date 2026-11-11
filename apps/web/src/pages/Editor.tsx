@@ -110,6 +110,8 @@ const pdfDefault = () => Math.max(360, Math.round(window.innerWidth * 0.4));
 const EDITOR_MODE = 'aldine.editorMode';
 /** Vim keybindings in the code editor, '1' when on. */
 const VIM = 'aldine.vim';
+/** Change marks in the editor's gutter; on unless turned off. */
+const CHANGE_MARKS = 'aldine.changeMarks';
 /** The outline under the file tree, '0' when folded. */
 const OUTLINE_OPEN = 'aldine.outlineOpen';
 const PHONE = '(max-width: 640px)';
@@ -327,6 +329,8 @@ export default function Editor() {
   }, []);
   const [vim, setVim] = useState(() => safeStorage.get(VIM) === '1');
   const toggleVim = useCallback(() => setVim((v) => { safeStorage.set(VIM, v ? '0' : '1'); return !v; }), []);
+  const [changeMarks, setChangeMarks] = useState(() => safeStorage.get(CHANGE_MARKS) !== '0');
+  const toggleChangeMarks = useCallback(() => setChangeMarks((v) => { safeStorage.set(CHANGE_MARKS, v ? '0' : '1'); return !v; }), []);
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
   const agentPresenceEnabled = safeStorage.get('aldine.experimental.agentPresence') === '1';
   const [mode, setMode] = useState<EditorMode>(() => {
@@ -1657,6 +1661,7 @@ export default function Editor() {
       { id: 'stop-on-error', group: 'Actions', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Actions', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
       { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: toggleSpellcheck },
+      { id: 'change-marks', group: 'Actions', title: `${changeMarks ? 'Hide' : 'Show'} the lines changed since the last ${project?.manualCommits ? 'commit' : 'checkpoint'}`, keywords: 'diff gutter changes', run: toggleChangeMarks },
       { id: 'vim', group: 'Actions', title: vim ? 'Turn Vim keybindings off' : 'Turn Vim keybindings on', run: () => { toggleVim(); requestAnimationFrame(() => codeRef.current?.focus()); } },
       ...appearanceCommands(appearance),
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
@@ -1795,7 +1800,7 @@ export default function Editor() {
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -2311,6 +2316,9 @@ export default function Editor() {
                 readOnly={locked || zoteroBib}
                 onSync={(state) => setSync({ key: paneKey, state })}
                 agentSeenAt={unseen.seenAt}
+                changeMarks={changeMarks}
+                baselineVersion={historyVersion}
+                manualCommits={!!project?.manualCommits}
               />
             </>
           ) : filesLoaded && !hasFiles ? (

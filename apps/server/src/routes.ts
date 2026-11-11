@@ -2267,9 +2267,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const { branch = 'main', message, author: claimed } = req.body || {};
       const author = commitAuthor(req, claimed);
       flushBranchDocs(req.params.id, branch);
-      // autoCommit, not commitAll: a person's checkpoint inside the agent's
-      // debounce window must not sign Claude's pending delta with their name.
-      const r = await gitops.autoCommit(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
+      // checkpoint (an autoCommit), not commitAll: a person's checkpoint inside
+      // the agent's debounce window must not sign Claude's pending delta with
+      // their name.
+      const r = await gitops.checkpoint(req.params.id, branch, cleanCommitMessage(message, 'aldine: manual commit'), author);
       if (r.committed) signalCommitted(req.params.id, branch);
       if (r.committed && branch === 'main') scheduleAutopush(req.params.id);
       if (r.committed) void pruneImages(req.params.id).catch(() => {});
@@ -2339,6 +2340,25 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     flushBranchDocs(req.params.id, branch);
     try { return { paths: await gitops.uncommittedPaths(req.params.id, branch) }; }
     catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
+  });
+
+  // What the editor's change marks compare a file against (gitops
+  // diffBaselineCommit). `since`: the commit the caller already holds, which
+  // comes back without the content when it is still the baseline.
+  app.get<{ Params: { id: string }; Querystring: Q & { since?: string } }>('/api/projects/:id/diff-baseline', async (req, reply) => {
+    const { branch = 'main', path: rel, since } = req.query;
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    if (!namesEntry(rel)) return reply.code(400).send({ error: NOT_AN_ENTRY });
+    if (isHiddenPath(rel!)) return reply.code(403).send({ error: 'forbidden path' });
+    try {
+      const manual = await store.readMeta(req.params.id).then((m) => m.manualCommits === true, () => false);
+      const commit = await gitops.diffBaselineCommit(req.params.id, branch, manual);
+      if (!commit) return { commit: null, content: null };
+      if (since === commit) return { commit, unchanged: true };
+      return { commit, ...(await gitops.fileAtCommit(req.params.id, commit, importPath(rel!)!)) };
+    } catch {
+      return reply.code(404).send({ error: 'Project or branch not found' });
+    }
   });
 
   app.get<{ Params: { id: string; hash: string } }>('/api/projects/:id/commit/:hash/diff', async (req, reply) => {

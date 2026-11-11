@@ -10,7 +10,7 @@ import { latex, latexCompletionSource } from 'codemirror-lang-latex';
 import type * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap, ySyncFacet, YRange } from 'y-codemirror.next';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { localUser } from '../api';
+import { api, localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { findKeymap, findPanel, gotoLineTop, openFind, restoreFind } from '../editor/findPanel';
 import { everydayCompletionSource, macroCompletionSource, pathCompletionSource } from '../editor/completions';
@@ -30,6 +30,8 @@ import { useToast } from './Toast';
 import type { Text } from '@codemirror/state';
 import { safeStorage } from '../util/safeStorage';
 import { loadVim, vimIfLoaded, vimWrite } from '../editor/vim';
+import { diffGutter, setDiffBaseline, type DiffBaseline } from '../editor/diffGutter';
+import { splitLines } from '../editor/lineDiff';
 import { readOnlyDoc } from '../editor/readOnly';
 import { openDoc, parkDoc } from '../editor/docCache';
 import { captureSpot, clampSpot, fileSpots, spotScroll, spotSelection } from '../editor/fileSpots';
@@ -192,6 +194,12 @@ interface Props {
   /** This person's agent review mark (server ms): Claude's changes after it
    *  are marked in the gutter. Null while unknown. */
   agentSeenAt?: number | null;
+  /** Mark the lines changed since the branch's last checkpoint (source mode). */
+  changeMarks?: boolean;
+  /** Bumped when the branch's history may have moved: the baseline is asked again. */
+  baselineVersion?: number;
+  /** The project commits by hand: the baseline is the last commit. */
+  manualCommits?: boolean;
 }
 
 /** Approximate word count for LaTeX prose: strips comments, commands, math. */
@@ -254,7 +262,7 @@ function headingAt(entries: OutlineEntry[], line: number): number {
 const sameOutline = (a: OutlineEntry[], b: OutlineEntry[]) =>
   a.length === b.length && a.every((h, i) => h.line === b[i].line && h.level === b[i].level && h.title === b[i].title && h.pos === b[i].pos);
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null, changeMarks = false, baselineVersion = 0, manualCommits = false }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret });
@@ -264,7 +272,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const toastRef = useRef(toast);
   toastRef.current = toast;
   // Per-mount reconfiguration handles: compartments + the deps visualExtensions needs.
-  const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; deps: VisualDeps } | null>(null);
+  const reconfRef = useRef<{ modeComp: Compartment; spellComp: Compartment; vimComp: Compartment; diffComp: Compartment; deps: VisualDeps } | null>(null);
+  /** The open file's change-mark baseline, once loaded; null: no marks. */
+  const baselineRef = useRef<DiffBaseline | null>(null);
   const readOnlyRef = useRef<{ comp: Compartment; ydoc: Y.Doc; on: boolean } | null>(null);
   const lastCommentRanges = useRef<CommentRange[]>([]);
   const agentSeenRef = useRef(agentSeenAt);
@@ -438,6 +448,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const modeComp = new Compartment();
     const spellComp = new Compartment();
     const vimComp = new Compartment();
+    const diffComp = new Compartment();
     const readOnlyComp = new Compartment();
     // Until the first sync the editor holds an empty document: an edit made to
     // it would land at the top of the file once the server's text arrives.
@@ -479,6 +490,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           vimComp.of((vim && vimIfLoaded()) || []),
           vimWrite.of(() => cbRef.current.onWrite?.()),
           lineNumbers(),
+          // Visual hides the gutters: the marks are a Source view only.
+          diffComp.of(changeMarks && mode === 'source' ? diffGutter(provider.isSynced ? baselineRef.current : null, manualCommits ? 'commit' : 'checkpoint') : []),
           highlightActiveLineGutter(),
           highlightSpecialChars(),
           foldGutter(),
@@ -576,7 +589,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       }),
     });
     viewRef.current = view;
-    reconfRef.current = { modeComp, spellComp, vimComp, deps };
+    reconfRef.current = { modeComp, spellComp, vimComp, diffComp, deps };
     restoreFind(view);
     readOnlyRef.current = { comp: readOnlyComp, ydoc, on: readOnly };
 
@@ -611,6 +624,9 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         view.dispatch({ selection: spotSelection(s), effects: spotScroll(s) });
       }
       for (const run of pendingEdits.current.splice(0)) run();
+      // Compared only against the server's text: the empty doc before it
+      // would mark the whole baseline removed.
+      if (baselineRef.current) view.dispatch({ effects: setDiffBaseline.of(baselineRef.current) });
       cbRef.current.onStats?.({ words: latexWordCount(view.state.doc.toString()), selWords: null });
       reportOutline(true);
       // Re-anchor comments against the now-populated doc: a push that arrived
@@ -687,6 +703,27 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   useEffect(() => {
     viewRef.current?.dispatch({ effects: setAgentSeen.of(agentSeenAt) });
   }, [agentSeenAt]);
+
+  useEffect(() => {
+    const view = viewRef.current, rc = reconfRef.current;
+    if (!view || !rc) return;
+    const on = changeMarks && mode === 'source';
+    view.dispatch({ effects: rc.diffComp.reconfigure(on ? diffGutter(syncedRef.current ? baselineRef.current : null, manualCommits ? 'commit' : 'checkpoint') : []) });
+  }, [changeMarks, mode, manualCommits]);
+  // The baseline moves with the branch's checkpoints (commits, with manual
+  // commits); `since` keeps an unmoved one from being sent again.
+  useEffect(() => {
+    if (!changeMarks) return;
+    let live = true;
+    api.diffBaseline(projectId, branch, filePath, baselineRef.current?.commit).then((r) => {
+      if (!live || r.unchanged) return;
+      const next: DiffBaseline | null = r.commit && !r.large ? { commit: r.commit, lines: r.content == null ? null : splitLines(r.content) } : null;
+      baselineRef.current = next;
+      const view = viewRef.current;
+      if (view && syncedRef.current) view.dispatch({ effects: setDiffBaseline.of(next) });
+    }, () => { /* no marks until the next try */ });
+    return () => { live = false; };
+  }, [projectId, branch, filePath, baselineVersion, changeMarks, manualCommits]);
 
   // Mode and spellcheck are presentation-only: swap them at runtime through
   // compartments so the Yjs doc, collab socket, scroll, and cursor survive.
