@@ -71,6 +71,32 @@ test.describe('Cite panel: the project bibliography', () => {
     }
   });
 
+  test('the paper search says so when nothing matches', async ({ page, request }) => {
+    const id = await createProject(request, 'Bib No Match');
+    try {
+      await page.route('**/api/references/search*', (route) => route.fulfill({ json: [] }));
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      await page.getByTestId('reference-search').fill('no such paper');
+      await expect(page.getByTestId('reference-search-status')).toHaveText('No papers match that search.');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the paper search shows why it failed', async ({ page, request }) => {
+    const id = await createProject(request, 'Bib Search Failed');
+    try {
+      await page.route('**/api/references/search*', (route) => route.fulfill({ status: 429, json: { error: 'Search rate limit reached — please slow down' } }));
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      await page.getByTestId('reference-search').fill('rate limited');
+      await expect(page.getByTestId('reference-search-status')).toHaveText('Search failed: Search rate limit reached — please slow down');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('a pick joins the citation at the cursor, and says so only when it inserted something', async ({ page, request }) => {
     const id = await createProject(request, 'Bib Join');
     try {
