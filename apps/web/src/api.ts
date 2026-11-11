@@ -8,6 +8,14 @@ import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from
 /** `avatar`: version of the profile picture the server keeps for the account, absent without one. */
 export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string }
 export interface OAuthProviderInfo { id: string; label: string }
+/** The support contact on /admin: `source` says whether it was set there or comes from ALDINE_SUPPORT (`env`). */
+export interface SupportSetting {
+  support: { kind: 'email' | 'url'; value: string } | null;
+  source: 'admin' | 'env' | null;
+  env: { kind: 'email' | 'url'; value: string } | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
 /** Account settings, Sign-in methods. `password`: the password signs in
  *  here; `provider`: the provider a single sign-on account belongs to;
  *  `links`: providers connected to a password account; `canConnect`: it is
@@ -721,6 +729,8 @@ export const api = {
     req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', invite ? { method: 'POST', body: JSON.stringify({ invite }) } : { method: 'POST' }),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
+  adminSupport: () => req<SupportSetting>('/api/admin/instance'),
+  setAdminSupport: (support: string) => req<SupportSetting>('/api/admin/instance', { method: 'PUT', body: JSON.stringify({ support }) }),
   // Every account action sends a JSON body: the server refuses any other.
   adminDisable: (id: string, revokeAgentAccess: boolean) =>
     req<AdminUserRow>(`/api/admin/users/${encodeURIComponent(id)}/disable`, { method: 'POST', body: JSON.stringify({ revokeAgentAccess }) }),

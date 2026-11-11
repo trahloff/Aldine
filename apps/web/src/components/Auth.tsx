@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useState, type JSX } from 'react'
 import { BASE_PATH, withBase } from '../basePath';
 import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
 import Wordmark from './Wordmark';
+import { OperatorCredit, SupportLink } from './Operator';
+import { INSTANCE } from '../instance';
 import { useDocumentTitle } from '../util/documentTitle';
 import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
 import { projectOfPath } from '../util/projectResume';
@@ -315,7 +317,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
         {providers.length > 0 && passwordAuth && <div className="login__or">or</div>}
 
         {!passwordAuth && providers.length === 0 && (
-          <p className="login__error" role="alert">No sign-in method is configured. Contact the administrator.</p>
+          <p className="login__error" role="alert">No sign-in method is configured. {INSTANCE?.support ? <>Contact <SupportLink /></> : 'Contact the administrator.'}</p>
         )}
         {!passwordAuth && providers.length > 0 && approvalNote}
 
@@ -387,6 +389,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
             )}
           </>
         )}
+        <OperatorCredit />
       </div>
     </main>
   );

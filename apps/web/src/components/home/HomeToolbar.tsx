@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import type { AuthUser, RemoteInfo, RemoteProviderId } from '../../api';
 import { MenuButton, type MenuEntry } from '../Menu';
 import { AvatarFace } from '../AvatarFace';
+import { OperatorBadge } from '../Operator';
+import { INSTANCE, supportHref } from '../../instance';
 import { IconChevronDown, IconEllipsis, IconFile, IconPlus, IconSearch, IconX } from '../Icons';
 import Wordmark from '../Wordmark';
 import { REMOTES } from '../../remotes';
@@ -48,6 +50,8 @@ export function startItems(a: StartActions): MenuEntry[] {
   ];
 }
 
+const helpItem = (): MenuEntry[] => (INSTANCE?.support ? [{ id: 'help', label: 'Get help…', onSelect: openSupport, testId: 'get-help' }] : []);
+
 function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppearance>): MenuEntry[] {
   const appearanceSub: MenuEntry = { kind: 'submenu', id: 'appearance', label: 'Appearance', items: appearanceMenuItems(appearance), testId: 'appearance' };
   if (!a.accounts || !a.user) {
@@ -55,6 +59,7 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
       appearanceSub,
       { id: 'connect', label: 'Connect Claude…', onSelect: a.onConnect, testId: 'open-connect-claude' },
       { kind: 'separator' },
+      ...helpItem(),
       { id: 'about', label: 'About & source', onSelect: a.onAbout, testId: 'open-about' },
     ];
   }
@@ -66,9 +71,18 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
     { id: 'connect', label: 'Connect Claude…', onSelect: a.onConnect, testId: 'open-connect-claude' },
     ...(a.admin ? [{ id: 'admin', label: 'Server admin', onSelect: a.onAdmin, testId: 'admin-link' } as MenuEntry] : []),
     { kind: 'separator' },
+    ...helpItem(),
     { id: 'about', label: 'About & source', onSelect: a.onAbout, testId: 'open-about' },
     { id: 'sign-out', label: 'Sign out', onSelect: a.onSignOut, testId: 'logout' },
   ];
+}
+
+/** The operator's support contact (ALDINE_SUPPORT): a new mail, or its help page in a new tab. */
+function openSupport() {
+  const s = INSTANCE?.support;
+  if (!s) return;
+  if (s.kind === 'email') window.location.href = supportHref(s);
+  else window.open(s.value, '_blank', 'noopener,noreferrer');
 }
 
 /** The avatar with the account menu, or "…" with the same minus the account when there are no accounts. */
@@ -159,6 +173,7 @@ export default function HomeToolbar({ compact, scrolled, titleInBar, start, acco
     <header className={`home-bar${scrolled ? ' is-scrolled' : ''}${compact ? ' home-bar--compact' : ''}`} aria-label="Projects toolbar" data-testid="home-bar">
       <div className="home-bar__inner">
         <Link to="/" className="home-bar__brand"><Wordmark height={compact ? 17 : 18} /></Link>
+        <OperatorBadge compact={compact} />
         {compact && <span className={`home-bar__title${titleInBar ? ' is-shown' : ''}`} aria-hidden="true">Projects</span>}
         {!compact && search}
         <span className="home-bar__spacer" />

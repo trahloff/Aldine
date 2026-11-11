@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, AdminStats, AdminUserRow } from '../api';
+import { api, ApiError, AdminStats, AdminUserRow, type SupportSetting } from '../api';
 import { useAuth } from '../components/Auth';
 import Wordmark from '../components/Wordmark';
 import AdminAccountDialog from '../components/AdminAccountDialog';
@@ -36,6 +36,56 @@ function Stat({ label, value, hint, testId }: { label: string; value: string | n
       <div className="admin__stat-label">{label}</div>
       {hint && <div className="admin__stat-hint">{hint}</div>}
     </div>
+  );
+}
+
+/**
+ * The support contact everyone sees on the sign-in page, in About and as Get
+ * help… in the account menu. Saved here, it overrides ALDINE_SUPPORT; cleared,
+ * that one applies again. The app picks it up on the next page load.
+ */
+function SupportCard() {
+  const [setting, setSetting] = useState<SupportSetting | null>(null);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  useEffect(() => {
+    api.adminSupport().then((s) => { setSetting(s); setValue(s.source === 'admin' ? s.support!.value : ''); }, () => {});
+  }, []);
+  if (!setting) return null;
+  const save = async (next: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const s = await api.setAdminSupport(next);
+      setSetting(s);
+      setValue(s.source === 'admin' ? s.support!.value : '');
+      const text = !next
+        ? (s.support ? `Cleared. People see ${s.support.value} from ALDINE_SUPPORT again after their next page load.` : 'Cleared. People see no support contact.')
+        : `Saved. People see ${s.support!.value} after their next page load.`;
+      setMessage({ text, error: false });
+    } catch (err) {
+      setMessage({ text: err instanceof ApiError ? err.message : 'Could not save the support contact', error: true });
+    } finally { setBusy(false); }
+  };
+  const envNote = setting.env
+    ? (setting.source === 'admin' ? `This replaces ${setting.env.value} from ALDINE_SUPPORT. Clear it to use that again.` : `Now ${setting.env.value}, from ALDINE_SUPPORT. A contact saved here replaces it.`)
+    : null;
+  return (
+    <section className="admin__card" data-testid="admin-support">
+      <h2 className="home__section">Support contact</h2>
+      <p className="admin__muted">Shown on the sign-in page, in About and as Get help… in the account menu. An email address or a link to your help page.</p>
+      <form className="admin__support-form" onSubmit={(e) => { e.preventDefault(); save(value); }}>
+        <label className="field__label" htmlFor="admin-support-input">Email or https link</label>
+        <div className="admin__support-row">
+          <input id="admin-support-input" className="input" value={value} placeholder={setting.env?.value ?? 'latex-help@example.org'} maxLength={2000} autoCapitalize="none" spellCheck={false} onChange={(e) => setValue(e.target.value)} data-testid="admin-support-input" />
+          <button type="submit" className="btn btn--primary" disabled={busy} data-testid="admin-support-save">Save</button>
+          {setting.source === 'admin' && <button type="button" className="btn" disabled={busy} onClick={() => save('')} data-testid="admin-support-clear">Clear</button>}
+        </div>
+      </form>
+      {envNote && <p className="admin__muted" data-testid="admin-support-env">{envNote}</p>}
+      {message && <p className={message.error ? 'admin__error' : 'admin__muted'} role={message.error ? 'alert' : 'status'} data-testid="admin-support-message">{message.text}</p>}
+    </section>
   );
 }
 
@@ -124,6 +174,8 @@ export default function Admin() {
                 testId="stat-compile"
               />
             </div>
+
+            <SupportCard />
 
             <h2 className="home__section">Accounts</h2>
             <div className="admin__table-wrap">

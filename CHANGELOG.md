@@ -14,6 +14,14 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Aldine fetches it once at sign-in and serves its own copy, so co-authors'
   browsers never contact the provider. `ALDINE_AVATARS=0` turns it off.
   Details in docs/OIDC.md. Refs #277.
+- Name the operator of your instance. `ALDINE_INSTANCE_NAME`,
+  `ALDINE_INSTANCE_LOGO` (plus `ALDINE_INSTANCE_LOGO_DARK` for the dark
+  theme), `ALDINE_INSTANCE_URL` and `ALDINE_SUPPORT` put your name, logo,
+  website and support contact beside Aldine's: on the sign-in page ("Provided
+  by …", "Need help?"), after the wordmark in the project list, in the
+  browser tab, in About, and as **Get help…** in the account menu. Aldine's
+  own name and logo stay. Administrators can also change the support
+  contact on `/admin` without a restart. See docs/BRANDING.md. Refs #288.
 
 ## [1.9.1] — 2026-11-07
 

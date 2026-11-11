@@ -1,4 +1,5 @@
 import Fastify, { LogController, type FastifyInstance, type FastifyReply } from 'fastify';
+import { stampInstance } from './instance.js';
 import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -127,7 +128,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const sendIndex = (_req: unknown, reply: FastifyReply) => reply
       .header('content-security-policy', "frame-ancestors 'none'")
       .header('x-frame-options', 'DENY')
-      .type('text/html').send(indexHtml);
+      .type('text/html').send(stampInstance(indexHtml));
     // The raw index.html never goes on the wire: '/' has its own route, the
     // static plugin is told not to serve directory indexes or the file itself,
     // and every other app route lands in the not-found fallback below.

@@ -571,6 +571,22 @@ select.input { padding-right: 30px; text-overflow: ellipsis; }
 .login__info--warn { color: var(--warn-text); }
 .login__approval { margin: 2px 0 10px; }
 
+/* The instance operator (ALDINE_INSTANCE_*), beside Aldine's own mark, never in its place */
+.operator { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: inherit; text-decoration: none; }
+.operator__logo { display: block; width: auto; max-width: 140px; object-fit: contain; }
+.operator__logo--dark, :root[data-theme="dark"] .operator__logo--light { display: none; }
+:root[data-theme="dark"] .operator__logo--dark { display: block; }
+.operator__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operator--bar { flex: 0 1 auto; padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--hairline); color: var(--text-2); font-size: var(--text-s); font-weight: 500; max-width: 260px; }
+a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+@media (hover: hover) and (pointer: fine) { a.operator--bar:hover .operator__name { color: var(--text); } }
+.operator-credit { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hairline); color: var(--text-2); font-size: var(--text-s); }
+.operator-credit p { margin: 0; }
+.operator-credit p + p { margin-top: 6px; }
+.operator-credit__who { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.operator-credit__label { color: var(--text-3); }
+.operator-credit .operator { color: var(--text); font-weight: 500; }
+
 /* comment composer */
 .composer__quote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--bg-inset); border-radius: 0 var(--radius-s) var(--radius-s) 0; color: var(--text-2); font-size: var(--text-s); max-height: 84px; overflow-y: auto; white-space: pre-wrap; }
 .composer__body { width: 100%; min-height: 72px; resize: vertical; font-family: inherit; line-height: 1.5; margin-bottom: 8px; }
@@ -2037,6 +2053,10 @@ a.btn { text-decoration: none; }
 .admin__muted { color: var(--text-3); }
 .admin__error { color: var(--error); }
 .admin__foot { color: var(--text-3); font-size: var(--text-s); margin-top: 14px; }
+.admin__card p { margin: 6px 0 0; font-size: var(--text-s); }
+.admin__support-form { margin-top: 10px; max-width: 560px; }
+.admin__support-row { display: flex; gap: 8px; margin-top: 4px; }
+.admin__support-row .input { flex: 1; min-width: 0; height: 32px; }
 .admin .home__inner { max-width: 1280px; }
 .admin__notice { padding: 8px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-s); background: color-mix(in srgb, var(--ok) 10%, var(--bg-panel)); }
 .admin__status { font-size: var(--text-s); }

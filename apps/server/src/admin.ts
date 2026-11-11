@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { setSupport, supportSetting } from './instance.js';
 import { db } from './db/index.js';
 import type { Invitation, ProjectMeta, User } from './db/types.js';
 import * as auth from './auth.js';
@@ -246,6 +247,21 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
     });
     admin.get('/api/admin/stats', async () => adminStats());
     admin.get('/api/admin/users', async () => adminUsers());
+
+    // The support contact shown to everyone (instance.ts): this overrides
+    // ALDINE_SUPPORT; an empty value clears it and the env value applies again.
+    admin.get('/api/admin/instance', async () => supportSetting());
+    admin.put<{ Body: { support?: unknown } | undefined }>('/api/admin/instance', async (req, reply) => {
+      const actor = reqUser(req);
+      try {
+        setSupport(req.body?.support ?? '', actor ? who(actor) : 'anonymous (auth off)');
+      } catch (err: any) {
+        return reply.code(400).send({ error: err.message });
+      }
+      const s = supportSetting();
+      console.log(`[aldine] admin ${actor ? who(actor) : 'anonymous (auth off)'} set the support contact to ${s.support ? s.support.value : 'none'}${s.source === 'env' ? ' (ALDINE_SUPPORT)' : ''}`);
+      return s;
+    });
 
     // `:userId`, never `:id`: the project guard in routes.ts reads `params.id`
     // as a project id on every route.

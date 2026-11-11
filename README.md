@@ -144,6 +144,11 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   password or single sign-on, waiting until an administrator approves it on
   `/admin`; with email set up, the administrators get a mail when one starts
   waiting.
+- **Your name next to ours**: `ALDINE_INSTANCE_NAME`, a logo, your website and
+  a support contact (`ALDINE_SUPPORT`) show who runs the instance and whom to
+  ask for help, beside Aldine's own name, on the sign-in page, the project
+  list, About and the browser tab; administrators can change the support
+  contact on `/admin`. [docs/BRANDING.md](docs/BRANDING.md).
 - **Scales when you need it**: one SQLite file by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
@@ -418,6 +423,13 @@ OIDC_ALLOWED_GROUPS=
 # Profile pictures from SSO (OIDC `picture`, Google, GitHub) are fetched and served
 # by Aldine itself; 0 keeps initials and fetches nothing
 # ALDINE_AVATARS=0
+# Who runs this instance, shown beside Aldine (docs/BRANDING.md); the logo
+# paths are inside the container
+ALDINE_INSTANCE_NAME=
+ALDINE_INSTANCE_LOGO=
+ALDINE_INSTANCE_LOGO_DARK=
+ALDINE_INSTANCE_URL=
+ALDINE_SUPPORT=
 # GitHub repo sync: a separate OAuth app with repo scope; GITHUB_URL points
 # it at a GitHub Enterprise Server (PAT connect works without these)
 # GITHUB_URL=https://github.com
