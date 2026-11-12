@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-11-12
+
 ### Added
 - Commit email in Account settings. Commits Aldine makes for you
   (checkpoints, merges, reverts, publish and pull, switching branch) used

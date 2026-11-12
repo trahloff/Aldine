@@ -3,7 +3,7 @@
   "name": "io.github.trahloff/aldine",
   "title": "Aldine",
   "description": "Self-hosted collaborative LaTeX editor: read and edit files, typeset, get the errors and the PDF.",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "websiteUrl": "https://aldine.dev/latex-mcp/",
   "repository": {
     "url": "https://github.com/trahloff/Aldine",
