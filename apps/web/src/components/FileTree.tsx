@@ -40,9 +40,36 @@ interface Props {
   /** Per path: Claude is writing this file now ('live'), or changed it since
    *  this person's last review ('changed'). */
   agentMarks?: ReadonlyMap<string, AgentTreeMark>;
+  /** Per path: added or changed since the branch's diff baseline, which
+   *  `changeNoun` names (the editor gutter's change marks). */
+  changeMarks?: ReadonlyMap<string, ChangeTreeMark>;
+  changeNoun?: 'checkpoint' | 'commit';
 }
 
 export type AgentTreeMark = 'live' | 'changed';
+export type ChangeTreeMark = 'added' | 'modified';
+
+/** A closed folder's change mark: 'modified' when any file in it changed. */
+function folderChange(marks: ReadonlyMap<string, ChangeTreeMark> | undefined, dir: string): ChangeTreeMark | undefined {
+  let found: ChangeTreeMark | undefined;
+  for (const [path, kind] of marks ?? []) {
+    if (!within(path, dir)) continue;
+    if (kind === 'modified') return kind;
+    found = kind;
+  }
+  return found;
+}
+
+function ChangeMark({ kind, noun, folder = false }: { kind: ChangeTreeMark | undefined; noun: string; folder?: boolean }) {
+  if (!kind) return null;
+  const label = folder ? `Holds files changed since the last ${noun}`
+    : kind === 'added' ? `Added since the last ${noun}` : `Changed since the last ${noun}`;
+  return (
+    <span className={`tree__change tree__change--${kind} ${folder ? 'tree__change--folder' : ''}`} title={label} aria-label={label} role="img" data-testid={folder ? 'tree-change-folder' : `tree-change-${kind}`}>
+      {!folder && (kind === 'added' ? 'A' : 'M')}
+    </span>
+  );
+}
 
 /** A folder shows its files' marks while it is closed; 'live' wins. */
 function folderMark(marks: ReadonlyMap<string, AgentTreeMark> | undefined, dir: string): AgentTreeMark | undefined {
@@ -145,7 +172,7 @@ type Sent = { kind: 'ok' } | { kind: 'exists' } | { kind: 'unreadable' } | { kin
 /** What the progress row shows, summed over every upload under way. */
 interface Progress { done: number; total: number; fraction: number; name: string }
 
-export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false, readOnly = false, agentMarks }: Props) {
+export default function FileTree({ files, active, rootFile, projectId, branch, onOpen, onCreate, onCreateFolder, onUploaded, onDelete, onRename, onSetRoot, newFileRequest = 0, newFileKind = 'file', onNewFileHandled, hidden = false, readOnly = false, agentMarks, changeMarks, changeNoun = 'checkpoint' }: Props) {
   const dialogs = useDialogs();
   const toast = useToast();
   const errorId = useId();
@@ -698,6 +725,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
               <span className="tree__icon"><FolderIcon /></span>
               {node.name}
               {!open && <AgentMark kind={folderMark(agentMarks, node.path)} />}
+              {!open && <ChangeMark kind={folderChange(changeMarks, node.path)} noun={changeNoun} folder />}
             </button>
             {!readOnly && rowMenu(node)}
           </div>
@@ -732,6 +760,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
           {node.name}
           {node.path === rootFile && <span className="tree__root-tag">root</span>}
           <AgentMark kind={agentMarks?.get(node.path)} />
+          <ChangeMark kind={changeMarks?.get(node.path)} noun={changeNoun} />
         </button>
         {!readOnly && rowMenu(node)}
       </div>
