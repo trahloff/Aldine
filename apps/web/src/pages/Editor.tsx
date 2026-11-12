@@ -47,7 +47,7 @@ import { readSeen, markPrompted, markAcknowledged } from '../util/agentSeen';
 import { mergeAgentBatches, revertSummary, agentName, type AgentBatch } from '../util/agentReview';
 import { askWaitingCommit } from '../util/waitingCommit';
 import { useAgentUnseen } from '../editor/agentUnseen';
-import type { AgentTreeMark } from '../components/FileTree';
+import type { AgentTreeMark, ChangeTreeMark } from '../components/FileTree';
 import FormatToolbar from '../components/FormatToolbar';
 import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
@@ -110,6 +110,9 @@ const pdfDefault = () => Math.max(360, Math.round(window.innerWidth * 0.4));
 const EDITOR_MODE = 'aldine.editorMode';
 /** Vim keybindings in the code editor, '1' when on. */
 const VIM = 'aldine.vim';
+/** After a pause this long in anyone's typing the file tree's change marks
+ *  are refetched. */
+const TREE_CHANGES_DELAY_MS = 1500;
 /** Change marks in the editor's gutter; on unless turned off. */
 const CHANGE_MARKS = 'aldine.changeMarks';
 /** The outline under the file tree, '0' when folded. */
@@ -475,6 +478,8 @@ export default function Editor() {
   // so the total stays current while typing without refetching.
   const [docWords, setDocWords] = useState<{ total: number; files: Record<string, number> } | null>(null);
   const docWordsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const treeChangesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [treeChangesTick, setTreeChangesTick] = useState(0);
   const refreshDocWords = useCallback(() => {
     api.wordcount(id, branch).then(setDocWords).catch(() => { /* keep the last total */ });
   }, [id, branch]);
@@ -749,6 +754,8 @@ export default function Editor() {
   const onDocChanged = useCallback((local: boolean) => {
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
     docWordsTimer.current = setTimeout(refreshDocWords, 3000);
+    if (treeChangesTimer.current) clearTimeout(treeChangesTimer.current);
+    treeChangesTimer.current = setTimeout(() => setTreeChangesTick((v) => v + 1), TREE_CHANGES_DELAY_MS);
     if (!local) return;
     lastLocalEditAt.current = Date.now();
     armAutoTypeset('local');
@@ -759,7 +766,26 @@ export default function Editor() {
     if (fullTimer.current) clearTimeout(fullTimer.current);
     if (agentWatchdog.current) clearTimeout(agentWatchdog.current);
     if (docWordsTimer.current) clearTimeout(docWordsTimer.current);
+    if (treeChangesTimer.current) clearTimeout(treeChangesTimer.current);
   }, []);
+
+  // The file tree's change marks, against the gutter's baseline: refetched
+  // after a pause in anyone's typing, on a commit or checkpoint
+  // (historyVersion), and when the file list changes.
+  const [treeChanges, setTreeChanges] = useState<{ key: string; marks: Map<string, ChangeTreeMark> } | null>(null);
+  useEffect(() => {
+    if (!changeMarks) return;
+    let live = true;
+    const key = `${id}::${branch}`;
+    api.baselineChanges(id, branch).then((r) => {
+      if (!live) return;
+      const marks = new Map<string, ChangeTreeMark>();
+      for (const f of r.files) if (f.status !== 'deleted') marks.set(f.path, f.status);
+      setTreeChanges({ key, marks });
+    }, () => { /* the marks stay as they were */ });
+    return () => { live = false; };
+  }, [id, branch, changeMarks, historyVersion, files, treeChangesTick, project?.manualCommits]);
+  const changeTreeMarks = changeMarks && treeChanges?.key === `${id}::${branch}` ? treeChanges.marks : undefined;
 
   // ---- agent session review (UX.md "Audit and undo") ----
   /** The agent's session on the branch, whichever file is open (the branch signal's awareness). */
@@ -1661,7 +1687,7 @@ export default function Editor() {
       { id: 'stop-on-error', group: 'Actions', title: project?.stopOnFirstError ? 'Stop on first error: on' : 'Stop on first error: off', run: () => setStopOnFirstError(!project?.stopOnFirstError) },
       { id: 'manual-commits', group: 'Actions', title: project?.manualCommits ? 'Commit changes: when I commit' : 'Commit changes: automatically', run: () => setManualCommits(!project?.manualCommits) },
       { id: 'spell', group: 'Actions', title: spellcheck ? 'Turn spellcheck off' : 'Turn spellcheck on', run: toggleSpellcheck },
-      { id: 'change-marks', group: 'Actions', title: `${changeMarks ? 'Hide' : 'Show'} the lines changed since the last ${project?.manualCommits ? 'commit' : 'checkpoint'}`, keywords: 'diff gutter changes', run: toggleChangeMarks },
+      { id: 'change-marks', group: 'Actions', title: `${changeMarks ? 'Hide' : 'Show'} the lines and files changed since the last ${project?.manualCommits ? 'commit' : 'checkpoint'}`, keywords: 'diff gutter changes file tree', run: toggleChangeMarks },
       { id: 'vim', group: 'Actions', title: vim ? 'Turn Vim keybindings off' : 'Turn Vim keybindings on', run: () => { toggleVim(); requestAnimationFrame(() => codeRef.current?.focus()); } },
       ...appearanceCommands(appearance),
       { id: 'settings', group: 'View', title: 'Project settings: compiler, main document, TeX Live', run: () => setSettingsOpen(true) },
@@ -2138,6 +2164,8 @@ export default function Editor() {
                 hidden={tab !== 'files'}
                 readOnly={locked}
                 agentMarks={agentTreeMarks}
+                changeMarks={changeTreeMarks}
+                changeNoun={project.manualCommits ? 'commit' : 'checkpoint'}
                 onCreate={async (path) => {
                   try {
                     await api.createFile(id, branch, path);

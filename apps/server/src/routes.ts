@@ -2380,6 +2380,20 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
   });
 
+  // The file tree's change marks: which files differ from the same baseline.
+  // Flushes open docs first, so typing not yet autosaved counts too.
+  app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/baseline-changes', async (req, reply) => {
+    const branch = req.query.branch || 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    try {
+      const manual = await store.readMeta(req.params.id).then((m) => m.manualCommits === true, () => false);
+      flushBranchDocs(req.params.id, branch);
+      return await gitops.changedSinceBaseline(req.params.id, branch, manual);
+    } catch {
+      return reply.code(404).send({ error: 'Project or branch not found' });
+    }
+  });
+
   app.get<{ Params: { id: string; hash: string } }>('/api/projects/:id/commit/:hash/diff', async (req, reply) => {
     try { return await gitops.commitDiff(req.params.id, req.params.hash); }
     catch (err: any) { return reply.code(400).send({ error: err.message }); }

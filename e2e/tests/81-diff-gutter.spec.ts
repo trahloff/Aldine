@@ -62,7 +62,7 @@ test.describe('change marks', () => {
       await page.keyboard.type(' Again.');
       await expect(marks(page, 'mod')).toHaveCount(1);
       await page.keyboard.press('ControlOrMeta+k');
-      await page.getByTestId('palette-input').fill('hide the lines changed');
+      await page.getByTestId('palette-input').fill('hide the lines and files changed');
       await page.keyboard.press('Enter');
       await expect(marks(page)).toHaveCount(0);
       await expect(page.locator('.cm-diff-gutter')).toHaveCount(0);

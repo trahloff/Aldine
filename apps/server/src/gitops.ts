@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { projectsDir } from './config.js';
 import { repoDir, branchDir, git, readMeta, removeTree } from './store.js';
 import { spawn } from 'node:child_process';
-import { BRANCH_RE } from './util.js';
+import { BRANCH_RE, isHiddenPath } from './util.js';
 
 export interface BranchInfo { name: string; current?: boolean; head: string; message: string; date: string }
 
@@ -692,6 +692,37 @@ export async function fileAtCommit(id: string, commit: string, rel: string): Pro
   const content = await g.raw(['cat-file', 'blob', oid]);
   if (content.includes('\0')) return { content: null, large: true };
   return { content };
+}
+
+export type BaselineChange = 'added' | 'modified' | 'deleted';
+
+/**
+ * The files whose state on disk differs from the diff baseline
+ * (diffBaselineCommit), for the file tree's change marks: names and a
+ * status only, never contents. Untracked files count as added. Read-only:
+ * no repo lock, and no optional index write that could collide with a
+ * commit holding it. `commit` is null when the branch has no commit.
+ */
+export async function changedSinceBaseline(id: string, branch: string, manual: boolean): Promise<{ commit: string | null; files: { path: string; status: BaselineChange }[] }> {
+  const commit = await diffBaselineCommit(id, branch, manual);
+  if (!commit) return { commit: null, files: [] };
+  const dir = await ensureWorktree(id, branch);
+  ensureOutputExcluded(id);
+  const g = git(dir);
+  const [diff, untracked] = await Promise.all([
+    g.raw(['--no-optional-locks', '-c', 'core.quotePath=false', 'diff', '--no-renames', '--no-ext-diff', '--name-status', '-z', commit, '--']),
+    g.raw(['--no-optional-locks', '-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '-z']),
+  ]);
+  const byPath = new Map<string, BaselineChange>();
+  const f = diff.split('\0');
+  for (let i = 0; i + 1 < f.length; i += 2) {
+    const code = f[i].trim()[0], rel = f[i + 1];
+    if (!rel) continue;
+    byPath.set(rel, code === 'A' ? 'added' : code === 'D' ? 'deleted' : 'modified');
+  }
+  for (const rel of untracked.split('\0')) if (rel) byPath.set(rel, 'added');
+  const files = [...byPath].filter(([p]) => !/^\.(aldine|papyr)-out\//.test(p) && !isHiddenPath(p)).map(([path, status]) => ({ path, status }));
+  return { commit, files };
 }
 
 /** Trailer naming whose access token an agent commit was made with: the

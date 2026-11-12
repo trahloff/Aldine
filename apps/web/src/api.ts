@@ -605,6 +605,9 @@ export const api = {
     req<{ commit: string | null; content?: string | null; large?: boolean; unchanged?: boolean }>(
       `/api/projects/${id}/diff-baseline?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}${since ? `&since=${since}` : ''}`,
     ),
+  /** The files that differ from that same baseline, for the file tree. */
+  baselineChanges: (id: string, branch: string) =>
+    req<{ commit: string | null; files: { path: string; status: 'added' | 'modified' | 'deleted' }[] }>(`/api/projects/${id}/baseline-changes?branch=${encodeURIComponent(branch)}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ branch, q: query.q });

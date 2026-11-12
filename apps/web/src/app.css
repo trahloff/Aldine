@@ -1005,6 +1005,12 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 /* Claude in the file now (the spark), or its unreviewed changes there (a dot) */
 .tree__agent { flex: none; display: inline-flex; align-items: center; color: var(--agent); }
 .tree__agent--changed { width: 6px; height: 6px; border-radius: 50%; background: var(--agent); }
+/* Changed since the baseline, in the change-mark colours: a letter at the
+   row's end (M changed, A added), a dot on a closed folder. */
+.tree__change { flex: none; margin-left: auto; min-width: 10px; font-size: var(--text-xs); font-weight: 600; line-height: 1; text-align: center; }
+.tree__change--modified { color: var(--accent); }
+.tree__change--added { color: var(--ok); }
+.tree__change--folder { min-width: 0; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.8; }
 .tree__item--active:active { background: var(--accent-soft); }
 .tree__item--active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tree__item--dir { color: var(--text-2); font-weight: 600; cursor: default; }

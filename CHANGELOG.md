@@ -17,6 +17,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   name, Aldine stays the committer, and only you see the address. Stored in
   every datastore (SQLite migrates to schema 4). See "Commit authors" in the
   README. Refs #294.
+- Change marks in the file tree, against the same baseline as the gutter's:
+  a blue M beside files changed since the last checkpoint (the last commit,
+  with manual commits), a green A beside files added since, and a dot on a
+  closed folder that holds either. Typing counts before it is autosaved;
+  the marks clear in every open editor when someone saves a checkpoint.
+  The command palette's toggle for the gutter's marks hides these too.
+  Refs #289.
 
 ## [1.10.0] — 2026-11-11
 
