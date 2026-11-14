@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Compartment, Prec } from '@codemirror/state';
-import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { indentOnInput, indentUnit, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
@@ -12,6 +12,8 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { api, localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { findKeymap, findPanel, gotoLineTop, openFind, restoreFind } from '../editor/findPanel';
+import { formatChanges } from '../editor/formatChanges';
+import { FORMAT_DOCUMENT_KEYS, matchesChord } from '../util/shortcuts';
 import { everydayCompletionSource, macroCompletionSource, pathCompletionSource } from '../editor/completions';
 import { spellcheckExtension } from '../editor/spellcheck';
 import { latexNewlineIndent } from '../editor/newlineIndent';
@@ -109,6 +111,12 @@ export interface CodePaneHandle {
   openFind(field?: 'search' | 'replace'): boolean;
   /** The Go to line prompt above the text. */
   gotoLinePrompt(): void;
+  /** Runs `format` on the document's text and indent unit, then applies only
+   *  the characters that differ, in one undo step of its own. 'stale': the
+   *  document changed before `format` answered, and nothing was applied;
+   *  null: no synced document this editor may change, or the pane moved on
+   *  to another file. A rejection of `format` passes through. */
+  formatDocument(format: (text: string, indent: string) => Promise<string>): Promise<'formatted' | 'unchanged' | 'stale' | null>;
 }
 
 /** Comment highlight decorations, updatable via an effect and tracking edits.
@@ -198,6 +206,8 @@ interface Props {
   changeMarks?: boolean;
   /** Bumped when the branch's history may have moved: the baseline is asked again. */
   baselineVersion?: number;
+  /** Format document's keys (Shift+Alt+F) in the text. */
+  onFormat?(): void;
   /** The project commits by hand: the baseline is the last commit. */
   manualCommits?: boolean;
 }
@@ -248,11 +258,11 @@ function headingAt(entries: OutlineEntry[], line: number): number {
 const sameOutline = (a: OutlineEntry[], b: OutlineEntry[]) =>
   a.length === b.length && a.every((h, i) => h.line === b[i].line && h.level === b[i].level && h.title === b[i].title && h.pos === b[i].pos);
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null, changeMarks = false, baselineVersion = 0, manualCommits = false }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null, changeMarks = false, baselineVersion = 0, manualCommits = false, onFormat }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret });
-  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat });
+  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat };
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -395,6 +405,22 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const view = viewRef.current;
       if (view) gotoLineTop(view);
     },
+    async formatDocument(format) {
+      const view = viewRef.current;
+      if (!view || !syncedRef.current || view.state.readOnly) return null;
+      const doc = view.state.doc;
+      const before = doc.toString();
+      const after = await format(before, view.state.facet(indentUnit));
+      if (viewRef.current !== view) return null;
+      // Any edit meanwhile, here or a collaborator's, makes a new doc.
+      if (view.state.doc !== doc) return 'stale';
+      const changes = formatChanges(before, after);
+      if (!changes.length) return 'unchanged';
+      undoRef.current?.stopCapturing();
+      view.dispatch({ changes, userEvent: 'input.format' });
+      undoRef.current?.stopCapturing();
+      return 'formatted';
+    },
   }), []);
 
   // A layout effect: the view is in place before the browser paints the
@@ -520,6 +546,17 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
             { key: 'Mod-b', run: toggleStyle('bold') },
             { key: 'Mod-i', run: toggleStyle('italic') },
           ])),
+          // VS Code's Format Document keys, by physical key: CodeMirror's keymap
+          // reads Option+Shift+F on a Mac as the character it types (Ï).
+          EditorView.domEventHandlers({
+            keydown: (e) => {
+              const f = cbRef.current.onFormat;
+              if (!f || !matchesChord(e, FORMAT_DOCUMENT_KEYS)) return false;
+              e.preventDefault();
+              f();
+              return true;
+            },
+          }),
           findPanel(),
           keymap.of([
             ...closeBracketsKeymap,

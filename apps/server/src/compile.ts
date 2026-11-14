@@ -483,3 +483,29 @@ export async function synctexLookup(projectId: string, branch: string, payload: 
     direction, file, line, column, page, x, y,
   });
 }
+
+/** Why Format document left the text as it was, as the compiler reports it. */
+export type FormatRefusal = 'unavailable' | 'too-large' | 'timeout' | 'busy' | 'failed' | 'changed-text' | 'invalid';
+
+const FORMAT_MESSAGES: Record<FormatRefusal, (detail: string) => string> = {
+  unavailable: () => 'latexindent isn’t available on this server, so documents can’t be formatted here.',
+  'too-large': (detail) => `This file is too large to format${detail ? ` (${detail})` : ''}.`,
+  timeout: () => 'Formatting took too long and was stopped. Nothing changed.',
+  busy: () => 'The formatter is busy with other files. Try again in a moment.',
+  failed: (detail) => `latexindent couldn’t format this file${detail ? `: ${detail}` : '.'}`,
+  'changed-text': () => 'latexindent changed more than indentation, so nothing was applied.',
+  invalid: (detail) => detail || 'This file can’t be formatted.',
+};
+
+/**
+ * The text as latexindent indents it, computed by the compile service: the
+ * app server runs no TeX tool itself. `text` is the editor's copy, which
+ * is newer than the file on disk.
+ */
+export async function formatText(text: string, indent: string, ext: string): Promise<{ ok: true; text: string } | { ok: false; reason: FormatRefusal; error: string }> {
+  const res = await compilerPost<{ ok?: boolean; text?: unknown; reason?: unknown; error?: unknown }>('/format', { text, indent, ext });
+  if (res.ok && typeof res.text === 'string') return { ok: true, text: res.text };
+  // A compiler from before /format answers 404 "not found".
+  const reason: FormatRefusal = typeof res.reason === 'string' && res.reason in FORMAT_MESSAGES ? res.reason as FormatRefusal : 'unavailable';
+  return { ok: false, reason, error: FORMAT_MESSAGES[reason](typeof res.error === 'string' ? res.error : '') };
+}

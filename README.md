@@ -126,7 +126,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   spellcheck, Vim keybindings, PDF zoom + download, selectable PDF text with
   Find (⌘F in the preview), drag-drop figure upload,
   previews of images and PDFs from the file tree, plain-English error
-  hints + raw log, command palette (⌘K / Ctrl+K).
+  hints + raw log, command palette (⌘K / Ctrl+K), Format document
+  (latexindent on the compile service, Shift+Alt+F / ⌥⇧F; indentation only,
+  one undo step).
 - **Search and replace across the project**: every text file on the branch,
   open or not, with match case, whole word and regular expressions; Replace
   all changes open documents live for everyone and lands as one commit.

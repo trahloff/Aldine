@@ -44,6 +44,9 @@ export function isTypesetEnter(e: KeyboardEvent, mac = isMac): boolean {
   return matchesChord(e, { ...TYPESET_ENTER, key: 'enter' }, mac);
 }
 
+/** Format document in the code editor, VS Code's keys; not changeable (no mod key). */
+export const FORMAT_DOCUMENT_KEYS: Chord = { mod: false, shift: true, alt: true, key: 'f', code: 'KeyF' };
+
 /** Opens the code editor's Find from anywhere on the page. */
 export function isFindKey(e: KeyboardEvent, mac = isMac): boolean {
   return matchesChord(e, { mod: true, shift: false, alt: false, key: 'f' }, mac);

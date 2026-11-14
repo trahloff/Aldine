@@ -579,6 +579,9 @@ export const api = {
     req<CompileStatus>(`/api/projects/${id}/compile-status?branch=${encodeURIComponent(branch)}`),
   stopCompile: (id: string, branch: string) =>
     req<{ ok: true }>(`/api/projects/${id}/compile/stop`, { method: 'POST', body: JSON.stringify({ branch }) }),
+  /** The text as the server's latexindent indents it; the error names the cause when it cannot. */
+  formatDocument: (id: string, branch: string, path: string, text: string, indent: string) =>
+    req<{ ok: true; text: string }>(`/api/projects/${id}/format`, { method: 'POST', body: JSON.stringify({ branch, path, text, indent }) }),
   synctex: (id: string, branch: string, payload: Record<string, unknown>) =>
     req<{ ok: boolean; records: Array<Record<string, number | string>> }>(`/api/projects/${id}/synctex`, { method: 'POST', body: JSON.stringify({ branch, ...payload }) }),
   bib: (id: string, branch: string) => req<BibEntry[]>(`/api/projects/${id}/bib?branch=${encodeURIComponent(branch)}`),
