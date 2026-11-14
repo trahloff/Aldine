@@ -79,6 +79,10 @@ in `21-zip-import.spec.ts`.*
   bibliography and labels.
 - **EDIT-8** — Hovering a `\cite` key shows a reference preview tooltip.
 - **EDIT-9** — Spellcheck can be toggled and underlines prose in `.tex`/`.md`.
+- **EDIT-10** — Format document (palette, or Shift+Alt+F in the text) indents
+  the open `.tex`, `.sty` or `.cls` file with latexindent, changing only
+  whitespace; one undo takes it back, and a file that is already formatted
+  says so (`83-format-document.spec.ts`).
 
 ## Compile & preview (COMP)
 

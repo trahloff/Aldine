@@ -6,7 +6,7 @@ import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
-import { compileProject, compileStatus, synctexLookup, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
+import { compileProject, compileStatus, synctexLookup, formatText, type FormatRefusal, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
@@ -41,7 +41,7 @@ import { instance } from './instance.js';
 import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
@@ -2205,6 +2205,28 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (res.stale) return reply.code(409).send({ error: res.error });
       return res;
     });
+
+  // Format document: latexindent over the editor's text, on the compile
+  // service. Not in VIEWER_WRITES (a viewer cannot change the file, so has
+  // nothing to format) and not in TOKEN_PROJECT_WRITES; a showcase refuses
+  // it with every other write. The text is the editor's, newer than the file
+  // on disk; the answer goes back to that editor and nowhere else.
+  const FORMAT_STATUS: Record<FormatRefusal, number> = { unavailable: 503, 'too-large': 413, timeout: 422, busy: 429, failed: 422, 'changed-text': 422, invalid: 400 };
+  app.post<{ Params: { id: string }; Body: { path?: unknown; text?: unknown; indent?: unknown } }>('/api/projects/:id/format', async (req, reply) => {
+    const { path: rel, text, indent } = req.body || {};
+    if (typeof text !== 'string') return reply.code(400).send({ error: 'text must be a string', reason: 'invalid' });
+    const ext = typeof rel === 'string' ? /\.(tex|sty|cls)$/i.exec(rel)?.[1]?.toLowerCase() : undefined;
+    if (!ext) return reply.code(400).send({ error: 'Format document works on .tex, .sty and .cls files', reason: 'invalid' });
+    if (typeof indent !== 'string' || !/^(?:\t| {1,8})$/.test(indent)) return reply.code(400).send({ error: 'indent must be a tab or 1 to 8 spaces', reason: 'invalid' });
+    if (!(await formatLimiter.take(clientKey(req, reqUser(req)?.id)))) return reply.code(429).send({ error: 'Too many formatting requests. Try again in a moment.', reason: 'busy' });
+    try {
+      const res = await formatText(text, indent, ext);
+      if (!res.ok) return reply.code(FORMAT_STATUS[res.reason]).send({ error: res.error, reason: res.reason });
+      return { ok: true, text: res.text };
+    } catch (err: any) {
+      return reply.code(err instanceof CompilerUnavailableError ? 503 : 400).send({ error: err.message, reason: 'compiler' });
+    }
+  });
 
   // ---------- bib + label indexes (for \cite / \ref autocomplete), word count ----------
   // Implementations live in indexes.ts, shared with the MCP tools.

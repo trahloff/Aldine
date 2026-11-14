@@ -71,6 +71,11 @@ RUN biber --version
 # fails here instead of typesetting with no thumbnails.
 RUN gs --version
 
+# latexindent formats documents (format.js). Both bases ship it and the Perl
+# modules it loads (YAML::Tiny, File::HomeDir); a base without them fails here
+# instead of answering every Format document with "isn't available".
+RUN latexindent --version
+
 # Restricted (partial) shell-escape: allow only the vetted whitelist (epstopdf,
 # kpsewhich, bibtex, …) so EPS auto-conversion works and the epstopdf warning
 # goes away — but arbitrary \write18 commands stay blocked. Same posture as
@@ -78,7 +83,7 @@ RUN gs --version
 RUN tlmgr conf texmf shell_escape p
 
 WORKDIR /srv
-COPY server.js catalog.js preamble.js thumbnail.js ./
+COPY server.js catalog.js preamble.js thumbnail.js format.js ./
 # server.js reports the scheme at GET /health; the ARG must be re-declared
 # after FROM to be visible in this stage.
 ARG TEXLIVE_SCHEME

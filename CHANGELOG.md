@@ -7,6 +7,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Format document: the command palette's "Format document", or Shift+Alt+F
+  (⌥⇧F on a Mac) in the text, indents the open `.tex`, `.sty` or `.cls` file
+  with latexindent. It runs on the compile service (`POST /format`), never
+  on the app server, over a copy of the editor's text in a temporary
+  directory: no project-local or account settings are read, nothing is
+  written back in place, line breaks stay where they are, and an answer
+  that changed anything but whitespace is refused. Only the characters that
+  differ are changed, in one undo step, so collaborators' cursors and
+  comments stay put; if the document changed while latexindent ran, nothing
+  is applied. Files over 1 MB and runs over 10 s (`FORMAT_MAX_BYTES`,
+  `FORMAT_TIMEOUT_MS` on the compiler) are refused with the reason, and a
+  viewer cannot format. Both published compiler images already ship
+  latexindent and its Perl modules; the compiler's `/health` now reports it.
+  Refs #304.
+
 ### Fixed
 - Syntax highlighting colors every LaTeX command. Commands the LaTeX
   grammar knows by name, such as `\item`, `\hline`, `\centering`,

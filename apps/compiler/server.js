@@ -8,8 +8,10 @@
  *   POST /stop     { projectDir }  -> { ok: true, stopped: <typesets of that directory ended> }
  *     ends that directory's running or waiting typesets, which answer stopped: true
  *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' },
- *                        thumbnails: 'gs' | 'pdftoppm' | 'none' }
+ *                        thumbnails: 'gs' | 'pdftoppm' | 'none',
+ *                        latexindent: { available: true, version } | { available: false, error } }
  *   GET  /catalog  -> { ok, generatedAt, classes: [{ id, cls, kind, license, sample }] }
+ *   POST /format   { text, indent?, ext? } -> { ok, text } | { ok: false, reason, error }  (format.js)
  *
  * The compiler shares the projects volume (read) and an output cache volume
  * (write) with the app server, so no file transfer is needed.
@@ -27,6 +29,7 @@ const crypto = require('crypto');
 const { getCatalog } = require('./catalog.js');
 const preamble = require('./preamble.js');
 const thumbnail = require('./thumbnail.js');
+const formatter = require('./format.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4020;
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../.data');
@@ -697,9 +700,33 @@ async function synctex(body) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive, thumbnails: thumbnail.rendererName() });
+  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, texlive, thumbnails: thumbnail.rendererName(), latexindent: formatter.info() });
   if (req.method === 'GET' && (req.url === '/catalog' || req.url.startsWith('/catalog?'))) {
     return getCatalog().then((c) => json(res, 200, c), (err) => json(res, 500, { ok: false, error: String(err && err.message || err) }));
+  }
+
+  if (req.method === 'POST' && req.url === '/format') {
+    // JSON escapes at most double a text of tabs and newlines; past that the
+    // body is no file that could be formatted, and it is not read further.
+    const limit = formatter.MAX_BYTES * 2 + 4096;
+    const chunks = [];
+    let size = 0;
+    let over = false;
+    req.on('data', (d) => {
+      if (over) return;
+      size += d.length;
+      if (size > limit) { over = true; chunks.length = 0; return; }
+      chunks.push(d);
+    });
+    req.on('end', async () => {
+      if (over) return json(res, 200, { ok: false, reason: 'too-large', error: formatter.sizeLimit() });
+      try {
+        json(res, 200, await formatter.format(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')));
+      } catch (err) {
+        json(res, 400, { ok: false, reason: 'invalid', error: String(err && err.message || err) });
+      }
+    });
+    return;
   }
 
   if (req.method === 'POST' && (req.url === '/compile' || req.url === '/synctex' || req.url === '/stop')) {
@@ -726,7 +753,8 @@ const server = http.createServer(async (req, res) => {
 module.exports = { parseLog, parseBibLog, latexmkFailure, invalidRootFile, documentBodyReached, clipLog, preambleIdle: preamble.idle, thumbnailsIdle: thumbnail.idle };
 
 if (require.main === module) {
-  Promise.allSettled([probeTexLive(), thumbnail.probe()]).then(() => {
-    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme}), thumbnails=${thumbnail.rendererName()}`));
+  Promise.allSettled([probeTexLive(), thumbnail.probe(), formatter.probe()]).then(() => {
+    const li = formatter.info();
+    server.listen(PORT, () => console.log(`[compiler] listening on :${PORT}, data=${DATA_DIR}, texlive=${texlive.release} (${texlive.scheme}), thumbnails=${thumbnail.rendererName()}, latexindent=${li.available ? li.version : `none (${li.error})`}`));
   });
 }

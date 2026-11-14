@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, isFindKey, isTypesetEnter, matchesChord, setChord } from '../shortcuts';
+import { FORMAT_DOCUMENT_KEYS, chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isDefaultChord, isFindKey, isTypesetEnter, matchesChord, setChord } from '../shortcuts';
 
 const key = (k: string, code: string, mods: Partial<Record<'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey', boolean>> = {}, altGraph = false) =>
   ({ key: k, code, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods, getModifierState: (m: string) => m === 'AltGraph' && altGraph }) as unknown as KeyboardEvent;
@@ -21,6 +21,15 @@ describe('shortcut labels', () => {
     expect(formatChord(search, true)).toBe('⇧⌘F');
     expect(formatChord(search, false)).toBe('Ctrl+Shift+F');
     expect(matchesChord(key('F', 'KeyF', { metaKey: true, shiftKey: true }), search)).toBe(true);
+  });
+
+  it('formats the document on Shift+Alt+F by the physical key, Option+Shift+F on a Mac', () => {
+    expect(formatChord(FORMAT_DOCUMENT_KEYS, true)).toBe('⌥⇧F');
+    expect(formatChord(FORMAT_DOCUMENT_KEYS, false)).toBe('Alt+Shift+F');
+    expect(matchesChord(key('Ï', 'KeyF', { altKey: true, shiftKey: true }), FORMAT_DOCUMENT_KEYS, true)).toBe(true);
+    expect(matchesChord(key('F', 'KeyF', { altKey: true, shiftKey: true }), FORMAT_DOCUMENT_KEYS, false)).toBe(true);
+    expect(matchesChord(key('F', 'KeyF', { altKey: true, shiftKey: true, ctrlKey: true }), FORMAT_DOCUMENT_KEYS, false)).toBe(false);
+    expect(matchesChord(key('f', 'KeyF', { altKey: true }), FORMAT_DOCUMENT_KEYS, false)).toBe(false);
   });
 
   it('names the clash when a chord saved earlier is a new default too', () => {

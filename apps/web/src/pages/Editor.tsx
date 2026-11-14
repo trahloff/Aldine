@@ -53,7 +53,7 @@ import Splitter from '../components/Splitter';
 import { useAppearance } from '../theme';
 import { appearanceCommands } from '../components/Appearance';
 import { useDocumentTitle } from '../util/documentTitle';
-import { formatChord, isFindKey, isTypesetEnter, matchesShortcut, TYPESET_ENTER, useShortcutLabel } from '../util/shortcuts';
+import { FORMAT_DOCUMENT_KEYS, formatChord, isFindKey, isTypesetEnter, matchesShortcut, TYPESET_ENTER, useShortcutLabel } from '../util/shortcuts';
 import { shortcut } from '../platform';
 import { MenuButton, type MenuEntry } from '../components/Menu';
 import ProjectSettings from '../components/ProjectSettings';
@@ -129,9 +129,11 @@ function inTextField(target: EventTarget | null): boolean {
 }
 
 /** Palette commands a read-only showcase would refuse (with the engine and remote ones). */
-const SHOWCASE_REFUSES = new Set(['comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder', 'replace-in-file']);
+const SHOWCASE_REFUSES = new Set(['format-document', 'comment', 'stop-on-error', 'manual-commits', 'commit', 'newbranch', 'rename-file', 'delete-file', 'new-file', 'new-folder', 'upload-files', 'upload-folder', 'replace-in-file']);
 /** Palette commands someone who can only view would see refused (with the engine and remote ones): what the showcase refuses, less commenting. */
 const VIEWER_REFUSES = new Set([...SHOWCASE_REFUSES].filter((c) => c !== 'comment'));
+/** The files latexindent formats. */
+const FORMATTABLE = /\.(tex|sty|cls)$/i;
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
 
@@ -1152,6 +1154,33 @@ export default function Editor() {
   // A citation belongs in a TeX source: not in a .bib, a preview, or nothing.
   const insertCitation = useCallback((key: string) => (activeFile && /\.(tex|ltx)$/i.test(activeFile) && codeRef.current?.insertCitation(key)) || false, [activeFile]);
 
+  // ---- Format document (latexindent on the compile service) ----
+  const formatting = useRef(false);
+  const formatDocument = useCallback(async () => {
+    const file = activeFile;
+    if (!file || formatting.current) return;
+    if (!FORMATTABLE.test(file)) {
+      toast(`Format document works on .tex, .sty and .cls files; latexindent can’t format ${file.split('/').pop()}`);
+      return;
+    }
+    if (project?.readOnly || (authEnabled && project?.canEdit === false)) {
+      toast('You can view this project, not change it, so it can’t be formatted here');
+      return;
+    }
+    formatting.current = true;
+    try {
+      const result = await codeRef.current?.formatDocument((text, indent) => api.formatDocument(id, branch, file, text, indent).then((r) => r.text));
+      if (result === 'formatted') toast(`Formatted ${file.split('/').pop()} with latexindent`, 'ok');
+      else if (result === 'unchanged') toast('Already formatted');
+      else if (result === 'stale') toast('The document changed while it was being formatted, so nothing was applied. Run Format document again.', 'error');
+      else if (result === null && codeRef.current) toast('The document isn’t ready to format yet. Try again once it has opened.');
+    } catch (err: any) {
+      toast(err?.message || 'Could not format the document', 'error');
+    } finally {
+      formatting.current = false;
+    }
+  }, [activeFile, id, branch, toast, project?.readOnly, project?.canEdit, authEnabled]);
+
   // ---- review comments ----
   const loadComments = useCallback(async () => {
     try { setComments(await api.comments(id, branch)); setCommentsLoad('ok'); } catch { setComments([]); setCommentsLoad('error'); }
@@ -1681,6 +1710,10 @@ export default function Editor() {
       ...(activeFile && !previewing ? [
         { id: 'find-in-file', group: 'Actions', title: 'Find in this file…', hint: formatChord({ mod: true, shift: false, alt: false, key: 'f' }), keywords: 'search', run: () => { if (codeRef.current?.openFind()) revealRef.current('editor'); } },
         { id: 'replace-in-file', group: 'Actions', title: 'Replace in this file…', keywords: 'find', run: () => { if (codeRef.current?.openFind('replace')) revealRef.current('editor'); } },
+        {
+          id: 'format-document', group: 'Actions', title: 'Format document', hint: formatChord(FORMAT_DOCUMENT_KEYS),
+          keywords: 'latexindent indent indentation tidy beautify prettify', run: () => { revealRef.current('editor'); void formatDocument(); },
+        },
         { id: 'goto-line', group: 'Actions', title: 'Go to line…', hint: formatChord({ mod: true, shift: false, alt: true, key: 'g' }), keywords: 'jump line number', run: () => { revealRef.current('editor'); codeRef.current?.gotoLinePrompt(); } },
       ] : []),
       ...ENGINES.map((e) => ({ id: `engine-${e.id}`, group: 'Actions', title: `Typeset with ${e.label}`, run: () => setEngine(e.id) })),
@@ -1826,7 +1859,7 @@ export default function Editor() {
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown, formatDocument]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -2347,6 +2380,7 @@ export default function Editor() {
                 changeMarks={changeMarks}
                 baselineVersion={historyVersion}
                 manualCommits={!!project?.manualCommits}
+                onFormat={formatDocument}
               />
             </>
           ) : filesLoaded && !hasFiles ? (
