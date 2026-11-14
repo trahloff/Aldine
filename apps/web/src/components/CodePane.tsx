@@ -1,12 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, DecorationSet } from '@codemirror/view';
 import { EditorState, StateField, StateEffect, Compartment, Prec } from '@codemirror/state';
-import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
-import { tags as t } from '@lezer/highlight';
+import { indentOnInput, bracketMatching, foldGutter, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
-import { latex, latexCompletionSource } from 'codemirror-lang-latex';
+import { latexCompletionSource } from 'codemirror-lang-latex';
 import type * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap, ySyncFacet, YRange } from 'y-codemirror.next';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
@@ -16,6 +15,7 @@ import { findKeymap, findPanel, gotoLineTop, openFind, restoreFind } from '../ed
 import { everydayCompletionSource, macroCompletionSource, pathCompletionSource } from '../editor/completions';
 import { spellcheckExtension } from '../editor/spellcheck';
 import { latexNewlineIndent } from '../editor/newlineIndent';
+import { aldineHighlight, aldineLatex } from '../editor/latexHighlight';
 import { setComments, CommentRange } from '../editor/commentsEffect';
 import { visualExtensions, editAtCursor, publishEditorFocus, recordOwnCopies, type VisualDeps } from '../editor/visual';
 import { agentHighlight } from '../editor/agentHighlight';
@@ -213,20 +213,6 @@ export function latexWordCount(src: string): number {
   const words = stripped.match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu);
   return words ? words.length : 0;
 }
-
-/** Calm, ink-blue syntax palette that flips with the color scheme via CSS vars. */
-const aldineHighlight = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.tagName, t.macroName, t.function(t.variableName)], color: 'var(--syn-command)' },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: 'var(--syn-comment)', fontStyle: 'italic' },
-  { tag: [t.string, t.attributeValue, t.inserted], color: 'var(--syn-string)' },
-  { tag: [t.number, t.literal, t.bool, t.escape], color: 'var(--syn-value)' },
-  { tag: [t.labelName, t.typeName, t.attributeName], color: 'var(--syn-value)' },
-  { tag: [t.heading], fontWeight: '600', color: 'var(--text)' },
-  { tag: [t.link, t.url], color: 'var(--accent)' },
-  { tag: [t.processingInstruction, t.meta, t.bracket], color: 'var(--text-2)' },
-  { tag: t.strong, fontWeight: '600' },
-  { tag: t.emphasis, fontStyle: 'italic' },
-]);
 
 const aldineTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)', color: 'var(--text)' },
@@ -521,7 +507,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           }),
           // enableAutocomplete:false keeps the package from adding an autocompletion with its own override;
           // enableTooltips:false so our richer \cite hover (reference preview) is the only hover
-          latex({ autoCloseTags: true, enableLinting: false, enableAutocomplete: false, enableTooltips: false }),
+          aldineLatex({ autoCloseTags: true, enableLinting: false, enableAutocomplete: false, enableTooltips: false }),
           latexNewlineIndent,
           Prec.high(keymap.of([{ key: '}', run: closeBeginBrace }])),
           closeBeginBraceInput,

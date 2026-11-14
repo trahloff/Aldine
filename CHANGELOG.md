@@ -7,6 +7,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Syntax highlighting colors every LaTeX command. Commands the LaTeX
+  grammar knows by name, such as `\item`, `\hline`, `\centering`,
+  `\caption`, `\footnote` and `\includegraphics`, showed as plain text;
+  only unknown ones like your own `\newcommand` macros were colored. Each
+  control sequence and control symbol (`\\`, `\%`, `\&`) now gets the
+  command color. Citation commands (`\cite`, `\citep`, `\citet` and the
+  rest) share the color of `\ref` and `\label` instead of showing as plain
+  text. `\textbf`, `\textit` and `\emph` color the command name and make
+  the argument bold or italic, where they used to bolden the name.
+  Environment names in `\begin{…}` get the same color as labels.
+  Sectioning commands and comments look as before. Refs #305.
+
 ## [1.11.0] — 2026-11-12
 
 ### Added
