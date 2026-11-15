@@ -185,6 +185,29 @@ repository is configured. Operators get the same from
 each repository's state (`ok`, `available`, `head`, `syncedAt`, `error`).
 Neither needs a restart: push a new folder, refresh, and the tile is there.
 
+### Personal repositories
+
+With accounts on, anyone can add template repositories that only they see:
+**Account settings → Personal templates → Add template repository**, with the
+clone URL and optionally a name, a branch and the folder that holds the
+templates. The layout is the same as above. Aldine clones the repository
+right away and refuses it, keeping nothing, when it cannot be cloned or holds
+no template. Its templates appear in that person's gallery in a group marked
+"only you", and nobody else is shown them, gets their previews or can create a
+project from them, the Agent API included.
+
+A private repository is read with the account's own connection to that host
+under Git hosts (GitHub, a GitLab or a Gitea instance): no token goes into
+the URL, and a URL with one is refused. Because the URL is the user's choice,
+not the operator's, a host that resolves to a private or loopback address is
+refused unless the account connected that host, and git follows no redirect
+for these repositories. Personal repositories refresh when their owner opens
+the gallery, at most once per `TEMPLATE_REPOS_REFRESH_MS`, and with
+**Refresh templates**. They share `TEMPLATE_REPO_MAX_BYTES`, live in
+`CACHE_DIR/template-repos/~<owner hash>-<id>`, and are removed with the
+account. `ALDINE_PERSONAL_TEMPLATE_REPOS` caps how many one account can add
+(default `5`); `0` turns the feature off.
+
 ### Stale, and other failure modes
 
 A refresh that fails (host down, token revoked, branch deleted) keeps the

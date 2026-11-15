@@ -10,6 +10,7 @@ import { discardCodesForUser } from './oauth/codes.js';
 import { subkey } from './output-signing.js';
 import { SESSION_DAYS, firstExpiry, renewIfDue } from './sessions.js';
 import { avatarVersion, removeAvatar } from './avatars.js';
+import { removeAllPersonalRepos } from './templaterepos.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -680,6 +681,7 @@ export async function deleteAccount(userId: string): Promise<void> {
   discardCodesForUser(userId);
   await db().deleteUser(userId);
   removeAvatar(userId);
+  await removeAllPersonalRepos(userId);
 }
 
 // ---------- personal access tokens (headless agent credentials) ----------

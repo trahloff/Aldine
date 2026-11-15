@@ -23,6 +23,8 @@ export interface GalleryGroup {
   heading: string;
   /** Set on a repository whose last refresh failed while its previous checkout is still listed. */
   stale?: { repoId: string; text: string };
+  /** A repository only this account sees (Account settings). */
+  personal?: boolean;
   items: TemplateInfo[];
 }
 
@@ -50,6 +52,7 @@ export function galleryGroups(shown: TemplateInfo[], repos: TemplateRepoState[])
       testid: `template-category-repo-${repoId}`,
       heading: state?.label ?? items[0].source?.label ?? repoId,
       stale,
+      ...(state?.personal || items[0].source?.personal ? { personal: true } : {}),
       items,
     });
   }

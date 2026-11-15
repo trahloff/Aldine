@@ -23,7 +23,7 @@ import { db } from './db/index.js';
 import { listPlugins, pluginAssetPath } from './plugins.js';
 import { listAllTemplates, resolveTemplateSeed, type TemplateSeed } from './templates.js';
 import { warmVenueCache } from './catalog.js';
-import { startTemplateRepoRefresh, syncAllTemplateRepos, templateRepoStates } from './templaterepos.js';
+import { PersonalRepoError, addPersonalRepo, loadPersonalRepos, personalLimit, personalStates, personalView, removePersonalRepo, startTemplateRepoRefresh, syncAllTemplateRepos, syncPersonalRepos, templateRepoStates, templateVisibleTo } from './templaterepos.js';
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
@@ -41,7 +41,7 @@ import { instance } from './instance.js';
 import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
@@ -964,7 +964,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       seed = files;
     }    if (template) {
       try {
-        resolved = await resolveTemplateSeed(template, { projectName: name, author: reqUser(req)?.name });
+        resolved = await resolveTemplateSeed(template, { projectName: name, author: reqUser(req)?.name, viewer: reqUser(req)?.id });
         seed = resolved.files;
       } catch (err: any) {
         return reply.code(400).send({ error: err.message });
@@ -1437,7 +1437,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // instead of waiting on the compiler.
   warmVenueCache();
   startTemplateRepoRefresh();
-  app.get('/api/templates', async () => withPreviews(await listAllTemplates()));
+  app.get('/api/templates', async (req) => withPreviews(await listAllTemplates(reqUser(req)?.id)));
   /**
    * Page 1 of a template, as the chooser shows it (templatepreviews.ts). With
    * accounts on it is for signed-in users, like creating a project from it: a
@@ -1447,7 +1447,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
    */
   app.get<{ Querystring: { id?: string; v?: string } }>('/api/templates/preview', async (req, reply) => {
     if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    const img = typeof req.query.id === 'string' ? readTemplatePreview(req.query.id) : null;
+    const id = typeof req.query.id === 'string' ? req.query.id : null;
+    const img = id && templateVisibleTo(id, reqUser(req)?.id) ? readTemplatePreview(id) : null;
     if (!img) return reply.code(404).send({ error: 'No preview: this template has not been typeset yet' });
     const etag = `"${img.v}"`;
     const scope = auth.AUTH_ENABLED ? 'private' : 'public';
@@ -1461,10 +1462,47 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // Template repositories: their sync state, and a forced refresh. With auth
   // on, refreshing is for signed-in users; one sync per repository runs at a
   // time, so a burst of clicks costs one fetch.
-  app.get('/api/templates/repos', async () => ({ repos: templateRepoStates() }));
+  app.get('/api/templates/repos', async (req) => {
+    const viewer = reqUser(req)?.id;
+    if (viewer) await loadPersonalRepos(viewer);
+    return { repos: [...templateRepoStates(), ...(viewer ? personalStates(viewer) : [])] };
+  });
   app.post('/api/templates/repos/refresh', async (req, reply) => {
-    if (auth.AUTH_ENABLED && !reqUser(req)) return reply.code(401).send({ error: 'Sign in required' });
-    return { repos: await syncAllTemplateRepos() };
+    const viewer = reqUser(req)?.id;
+    if (auth.AUTH_ENABLED && !viewer) return reply.code(401).send({ error: 'Sign in required' });
+    if (viewer) await loadPersonalRepos(viewer);
+    const [shared, mine] = await Promise.all([syncAllTemplateRepos(), viewer ? syncPersonalRepos(viewer) : Promise.resolve([])]);
+    return { repos: [...shared, ...mine] };
+  });
+
+  // Personal template repositories (Account settings). Session-only, like
+  // the git host connections whose tokens they may be read with.
+  app.get('/api/templates/personal', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const user = reqUser(req);
+    if (!user) return reply.code(404).send({ error: 'Personal template repositories need accounts (AUTH_ENABLED)' });
+    const list = await loadPersonalRepos(user.id);
+    return { max: personalLimit(), repos: list.map(personalView) };
+  });
+  app.post<{ Body: { label?: unknown; url?: unknown; ref?: unknown; path?: unknown } }>('/api/templates/personal', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const user = reqUser(req);
+    if (!user) return reply.code(404).send({ error: 'Personal template repositories need accounts (AUTH_ENABLED)' });
+    if (personalLimit() === 0) return reply.code(404).send({ error: 'Personal template repositories are turned off on this server' });
+    if (!(await templateRepoLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Too many repositories added in a short time. Try again in a minute.' });
+    try {
+      return { repo: await addPersonalRepo(user.id, req.body || {}) };
+    } catch (err) {
+      if (err instanceof PersonalRepoError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+  app.delete<{ Params: { repoId: string } }>('/api/templates/personal/:repoId', async (req, reply) => {
+    if (requireSignIn(req, reply)) return;
+    const user = reqUser(req);
+    if (!user) return reply.code(404).send({ error: 'Personal template repositories need accounts (AUTH_ENABLED)' });
+    if (!(await removePersonalRepo(user.id, req.params.repoId))) return reply.code(404).send({ error: 'No such template repository' });
+    return { ok: true };
   });
 
   // What the connected compiler runs. Not project-scoped, so it is not behind
