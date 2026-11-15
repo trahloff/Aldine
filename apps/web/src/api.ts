@@ -404,7 +404,7 @@ export interface TemplateInfo {
   /** Upstream the template's files were taken from (`source` in template.json). */
   origin?: { url: string; version?: string };
   /** Which listing the template comes from; `label` is the repository label for `repo`. */
-  source?: { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string };
+  source?: { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string; /** A repository only this account added (Account settings). */ personal?: true };
   /** Fetched-kit venues: where the official kit is downloaded from at create time. */
   kit?: { host: string; url: string; homepage?: string; termsUrl?: string; manual?: boolean };
   /** Page 1 of the template, typeset once per version by the server. Absent until rendered, and for venues. */
@@ -421,6 +421,24 @@ export interface TemplateRepoState {
   head?: string;
   syncedAt?: string;
   error?: string;
+  /** One of this account's personal repositories. */
+  personal?: true;
+}
+
+/** A template repository this account added in Account settings. `id` is
+ *  the account's own; template ids use `repoId`. */
+export interface PersonalTemplateRepo {
+  id: string;
+  repoId: string;
+  label: string;
+  url: string;
+  ref: string;
+  path: string;
+  ok: boolean;
+  available: boolean;
+  syncedAt?: string;
+  error?: string;
+  templates: number;
 }
 
 /** How the venue kit went while the project was being created. */
@@ -459,6 +477,10 @@ export const api = {
   /** The image for a template's `preview`; with `v` in it the browser keeps it for good. */
   templatePreviewUrl: (id: string, v: string) => withBase(`/api/templates/preview?id=${encodeURIComponent(id)}&v=${encodeURIComponent(v)}`),
   refreshTemplateRepos: () => req<{ repos: TemplateRepoState[] }>('/api/templates/repos/refresh', { method: 'POST' }),
+  personalTemplateRepos: () => req<{ max: number; repos: PersonalTemplateRepo[] }>('/api/templates/personal'),
+  addPersonalTemplateRepo: (body: { label?: string; url: string; ref?: string; path?: string }) =>
+    req<{ repo: PersonalTemplateRepo }>('/api/templates/personal', { method: 'POST', body: JSON.stringify(body) }),
+  removePersonalTemplateRepo: (id: string) => req<{ ok: true }>(`/api/templates/personal/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** Multipart so the browser streams the File itself; the JSON + base64
    *  shape stays on the server for API clients. */
   /** Direct link (not a fetch): the browser saves the branch's source as a ZIP. */

@@ -584,8 +584,10 @@ poster or report templates puts the same layout in any git repository
 `TEMPLATE_REPOS`, and the templates appear in the gallery under the
 repository's name, refreshed on an interval or with "Refresh templates", with
 `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}` and `{{YEAR}}` filled in on
-create. Layout, manifest fields, placeholders and private-repository tokens:
-[templates/README.md](templates/README.md).
+create. With accounts on, each person can also add repositories only they
+see, such as letters with their own address, under Account settings →
+Personal templates. Layout, manifest fields, placeholders and
+private-repository tokens: [templates/README.md](templates/README.md).
 
 ## License
 

@@ -179,7 +179,7 @@ export function rekeyRepo(repoId: string): void {
   const prefix = `${REPO_PREFIX}${repoId}/`;
   for (const id of [...keys.keys()]) if (id.startsWith(prefix)) keys.delete(id);
   const live = new Set<string>();
-  for (const t of listRepoTemplates()) {
+  for (const t of listRepoTemplates({ all: true })) {
     if (!t.id.startsWith(prefix)) continue;
     const ver = versionOf(t);
     if (!ver) continue;
@@ -423,7 +423,7 @@ export function startTemplatePreviews(): void {
   if (started) return;
   started = true;
   loadShippedPreviews();
-  for (const t of listRepoTemplates()) {
+  for (const t of listRepoTemplates({ all: true })) {
     const repoId = repoOf(t.id);
     if (repoId && !keyed.has(repoId)) rekeyRepo(repoId);
   }

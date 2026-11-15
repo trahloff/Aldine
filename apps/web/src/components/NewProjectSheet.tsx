@@ -335,6 +335,7 @@ export default function NewProjectSheet({ onClose, template: preselected, provis
                   <div key={g.key} role="group" className="tpl-group" data-testid={g.testid} aria-labelledby={`tpl-group-${g.key}`}>
                     <h3 className="tpl-group__label" id={`tpl-group-${g.key}`}>
                       {g.heading}
+                      {g.personal && <span className="tpl-group__stale" title="You added this repository in Account settings. Nobody else sees it." data-testid={`template-repo-personal-${g.key.slice('repo:'.length)}`}>only you</span>}
                       {g.stale && <span className="tpl-group__stale" data-testid={`template-repo-stale-${g.stale.repoId}`}>{g.stale.text}</span>}
                     </h3>
                     <div className="tpl-grid">

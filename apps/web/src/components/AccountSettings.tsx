@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, AccessToken, ApiError, AuthUser, ProjectSummary, RemoteConnectionRow, SignInMethods as Methods } from '../api';
+import { api, AccessToken, ApiError, AuthUser, PersonalTemplateRepo, ProjectSummary, RemoteConnectionRow, SignInMethods as Methods } from '../api';
 import { remoteDescriptor } from '../remotes';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
@@ -41,6 +41,96 @@ function GitHosts() {
           <button className="btn btn--small" onClick={() => disconnect(r)} data-testid={`account-git-${r.provider}-disconnect`}>Disconnect</button>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Template repositories only this account sees in the New project gallery.
+ *  Hidden when the server turned them off (max 0) or answers 404. */
+function PersonalTemplates() {
+  const [data, setData] = useState<{ max: number; repos: PersonalTemplateRepo[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState('');
+  const [url, setUrl] = useState('');
+  const [ref, setRef] = useState('');
+  const [folder, setFolder] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const dialogs = useDialogs();
+  const load = () => api.personalTemplateRepos().then((r) => { setData(r); setFailed(false); }, (err) => {
+    if (err instanceof ApiError && err.status === 404) setData({ max: 0, repos: [] });
+    else setFailed(true);
+  });
+  useEffect(() => { load(); }, []);
+  if (data && data.max === 0 && !data.repos.length) return null;
+  const reset = () => { setAdding(false); setLabel(''); setUrl(''); setRef(''); setFolder(''); setError(''); };
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    if (!url.trim()) { setError('Enter the repository’s https:// clone URL'); return; }
+    setBusy(true);
+    try {
+      const { repo } = await api.addPersonalTemplateRepo({ label: label.trim() || undefined, url: url.trim(), ref: ref.trim() || undefined, path: folder.trim() || undefined });
+      toast(`Added ${repo.label}: ${repo.templates} ${repo.templates === 1 ? 'template' : 'templates'}, shown only to you under New project`, 'ok');
+      reset();
+      load();
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setBusy(false);
+  };
+  const remove = async (r: PersonalTemplateRepo) => {
+    const yes = await dialogs.confirm({ title: `Remove ${r.label}?`, body: 'Its templates leave your gallery. Projects you started from them stay as they are, and the repository itself is not touched.', confirmLabel: 'Remove' });
+    if (!yes) return;
+    try { await api.removePersonalTemplateRepo(r.id); toast(`Removed ${r.label}`, 'ok'); load(); }
+    catch (err: any) { toast(err.message, 'error'); }
+  };
+  const full = !!data && data.repos.length >= data.max;
+  return (
+    <div data-testid="account-templates">
+      <div className="menu__label" style={{ margin: '18px 0 6px' }}>Personal templates</div>
+      {failed && <LoadError text="Couldn’t load your template repositories." onRetry={load} testId="account-templates-error" />}
+      {!failed && data?.repos.length === 0 && !adding && (
+        <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }}>Add a git repository of templates that only you see under New project, like letters with your address.</p>
+      )}
+      {data?.repos.map((r) => (
+        <div className="settings__row" key={r.id} data-testid={`account-template-repo-${r.id}`}>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.url}>
+            <strong>{r.label}</strong>
+            <span style={{ color: 'var(--text-3)' }}> · {r.url.replace(/^https?:\/\//, '')}</span>
+            {r.ok || r.available
+              ? <span style={{ color: 'var(--text-2)' }} data-testid={`account-template-repo-${r.id}-count`}> · {r.templates} {r.templates === 1 ? 'template' : 'templates'}</span>
+              : null}
+            {!r.ok && r.error && <span style={{ color: 'var(--error)' }} data-testid={`account-template-repo-${r.id}-error`}> · refresh failed: {r.error}</span>}
+          </span>
+          <button className="btn btn--small" onClick={() => remove(r)} aria-label={`Remove ${r.label}`} data-testid={`account-template-repo-${r.id}-remove`}>Remove</button>
+        </div>
+      ))}
+      {!adding && data && !full && (
+        <button type="button" className="btn btn--small" style={{ marginTop: 8 }} onClick={() => setAdding(true)} data-testid="account-templates-add">Add template repository</button>
+      )}
+      {!adding && full && data!.repos.length > 0 && (
+        <p className="login__hint" data-testid="account-templates-full">You can add up to {data!.max}. Remove one to add another.</p>
+      )}
+      {adding && (
+        <form onSubmit={add} noValidate data-testid="account-templates-form" style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+          <input className="input" value={url} onChange={(e) => { setUrl(e.target.value); setError(''); }} placeholder="https://github.com/you/latex-templates.git" aria-label="Repository URL" autoFocus spellCheck={false} autoComplete="off" aria-invalid={error ? true : undefined} data-testid="account-templates-url" />
+          <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name in the gallery (optional)" aria-label="Name in the gallery" maxLength={60} data-testid="account-templates-label" />
+          <span style={{ display: 'flex', gap: 6 }}>
+            <input className="input" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Branch (default branch)" aria-label="Branch" spellCheck={false} autoComplete="off" data-testid="account-templates-ref" />
+            <input className="input" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="Folder (repository root)" aria-label="Folder" spellCheck={false} autoComplete="off" data-testid="account-templates-path" />
+          </span>
+          {error
+            ? <p className="field__error" role="alert" data-testid="account-templates-error-text">{error}</p>
+            : <p className="login__hint">Each template is a folder with a <code>template.json</code>, like the shared template repositories. A private repository is read with your connection to its host under Git hosts.</p>}
+          <span style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn--small" onClick={reset} data-testid="account-templates-cancel">Cancel</button>
+            <button type="submit" className="btn btn--small btn--primary" disabled={busy} aria-busy={busy || undefined} data-testid="account-templates-save">{busy ? 'Cloning…' : 'Add repository'}</button>
+          </span>
+        </form>
+      )}
     </div>
   );
 }
@@ -627,6 +717,8 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         <GitHosts />
         {/* Below the agent card, which must open above the sticky footer. */}
         <CommitEmailRow user={user} />
+
+        <PersonalTemplates />
 
         <ZoteroKey />
 

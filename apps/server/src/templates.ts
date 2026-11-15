@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { CATALOG_WAIT_MS, VENUE_PREFIX, venueClasses, venueTemplateFiles, venueTemplates } from './catalog.js';
 import { venueKit, venueKitSeed, venueKitTemplates, type VenueKitStatus } from './venuekits.js';
-import { REPO_PREFIX, listRepoTemplates, repoTemplateFiles } from './templaterepos.js';
+import { REPO_PREFIX, listRepoTemplates, loadPersonalRepos, refreshStalePersonal, repoTemplateFiles, templateVisibleTo } from './templaterepos.js';
 import { isTextFile } from './util.js';
 
 export type TemplateCategory = 'Journals' | 'Conferences' | 'Theses' | 'Slides' | 'General';
@@ -19,7 +19,7 @@ export const BLANK_TEMPLATE: TemplateInfo = {
 export interface TemplateOrigin { url: string; version?: string }
 
 /** Which half of the gallery lists the template; `label` names a template repository. */
-export interface TemplateSource { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string }
+export interface TemplateSource { kind: 'builtin' | 'repo' | 'venue' | 'kit'; label?: string; /** A repository only the viewing account added. */ personal?: true }
 
 export interface TemplateInfo {
   id: string;
@@ -101,8 +101,12 @@ export function listTemplates(): TemplateInfo[] {
  * A venue in both halves is listed once, as the installed class: that seeds a
  * project with no download at all, so it is the better of the two.
  */
-export async function listAllTemplates(): Promise<TemplateInfo[]> {
+export async function listAllTemplates(viewer?: string | null): Promise<TemplateInfo[]> {
   const folders = listTemplates();
+  if (viewer) {
+    await loadPersonalRepos(viewer);
+    refreshStalePersonal(viewer);
+  }
   const installed = await venueTemplates(CATALOG_WAIT_MS);
   const seen = new Set(installed.map((t) => t.id));
   const fetched = venueKitTemplates().filter((t) => !seen.has(t.id));
@@ -110,7 +114,7 @@ export async function listAllTemplates(): Promise<TemplateInfo[]> {
   // A-Z and then starts over with the fetched ones reads as if the second half
   // is not there. Folder templates keep their curated order, blank first.
   const venues = [...installed, ...fetched].sort((a, b) => a.name.localeCompare(b.name));
-  return [...folders, ...listRepoTemplates(), ...venues];
+  return [...folders, ...listRepoTemplates({ viewer }), ...venues];
 }
 
 /** Gallery bookkeeping, not part of the document the user starts from. */
@@ -144,7 +148,11 @@ export function templateFilesIn(base: string, id: string): Record<string, Buffer
 }
 
 /** Values a template can ask for with `{{PROJECT_NAME}}`, `{{AUTHOR}}`, `{{DATE}}`, `{{YEAR}}`. */
-export interface SeedContext { projectName?: string; author?: string; now?: Date }
+export interface SeedContext {
+  projectName?: string; author?: string; now?: Date;
+  /** The account creating the project: only its own personal repositories seed. */
+  viewer?: string | null;
+}
 
 const PLACEHOLDER_RE = /\{\{(PROJECT_NAME|AUTHOR|DATE|YEAR)\}\}/g;
 const TEX_SPECIALS: Record<string, string> = { '\\': '\\textbackslash{}', '&': '\\&', '%': '\\%', '$': '\\$', '#': '\\#', '_': '\\_', '{': '\\{', '}': '\\}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
@@ -192,6 +200,10 @@ export interface TemplateSeed {
  * they get.
  */
 export async function resolveTemplateSeed(id: string, ctx: SeedContext = {}): Promise<TemplateSeed> {
+  if (id.startsWith(REPO_PREFIX)) {
+    if (ctx.viewer) await loadPersonalRepos(ctx.viewer);
+    if (!templateVisibleTo(id, ctx.viewer)) throw new Error(`unknown template: ${id}`);
+  }
   const seed = await rawTemplateSeed(id);
   return { ...seed, files: applyPlaceholders(seed.files, ctx) };
 }

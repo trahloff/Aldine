@@ -7,6 +7,21 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Personal templates. With accounts on, Account settings has a "Personal
+  templates" section where anyone can add git repositories of templates
+  (the `TEMPLATE_REPOS` layout) that only they see: their New project
+  gallery lists them in a group marked "only you", and nobody else is shown
+  them, gets their previews or can create a project from them, the Agent
+  API included. A private repository is read with the account's own
+  connection to that host under Git hosts, never with a token in the URL.
+  A repository is cloned when it is added and refused, keeping nothing,
+  when that fails or it holds no template; a host on a private address is
+  refused unless the account connected it, and git follows no redirect.
+  `ALDINE_PERSONAL_TEMPLATE_REPOS` caps how many one account can add
+  (default 5, `0` turns it off). Server-wide `TEMPLATE_REPOS` work as
+  before. Refs #308.
+
 ## [1.12.0] — 2026-11-15
 
 ### Added

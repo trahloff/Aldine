@@ -129,6 +129,7 @@ SENTRY_ENVIRONMENT=production
 #TEMPLATE_REPO_LAB_TOKEN=
 #TEMPLATE_REPOS_REFRESH_MS=600000  # re-fetch interval; floor 60000
 #TEMPLATE_REPO_MAX_BYTES=52428800  # per-checkout cap, 50 MiB
+#ALDINE_PERSONAL_TEMPLATE_REPOS=5  # repositories each account may add for itself; 0 = off
 
 # Shared rate limits and cross-node access-revocation events (the `redis`
 # profile). This does NOT make multiple app nodes a supported topology: routing
@@ -638,7 +639,7 @@ override file.
 | `SENTRY_RELEASE` | Build an error belongs to. Defaults to `ALDINE_VERSION`, then the package version |
 | `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
-| `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST` | Rate-limit tuning (sane defaults) |
+| `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST`, `RL_TEMPLATE_REPO_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
 | `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
 | `RL_SHARE_BURST` | Invitations a project owner may make per hour (default 200): each address or ORCID iD invited from the share dialog, and each Invite again, counts once. Over it, the request is refused and nothing of it is saved |
@@ -669,6 +670,7 @@ override file.
 | `TEMPLATE_REPOS_REFRESH_MS` | How often template repositories are fetched again (default `600000` = 10 min; values below `60000` are raised to it). "Refresh templates" in the new-project dialog fetches on demand |
 | `ALDINE_TEMPLATE_PREVIEWS` | App server. Each template from a template repository is typeset by the compiler once per version, after a sync that changed it, so the New project chooser shows its page 1 (kept in `CACHE_DIR/template-previews/<repo>`; a failed render is retried on a later sync). `0` turns that off and those templates show a title-page placeholder. Shipped templates are rendered before release and ship in the image; a folder in your own `TEMPLATES_DIR` shows the placeholder. On by default |
 | `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |
+| `ALDINE_PERSONAL_TEMPLATE_REPOS` | How many template repositories one account can add in Account settings, seen only by that account (default `5`; `0` turns personal templates off). Needs accounts. A private one is read with the account's git host connection; a host on a private address is refused unless the account connected it. See "Personal repositories" in `templates/README.md` |
 
 ### Tests and internals
 

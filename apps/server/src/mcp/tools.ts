@@ -1138,12 +1138,12 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (template) {
         // The same gallery the New project dialog offers, so a venue the user
         // can pick there is one the agent can pick too.
-        const known = (await listAllTemplates()).map((t) => t.id);
+        const known = (await listAllTemplates(identity.user?.id)).map((t) => t.id);
         if (!known.includes(template)) {
           return fail(`Unknown template "${template}"${known.length ? ` — available: ${known.join(', ')}` : ''}`);
         }
         try {
-          resolved = await resolveTemplateSeed(template);
+          resolved = await resolveTemplateSeed(template, { viewer: identity.user?.id });
           seed = resolved.files;
         } catch (err: any) {
           return fail(`Template "${template}" could not be prepared: ${err?.message || err}`);
