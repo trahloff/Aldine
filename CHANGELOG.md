@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-11-15
+
 ### Added
 - Format document: the command palette's "Format document", or Shift+Alt+F
   (⌥⇧F on a Mac) in the text, indents the open `.tex`, `.sty` or `.cls` file
