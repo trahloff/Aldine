@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-11-15
+
 ### Added
 - Personal templates. With accounts on, Account settings has a "Personal
   templates" section where anyone can add git repositories of templates
