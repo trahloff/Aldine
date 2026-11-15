@@ -268,6 +268,8 @@ test.describe('Zotero integration (via plugin system)', () => {
       await expect(page.getByTestId('zotero-sync')).toHaveCount(0);
       await expect(page.getByTestId('zotero-unlink')).toHaveCount(0);
     } finally {
+      // The editor may still be reloading the project: a handler mid-fetch would fail the test once it ends.
+      await page.unrouteAll({ behavior: 'ignoreErrors' });
       await cleanup(request, id);
     }
   });

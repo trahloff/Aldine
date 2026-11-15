@@ -27,7 +27,7 @@ import Presence, { PresenceUser } from '../components/Presence';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -378,6 +378,8 @@ export default function Editor() {
   const pendingRef = useRef(false);
   /** A queued typeset owes a full run (someone asked for one while a draft ran). */
   const pendingFullRef = useRef(false);
+  /** A Typeset from scratch asked for while another typeset ran. */
+  const pendingCleanRef = useRef(false);
   /** Who the queued typeset is for. */
   const pendingTriggerRef = useRef<TypesetTrigger | null>(null);
   /** A capacity retry waiting to run. */
@@ -616,12 +618,14 @@ export default function Editor() {
     if (activeFile && openFor === `${id}::${branch}`) rememberOpenFile(id, branch, activeFile);
   }, [id, branch, activeFile, openFor]);
 
-  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean; trigger?: TypesetTrigger }) => {
-    const draft = !!opts?.draft;
+  const doCompile = useCallback(async (attempt = 0, opts?: { reason?: 'agent'; draft?: boolean; clean?: boolean; trigger?: TypesetTrigger }) => {
+    const clean = !!opts?.clean;
+    const draft = !clean && !!opts?.draft;
     const trigger = opts?.trigger ?? 'user';
     if (compilingRef.current) {
       pendingRef.current = true;
       if (!draft) pendingFullRef.current = true;
+      if (clean) pendingCleanRef.current = true;
       pendingTriggerRef.current = strongerTrigger(pendingTriggerRef.current, trigger);
       return;
     }
@@ -643,7 +647,7 @@ export default function Editor() {
     setCompile((c) => ({ ...c, status: 'compiling' }));
     const t0 = Date.now();
     try {
-      const result = await api.compile(id, branch, opts?.reason, draft ? 'draft' : undefined);
+      const result = await api.compile(id, branch, opts?.reason, draft ? 'draft' : undefined, clean);
       // The user may have switched branch while this ran: the result belongs
       // to the branch it was asked for, not to whatever is on screen now.
       if (branchRef.current !== branch) return;
@@ -659,7 +663,9 @@ export default function Editor() {
       // keep the busy state and retry with backoff instead of showing "Failed".
       if (/too many typesets/i.test(err?.message || '') && attempt < 3) {
         pendingRef.current = false; // the retry below also serves any queued request
-        retryTimer.current = setTimeout(() => doCompile(attempt + 1, opts), 1500 * (attempt + 1));
+        const retryOpts = pendingCleanRef.current ? { ...opts, clean: true } : opts;
+        pendingCleanRef.current = false;
+        retryTimer.current = setTimeout(() => doCompile(attempt + 1, retryOpts), 1500 * (attempt + 1));
         return;
       }
       // The server words "the compiler is down" itself (503); anything else
@@ -674,11 +680,13 @@ export default function Editor() {
         pendingRef.current = false;
         const full = pendingFullRef.current;
         pendingFullRef.current = false;
+        const queuedClean = pendingCleanRef.current;
+        pendingCleanRef.current = false;
         const queued = pendingTriggerRef.current ?? 'auto';
         pendingTriggerRef.current = null;
         // Through the ref: after a branch switch the queued request (often the
         // new branch's on-open typeset) belongs to the branch now on screen.
-        setTimeout(() => doCompileRef.current(0, full ? { trigger: queued } : { draft: draftRef.current, trigger: queued }), 400);
+        setTimeout(() => doCompileRef.current(0, queuedClean ? { clean: true, trigger: queued } : full ? { trigger: queued } : { draft: draftRef.current, trigger: queued }), 400);
       }
     }
   }, [id, branch]);
@@ -690,6 +698,7 @@ export default function Editor() {
   const stopTypeset = useCallback(async () => {
     pendingRef.current = false;
     pendingFullRef.current = false;
+    pendingCleanRef.current = false;
     pendingTriggerRef.current = null;
     if (autoTimer.current) { clearTimeout(autoTimer.current); autoTimer.current = null; pendingSource.current = null; }
     if (fullTimer.current) { clearTimeout(fullTimer.current); fullTimer.current = null; }
@@ -1695,6 +1704,7 @@ export default function Editor() {
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
       { id: 'typeset', group: 'Actions', title: 'Typeset document', hint: keys.typeset, keywords: 'compile recompile build pdf', run: doCompile },
+      { id: 'typeset-clean', group: 'Actions', title: 'Typeset from scratch', keywords: 'recompile clean clear cache aux build files stale rebuild compile', run: () => doCompile(0, { clean: true }) },
       { id: 'auto', group: 'Actions', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       {
         id: 'draft-typeset', group: 'Actions',
@@ -2023,9 +2033,9 @@ export default function Editor() {
             );
           })}
         </div>
-        <div className="toolbar__group">
+        <div className="toolbar__group split-btn">
           <button
-            className="btn btn--primary"
+            className="btn btn--primary split-btn__main"
             onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
             aria-busy={compile.status === 'compiling' || undefined}
@@ -2035,6 +2045,21 @@ export default function Editor() {
             {compile.status === 'compiling' ? <span className="spinner" /> : null}
             Typeset
           </button>
+          <MenuButton
+            className="btn btn--primary split-btn__more"
+            label="Typeset options"
+            ariaLabel="Typeset options"
+            title="Typeset options"
+            placement="bottom-end"
+            testId="typeset-options"
+            menuTestId="typeset-options-menu"
+            items={[
+              { id: 'clean', label: 'Typeset from scratch', onSelect: () => doCompile(0, { clean: true }), testId: 'typeset-clean' },
+              { kind: 'hint', label: 'Deletes the generated build files, never your sources, and typesets the document again.' },
+            ]}
+          >
+            <IconChevronDown />
+          </MenuButton>
         </div>
         <button
           className="btn btn--ghost toolbar__more"

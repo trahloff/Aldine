@@ -3,8 +3,9 @@
  * Aldine compile service — zero-dependency Node HTTP server wrapping latexmk.
  *
  * Contract:
- *   POST /compile  { projectDir, rootFile, engine? }  ->
+ *   POST /compile  { projectDir, rootFile, engine?, clean? }  ->
  *     { ok, pdf: <path in OUT_DIR>, log, errors: [{file,line,message,type}], durationMs, stopped? }
+ *     clean: true removes the root's .aldine-out before the run (cleanOutput)
  *   POST /stop     { projectDir }  -> { ok: true, stopped: <typesets of that directory ended> }
  *     ends that directory's running or waiting typesets, which answer stopped: true
  *   GET  /health   -> { ok: true, texlive: { release: '2026' | 'unknown', scheme: 'full' | 'medium' | 'unknown' },
@@ -444,6 +445,33 @@ function linkOutOfProject(absDir) {
   return walk(root);
 }
 
+/**
+ * Remove the output directory of the root file's directory: everything
+ * typesets wrote there (aux files, the bibliography, latexmk's database,
+ * the PDF, SyncTeX), the precompiled preamble and the thumbnail. The
+ * directory must be a real directory inside the project: a symbolic link
+ * named .aldine-out would have the removal delete whatever it points at,
+ * source files included. Links inside it are removed, never followed.
+ * The thumbnail render and the format build that write into it are
+ * waited for first, or they would recreate files after the removal.
+ */
+async function cleanOutput(absDir, rootDir) {
+  const root = fs.realpathSync(absDir);
+  let dir;
+  try { dir = fs.realpathSync(path.join(absDir, rootDir)); } catch { return; }
+  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error('Cannot typeset from scratch: the main document\'s folder is outside the project.');
+  // The path the typeset itself uses: renders and builds are keyed by it.
+  const outAbs = path.join(absDir, rootDir, OUT_SUBDIR);
+  let st;
+  try { st = fs.lstatSync(outAbs); } catch { return; }
+  if (!st.isDirectory()) {
+    throw new Error(`Cannot typeset from scratch: ${path.relative(root, path.join(dir, OUT_SUBDIR))} is not the folder the compiler made. Delete it from the project's repository and pull, then try again.`);
+  }
+  await thumbnail.cancel(outAbs);
+  await preamble.idleIn(outAbs);
+  fs.rmSync(outAbs, { recursive: true, force: true });
+}
+
 async function compileInner(body, job) {
   const { projectDir, rootFile = 'main.tex', engine = 'pdf', haltOnError = false, draft = false } = body;
   const absDir = projectRoot(projectDir);
@@ -458,6 +486,7 @@ async function compileInner(body, job) {
   // resolve relative to the main file — exactly like a local/Overleaf build. The
   // output dir is then relative to that subdir too.
   const rootDir = path.dirname(rootFile); // '.' when the root is top-level
+  if (body.clean === true) await cleanOutput(absDir, rootDir);
   fs.mkdirSync(path.join(absDir, rootDir, OUT_SUBDIR), { recursive: true });
 
   const engineFlag = engine === 'xelatex' ? '-pdfxe' : engine === 'lualatex' ? '-pdflua' : '-pdf';

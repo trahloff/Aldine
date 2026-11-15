@@ -519,7 +519,10 @@ vulnerabilities.
   straight to the git worktree with debounced writes and auto-commits.
 - Branches are git worktrees, so every branch is editable concurrently.
 - Compile output stays inside the project tree (`.aldine-out/`, kept out of
-  git history) which keeps latexmk's incremental cache warm.
+  git history) which keeps latexmk's incremental cache warm. When leftover
+  build files break a document whose source is fine, **Recompile from
+  scratch** (the menu beside Typeset, or the command palette) deletes the
+  main document's `.aldine-out/` and typesets it again.
 
 ### Data & storage
 

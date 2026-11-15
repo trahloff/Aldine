@@ -851,9 +851,13 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   server.registerTool('compile', {
     ...annotate('Typeset the project', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
     description: `Typeset the project with latexmk: parsed errors [{type,file,line,message,context?,source?}] (type "error" rows before "warning" rows, first ${MAX_RESULT_ERRORS}; errorsTotal counts the errors and warningsTotal the warnings, whether or not the list was capped; box warnings are omitted; context is the source line the engine was reading, source the tool that raised a warning — latex, a package name, biber — and a biber row names the .bib and its line), on failure ≤4 KB of the log around the first error, pages, and a deep link into Aldine. With errors present the PDF is complete but the bibliography and cross-references are not rebuilt — say so. pdfUrl is a signed link to this run's PDF that anyone can open for ${OUTPUT_URL_TTL_S / 60} minutes — hand it to the user as the way to see the result, and call get_pdf_url for a fresh link later instead of recompiling. pdfStale:true means this run wrote no PDF: pdfUrl shows the previous one, or is null when that no longer exists. Takes up to ~2 minutes; progress notifications arrive while it runs. Compile after a coherent set of edits, not after each one, and never just to check syntax. On errors: fix and recompile at most 3 times, narrating each attempt ("attempt 2 of 3: added natbib"), then stop and ask the user, quoting the failing file:line. A project with no .tex file cannot be typeset: write the main document first. A compiler-not-responding, compiler-cannot-see-the-project, missing-package (hint), quota, or typeset-already-running error is for the user to act on — relay it, do not retry.`,
-    inputSchema: { project: projectParam, branch: branchParam },
+    inputSchema: {
+      project: projectParam,
+      branch: branchParam,
+      clean: z.boolean().optional().describe('Delete the generated build files (aux, bibliography, latexmk state, precompiled preamble, the previous PDF) first and typeset from nothing; source files are never touched. Only for errors located in a generated file (.aux, .bbl, .toc) that survive a fix in the source, or when the user asks to recompile from scratch: a clean run is several times slower.'),
+    },
     ...uiMeta,
-  }, async ({ project, branch = 'main' }, extra) => {
+  }, async ({ project, branch = 'main', clean }, extra) => {
     let key: string | null = null;
     // Slots are released ONLY when their tryAcquire succeeded: a refusal path
     // releasing an unheld slot would decrement the gate under a compile that IS
@@ -902,7 +906,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         }, 10_000);
         timer.unref?.();
       }
-      const result = await compileProject(meta.id, branch, { agent: true });
+      const result = await compileProject(meta.id, branch, { agent: true, clean: clean === true });
       // Re-read: a rootless project adopts its root inside compileProject, and
       // the root file is project-wide while the branch compiled may lack it.
       const compiled = await store.readMeta(meta.id).catch(() => meta);
