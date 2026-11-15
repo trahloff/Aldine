@@ -2175,7 +2175,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // ---------- compile ----------
   // `reason` only decides whether the branch's other clients are told about
   // this run; it grants nothing and is not trusted for anything else.
-  // `clean` (Recompile from scratch) deletes only generated files, so whoever
+  // `clean` (Typeset from scratch) deletes only generated files, so whoever
   // may typeset may ask for it, under the same budget and gates.
   app.post<{ Params: { id: string }; Body: { branch?: string; reason?: string; mode?: string; clean?: boolean } }>('/api/projects/:id/compile', async (req, reply) => {
     const branch = req.body?.branch || 'main';

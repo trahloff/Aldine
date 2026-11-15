@@ -378,7 +378,7 @@ export default function Editor() {
   const pendingRef = useRef(false);
   /** A queued typeset owes a full run (someone asked for one while a draft ran). */
   const pendingFullRef = useRef(false);
-  /** A Recompile from scratch asked for while another typeset ran. */
+  /** A Typeset from scratch asked for while another typeset ran. */
   const pendingCleanRef = useRef(false);
   /** Who the queued typeset is for. */
   const pendingTriggerRef = useRef<TypesetTrigger | null>(null);
@@ -1704,7 +1704,7 @@ export default function Editor() {
   const commands: Command[] = useMemo(() => {
     const cmds: Command[] = [
       { id: 'typeset', group: 'Actions', title: 'Typeset document', hint: keys.typeset, keywords: 'compile recompile build pdf', run: doCompile },
-      { id: 'typeset-clean', group: 'Actions', title: 'Recompile from scratch', keywords: 'clean clear cache aux build files stale rebuild typeset compile', run: () => doCompile(0, { clean: true }) },
+      { id: 'typeset-clean', group: 'Actions', title: 'Typeset from scratch', keywords: 'recompile clean clear cache aux build files stale rebuild compile', run: () => doCompile(0, { clean: true }) },
       { id: 'auto', group: 'Actions', title: auto ? 'Turn auto-typeset off' : 'Turn auto-typeset on', run: toggleAuto },
       {
         id: 'draft-typeset', group: 'Actions',
@@ -2054,7 +2054,7 @@ export default function Editor() {
             testId="typeset-options"
             menuTestId="typeset-options-menu"
             items={[
-              { id: 'clean', label: 'Recompile from scratch', onSelect: () => doCompile(0, { clean: true }), testId: 'typeset-clean' },
+              { id: 'clean', label: 'Typeset from scratch', onSelect: () => doCompile(0, { clean: true }), testId: 'typeset-clean' },
               { kind: 'hint', label: 'Deletes the generated build files, never your sources, and typesets the document again.' },
             ]}
           >

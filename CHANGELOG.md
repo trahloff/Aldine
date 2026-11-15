@@ -21,7 +21,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `ALDINE_PERSONAL_TEMPLATE_REPOS` caps how many one account can add
   (default 5, `0` turns it off). Server-wide `TEMPLATE_REPOS` work as
   before. Refs #308.
-- Recompile from scratch: the menu beside the Typeset button, or the
+- Typeset from scratch: the menu beside the Typeset button, or the
   command palette, deletes the main document's generated build files and
   typesets it again. That is the way out when leftover files from an
   earlier run (an `.aux` written before you changed the document language,

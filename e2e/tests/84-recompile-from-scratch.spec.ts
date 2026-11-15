@@ -3,7 +3,7 @@ import type { APIRequestContext, Page } from '@playwright/test';
 import { createProject, openProject, expectTypesetOk, cleanup } from './helpers';
 
 /**
- * Recompile from scratch (#309): a document whose own source is fine but
+ * Typeset from scratch (#309): a document whose own source is fine but
  * whose generated files from an earlier run break every typeset recovers
  * from the Typeset button's menu, and again from the command palette, and
  * the sources stay as they were.
@@ -38,7 +38,7 @@ const cleanRun = (page: Page) => page.waitForResponse((r) => r.url().includes('/
 const typesetApi = async (request: APIRequestContext, id: string) =>
   (await request.post(`/api/projects/${id}/compile`, { data: { branch: 'main' }, timeout: 150_000 })).json();
 
-test.describe('recompile from scratch', () => {
+test.describe('typeset from scratch', () => {
   test('clears stale build files from the Typeset menu and the palette, keeping the sources', async ({ page, request }) => {
     test.setTimeout(300_000);
     const id = await createProject(request, 'Recompile From Scratch');
@@ -67,7 +67,7 @@ test.describe('recompile from scratch', () => {
       expect((await typesetApi(request, id)).ok).toBe(true);
 
       await page.getByTestId('palette-open').click();
-      await page.getByTestId('palette-input').fill('recompile from scratch');
+      await page.getByTestId('palette-input').fill('typeset from scratch');
       const fromPalette = cleanRun(page);
       await page.getByTestId('palette-item-typeset-clean').click();
       expect((await (await fromPalette).json()).ok, 'the palette asks for a clean run too').toBe(true);

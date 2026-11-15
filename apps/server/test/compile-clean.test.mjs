@@ -1,5 +1,5 @@
 /**
- * Recompile from scratch through the app server: POST …/compile with
+ * Typeset from scratch through the app server: POST …/compile with
  * clean: true asks the compiler for a clean run (never a draft), a plain
  * typeset never sends clean, and a clean run waits in the branch's chain
  * behind the typeset in progress, so it cannot delete files under it.

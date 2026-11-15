@@ -1,5 +1,5 @@
 /**
- * POST /compile with clean: true (Recompile from scratch) removes the root
+ * POST /compile with clean: true (Typeset from scratch) removes the root
  * file's .aldine-out before latexmk runs: aux files, the precompiled preamble,
  * the thumbnail, links inside it. Source files stay, a link inside the output
  * directory is removed without following it, another root's output directory

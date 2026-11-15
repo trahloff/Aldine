@@ -459,13 +459,13 @@ async function cleanOutput(absDir, rootDir) {
   const root = fs.realpathSync(absDir);
   let dir;
   try { dir = fs.realpathSync(path.join(absDir, rootDir)); } catch { return; }
-  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error('Cannot recompile from scratch: the main document\'s folder is outside the project.');
+  if (dir !== root && !dir.startsWith(root + path.sep)) throw new Error('Cannot typeset from scratch: the main document\'s folder is outside the project.');
   // The path the typeset itself uses: renders and builds are keyed by it.
   const outAbs = path.join(absDir, rootDir, OUT_SUBDIR);
   let st;
   try { st = fs.lstatSync(outAbs); } catch { return; }
   if (!st.isDirectory()) {
-    throw new Error(`Cannot recompile from scratch: ${path.relative(root, path.join(dir, OUT_SUBDIR))} is not the folder the compiler made. Delete it from the project's repository and pull, then try again.`);
+    throw new Error(`Cannot typeset from scratch: ${path.relative(root, path.join(dir, OUT_SUBDIR))} is not the folder the compiler made. Delete it from the project's repository and pull, then try again.`);
   }
   await thumbnail.cancel(outAbs);
   await preamble.idleIn(outAbs);

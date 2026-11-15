@@ -595,7 +595,7 @@ export const api = {
   renameFile: (id: string, branch: string, from: string, to: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/file/rename`, { method: 'POST', body: JSON.stringify({ branch, from, to }) }),
 
-  /** `clean`: delete the generated build files first and typeset from nothing (Recompile from scratch). */
+  /** `clean`: delete the generated build files first and typeset from nothing (Typeset from scratch). */
   compile: (id: string, branch: string, reason?: 'agent', mode?: 'draft', clean?: boolean) =>
     req<CompileResult>(`/api/projects/${id}/compile`, { method: 'POST', body: JSON.stringify({ branch, ...(reason ? { reason } : {}), ...(mode ? { mode } : {}), ...(clean ? { clean: true } : {}) }) }),
   compileStatus: (id: string, branch: string) =>
