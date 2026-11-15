@@ -21,6 +21,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `ALDINE_PERSONAL_TEMPLATE_REPOS` caps how many one account can add
   (default 5, `0` turns it off). Server-wide `TEMPLATE_REPOS` work as
   before. Refs #308.
+- Recompile from scratch: the menu beside the Typeset button, or the
+  command palette, deletes the main document's generated build files and
+  typesets it again. That is the way out when leftover files from an
+  earlier run (an `.aux` written before you changed the document language,
+  a bibliography from a removed package) break every typeset of a source
+  that is fine, which until now took a shell on the server. The compiler
+  removes the main document's `.aldine-out/` folder: aux files,
+  bibliography, latexmk's state, the precompiled preamble, SyncTeX, the
+  previous PDF and its thumbnail. Source files are never touched, and an
+  `.aldine-out` that is a symbolic link is refused instead of followed.
+  The run waits behind a typeset already running on the branch, and
+  whoever may typeset may ask for it. The Agent API's `compile` tool takes
+  `clean: true` for the same. Refs #309.
 
 ## [1.12.0] — 2026-11-15
 

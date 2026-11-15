@@ -816,6 +816,10 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 .toolbar__name:focus { outline: none; border-color: var(--accent); background: var(--bg-panel); }
 .toolbar__spacer { flex: 1; }
 .toolbar__group { display: flex; align-items: center; gap: 6px; }
+/* A primary action with its options beside it: one shape split by a hairline. */
+.toolbar__group.split-btn { gap: 1px; }
+.split-btn__main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split-btn__more { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 7px; }
 /* Short of room, the project name gives way first, then the search field;
    no button is squeezed or pushed out, Typeset least of all. */
 .toolbar > * { flex-shrink: 0; }

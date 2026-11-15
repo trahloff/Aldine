@@ -232,14 +232,20 @@ export function compilerInfo(): Promise<CompilerInfo> {
   return compilerInfoInflight;
 }
 
-export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean } = {}): Promise<CompileResult> {
+/**
+ * `clean`: remove the root's generated files (.aldine-out) first and typeset
+ * from nothing — the way out of stale aux files that break every later run.
+ * It runs in the branch's chain like any typeset, so it never deletes files
+ * under a run in progress. A clean run is always a full one, never a draft.
+ */
+export function compileProject(projectId: string, branch: string, opts: { agent?: boolean; draft?: boolean; clean?: boolean } = {}): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   // A typeset recreates a missing worktree, so one started while the branch
   // is deleted would bring its directory back or block `branch -D`.
   if (closedBranches.has(key)) return Promise.reject(new Error('This branch is being deleted'));
   const prev = compileChain.get(key) || Promise.resolve();
   const request = ++lastRequest;
-  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !!opts.draft, request));
+  const result = prev.catch(() => undefined).then(() => runCompile(projectId, branch, !!opts.agent, !opts.clean && !!opts.draft, !!opts.clean, request));
   // The chain tail must never reject (would surface as an unhandled rejection);
   // the caller gets `result` (which may reject and is awaited/handled by the route).
   const tail = result.catch(() => undefined).then(() => {
@@ -327,12 +333,12 @@ export function compileStatus(projectId: string, branch: string): CompileStatus 
   };
 }
 
-async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
+async function runCompile(projectId: string, branch: string, agent: boolean, draft: boolean, clean: boolean, request: number): Promise<CompileResult> {
   const key = `${projectId}::${branch}`;
   running.set(key, (running.get(key) ?? 0) + 1);
   let finished = false;
   try {
-    const result = await runCompileInner(projectId, branch, agent, draft, request);
+    const result = await runCompileInner(projectId, branch, agent, draft, clean, request);
     lastRun.set(key, { result, finishedAt: Date.now(), agent });
     noteCompile(projectId, branch, result);
     finished = true;
@@ -349,7 +355,7 @@ async function runCompile(projectId: string, branch: string, agent: boolean, dra
   }
 }
 
-async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean, request: number): Promise<CompileResult> {
+async function runCompileInner(projectId: string, branch: string, agent: boolean, draft: boolean, clean: boolean, request: number): Promise<CompileResult> {
   const meta = await readMeta(projectId);
   await ensureWorktree(projectId, branch);
   flushBranchDocs(projectId, branch);
@@ -369,6 +375,8 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
 
   type Raw = Partial<Omit<CompileResult, 'pdfUrl'>> & { error?: string; pdfFresh?: boolean; synctexFresh?: boolean };
   const stopped = () => (stoppedUpTo.get(`${projectId}::${branch}`) ?? 0) >= request;
+  // The SyncTeX file goes with the rest of the output.
+  if (clean && !stopped()) lastSynctexId.delete(`${projectId}::${branch}`);
   // A stop that came while this run waited for the one before ends it here.
   const raw: Raw = stopped()
     ? { ok: false, stopped: true, log: '', errors: [], durationMs: 0 }
@@ -378,6 +386,7 @@ async function runCompileInner(projectId: string, branch: string, agent: boolean
       engine: meta.engine,
       haltOnError: !!meta.stopOnFirstError,
       ...(draft ? { draft: true } : {}),
+      ...(clean ? { clean: true } : {}),
     });
   // Normalize: the compiler may return a bare {ok:false,error} on a 4xx — always
   // hand the client a well-formed CompileResult so the UI never sees undefined fields.

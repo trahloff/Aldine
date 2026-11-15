@@ -19,6 +19,7 @@
   },
   "compile": {
     "branch": { "type": "string", "required": false },
+    "clean": { "type": "boolean", "required": false },
     "project": { "type": "string", "required": false }
   },
   "create_project": {

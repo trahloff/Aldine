@@ -161,13 +161,16 @@ function scheduleBuild(state) {
   building.add(state.fmtDir);
   active++;
   const p = build(state).catch(() => {}).finally(() => { building.delete(state.fmtDir); active--; });
-  pending.add(p);
+  pending.set(p, state.fmtDir);
   p.finally(() => pending.delete(p));
   return p;
 }
-const pending = new Set();
+/** Scheduled builds and the format directory each writes. */
+const pending = new Map();
 /** Resolves once every scheduled build has finished (tests). */
-const idle = () => Promise.all([...pending]);
+const idle = () => Promise.all([...pending.keys()]);
+/** Resolves once no build writes under `outAbs`. */
+const idleIn = (outAbs) => Promise.all([...pending].filter(([, dir]) => dir.startsWith(outAbs + path.sep)).map(([p]) => p));
 
 async function build(state) {
   const { fmtDir, base, cwd, projectRoot, rootPath, hash } = state;
@@ -204,4 +207,4 @@ async function build(state) {
   }
 }
 
-module.exports = { prepare, settle, scheduleBuild, idle, preambleOf, ENABLED };
+module.exports = { prepare, settle, scheduleBuild, idle, idleIn, preambleOf, ENABLED };
