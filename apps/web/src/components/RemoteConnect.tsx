@@ -17,7 +17,8 @@ export default function RemoteConnectForm({ provider, status, onConnected, retur
   const [token, setToken] = useState('');
   // A host without a canonical instance (Gitea / Forgejo) always takes a URL; the others offer it behind a toggle.
   const [selfHosted, setSelfHosted] = useState(d.baseUrlRequired);
-  const [baseUrl, setBaseUrl] = useState('');
+  // The server's default instance (GITEA_URL) starts the field for such hosts; it can be changed.
+  const [baseUrl, setBaseUrl] = useState(d.baseUrlRequired ? status.instanceUrl ?? '' : '');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
@@ -49,7 +50,7 @@ export default function RemoteConnectForm({ provider, status, onConnected, retur
       )}
       {d.selfHosted && selfHosted && (
         <input
-          className="input login__input" type="url" placeholder={d.baseUrlPlaceholder} aria-label={`${d.label} instance URL`}
+          className="input login__input" type="url" placeholder={d.baseUrlRequired ? status.instanceUrl ?? d.baseUrlPlaceholder : d.baseUrlPlaceholder} aria-label={`${d.label} instance URL`}
           value={baseUrl} data-testid={`${provider}-baseurl`} onChange={(e) => setBaseUrl(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && connect()}
         />

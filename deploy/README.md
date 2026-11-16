@@ -73,8 +73,9 @@ GITHUB_CLIENT_SECRET=...
 GITLAB_URL=https://gitlab.com
 GITLAB_CLIENT_ID=...
 GITLAB_CLIENT_SECRET=...
-# Gitea / Forgejo sync (Codeberg included) has no settings: users connect with a
-# personal access token and their instance URL.
+# Gitea / Forgejo sync (Codeberg included): users connect with a personal access
+# token and their instance URL. GITEA_URL fills that field in for them.
+# GITEA_URL=https://git.example.edu
 # REMOTE_PROVIDERS=github,gitlab,gitea   # comma list; leave one out to hide it
 # GitLab provisioning — every new project is also created on GitLab, in this
 # group or a subgroup the user picks, and every autosave is pushed from the
@@ -619,6 +620,7 @@ override file.
 | `GITHUB_CLIENT_ID/SECRET` | GitHub **sync** OAuth app (repo import/push/pull) — separate from login, registered on `GITHUB_URL`'s instance. Its redirect URL stays `<ALDINE_PUBLIC_URL>/api/github/oauth/callback`. Unset = token connect only |
 | `GITLAB_URL` | GitLab instance the OAuth connect talks to (default `https://gitlab.com`). Users connecting with a personal access token can point the dialog at any https instance, sub-path installs included |
 | `GITLAB_CLIENT_ID/SECRET` | GitLab **sync** OAuth application with scope `api`; redirect URL `<ALDINE_PUBLIC_URL>/api/remotes/gitlab/oauth/callback`. Unset = token connect only |
+| `GITEA_URL` | Gitea or Forgejo instance the connect and clone forms start from, and the one a connect without a URL uses (https only, sub-path installs included). Unset by default, so users type their instance. Users can still enter any other instance |
 | `REMOTE_PROVIDERS` | Comma list of remote providers offered in the UI (default `github,gitlab,gitea`; `gitea` is Gitea and Forgejo, Codeberg included, token connect with a mandatory instance URL and no server-side settings); leave one out to hide it |
 | `GITLAB_TOKEN` | Service-account personal access token for GitLab provisioning: scope `api`, Owner on `GITLAB_DEFAULT_GROUP` (Maintainer cannot delete projects). Used only to create projects and subgroups in the group, push provisioned projects, and delete projects Aldine created; never to list or import a user's repositories. Provisioning is off unless both this and `GITLAB_DEFAULT_GROUP` are set |
 | `GITLAB_DEFAULT_GROUP` | Full path of the root group new projects are created in (`research/latex`); users may pick any subgroup of it in the new-project dialog, or create one. Deleting a project deletes the GitLab project only when Aldine created it, an imported repository is never touched; GitLab's delayed deletion is handled (a purge is requested, otherwise the scheduled date is reported), and restoring the project re-creates it in the same namespace |

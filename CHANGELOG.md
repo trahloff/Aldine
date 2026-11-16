@@ -15,6 +15,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The Share dialog's invite field is full width again. The role menu next
   to it had taken the whole row and pushed past the dialog's edge, leaving
   a box too small to read the addresses typed into it (#318).
+- `GITEA_URL` names a default Gitea or Forgejo instance. The connect and
+  clone forms start with it filled in, the token help links to its token
+  page, and a connect without a URL uses it. Users can still type another
+  instance (#317).
 
 ## [1.13.0] — 2026-11-15
 

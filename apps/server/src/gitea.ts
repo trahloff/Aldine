@@ -34,8 +34,10 @@ import { jsonResponse, normalizeInstanceUrl, RemoteApiError, type RemoteConnecti
  * the user to keep the credential attributable in the host's logs.
  *
  * There is no canonical instance, so a connection always carries its
- * `baseUrl`, sub-path installs included. GITEA_API_BASE replaces the whole
- * `<base>/api/v1` prefix and exists for tests only.
+ * `baseUrl`, sub-path installs included. GITEA_URL names the instance the
+ * connect forms start from and a connect without a URL uses; it is only a
+ * default, any other https instance stays allowed. GITEA_API_BASE replaces
+ * the whole `<base>/api/v1` prefix and exists for tests only.
  */
 
 /** Gitea's default MAX_RESPONSE_ITEMS; asking for more is silently clamped to it. */
@@ -45,6 +47,17 @@ const MAX_PAGES = 40;
 
 export function normalizeBaseUrl(raw: string | undefined): string | undefined {
   return normalizeInstanceUrl(raw, 'Gitea / Forgejo', !!process.env.GITEA_API_BASE, '/api/v1');
+}
+
+let warnedUrl = false;
+
+/** GITEA_URL normalized, or undefined when unset; a value that is not an https URL is ignored with one warning. */
+export function defaultInstanceUrl(): string | undefined {
+  try { return normalizeBaseUrl(process.env.GITEA_URL); }
+  catch (err: any) {
+    if (!warnedUrl) { warnedUrl = true; console.warn(`GITEA_URL ignored: ${err.message}`); }
+    return undefined;
+  }
 }
 
 export function apiBase(conn: RemoteConnection): string {
@@ -121,6 +134,7 @@ export const gitea: RemoteProvider = {
   tokenScopeHint: 'read:user and write:repository; publishing a project as a new repository also needs write:user',
   pathHint: 'Expected "owner/repo"',
   normalizeBaseUrl,
+  defaultInstanceUrl,
   instanceOrigin(conn) {
     if (!conn.baseUrl) throw new Error('Gitea / Forgejo connection has no instance URL');
     return new URL(conn.baseUrl).origin;

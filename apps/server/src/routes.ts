@@ -2974,6 +2974,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       try { baseUrl = p.normalizeBaseUrl(String(req.body.baseUrl)); }
       catch (err: any) { return reply.code(400).send({ error: err.message }); }
     }
+    if (p.baseUrlRequired && !baseUrl) baseUrl = p.defaultInstanceUrl?.();
     if (p.baseUrlRequired && !baseUrl) return reply.code(400).send({ error: `The ${p.label} instance URL is required${p.baseUrlExample ? `, ${p.baseUrlExample} for example` : ''}` });
     try {
       const me = await p.whoami({ token, login: '', baseUrl });
@@ -3100,6 +3101,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         try { baseUrl = p.normalizeBaseUrl(String(req.body.baseUrl)); }
         catch (err: any) { return reply.code(400).send({ error: err.message }); }
       }
+      if (p.baseUrlRequired && !baseUrl) baseUrl = p.defaultInstanceUrl?.();
       if (p.baseUrlRequired && !baseUrl) return reply.code(400).send({ error: `The ${p.label} instance URL is required${p.baseUrlExample ? `, ${p.baseUrlExample} for example` : ''}` });
       conn = { token: ownToken, login: '', ...(baseUrl ? { baseUrl } : {}) };
       try { const me = await p.whoami(conn); conn.login = me.login; conn.name = me.name; }

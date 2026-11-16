@@ -52,7 +52,7 @@ export interface RemoteProvider {
   /** Origin (scheme, host, port) of the instance `conn` talks to; the only origin git may be pointed at for it. */
   instanceOrigin(conn: RemoteConnection): string;
   /** The instance a connection without its own `baseUrl` talks to, for hosts where the server configures one. */
-  defaultInstanceUrl?(): string;
+  defaultInstanceUrl?(): string | undefined;
   /** The `*_API_BASE` test override is set: mocks answer with file:// clone URLs, so the origin check is off. */
   apiOverridden(): boolean;
   whoami(conn: RemoteConnection): Promise<{ login: string; name?: string }>;

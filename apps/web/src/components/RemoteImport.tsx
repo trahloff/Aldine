@@ -143,7 +143,7 @@ function SingleRepoClone({ provider, instanceUrl, onImported }: { provider: Remo
   const [open, setOpen] = useState(false);
   const [repo, setRepo] = useState('');
   const [token, setToken] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = useState(d.baseUrlRequired ? instanceUrl ?? '' : '');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
@@ -169,7 +169,7 @@ function SingleRepoClone({ provider, instanceUrl, onImported }: { provider: Remo
     <div style={{ marginTop: 14 }} data-testid={`${provider}-single-form`}>
       <div className="menu__label" style={{ marginBottom: 6 }}>One repository, its own token</div>
       {d.selfHosted && (
-        <input className="input login__input" type="url" placeholder={d.baseUrlRequired ? d.baseUrlPlaceholder : `${d.baseUrlPlaceholder} (leave empty for ${d.label}'s default)`} aria-label={`${d.label} instance URL`}
+        <input className="input login__input" type="url" placeholder={d.baseUrlRequired ? instanceUrl ?? d.baseUrlPlaceholder : `${d.baseUrlPlaceholder} (leave empty for ${d.label}'s default)`} aria-label={`${d.label} instance URL`}
           value={baseUrl} data-testid={`${provider}-single-baseurl`} onChange={(e) => setBaseUrl(e.target.value)} />
       )}
       <input className="input login__input" placeholder="owner/repo or its URL" aria-label="Repository"

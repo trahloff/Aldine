@@ -86,6 +86,23 @@ test.describe('remote providers on Home', () => {
     await expect(tokenInput).toBeVisible();
   });
 
+  test('with GITEA_URL set, the connect form starts from that instance (#317)', async ({ page }) => {
+    // the server's answer carries the GITEA_URL default; the e2e server runs without one
+    await page.route('**/api/remotes/gitea/status', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), connected: false, login: undefined, baseUrl: undefined, instanceUrl: 'https://git.uni.example' } });
+    });
+    await page.goto('/');
+    await startFrom(page, 'new-from-gitea');
+    const baseUrl = page.getByTestId('gitea-baseurl');
+    await expect(baseUrl).toHaveValue('https://git.uni.example');
+    await expect(baseUrl).toHaveAttribute('placeholder', 'https://git.uni.example');
+    await expect(page.getByTestId('gitea-token-page')).toHaveAttribute('href', 'https://git.uni.example/user/settings/applications');
+    // still only a default: another instance can be typed over it
+    await baseUrl.fill('https://codeberg.org');
+    await expect(page.getByTestId('gitea-token-page')).toHaveAttribute('href', 'https://codeberg.org/user/settings/applications');
+  });
+
   test("the token help links to the host's new-token page with the scope filled in", async ({ page }) => {
     const connectForm = async (item: string, p: string) => {
       await page.goto('/');
