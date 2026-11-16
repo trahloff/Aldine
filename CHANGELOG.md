@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Branch names git would refuse — a trailing dot or slash, `a//b`, `x.lock`,
+  `a/.b` — are refused with a 400 that names the rule ("Branch names cannot
+  end with a dot") instead of letting git fail and its stderr reach the
+  toast. The toast no longer doubles its "Could not … branch" prefix: the
+  server stopped adding it, the client still does. Refs #136.
+
 ## [1.14.0] — 2026-11-16
 
 ### Added
