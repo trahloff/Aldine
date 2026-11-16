@@ -62,3 +62,63 @@ resource "aws_route53_record" "ses_dmarc" {
   ttl     = 600
   records = ["v=DMARC1; p=none;"]
 }
+
+# --- Further sending domains ---------------------------------------------------
+# More instances that send through this account (another box on deploy/hetzner,
+# say), each as its own domain: the same identity, DKIM, MAIL FROM and DMARC
+# records as above, in the zone named for it. The offbox key may send as them.
+
+data "aws_route53_zone" "ses_extra" {
+  for_each     = var.enable_ses ? var.ses_extra_domains : {}
+  name         = each.value
+  private_zone = false
+}
+
+resource "aws_sesv2_email_identity" "extra" {
+  for_each       = var.enable_ses ? var.ses_extra_domains : {}
+  email_identity = each.key
+}
+
+resource "aws_route53_record" "ses_extra_dkim" {
+  # DKIM tokens are only known after apply, so the keys are positions.
+  for_each = { for p in setproduct(keys(var.enable_ses ? var.ses_extra_domains : {}), [0, 1, 2]) : "${p[0]}/${p[1]}" => { domain = p[0], i = p[1] } }
+  zone_id  = data.aws_route53_zone.ses_extra[each.value.domain].zone_id
+  name     = "${aws_sesv2_email_identity.extra[each.value.domain].dkim_signing_attributes[0].tokens[each.value.i]}._domainkey.${each.value.domain}"
+  type     = "CNAME"
+  ttl      = 600
+  records  = ["${aws_sesv2_email_identity.extra[each.value.domain].dkim_signing_attributes[0].tokens[each.value.i]}.dkim.amazonses.com"]
+}
+
+resource "aws_sesv2_email_identity_mail_from_attributes" "extra" {
+  for_each               = aws_sesv2_email_identity.extra
+  email_identity         = each.value.email_identity
+  mail_from_domain       = "${var.ses_mail_from_subdomain}.${each.key}"
+  behavior_on_mx_failure = "USE_DEFAULT_VALUE"
+}
+
+resource "aws_route53_record" "ses_extra_mail_from_mx" {
+  for_each = aws_sesv2_email_identity.extra
+  zone_id  = data.aws_route53_zone.ses_extra[each.key].zone_id
+  name     = "${var.ses_mail_from_subdomain}.${each.key}"
+  type     = "MX"
+  ttl      = 600
+  records  = ["10 feedback-smtp.${var.region}.amazonses.com"]
+}
+
+resource "aws_route53_record" "ses_extra_mail_from_spf" {
+  for_each = aws_sesv2_email_identity.extra
+  zone_id  = data.aws_route53_zone.ses_extra[each.key].zone_id
+  name     = "${var.ses_mail_from_subdomain}.${each.key}"
+  type     = "TXT"
+  ttl      = 600
+  records  = ["v=spf1 include:amazonses.com ~all"]
+}
+
+resource "aws_route53_record" "ses_extra_dmarc" {
+  for_each = aws_sesv2_email_identity.extra
+  zone_id  = data.aws_route53_zone.ses_extra[each.key].zone_id
+  name     = "_dmarc.${each.key}"
+  type     = "TXT"
+  ttl      = 600
+  records  = ["v=DMARC1; p=none;"]
+}
