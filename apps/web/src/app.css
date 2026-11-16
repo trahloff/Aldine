@@ -739,7 +739,7 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 .share__invite-link { font-size: var(--text-s); }
 .share__person { display: flex; align-items: center; gap: 8px; font-size: var(--text-s); }
 .share__person .share__invite-to { flex: 1; }
-.share__role { width: auto; flex-shrink: 0; font-size: var(--text-s); padding-top: 2px; padding-bottom: 2px; }
+.share__role, .modal .share__role { width: auto; flex-shrink: 0; font-size: var(--text-s); padding-top: 2px; padding-bottom: 2px; }
 .share__invite-field { display: flex; gap: 8px; align-items: center; }
 .share__invite-field .input:not(select) { flex: 1; min-width: 0; }
 .share__invite-line .share__role { margin-left: auto; }

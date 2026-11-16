@@ -1730,6 +1730,12 @@ test.describe('view-only sharing', () => {
     await page.goto(`/p/${proj.id}`);
     await expect(page.locator('.cm-content')).toContainText('READER-TEXT');
     await page.getByTestId('share-project').click();
+    // #318: the address field takes the row, the role menu stays compact and inside the dialog
+    const field = (await page.getByTestId('share-emails').boundingBox())!;
+    const role = (await page.getByTestId('share-invite-role').boundingBox())!;
+    const dialog = (await page.getByRole('dialog').boundingBox())!;
+    expect(field.width).toBeGreaterThan(role.width * 2);
+    expect(role.x + role.width).toBeLessThanOrEqual(dialog.x + dialog.width);
     await page.getByTestId('share-emails').fill(rEmail);
     await page.getByTestId('share-invite-role').selectOption('view');
     await page.getByTestId('share-save').click();
