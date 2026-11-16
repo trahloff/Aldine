@@ -6,7 +6,7 @@
 
 locals {
   offbox_actions = concat(
-    var.enable_ses ? [{ actions = ["ses:SendEmail"], resources = [aws_sesv2_email_identity.domain[0].arn] }] : [],
+    var.enable_ses ? [{ actions = ["ses:SendEmail"], resources = concat([aws_sesv2_email_identity.domain[0].arn], [for d in aws_sesv2_email_identity.extra : d.arn]) }] : [],
     var.offbox_access ? [
       { actions = ["s3:PutObject", "s3:GetObject"], resources = ["${aws_s3_bucket.offbox[0].arn}/*"] },
       { actions = ["s3:ListBucket"], resources = [aws_s3_bucket.offbox[0].arn] },

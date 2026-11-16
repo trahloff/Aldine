@@ -104,6 +104,12 @@ variable "ses_mail_from_subdomain" {
   default     = "mail"
 }
 
+variable "ses_extra_domains" {
+  description = "Further domains the offbox key may send as, each mapped to the Route 53 zone that holds its records: { \"app.example.org\" = \"example.org\" }. For more instances that send through this account (deploy/hetzner boxes)."
+  type        = map(string)
+  default     = {}
+}
+
 # ---- secrets ----
 # Each non-empty entry becomes an SSM SecureString parameter and is injected into
 # the server container as the env var of the same name. Empty values are skipped,

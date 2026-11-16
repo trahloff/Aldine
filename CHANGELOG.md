@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- `deploy/aws`: `ses_extra_domains` verifies further sending domains (DKIM,
+  MAIL FROM, DMARC in the zone named for each) and lets the offbox key send
+  as them, for more than one `deploy/hetzner` box on one AWS account.
+
 ## [1.13.0] — 2026-11-15
 
 ### Added
