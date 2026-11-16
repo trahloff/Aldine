@@ -109,6 +109,8 @@ export const NO_CONNECTION = 'no-connection';
 export const GIT_ACCESS_CODES = ['no-access', 'repo-missing'];
 /** Opening a pull or merge request found one already open; the error carries its `url` and `number`. */
 export const CHANGE_REQUEST_OPEN = 'change-request-open';
+/** A host hook refused the push; `detail` carries everything it printed. */
+export const REMOTE_REJECTED = 'remote-rejected';
 /** Publish: the owner already has a repository with that name. */
 export const NAME_TAKEN = 'name-taken';
 /** Somewhere Publish can create the repository; `path` is what it sends as `namespace`. */
@@ -707,6 +709,9 @@ export const api = {
     if (!res.ok) throw new ApiError(body.error || `HTTP ${res.status}`, res.status, undefined, typeof body.code === 'string' ? body.code : undefined, body);
     return { ok: true };
   },
+  /** Folds the commits the host lacks into one and pushes it; `pushed: false` when nothing was left to push.
+   *  `forked`: local branches that still carry the old commits. */
+  remoteCombineUnpushed: (id: string, message?: string) => req<{ ok: boolean; combined: number; kept: string | null; pushed: boolean; forked: string[] }>(`/api/projects/${id}/remote/combine-unpushed`, { method: 'POST', body: JSON.stringify({ message }) }),
   /** `kept`: the branch, only on this server, that main was saved as first (null when main had nothing the host lacks). */
   remoteResetToRemote: (id: string) => req<{ ok: boolean; kept: string | null }>(`/api/projects/${id}/remote/reset-to-remote`, { method: 'POST' }),
   remoteBranches: (id: string) => req<{ branches: string[]; current: string; default: string }>(`/api/projects/${id}/remote/branches`),

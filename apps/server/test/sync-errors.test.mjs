@@ -51,6 +51,12 @@ eq(explainGitFailure("fatal: unable to access 'https://x/y.git/': The requested 
   const r = explainGitFailure('remote: pushes are closed        \nTo /tmp/bare.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to \'/tmp/bare.git\'', ctx);
   eq(r?.code, 'remote-rejected', 'remote rejected');
   eq(r?.error, 'GitHub refused the push, saying "pushes are closed".', 'quotes the remote line, padding dropped');
+  eq(r?.detail, 'pushes are closed', 'and every remote line as the detail');
+  eq(r?.hook, true, 'a declining hook is marked, combining can help');
+  eq(explainGitFailure(' ! [remote rejected] main -> main (shallow update not allowed)', ctx)?.hook, undefined, 'other refusals are not');
+  const hook = explainGitFailure('remote: \nremote: Forbidden file types:\nremote:   figures/photo.png (image/png)\nremote: Remove them and push again.\nTo https://forge.example/a/b.git\n ! [remote rejected] main -> main (pre-receive hook declined)', ctx);
+  eq(hook?.detail, 'Forbidden file types:\n  figures/photo.png (image/png)\nRemove them and push again.', 'a hook\'s whole explanation, indentation kept');
+  eq(explainGitFailure(' ! [remote rejected] main -> main (pre-receive hook declined)', ctx)?.detail, undefined, 'no remote lines, no detail');
   eq(explainGitFailure(' ! [remote rejected] main -> main (pre-receive hook declined)', ctx)?.error, 'GitHub refused the push, saying "pre-receive hook declined".', 'without remote lines, the reason git names');
 }
 

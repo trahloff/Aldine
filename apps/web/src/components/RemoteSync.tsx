@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, CHANGE_REQUEST_OPEN, GIT_ACCESS_CODES, NO_CONNECTION, PULL_FIRST, RemoteLink, TOKEN_REJECTED } from '../api';
+import { api, CHANGE_REQUEST_OPEN, GIT_ACCESS_CODES, NO_CONNECTION, PULL_FIRST, REMOTE_REJECTED, RemoteLink, TOKEN_REJECTED } from '../api';
 import { pushSummary, remoteDescriptor, sentence } from '../remotes';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
@@ -46,7 +46,9 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
   /** Why the last status check failed (token refusals aside): shown instead of "Checking…". */
   const [statusError, setStatusError] = useState<{ message: string; code?: string } | null>(null);
   const [autopushPaused, setAutopushPaused] = useState<{ since: string; message: string } | null>(null);
-  const [busy, setBusy] = useState<'' | 'push' | 'pull' | 'reset' | 'branch'>('');
+  const [busy, setBusy] = useState<'' | 'push' | 'pull' | 'reset' | 'branch' | 'combine'>('');
+  /** A push the host's hooks refused: its words, and the way out. */
+  const [refused, setRefused] = useState<{ error: string; detail: string | null; hook: boolean } | null>(null);
   const [showPush, setShowPush] = useState(false);
   /** What the push dialog sends: edits not yet committed (files) and commits the host lacks (null: unknown). */
   const [pushInfo, setPushInfo] = useState<{ pending: number; ahead: number | null }>({ pending: 1, ahead: null });
@@ -103,6 +105,7 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     if (noteRejected(err)) toast(err.message, 'error', { label: 'Reconnect', testId: `${p}-reconnect-toast`, key: `${p}-rejected`, onClick: () => setShowAccess(true) });
     else if (code === PULL_FIRST) toast(err.message, 'error', { label: 'Pull', testId: `${p}-pull-first`, onClick: () => pullRef.current() });
     else if (code === NO_CONNECTION || GIT_ACCESS_CODES.includes(code)) toast(err.message, 'error', { label: 'Git access…', testId: `${p}-access-toast`, onClick: () => setShowAccess(true) });
+    else if (code === REMOTE_REJECTED) setRefused({ error: err.message, detail: typeof err?.body?.detail === 'string' ? err.body.detail : null, hook: err?.body?.hook === true });
     else if (code === CHANGE_REQUEST_OPEN && url) toast(err.message, 'info', { label: `Open #${err.body.number}`, testId: `${p}-open-existing`, onClick: () => window.open(url, '_blank', 'noopener') });
     else toast(err.message, 'error');
     void refresh();
@@ -149,6 +152,21 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
     setBusy('push'); setShowPush(false);
     try { await api.remotePush(projectId, msg); toast(`Pushed to ${d.label}`, 'ok'); await refresh(); }
     catch (err: any) { failed(err); }
+    setBusy('');
+  };
+  // Every unpushed commit reaches the host's hooks, so a refused file stays
+  // refused after it is deleted; one combined commit no longer holds it.
+  const combine = async () => {
+    setBusy('combine'); setRefused(null);
+    try {
+      const r = await api.remoteCombineUnpushed(projectId, message.trim() || undefined);
+      const keptNote = r.kept ? { label: `Open ${r.kept}`, testId: 'combine-open-kept', onClick: () => onSwitch(r.kept!) } : undefined;
+      if (r.pushed) toast(r.combined > 1 ? `Combined ${r.combined} commits into one and pushed to ${d.label}` : `Pushed to ${d.label}`, 'ok', keptNote);
+      else toast(`Nothing left to push: the files match ${d.label}'s`, 'ok', keptNote);
+      if (r.forked.length) toast(`${r.forked.join(', ')} ${r.forked.length === 1 ? 'was' : 'were'} started from the old commits. Merging ${r.forked.length === 1 ? 'it' : 'them'} into main brings those commits back, and ${d.label} refuses them again.`, 'info');
+      local.load();
+      await refresh();
+    } catch (err: any) { failed(err); }
     setBusy('');
   };
   const toggleAutopush = async () => {
@@ -413,6 +431,29 @@ export default function RemoteSync({ projectId, link, autopush, isOwner, current
           <div className="modal__row" style={{ marginTop: 12 }}>
             <button className="btn" onClick={() => setShowPush(false)}>Cancel</button>
             <button ref={pushConfirm} className="btn btn--primary" onClick={() => doPush(message.trim() || 'Update from Aldine')} data-testid="push-confirm">{pushInfo.pending > 0 ? 'Commit & push' : 'Push'}</button>
+          </div>
+        </Modal>
+      )}
+
+      {refused && (
+        <Modal onClose={() => setRefused(null)} label="Push refused" width={520} testId="push-refused-dialog">
+          <h2 style={{ marginBottom: 8 }}>{d.label} refused the push</h2>
+          {refused.detail
+            ? <pre className="push-refused__detail" data-testid="push-refused-detail">{refused.detail}</pre>
+            : <p className="modal__sub" data-testid="push-refused-detail">{refused.error}</p>}
+          {refused.hook && (
+            <>
+              <p className="conflict__note">A hook on {d.label} checks each commit not yet on it, so deleting a refused file is not enough: the commit that added it is still on the way. Delete or fix what it names first.</p>
+              {isOwner ? (
+                <p className="conflict__note" data-testid="push-refused-combine-note">Combine and push then turns everything not yet on {d.label} into one commit of the files as they are now, and pushes it. The files stay as they are. The separate commits, with their history and undo, move to a branch that only this server has.</p>
+              ) : (
+                <p className="conflict__note" data-testid="push-refused-owner-note">Only the project owner can combine the commits not yet on {d.label} into one, since it changes main's history for everyone.</p>
+              )}
+            </>
+          )}
+          <div className="modal__row" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={() => setRefused(null)}>Close</button>
+            {refused.hook && isOwner && <button className="btn btn--primary" onClick={combine} disabled={busy === 'combine'} data-testid="push-refused-combine">Combine and push</button>}
           </div>
         </Modal>
       )}

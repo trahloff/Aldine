@@ -19,6 +19,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   clone forms start with it filled in, the token help links to its token
   page, and a connect without a URL uses it. Users can still type another
   instance (#317).
+- A push the git host's hooks refuse now opens a dialog with everything the
+  host said, such as which file a pre-receive hook rejected. Hooks check every
+  commit on the way, so deleting the file alone never got the push through.
+  For the project owner, the dialog's "Combine and push" turns everything not
+  yet on the host into one commit with the files as they are now, then pushes
+  it. Other authors stay credited as co-authors. The separate commits are kept
+  on a `my-version-<date>` branch that only this server has, and branches
+  started from them are named, since merging one back would bring the refused
+  file back (#316).
 
 ## [1.13.0] — 2026-11-15
 
