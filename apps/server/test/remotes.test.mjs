@@ -174,6 +174,13 @@ eq([gitlab.gitlab.tokenScopeHint, gitlab.gitlab.pathHint, gitlab.gitlab.baseUrlE
   eq(gitea.normalizeBaseUrl('http://forge.example.org'), 'http://forge.example.org', 'GITEA_API_BASE (tests) lifts the https rule');
   await throws(() => gitea.normalizeBaseUrl('ftp://forge.example.org'), 'https://', 'but only for http, other schemes stay refused');
   delete process.env.GITEA_API_BASE;
+  eq(gitea.defaultInstanceUrl(), undefined, 'no GITEA_URL, no default instance');
+  process.env.GITEA_URL = 'https://git.uni.example/forge/';
+  eq(gitea.defaultInstanceUrl(), 'https://git.uni.example/forge', 'GITEA_URL is the default instance, normalized');
+  eq(gitea.gitea.defaultInstanceUrl(), 'https://git.uni.example/forge', 'and the provider reports it to the connect forms');
+  process.env.GITEA_URL = 'http://git.uni.example';
+  eq(gitea.defaultInstanceUrl(), undefined, 'a GITEA_URL that is not https is ignored');
+  delete process.env.GITEA_URL;
   eq(gitea.mapRepo({ full_name: 'alice/paper', name: 'paper', owner: { login: 'alice' }, private: true, default_branch: 'trunk', clone_url: 'https://codeberg.org/alice/paper.git', updated_at: '2026-01-01T00:00:00Z' }),
      { fullName: 'alice/paper', name: 'paper', owner: 'alice', private: true, defaultBranch: 'trunk', cloneUrl: 'https://codeberg.org/alice/paper.git', updatedAt: '2026-01-01T00:00:00Z' }, 'mapRepo reads the v1 Repository fields');
 }

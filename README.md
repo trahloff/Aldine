@@ -441,7 +441,8 @@ GITHUB_CLIENT_SECRET=
 GITLAB_URL=https://gitlab.com
 GITLAB_CLIENT_ID=
 GITLAB_CLIENT_SECRET=
-# Gitea / Forgejo sync needs nothing here: users paste a token and their instance URL
+# Gitea / Forgejo sync: users paste a token and their instance URL; this one starts the field
+# GITEA_URL=https://git.example.edu
 # REMOTE_PROVIDERS=github,gitlab,gitea   # hide a provider by leaving it out
 # Optional: every new project is also created on GitLab in this group (service
 # account PAT with scope api and Owner on the group). Off unless both are set.
