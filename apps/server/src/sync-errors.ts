@@ -10,7 +10,8 @@ export type SyncCode =
   | 'pull-first' | 'no-access' | 'token-invalid' | 'repo-missing' | 'protected-branch' | 'remote-rejected' | 'branch-missing' | 'unreachable'
   | 'name-taken' | 'no-create' | 'change-request-open' | 'nothing-to-compare';
 
-export interface SyncRefusal { status: number; error: string; code: SyncCode }
+/** `detail`: everything the host printed, for a refusal whose one-line `error` may cut it short. */
+export interface SyncRefusal { status: number; error: string; code: SyncCode; detail?: string; hook?: true }
 
 export interface GitContext {
   /** The host as people call it: "GitHub", "GitLab". */
@@ -32,6 +33,15 @@ function remoteSays(message: string): string {
     .slice(0, 2)
     .join(' ')
     .replace(/[.\s]+$/, '');
+}
+
+/** Every `remote:` line the host printed, trimmed and capped: a hook's whole explanation. */
+function remoteDetail(message: string): string {
+  return message.split('\n')
+    .map((l) => /^remote:\s?(.*)$/.exec(l.trim())?.[1]?.trimEnd())
+    .filter((l): l is string => l !== undefined)
+    .join('\n').replace(/^\n+|\n+$/g, '')
+    .slice(0, 4000);
 }
 
 export function explainGitFailure(message: string, ctx: GitContext): SyncRefusal | null {
@@ -72,7 +82,10 @@ export function explainGitFailure(message: string, ctx: GitContext): SyncRefusal
   const rejected = /\[remote rejected\][^\n]*\(([^)\n]+)\)/.exec(m);
   if (rejected) {
     const said = remoteSays(m) || rejected[1];
-    return { status: 403, code: 'remote-rejected', error: `${label} refused the push, saying "${said}".` };
+    const detail = remoteDetail(m);
+    // Only a hook checks the commits themselves, so only then can combining them help.
+    const hook = /hook declined/i.test(rejected[1]);
+    return { status: 403, code: 'remote-rejected', error: `${label} refused the push, saying "${said}".`, ...(detail ? { detail } : {}), ...(hook ? { hook: true as const } : {}) };
   }
   return null;
 }

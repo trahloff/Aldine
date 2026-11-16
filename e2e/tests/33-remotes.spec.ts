@@ -1096,3 +1096,61 @@ test.describe('sync failures, conflicts and where to publish', () => {
     expect(git(['--git-dir', path.join(GITEA_DATA, `e2e-org/org-paper-${stamp}.git`), 'show', 'main:main.tex'])).toContain('\\documentclass');
   });
 });
+
+test.describe('a push a server hook refuses (#316)', () => {
+  test('the hook is quoted in full, and combining the unpushed commits gets past it', async ({ page, request }) => {
+    const stamp = Date.now();
+    const name = `hooked-paper-${stamp}`;
+    await page.addInitScript(() => window.localStorage.setItem('aldine.autoTypeset', '0'));
+    // a project published to the mock Forgejo, whose repository refuses any commit that adds an image
+    expect((await request.post('/api/remotes/gitea/connect', { data: { token: 'e2e-token', baseUrl: GITEA_MOCK } })).ok()).toBeTruthy();
+    const proj = await (await request.post('/api/projects', { data: { name: 'Hooked Paper' } })).json();
+    const linked = await request.post(`/api/projects/${proj.id}/remote/link`, { data: { provider: 'gitea', name, private: true } });
+    expect(linked.ok(), await linked.text()).toBeTruthy();
+    const bare = path.join(GITEA_DATA, `e2e-user/${name}.git`);
+    const hook = path.join(bare, 'hooks/pre-receive');
+    fs.writeFileSync(hook, [
+      '#!/bin/sh',
+      'while read old new ref; do',
+      '  bad=$(git rev-list "$old..$new" 2>/dev/null | while read c; do git diff-tree --no-commit-id --name-only -r --diff-filter=A "$c"; done | grep "\\.png$")',
+      '  if [ -n "$bad" ]; then echo "Images are not allowed in this repository:"; echo "$bad" | sed "s/^/  /"; echo "Remove them from every commit and push again."; exit 1; fi',
+      'done',
+      '',
+    ].join('\n'));
+    fs.chmodSync(hook, 0o755);
+    const onHost = () => git(['--git-dir', bare, 'rev-parse', 'main']).trim();
+    const before = onHost();
+
+    // the image is added and pushed: refused, with everything the hook said
+    expect((await request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'figures/photo.png', content: 'not really a png' } })).ok()).toBeTruthy();
+    expect((await request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'notes.tex', content: `HOOK-NOTES-${stamp}\n` } })).ok()).toBeTruthy();
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    const push = async () => {
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('gitea-push-btn').click();
+      await page.getByTestId('push-confirm').click();
+    };
+    await push();
+    const refused = page.getByTestId('push-refused-dialog');
+    await expect(refused).toBeVisible();
+    await expect(page.getByTestId('push-refused-detail')).toHaveText('Images are not allowed in this repository:\n  figures/photo.png\nRemove them from every commit and push again.');
+    await page.keyboard.press('Escape');
+
+    // deleting it is not enough: the commit that added it is still on the way
+    expect((await request.delete(`/api/projects/${proj.id}/file?branch=main&path=${encodeURIComponent('figures/photo.png')}`)).ok()).toBeTruthy();
+    await push();
+    await expect(refused).toBeVisible();
+    expect(onHost()).toBe(before);
+
+    // one commit of the files as they are now gets through, and the old history stays on this server
+    await page.getByTestId('push-refused-combine').click();
+    await expect(page.locator('.toast').filter({ hasText: /Combined \d+ commits? into one and pushed to Gitea \/ Forgejo/ })).toBeVisible();
+    expect(onHost()).not.toBe(before);
+    expect(git(['--git-dir', bare, 'rev-list', '--count', `${before}..main`]).trim()).toBe('1');
+    expect(git(['--git-dir', bare, 'log', '--name-only', '--format=', 'main'])).not.toContain('photo.png');
+    expect(git(['--git-dir', bare, 'show', 'main:notes.tex'])).toContain(`HOOK-NOTES-${stamp}`);
+    const branches = await (await request.get(`/api/projects/${proj.id}/branches`)).json();
+    expect(JSON.stringify(branches)).toMatch(/my-version-\d{4}-\d{2}-\d{2}/);
+  });
+});

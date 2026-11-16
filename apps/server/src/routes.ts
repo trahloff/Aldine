@@ -3191,10 +3191,10 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   };
   /** A failed git operation of a linked project: a refused token, else a
    *  known failure as a sentence with its code, else `fallback`. */
-  const gitFailed = (reply: any, l: Linked, err: any, op: 'push' | 'fetch', fallback: () => unknown, branch?: string) =>
+  const gitFailed = (reply: any, l: Linked, err: any, op: 'push' | 'fetch', fallback: () => unknown, branch?: string, extra: Record<string, unknown> = {}) =>
     syncFailed(reply, l, err, () => {
       const known = explainGitFailure(String(err?.message || err), gitContext(l, op, branch));
-      return known ? reply.code(known.status).send({ error: known.error, code: known.code }) : fallback();
+      return known ? reply.code(known.status).send({ error: known.error, code: known.code, ...(known.detail ? { detail: known.detail } : {}), ...(known.hook ? { hook: true } : {}), ...extra }) : fallback();
     });
   const projectRoute = (method: 'get' | 'post', tail: string, handler: (req: any, reply: any) => Promise<unknown>, legacyTail = tail) => {
     app[method](`/api/projects/:id/remote/${tail}`, handler);
@@ -3298,6 +3298,31 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if ((await gitops.branchHead(req.params.id, 'main')) !== before) noteEdit(req.params.id, 'main', editorOf(reqUser(req)));
       return { ok: true };
     } catch (err: any) { return gitFailed(reply, l, err, 'fetch', () => reply.code(400).send({ error: `Pull failed: ${err.message}` })); }
+  });
+
+  // A push a host hook refused stays refused while any unpushed commit holds
+  // the refused file, deleted since or not: this folds those commits into one
+  // with the files as they are now, keeps the old history on a branch only
+  // this server has (my-version-<date>), and pushes. The files do not change.
+  // Everyone's commits on main become one, like a reset to the remote: the owner's call.
+  projectRoute('post', 'combine-unpushed', async (req, reply) => {
+    if (!(await requireOwner(req, reply, 'combine the commits not yet pushed'))) return;
+    const l = await linkedRemote(req, reply); if (!l) return;
+    flushBranchDocs(req.params.id, 'main');
+    await gitops.autoCommit(req.params.id, 'main', 'Local changes before combining', reqAuthor(req)).catch(() => {});
+    const message = cleanCommitMessage(req.body?.message, 'Update from Aldine');
+    let r: Awaited<ReturnType<typeof gitops.combineUnpushed>>;
+    try { r = await gitops.combineUnpushed(req.params.id, l.remoteBranch, l.url, keepName(), message, reqAuthor(req)); }
+    catch (err: any) { return gitFailed(reply, l, err, 'fetch', () => reply.code(400).send({ error: `Could not combine the commits: ${err.message}` })); }
+    if (r.diverged) return reply.code(409).send({ error: `${l.provider.label} has newer commits on ${l.remoteBranch}. Pull first, then combine.`, code: 'pull-first' });
+    if (r.kept) markTreeChanged(req.params.id, r.kept);
+    const done = { combined: r.combined, kept: r.kept, forked: r.forked };
+    if (!r.hash) return { ok: true, ...done, pushed: false }; // nothing left that the host lacks
+    try {
+      await gitops.pushToRemote(req.params.id, l.remoteBranch, l.url);
+      lastPushedHead.set(req.params.id, r.hash);
+      return { ok: true, ...done, pushed: true };
+    } catch (err: any) { return gitFailed(reply, l, err, 'push', () => reply.code(400).send({ error: `Push failed: ${err.message}`, ...done }), undefined, done); }
   });
 
   // Conflict escape hatch: main takes the remote version. Everyone's work the

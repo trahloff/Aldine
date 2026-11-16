@@ -1099,6 +1099,62 @@ async function resetMain(id: string, remoteBranch: string, tokenUrl: string, kee
   });
 }
 
+/**
+ * Fold every commit of `main` the remote branch lacks into one commit on top
+ * of the remote's head, with the files as they are now. A host whose hooks
+ * check each pushed commit (file types, sizes, secrets) refuses a history
+ * that ever held a refused file, even after the file is deleted; the single
+ * commit no longer holds it. When the files match the remote's, main simply
+ * becomes the remote's head. The old history is first saved as the local
+ * branch `keepAs` (never pushed). `null` from `combined` when there was
+ * nothing to combine. Needs the remote head to be an ancestor of main:
+ * newer commits on the host are pulled first. Commit edits first; others'
+ * authorship goes into Co-authored-by trailers.
+ */
+export async function combineUnpushed(id: string, remoteBranch: string, tokenUrl: string, keepAs: string, message: string, author?: CommitAuthor): Promise<{ combined: number; kept: string | null; hash: string | null; forked: string[]; diverged?: true }> {
+  if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
+  if (!BRANCH_RE.test(keepAs) || keepAs.includes('..') || keepAs === 'main') throw new Error('bad branch name');
+  forgetRemoteStatus(id);
+  return withRepoLock(id, async () => {
+    const g = git(repoDir(id));
+    await scrubbed(() => g.raw(['fetch', tokenUrl, remoteBranch]));
+    const remote = (await g.raw(['rev-parse', 'FETCH_HEAD'])).trim();
+    // Exit codes are not read here: simple-git's raw() resolves a failing command that prints nothing.
+    const onRemote = (await g.raw(['merge-base', remote, 'refs/heads/main']).catch(() => '')).trim() === remote;
+    if (!onRemote) return { combined: 0, kept: null, hash: null, forked: [], diverged: true };
+    const range = `${remote}..refs/heads/main`;
+    const commits = (await g.raw(['rev-list', '--reverse', range])).split('\n').map((l) => l.trim()).filter(Boolean);
+    const combined = commits.length;
+    const old = (await g.raw(['rev-parse', 'refs/heads/main'])).trim();
+    const same = (await g.raw(['diff', '--name-only', remote, old])).trim() === '';
+    // One commit is already one: push it as it is, without a copy to keep.
+    if (combined === 0 || (combined === 1 && !same)) return { combined, kept: null, hash: combined ? old : null, forked: [] };
+    // Local branches started inside the range still carry its commits; merging one into main brings them back.
+    const forked = (await g.raw(['for-each-ref', '--format=%(refname:short)', '--contains', commits[0], 'refs/heads']))
+      .split('\n').map((l) => l.trim()).filter((b) => b && b !== 'main');
+    const authors = (await g.raw(['log', '--format=%an <%ae>', range])).split('\n').map((l) => l.trim()).filter(Boolean);
+    const kept = await freeBranchName(id, keepAs);
+    const dir = branchDir(id, kept);
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    await g.raw(['worktree', 'add', '-b', kept, dir, old]);
+    try {
+      await g.raw(['reset', '--soft', remote]);
+      if (same) return { combined, kept, hash: null, forked };
+      const me = author && authorName(author) ? authorIdent(author) : null;
+      const others = [...new Set(authors)].filter((a) => !/^Aldine </.test(a) && (!me || a !== `${me.name} <${me.email}>`));
+      const trailers = others.length ? `\n\n${others.map((a) => `Co-authored-by: ${a}`).join('\n')}` : '';
+      const hash = await commitArgv(g, `${message}${trailers}`, author);
+      return { combined, kept, hash, forked };
+    } catch (err) {
+      // Back to the old history, so a later autosave cannot sweep everyone's commits into one by Aldine.
+      await g.raw(['reset', '--soft', old]).catch(() => {});
+      await g.raw(['worktree', 'remove', '--force', dir]).catch(() => {});
+      await g.raw(['branch', '-D', kept]).catch(() => {});
+      throw err;
+    }
+  });
+}
+
 /** Pull (fetch + merge) the remote branch into local `main`. Reports conflicts. */
 export async function pullFromRemote(id: string, remoteBranch: string, tokenUrl: string): Promise<MergeResult> {
   if (!BRANCH_RE.test(remoteBranch)) throw new Error('bad branch name');
