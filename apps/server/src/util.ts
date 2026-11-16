@@ -21,6 +21,32 @@ export function newId(len = 10): string {
 export const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
 export const PROJECT_ID_RE = /^[a-z0-9]{4,20}$/;
 
+/** Why git would refuse a branch name, or null when it accepts it: the
+ *  `git check-ref-format` rules — `..`, a doubled, leading or trailing
+ *  slash, a part starting with a dot or ending in `.lock`, a trailing dot,
+ *  `@{`, and the characters space `~^:?*[` and backslash. The
+ *  branch routes answer the sentence as a 400 instead of letting git fail
+ *  and its stderr reach the toast. Names git accepts but Aldine does not
+ *  (its own shape rule, `BRANCH_RE`) are not this function's business. */
+export function invalidBranchName(name: unknown): string | null {
+  if (typeof name !== 'string' || !name) return 'Branch name cannot be empty';
+  if (name.includes('@{')) return 'Branch names cannot contain "@{"';
+  const bad = [...name].find((ch) => ch <= ' ' || ch === '\x7f' || '~^:?*[\\'.includes(ch));
+  if (bad !== undefined) {
+    if (bad === ' ') return 'Branch names cannot contain spaces';
+    if (bad <= ' ' || bad === '\x7f') return 'Branch names cannot contain control characters';
+    return `Branch names cannot contain "${bad}"`;
+  }
+  if (name.includes('..')) return 'Branch names cannot contain ".."';
+  if (name.startsWith('/')) return 'Branch names cannot start with "/"';
+  if (name.endsWith('/')) return 'Branch names cannot end with "/"';
+  if (name.includes('//')) return 'Branch names cannot contain "//"';
+  if (name.endsWith('.')) return 'Branch names cannot end with a dot';
+  if (name.split('/').some((seg) => seg.startsWith('.'))) return 'Branch names cannot have a part starting with a dot';
+  if (name.split('/').some((seg) => seg.endsWith('.lock'))) return 'Branch names cannot have a part ending with ".lock"';
+  return null;
+}
+
 /** Resolve a user-supplied relative file path inside a base dir, rejecting
  *  escapes: lexical ones, and any segment that exists on disk as a symbolic
  *  link. Every fs call on the result follows links, so a link anywhere on the
