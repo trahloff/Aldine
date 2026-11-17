@@ -44,7 +44,7 @@ import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
-import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, publicBase } from './util.js';
+import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, invalidBranchName, publicBase } from './util.js';
 import { registerOAuth } from './oauth/routes.js';
 import { verifyOutputSignature, isOutputPath } from './output-signing.js';
 import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
@@ -2288,7 +2288,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     '/api/projects/:id/branches', async (req, reply) => {
       const { name, from = 'main', checkpoint, author: claimed } = req.body || {};
       if (!name) return reply.code(400).send({ error: 'name required' });
-      if (!BRANCH_RE.test(name) || name.includes('..') || /^(refs|heads|remotes)\//.test(name) || /^-/.test(name)) {
+      // The sentence names the rule git would refuse the name on, so the
+      // toast explains it instead of passing git's stderr through.
+      const invalid = invalidBranchName(name);
+      if (invalid) return reply.code(400).send({ error: invalid });
+      if (!BRANCH_RE.test(name) || /^(refs|heads|remotes)\//.test(name) || /^-/.test(name)) {
         return reply.code(400).send({ error: 'Invalid branch name' });
       }
       // capture latest edits so the new branch starts from what the user sees
@@ -2297,7 +2301,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       try {
         await gitops.createBranch(req.params.id, name, from);
       } catch (err) {
-        return reply.code(409).send({ error: `Could not create branch: ${(err as Error).message}` });
+        // Bare message: the client prefixes "Could not create branch".
+        return reply.code(409).send({ error: (err as Error).message });
       }
       // A recreated name must not inherit the deleted branch's version log:
       // a base_version read before the delete would otherwise pass the
@@ -2331,10 +2336,16 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     const { name } = req.query;
     if (!name) return reply.code(400).send({ error: 'name required' });
     if (name === 'main') return reply.code(400).send({ error: 'Cannot delete the main branch' });
+    // A name git would refuse cannot exist, so it is a 400 with the reason,
+    // not a 409 carrying git's complaint about it.
+    const invalid = invalidBranchName(name);
+    if (invalid) return reply.code(400).send({ error: invalid });
+    if (!BRANCH_RE.test(name)) return reply.code(400).send({ error: 'Invalid branch name' });
     try {
       await withBranchTypesetsClosed(req.params.id, name, () => gitops.deleteBranch(req.params.id, name));
     } catch (err) {
-      return reply.code(409).send({ error: `Could not delete branch: ${(err as Error).message}` });
+      // Bare message: the client prefixes "Could not delete branch".
+      return reply.code(409).send({ error: (err as Error).message });
     }
     markTreeChanged(req.params.id, name); // see the create route
     forgetPdfUrls(req.params.id, name);
@@ -3394,6 +3405,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!(await requireOwner(req, reply, 'start a branch on the git host'))) return;
     const l = await linkedRemote(req, reply); if (!l) return;
     const name = String(req.body?.name || '').trim();
+    const invalid = invalidBranchName(name);
+    if (invalid) return reply.code(400).send({ error: invalid });
     // Use the same BRANCH_RE gitops enforces on push/pull, so a name the UI
     // accepts can't later be rejected by git after a stray commit is written.
     if (!BRANCH_RE.test(name) || name.includes('..')) return reply.code(400).send({ error: 'Invalid branch name' });
