@@ -40,39 +40,49 @@ function unquoteGitPath(quoted: string): string {
   return utf8Decoder.decode(new Uint8Array(bytes));
 }
 
+/** End index (one past the closing quote) of the C-quoted token starting
+ *  at `s[i]`, or -1 when it is not closed. */
+function quotedEnd(s: string, i: number): number {
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') j++;
+    else if (s[j] === '"') return j + 1;
+  }
+  return -1;
+}
+
 /** Parse a `diff --git` header into the [old, new] paths it names. Git
- *  C-quotes a side whose bytes are not plain ASCII (a non-ASCII name, a
- *  space, a `"`), so each side is either a bare token or a `"..."` string
- *  with C-style escapes; octal bytes decode as UTF-8. Returns null when
- *  the line is not a well-formed header. */
+ *  C-quotes a side holding non-ASCII bytes, a `"`, a backslash or a control
+ *  character (`"..."` with C escapes, octal bytes decoding as UTF-8), but
+ *  leaves spaces bare: `diff --git a/my file.tex b/my file.tex`. Two bare
+ *  sides are split in the middle when they name the same path, else at the
+ *  last ` b/`, which is as far as the header alone can tell a rename of a
+ *  name with spaces. Returns null when the line is not a header. */
 export function parseDiffGitHeader(line: string): [string, string] | null {
   if (!line.startsWith('diff --git ')) return null;
   const rest = line.slice('diff --git '.length);
-  const tokens: string[] = [];
-  let i = 0;
-  while (tokens.length < 2) {
-    while (rest[i] === ' ') i++;
-    if (i >= rest.length) return null;
-    if (rest[i] === '"') {
-      let j = i + 1;
-      while (j < rest.length && rest[j] !== '"') {
-        if (rest[j] === '\\') j++;
-        j++;
-      }
-      if (j >= rest.length) return null;
-      tokens.push(rest.slice(i, j + 1));
-      i = j + 1;
-    } else {
-      let j = rest.indexOf(' ', i);
-      if (j === -1) j = rest.length;
-      tokens.push(rest.slice(i, j));
-      i = j;
-    }
+  let first: string;
+  let second: string;
+  if (rest.startsWith('"')) {
+    const e = quotedEnd(rest, 0);
+    if (e === -1 || rest[e] !== ' ') return null;
+    first = rest.slice(0, e);
+    second = rest.slice(e + 1);
+  } else if (rest.endsWith('"')) {
+    const k = rest.lastIndexOf(' "b/');
+    if (k === -1) return null;
+    first = rest.slice(0, k);
+    second = rest.slice(k + 1);
+  } else {
+    const half = (rest.length - 1) / 2;
+    const k = rest[half] === ' ' && rest.slice(2, half) === rest.slice(half + 3) ? half : rest.lastIndexOf(' b/');
+    if (k === -1) return null;
+    first = rest.slice(0, k);
+    second = rest.slice(k + 1);
   }
-  if (rest.slice(i).trim() !== '') return null;
-  const paths = tokens.map((t) => (t.startsWith('"') ? unquoteGitPath(t) : t));
-  if (!paths[0].startsWith('a/') || !paths[1].startsWith('b/')) return null;
-  return [paths[0].slice(2), paths[1].slice(2)];
+  if (second.startsWith('"') && quotedEnd(second, 0) !== second.length) return null;
+  const [a, b] = [first, second].map((t) => (t.startsWith('"') ? unquoteGitPath(t) : t));
+  if (!a.startsWith('a/') || !b.startsWith('b/')) return null;
+  return [a.slice(2), b.slice(2)];
 }
 
 /** Distinct file paths touched by a unified git patch (diff --git headers). */

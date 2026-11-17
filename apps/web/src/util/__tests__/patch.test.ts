@@ -21,8 +21,18 @@ describe('parseDiffGitHeader', () => {
     ).toEqual(['مقدمه.tex', 'مقدمه.tex']);
   });
 
-  it('keeps a name with a space, quoted by git', () => {
-    expect(parseDiffGitHeader('diff --git "a/my file.tex" "b/my file.tex"')).toEqual(['my file.tex', 'my file.tex']);
+  it('keeps a name with a space, which git leaves unquoted', () => {
+    expect(parseDiffGitHeader('diff --git a/my file.tex b/my file.tex')).toEqual(['my file.tex', 'my file.tex']);
+    expect(parseDiffGitHeader('diff --git a/a b/c.tex b/a b/c.tex')).toEqual(['a b/c.tex', 'a b/c.tex']);
+  });
+
+  it('parses a rename of names with spaces', () => {
+    expect(parseDiffGitHeader('diff --git a/my file.tex b/your file.tex')).toEqual(['my file.tex', 'your file.tex']);
+  });
+
+  it('parses a quoted side next to a bare side with a space', () => {
+    expect(parseDiffGitHeader('diff --git a/my file.tex "b/Einf\\303\\274hrung.tex"')).toEqual(['my file.tex', 'Einführung.tex']);
+    expect(parseDiffGitHeader('diff --git "a/Einf\\303\\274hrung.tex" b/my file.tex')).toEqual(['Einführung.tex', 'my file.tex']);
   });
 
   it('parses a rename where only the new side is quoted', () => {
@@ -41,7 +51,8 @@ describe('parseDiffGitHeader', () => {
     expect(parseDiffGitHeader('--- a/main.tex')).toBeNull();
     expect(parseDiffGitHeader('diff --git a/only-one-side')).toBeNull();
     expect(parseDiffGitHeader('diff --git "a/x.tex b/x.tex')).toBeNull();
-    expect(parseDiffGitHeader('diff --git a/main.tex b/main.tex extra')).toBeNull();
+    expect(parseDiffGitHeader('diff --git a/main.tex c/main.tex')).toBeNull();
+    expect(parseDiffGitHeader('diff --git "a/x.tex" "b/x.tex" extra')).toBeNull();
   });
 });
 
