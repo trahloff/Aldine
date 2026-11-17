@@ -13,6 +13,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   end with a dot") instead of letting git fail and its stderr reach the
   toast. The toast no longer doubles its "Could not … branch" prefix: the
   server stopped adding it, the client still does. Refs #136.
+- History diffs show the real file name for non-ASCII paths instead of git's
+  quoted `diff --git` header, and the changed-files count includes them.
+  Refs #135.
 
 ## [1.14.0] — 2026-11-16
 
