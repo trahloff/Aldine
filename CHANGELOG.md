@@ -16,6 +16,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - History diffs show the real file name for non-ASCII paths instead of git's
   quoted `diff --git` header, and the changed-files count includes them.
   Refs #135.
+- aldine.dev: code blocks are readable in light mode. They kept the dark
+  terminal panel but took the dark inline-code text colour (#320).
 
 ## [1.14.0] — 2026-11-16
 
