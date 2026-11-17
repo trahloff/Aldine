@@ -2301,8 +2301,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       try {
         await gitops.createBranch(req.params.id, name, from);
       } catch (err) {
-        // No "Could not create branch" prefix here: the client adds it to
-        // the toast, and adding it here too showed it twice.
+        // Bare message: the client prefixes "Could not create branch".
         return reply.code(409).send({ error: (err as Error).message });
       }
       // A recreated name must not inherit the deleted branch's version log:
@@ -2345,8 +2344,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     try {
       await withBranchTypesetsClosed(req.params.id, name, () => gitops.deleteBranch(req.params.id, name));
     } catch (err) {
-      // No "Could not delete branch" prefix here: the client adds it to the
-      // toast, and adding it here too showed it twice.
+      // Bare message: the client prefixes "Could not delete branch".
       return reply.code(409).send({ error: (err as Error).message });
     }
     markTreeChanged(req.params.id, name); // see the create route
