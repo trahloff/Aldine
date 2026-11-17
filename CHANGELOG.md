@@ -18,6 +18,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Refs #135.
 - aldine.dev: code blocks are readable in light mode. They kept the dark
   terminal panel but took the dark inline-code text colour (#320).
+- A new project's starter `main.tex` escapes LaTeX specials in the
+  project name, so names like "Results_v2", "R&D notes" or "50% draft"
+  typeset on the first try (#131).
 
 ## [1.14.0] — 2026-11-16
 
