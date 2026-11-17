@@ -97,11 +97,14 @@ awk '{ if ($0 ~ /^\\\\item/) printf "\\t%s\\n", $0; else print }' "$file"
   r = await fake.format({ text: '\\item a\n', indent: '  ', ext: 'sty' });
   eq(fs.readFileSync(`${log}.args`, 'utf8').trim().split('\n'), ['-g', '/dev/null', '-y=defaultIndent:"  "', 'doc.sty'], 'spaces are passed as defaultIndent, the extension kept');
 
+  r = await fake.format({ text: '@article{a,\ntitle={T},\n}\n', indent: '  ', ext: 'bib' });
+  eq(fs.readFileSync(`${log}.args`, 'utf8').trim().split('\n'), ['-g', '/dev/null', '-y=defaultIndent:"  ",noAdditionalIndentGlobal:namedGroupingBracesBrackets:1', 'doc.bib'], 'a .bib entry adds no indent level of its own');
+
   for (const [body, what] of [
     [{ text: 'x', indent: '\t\t' }, 'two tabs'],
     [{ text: 'x', indent: '"\nx: y' }, 'YAML in the indent'],
     [{ text: 'x', indent: '         ' }, 'nine spaces'],
-    [{ text: 'x', ext: 'bib' }, 'a .bib file'],
+    [{ text: 'x', ext: 'txt' }, 'a .txt file'],
     [{ text: 'x', ext: '../tex' }, 'a path as the extension'],
     [{ text: 42 }, 'text that is no string'],
   ]) eq((await fake.format(body)).body.reason, 'invalid', `refused: ${what}`);
