@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Format document works on `.bib` files too: latexindent puts each field one
+  level in and the closing brace back at the margin (#304).
+
 ## [1.15.0] — 2026-11-17
 
 ### Added
@@ -19,8 +23,6 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   (`node dist/cli/oauth-add-client.js` in the image) and enter the client ID
   it prints in the connector's OAuth settings. The default stays `open`
   (#327).
-- Format document works on `.bib` files too: latexindent puts each field one
-  level in and the closing brace back at the margin (#304).
 ### Fixed
 - Branch names git would refuse — a trailing dot or slash, `a//b`, `x.lock`,
   `a/.b` — are refused with a 400 that names the rule ("Branch names cannot
