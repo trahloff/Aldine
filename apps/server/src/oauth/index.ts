@@ -10,6 +10,7 @@ export { issueCode, consumeCode, CODE_TTL_MS } from './codes.js';
 export { fetchClientMetadata, parseClientIdUrl, parseClientMetadata, isAllowedRedirectUri, isBlockedAddress } from './cimd.js';
 export { resolveClient, redirectUriMatches, DCR_PREFIX } from './clients.js';
 export { registerClient, MAX_CLIENTS } from './register.js';
+export { registrationMode, registrationConfigWarnings } from './registration.js';
 export { exchangeCode, refreshTokens, revokeToken, checkResource, ACCESS_TTL_MS, REFRESH_TTL_MS, REFRESH_PREFIX } from './token.js';
 import { resetCodesForTests } from './codes.js';
 import { resetCimdCacheForTests } from './cimd.js';

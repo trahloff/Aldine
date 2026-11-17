@@ -34,19 +34,22 @@ export function protectedResourceMetadata(issuer: string) {
   };
 }
 
-export function authorizationServerMetadata(issuer: string) {
+/** With registration closed the document names neither way in for an
+ *  unknown client: no `registration_endpoint`, and CIMD reported unsupported. */
+export function authorizationServerMetadata(issuer: string, opts: { registrationOpen?: boolean } = {}) {
+  const open = opts.registrationOpen ?? true;
   return {
     issuer,
     authorization_endpoint: `${issuer}/oauth/authorize`,
     token_endpoint: `${issuer}/oauth/token`,
-    registration_endpoint: `${issuer}/oauth/register`,
+    ...(open ? { registration_endpoint: `${issuer}/oauth/register` } : {}),
     revocation_endpoint: `${issuer}/oauth/revoke`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
     revocation_endpoint_auth_methods_supported: ['none'],
-    client_id_metadata_document_supported: true,
+    client_id_metadata_document_supported: open,
     authorization_response_iss_parameter_supported: true,
     scopes_supported: [SCOPE],
   };

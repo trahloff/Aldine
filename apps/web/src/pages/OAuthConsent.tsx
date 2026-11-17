@@ -23,6 +23,8 @@ export function describeClientError(err: unknown): { message: string; detail?: s
         return { message: 'The app’s return address doesn’t match what it registered. Start the connection again from the app.', detail: err.message };
       case 'invalid_client':
         return { message: 'Aldine doesn’t recognize the app that sent you here. Start the connection again from the app; if it keeps failing, the app needs to register again.', detail: err.message };
+      case 'unauthorized_client':
+        return { message: 'This server accepts only apps its administrator registered. Ask them for a client ID, enter it in the app’s OAuth settings, and connect again.', detail: err.message };
       case 'invalid_request':
         return { message: 'This link is incomplete — start the connection again from the app.', detail: err.message };
     }
