@@ -76,6 +76,9 @@ services:
       # secret (>= 32 chars) is generated into META_DIR when blank.
       ALDINE_MCP: ${ALDINE_MCP:-}
       ALDINE_MCP_TOKEN: ${ALDINE_MCP_TOKEN:-}
+      # closed = only OAuth clients an administrator added with
+      # `docker compose exec app node dist/cli/oauth-add-client.js`.
+      ALDINE_OAUTH_REGISTRATION: ${ALDINE_OAUTH_REGISTRATION:-}
       ALDINE_SIGNING_SECRET: ${ALDINE_SIGNING_SECRET:-}
       # Optional outbound email for password resets: SMTP (any provider) or AWS
       # SES (SES_FROM + AWS_REGION). Without a transport, reset tokens are

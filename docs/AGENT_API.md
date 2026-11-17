@@ -310,6 +310,61 @@ so a private instance is not reachable this way even though the app runs
 next to it. Claude Desktop can also launch a local stdio server from its own
 configuration file, using the command from the previous section.
 
+## Only clients you registered
+
+By default any OAuth client can introduce itself: through dynamic client
+registration (`POST /oauth/register`, RFC 7591) or by presenting a Client ID
+Metadata Document URL, which Aldine then fetches. That is what lets the
+Connect button work with no setup. On a server many people share, such as a
+university's, you may want to approve each client instead. Set
+
+```dotenv
+ALDINE_OAUTH_REGISTRATION=closed
+```
+
+and restart. Then:
+
+- `POST /oauth/register` answers `403` with
+  `{"error":"access_denied","error_description":"Client registration is closed on this server. …"}`.
+- The discovery document (`/.well-known/oauth-authorization-server`) leaves
+  out `registration_endpoint` and reports
+  `client_id_metadata_document_supported: false`.
+- A `client_id` that is a URL is refused on the consent page ("This server
+  accepts only apps its administrator registered") before anything is
+  fetched. Aldine makes no outbound request for client metadata.
+- Clients registered before the switch, and connections already granted,
+  keep working. Users revoke a connection on their Agent access card.
+
+Register each client you allow from the server, with the same environment
+as the server (it writes to the same datastore):
+
+```bash
+# from a checkout
+npm run oauth:add-client -w apps/server -- --name Claude \
+  --redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --redirect-uri https://claude.com/api/mcp/auth_callback \
+  --redirect-uri http://localhost/callback
+# in the published image
+docker compose exec app node dist/cli/oauth-add-client.js --name Claude \
+  --redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --redirect-uri https://claude.com/api/mcp/auth_callback \
+  --redirect-uri http://localhost/callback
+```
+
+It prints the `client_id` (`aldc_…`; `--json` prints the whole registration).
+A loopback redirect such as `http://localhost/callback` matches any port, so
+one registration also serves Claude Code. Hand the ID to your users:
+
+- **claude.ai, Claude Desktop, Cowork:** Add custom connector → Advanced
+  settings → OAuth Client ID. Leave the client secret empty.
+- **Claude Code:** `claude mcp add --transport http --client-id <aldc_…>
+  --callback-port 8080 aldine https://<host>/mcp`, then `claude mcp login aldine`.
+
+With `ALDINE_DATASTORE=json`, stop the server before adding a client and
+start it again afterwards; the SQLite and Postgres stores take the write
+while the server runs. There is no list or revoke command yet: a client is
+removed by deleting its record from `oauth_clients` in the datastore.
+
 ## What the tools do
 
 | Tool | What it does | Changes |

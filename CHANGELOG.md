@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- `ALDINE_OAUTH_REGISTRATION=closed` lets only the OAuth clients an
+  administrator registered connect. `/oauth/register` answers 403, the
+  discovery document no longer lists `registration_endpoint` or claims
+  client metadata document support, and Aldine never fetches a client's
+  metadata URL. Register a client such as Claude with
+  `npm run oauth:add-client -w apps/server -- --name Claude --redirect-uri …`
+  (`node dist/cli/oauth-add-client.js` in the image) and enter the client ID
+  it prints in the connector's OAuth settings. The default stays `open`
+  (#327).
 ### Fixed
 - Branch names git would refuse — a trailing dot or slash, `a//b`, `x.lock`,
   `a/.b` — are refused with a 400 that names the rule ("Branch names cannot

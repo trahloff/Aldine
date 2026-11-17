@@ -6,6 +6,7 @@ import { OAuthError } from './errors.js';
 import { protectedResourceMetadata, authorizationServerMetadata, SCOPE } from './metadata.js';
 import { resolveClient } from './clients.js';
 import { registerClient } from './register.js';
+import { registrationMode, REGISTRATION_CLOSED_MESSAGE } from './registration.js';
 import { issueCode } from './codes.js';
 import { exchangeCode, refreshTokens, revokeToken, checkResource, param, type Params } from './token.js';
 
@@ -79,7 +80,7 @@ export async function registerOAuth(app: FastifyInstance): Promise<void> {
   }
   app.get('/.well-known/oauth-authorization-server', async (req, reply) => {
     if (!enabled(reply)) return;
-    return authorizationServerMetadata(publicBase(req));
+    return authorizationServerMetadata(publicBase(req), { registrationOpen: registrationMode() === 'open' });
   });
 
   // ---------- consent (cookie session only) ----------
@@ -174,6 +175,7 @@ export async function registerOAuth(app: FastifyInstance): Promise<void> {
 
     sub.post('/oauth/register', { bodyLimit: REGISTER_BODY_LIMIT }, async (req, reply) => {
       if (!enabled(reply)) return;
+      if (registrationMode() === 'closed') return sendError(reply, new OAuthError('access_denied', REGISTRATION_CLOSED_MESSAGE, 403));
       if (!(await oauthRegisterLimiter.take(clientKey(req)))) return noStore(reply).code(429).send({ error: 'invalid_request', error_description: 'Too many registrations — try again later' });
       try {
         return noStore(reply).code(201).send(await registerClient(req.body));

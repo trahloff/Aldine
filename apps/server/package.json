@@ -15,6 +15,7 @@
     "test:gitlab:delete": "tsx test/gitlab-delete.integration.mjs",
     "test:db": "tsx test/datastore.conformance.mjs",
     "test:unit": "node test/run-unit.mjs",
+    "oauth:add-client": "tsx src/cli/oauth-add-client.ts",
     "build:viewer": "node viewer/build.mjs",
     "templates:previews": "tsx scripts/render-template-previews.ts"
   },

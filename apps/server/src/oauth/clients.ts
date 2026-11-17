@@ -1,6 +1,7 @@
 import { db } from '../db/index.js';
 import { OAuthError } from './errors.js';
 import { fetchClientMetadata, isLoopbackHost } from './cimd.js';
+import { registrationMode } from './registration.js';
 
 /**
  * One view over the two client kinds: `aldc_…` ids registered via DCR
@@ -51,6 +52,8 @@ export async function resolveClient(clientId: string, redirectUri: string): Prom
     await db().touchOAuthClient(rec.id, new Date().toISOString()).catch(() => {});
     client = { id: rec.id, name: rec.name, host: hostOf(rec.redirectUris[0]), redirectUris: rec.redirectUris, loopbackOnly: false, kind: 'dcr' };
   } else if (clientId.startsWith('http')) {
+    // Closed registration must never reach out to a URL a visitor chose.
+    if (registrationMode() === 'closed') throw new OAuthError('unauthorized_client', 'This server only accepts clients its administrator registered. Ask for a client ID and enter it in your client\'s OAuth settings');
     const meta = await fetchClientMetadata(clientId);
     client = { id: meta.clientId, name: meta.clientName, host: new URL(clientId).host, redirectUris: meta.redirectUris, loopbackOnly: false, kind: 'cimd' };
   } else {

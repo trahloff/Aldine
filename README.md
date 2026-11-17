@@ -401,6 +401,9 @@ ALDINE_SIGNING_SECRET=
 ALDINE_MCP=
 # static bearer for /mcp with auth off (single-tenant); ignored when AUTH_ENABLED=1
 ALDINE_MCP_TOKEN=
+# closed = only OAuth clients an administrator added (npm run oauth:add-client);
+# open (default) = any client can register itself
+ALDINE_OAUTH_REGISTRATION=
 
 # Everything below is optional and off unless set.
 # multi-user login, ownership and sharing (unset = single-tenant)
