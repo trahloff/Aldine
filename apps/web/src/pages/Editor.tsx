@@ -133,7 +133,7 @@ const SHOWCASE_REFUSES = new Set(['format-document', 'comment', 'stop-on-error',
 /** Palette commands someone who can only view would see refused (with the engine and remote ones): what the showcase refuses, less commenting. */
 const VIEWER_REFUSES = new Set([...SHOWCASE_REFUSES].filter((c) => c !== 'comment'));
 /** The files latexindent formats. */
-const FORMATTABLE = /\.(tex|sty|cls)$/i;
+const FORMATTABLE = /\.(tex|sty|cls|bib)$/i;
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
 
@@ -1169,7 +1169,7 @@ export default function Editor() {
     const file = activeFile;
     if (!file || formatting.current) return;
     if (!FORMATTABLE.test(file)) {
-      toast(`Format document works on .tex, .sty and .cls files; latexindent can’t format ${file.split('/').pop()}`);
+      toast(`Format document works on .tex, .sty, .cls and .bib files; latexindent can’t format ${file.split('/').pop()}`);
       return;
     }
     if (project?.readOnly || (authEnabled && project?.canEdit === false)) {

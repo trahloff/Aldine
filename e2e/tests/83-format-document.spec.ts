@@ -43,7 +43,7 @@ async function runFromPalette(page: Page) {
 }
 
 test.describe('format document', () => {
-  test('indents the open file from the palette and Shift+Alt+F, undoes in one step, and refuses a .bib', async ({ page, request }) => {
+  test('indents the open file from the palette and Shift+Alt+F, undoes in one step, formats a .bib and refuses a .txt', async ({ page, request }) => {
     const id = await createProject(request, 'Format Document');
     try {
       const probe = await request.post(`/api/projects/${id}/format`, { data: { branch: 'main', path: 'probe.tex', text: '\\item x\n', indent: '  ' } });
@@ -52,7 +52,8 @@ test.describe('format document', () => {
       expect(probe.ok(), JSON.stringify(probed)).toBeTruthy();
 
       expect((await put(request, id, 'main.tex', MESSY)).ok()).toBeTruthy();
-      expect((await put(request, id, 'refs.bib', '@article{a,\ntitle={T}}\n')).ok()).toBeTruthy();
+      expect((await put(request, id, 'refs.bib', '@article{a,\ntitle={T},\n}\n')).ok()).toBeTruthy();
+      expect((await put(request, id, 'notes.txt', 'plain\n')).ok()).toBeTruthy();
       await openProject(page, id);
       await expect(page.getByTestId('active-file')).toHaveText('main.tex');
       await expect(page.locator('.cm-content')).toContainText('Nested point');
@@ -88,8 +89,15 @@ test.describe('format document', () => {
       await page.getByTestId('file-refs.bib').click();
       await expect(page.getByTestId('active-file')).toHaveText('refs.bib');
       await runFromPalette(page);
-      await expect(toast(page, 'Format document works on .tex, .sty and .cls files; latexindent can’t format refs.bib')).toBeVisible();
-      expect(await fileText(request, id, 'refs.bib')).toBe('@article{a,\ntitle={T}}\n');
+      await expect(toast(page, 'Formatted refs.bib with latexindent')).toBeVisible();
+      // fields one level in, the closing brace back at the margin
+      await expect.poll(async () => (await editorLines(page)).join('\n')).toMatch(/^@article\{a,\n(\t| +)title=\{T\},\n\}/);
+
+      await page.getByTestId('file-notes.txt').click();
+      await expect(page.getByTestId('active-file')).toHaveText('notes.txt');
+      await runFromPalette(page);
+      await expect(toast(page, 'Format document works on .tex, .sty, .cls and .bib files; latexindent can’t format notes.txt')).toBeVisible();
+      expect(await fileText(request, id, 'notes.txt')).toBe('plain\n');
     } finally {
       await cleanup(request, id);
     }

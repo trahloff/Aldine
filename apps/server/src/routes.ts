@@ -2255,8 +2255,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   app.post<{ Params: { id: string }; Body: { path?: unknown; text?: unknown; indent?: unknown } }>('/api/projects/:id/format', async (req, reply) => {
     const { path: rel, text, indent } = req.body || {};
     if (typeof text !== 'string') return reply.code(400).send({ error: 'text must be a string', reason: 'invalid' });
-    const ext = typeof rel === 'string' ? /\.(tex|sty|cls)$/i.exec(rel)?.[1]?.toLowerCase() : undefined;
-    if (!ext) return reply.code(400).send({ error: 'Format document works on .tex, .sty and .cls files', reason: 'invalid' });
+    const ext = typeof rel === 'string' ? /\.(tex|sty|cls|bib)$/i.exec(rel)?.[1]?.toLowerCase() : undefined;
+    if (!ext) return reply.code(400).send({ error: 'Format document works on .tex, .sty, .cls and .bib files', reason: 'invalid' });
     if (typeof indent !== 'string' || !/^(?:\t| {1,8})$/.test(indent)) return reply.code(400).send({ error: 'indent must be a tab or 1 to 8 spaces', reason: 'invalid' });
     if (!(await formatLimiter.take(clientKey(req, reqUser(req)?.id)))) return reply.code(429).send({ error: 'Too many formatting requests. Try again in a moment.', reason: 'busy' });
     try {

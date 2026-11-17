@@ -87,7 +87,7 @@ try {
   eq((await call(url, null, body, { authorization: `Bearer ${token}` })).statusCode, 403, 'an access token cannot format');
   eq(seen.length, before, 'none of them reached the compiler');
 
-  eq((await call(url, owner, { ...body, path: 'refs.bib' })).json().error, 'Format document works on .tex, .sty and .cls files', 'a .bib is refused with the reason');
+  eq((await call(url, owner, { ...body, path: 'notes.txt' })).json().error, 'Format document works on .tex, .sty, .cls and .bib files', 'a .txt is refused with the reason');
   eq((await call(url, owner, { ...body, indent: '\t\t' })).statusCode, 400, 'an indent that is no tab or 1–8 spaces is refused');
   eq(seen.length, before, 'none of those reached the compiler either');
 
