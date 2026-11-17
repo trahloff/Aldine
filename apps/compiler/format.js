@@ -1,7 +1,7 @@
 /**
  * POST /format: latexindent over a copy of one file's text, indentation only.
  *
- *   { text, indent?: '\t' | '  ' … (1–8 spaces), ext?: 'tex' | 'sty' | 'cls' } ->
+ *   { text, indent?: '\t' | '  ' … (1–8 spaces), ext?: 'tex' | 'sty' | 'cls' | 'bib' } ->
  *     { ok: true, text } | { ok: false, reason, error }
  *   reason: 'unavailable' | 'too-large' | 'timeout' | 'busy' | 'failed' | 'changed-text' | 'invalid'
  *
@@ -32,7 +32,7 @@ const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_FORMATS || 2);
 // the process is producing something else and is killed.
 const OUT_FACTOR = 4;
 const INDENT = /^(?:\t| {1,8})$/;
-const EXTS = new Set(['tex', 'sty', 'cls']);
+const EXTS = new Set(['tex', 'sty', 'cls', 'bib']);
 
 let running = 0;
 /** latexindent's version once probed; null when it is missing or cannot run. */
@@ -112,7 +112,7 @@ async function format(body) {
   const indent = body.indent === undefined ? '\t' : body.indent;
   if (typeof indent !== 'string' || !INDENT.test(indent)) return fail('invalid', 'indent must be a tab or 1 to 8 spaces');
   const ext = body.ext === undefined ? 'tex' : body.ext;
-  if (!EXTS.has(ext)) return fail('invalid', 'latexindent formats .tex, .sty and .cls files');
+  if (!EXTS.has(ext)) return fail('invalid', 'latexindent formats .tex, .sty, .cls and .bib files');
   const bytes = Buffer.byteLength(text, 'utf8');
   if (bytes > MAX_BYTES) return fail('too-large', sizeLimit());
   if (!version) return fail('unavailable', `latexindent ${probeError || 'is not available'}`);
@@ -125,8 +125,13 @@ async function format(body) {
     const file = `doc.${ext}`;
     fs.writeFileSync(path.join(dir, file), input);
     const args = ['-g', '/dev/null'];
+    const yaml = [];
     // YAML double quotes: "\t" is a tab, spaces are themselves.
-    if (indent !== '\t') args.push(`-y=defaultIndent:"${indent}"`);
+    if (indent !== '\t') yaml.push(`defaultIndent:"${indent}"`);
+    // An entry's fields are its braces' body: without this latexindent indents
+    // them twice and the closing brace once.
+    if (ext === 'bib') yaml.push('noAdditionalIndentGlobal:namedGroupingBracesBrackets:1');
+    if (yaml.length) args.push(`-y=${yaml.join(',')}`);
     args.push(file);
     const r = await runIndent(args, dir, TIMEOUT_MS, Math.max(bytes * OUT_FACTOR, 64_000));
     if (r.timedOut) return fail('timeout', `latexindent ran over ${Math.round(TIMEOUT_MS / 1000)} s`);
