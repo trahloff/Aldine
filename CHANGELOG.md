@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-11-17
+
 ### Added
 - `ALDINE_OAUTH_REGISTRATION=closed` lets only the OAuth clients an
   administrator registered connect. `/oauth/register` answers 403, the
