@@ -12,6 +12,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ### Added
 - Format document works on `.bib` files too: latexindent puts each field one
   level in and the closing brace back at the margin (#304).
+- Connect Claude or ChatGPT (the "…" menu and the command palette, formerly
+  Connect Claude) has a ChatGPT tab: add the connector URL as a custom MCP
+  server under Plugins with OAuth. ChatGPT cannot send the static
+  `X-Aldine-Token` header, so with sign-in off the tab says that ChatGPT
+  needs `AUTH_ENABLED=1`; on an address only Claude Code can reach, the
+  notice names ChatGPT too. docs/AGENT_API.md has a "Connect from ChatGPT"
+  section. Refs #336.
 ### Changed
 - Wrapped lines in the source editor continue under their own
   indentation instead of at the left edge, so a long `\item` in a nested
@@ -28,13 +35,6 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - "Set as main document" in the file tree is only offered for `.tex` files
   that are not already the main document, so a `.bib` file or an image can
   no longer become the file a typeset starts from. Refs #132.
-- Connect Claude or ChatGPT (the "…" menu and the command palette, formerly
-  Connect Claude) has a ChatGPT tab: add the connector URL as a custom MCP
-  server under Plugins with OAuth. ChatGPT cannot send the static
-  `X-Aldine-Token` header, so with sign-in off the tab says that ChatGPT
-  needs `AUTH_ENABLED=1`; on an address only Claude Code can reach, the
-  notice names ChatGPT too. docs/AGENT_API.md has a "Connect from ChatGPT"
-  section. Refs #336.
 - Jumps into a long document stay on screen: a SyncTeX double-click, an
   Outline click, a line link and Go to line keep re-centring the target line
   while Visual is still drawing tables, figures and formulas above it, instead
