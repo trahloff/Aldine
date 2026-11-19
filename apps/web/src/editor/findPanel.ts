@@ -2,6 +2,7 @@ import { EditorSelection, EditorState, type Extension, type StateEffect } from '
 import { EditorView, ViewPlugin, showDialog, type Command, type KeyBinding, type ViewUpdate } from '@codemirror/view';
 import { getSearchQuery, gotoLine, openSearchPanel, search, searchKeymap, searchPanelOpen, SearchQuery, setSearchQuery } from '@codemirror/search';
 import { safeStorage } from '../util/safeStorage';
+import { jumpEffects } from './jumpHold';
 
 /** Match case, whole word and regex: the project search panel's key, so both finds share them. */
 const TOGGLES = 'aldine.search';
@@ -242,7 +243,7 @@ export const gotoLineTop: Command = (view) => {
     }
     const to = state.doc.line(Math.max(1, Math.min(state.doc.lines, line)));
     const selection = EditorSelection.cursor(to.from + Math.max(0, Math.min(col, to.length)));
-    view.dispatch({ effects: [close, EditorView.scrollIntoView(selection.from, { y: 'center' })], selection });
+    view.dispatch({ effects: [close, ...jumpEffects(selection.from)], selection });
   });
   return true;
 };

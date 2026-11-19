@@ -38,6 +38,7 @@ import { splitLines } from '../editor/lineDiff';
 import { readOnlyDoc } from '../editor/readOnly';
 import { openDoc, parkDoc } from '../editor/docCache';
 import { captureSpot, clampSpot, fileSpots, spotScroll, spotSelection } from '../editor/fileSpots';
+import { jumpEffects, jumpHold } from '../editor/jumpHold';
 import { watchSync, reconnectProvider, type SyncState } from '../editor/syncStatus';
 import { citationEdit } from '../editor/citeInsert';
 
@@ -288,7 +289,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
 
   const applyRange = (view: EditorView, from: number, to: number, quote: string, focus: boolean, context?: MatchContext) => {
     const r = reanchor(view.state.doc, { from, to, quote }, context);
-    view.dispatch({ selection: { anchor: r.from, head: r.to }, effects: EditorView.scrollIntoView(r.from, { y: 'center' }) });
+    view.dispatch({ selection: { anchor: r.from, head: r.to }, effects: jumpEffects(r.from) });
     if (focus) view.focus();
   };
 
@@ -296,8 +297,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     const l = Math.min(Math.max(1, line), view.state.doc.lines);
     if (line > view.state.doc.lines) onClamped?.(view.state.doc.lines);
     const pos = view.state.doc.line(l).from;
-    const effects = [EditorView.scrollIntoView(pos, { y: 'center' }), ...(flash ? [flashLine.of(pos)] : [])];
-    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true, effects });
+    const effects = [...jumpEffects(pos), ...(flash ? [flashLine.of(pos)] : [])];
+    view.dispatch({ selection: { anchor: pos }, effects });
     view.focus();
     if (flash) {
       if (flashTimer.current) clearTimeout(flashTimer.current);
@@ -359,7 +360,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const view = viewRef.current;
       if (!view) return;
       const p = Math.min(Math.max(0, pos), view.state.doc.length);
-      view.dispatch({ selection: { anchor: p }, effects: EditorView.scrollIntoView(p, { y: 'center' }) });
+      view.dispatch({ selection: { anchor: p }, effects: jumpEffects(p) });
       view.focus();
     },
     format(action) {
@@ -518,6 +519,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           latexCloseBrackets(filePath),
           rectangularSelection(),
           highlightActiveLine(),
+          jumpHold,
           highlightSelectionMatches(),
           // Every source is listed here: an override ignores languageData, where the package
           // registers its command list with a \cite and \ref that insert the bare name.

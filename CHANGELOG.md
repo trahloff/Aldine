@@ -33,6 +33,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   needs `AUTH_ENABLED=1`; on an address only Claude Code can reach, the
   notice names ChatGPT too. docs/AGENT_API.md has a "Connect from ChatGPT"
   section. Refs #336.
+- Jumps into a long document stay on screen: a SyncTeX double-click, an
+  Outline click, a line link and Go to line keep re-centring the target line
+  while Visual is still drawing tables, figures and formulas above it, instead
+  of leaving it thousands of pixels away. Refs #338.
 
 ## [1.15.0] — 2026-11-17
 
