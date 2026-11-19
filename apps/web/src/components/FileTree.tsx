@@ -516,7 +516,9 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
 
   const fileMenu = useContextMenu({ label: 'File actions', testId: 'file-menu' });
   const fileActions = (path: string): MenuEntry[] => [
-    ...(onSetRoot ? [{ id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), disabled: path === rootFile, testId: 'file-menu-root' } as MenuEntry] : []),
+    // Only a .tex file can be the main document, and the one that already is
+    // needs no offer: project settings uses the same /\.tex$/i test.
+    ...(onSetRoot && /\.tex$/i.test(path) && path !== rootFile ? [{ id: 'root', label: 'Set as main document', onSelect: () => onSetRoot(path), testId: 'file-menu-set-root' } as MenuEntry] : []),
     { id: 'rename', label: 'Rename…', testId: 'file-menu-rename', onSelect: () => { void renameFile(path); } },
     { kind: 'separator' },
     { id: 'delete', label: 'Delete…', danger: true, testId: 'file-menu-delete', onSelect: () => { void deleteFile(path); } },
