@@ -189,8 +189,8 @@ export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete, readO
       </button>
       {name !== 'main' && !readOnly && (
         <>
-          <button className="btn btn--ghost btn--small" title={`Merge ${name} into main`} onClick={onMerge} data-testid={`merge-${name}`}>⤝ main</button>
-          <button className="btn btn--ghost btn--small" title={`Delete ${name}`} onClick={onDelete} data-testid={`delete-${name}`}>✕</button>
+          <button className="btn btn--ghost btn--small" title={`Merge ${name} into main`} aria-label={`Merge ${name} into main`} onClick={onMerge} data-testid={`merge-${name}`}>⤝ main</button>
+          <button className="btn btn--ghost btn--small" title={`Delete ${name}`} aria-label={`Delete branch ${name}`} onClick={onDelete} data-testid={`delete-${name}`}>✕</button>
         </>
       )}
     </div>
