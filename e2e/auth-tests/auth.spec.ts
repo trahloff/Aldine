@@ -297,7 +297,7 @@ test.describe('auth', () => {
     await page.getByTestId('file-main.tex').click({ button: 'right' });
     await expect(page.getByTestId('file-menu')).toBeVisible();
     await expect(page.getByTestId('file-menu-rename')).toBeVisible();
-    await expect(page.getByTestId('file-menu-root')).toHaveCount(0);
+    await expect(page.getByTestId('file-menu-set-root')).toHaveCount(0);
     await page.keyboard.press('Escape');
     // nor does the palette: the engine, Stop on first error and Commit changes are the project's
     const configCommands = async (shown: boolean) => {
