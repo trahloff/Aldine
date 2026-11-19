@@ -42,6 +42,25 @@ test.describe('git branches', () => {
     }
   });
 
+  test('delete branch from the menu by its accessible name', async ({ page, request }) => {
+    const id = await createProject(request, 'Branch Delete Test');
+    try {
+      await openProject(page, id);
+      await page.getByTestId('branch-menu').click();
+      await page.getByTestId('new-branch').click();
+      await page.getByTestId('new-branch-name').fill('revision');
+      await page.keyboard.press('Enter');
+      await expect(page.getByTestId('branch-menu')).toContainText('revision', { timeout: 15_000 });
+      await page.getByTestId('branch-menu').click();
+      await page.getByRole('button', { name: 'Delete branch revision' }).click();
+      await expect(page.getByTestId('dialog-title')).toHaveText('Delete branch revision?');
+      await page.getByTestId('dialog-confirm').click();
+      await expect(page.getByTestId('branch-revision')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('history shows checkpoints', async ({ page, request }) => {
     const id = await createProject(request, 'History Test');
     try {
