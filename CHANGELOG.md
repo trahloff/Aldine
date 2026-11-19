@@ -11,6 +11,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Format document works on `.bib` files too: latexindent puts each field one
   level in and the closing brace back at the margin (#304).
 
+### Fixed
+- When the server cannot be reached, the web app says "Could not reach the
+  server. Check your connection and try again." instead of the browser's
+  fetch wording, and a 502, 503 or 504 without a JSON error says "The server
+  is not responding." instead of a bare "HTTP 502". Refs #134.
+
 ## [1.15.0] — 2026-11-17
 
 ### Added

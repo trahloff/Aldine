@@ -367,10 +367,18 @@ export function onSignedOut(fn: () => void): () => void {
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(withBase(url), {
-    headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(withBase(url), {
+      headers: init?.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : undefined,
+      ...init,
+    });
+  } catch {
+    // A rejected fetch means the server was never reached: the browser's own
+    // wording ("Failed to fetch") names no remedy, so say what happened and
+    // what to try. Status 0 is "no HTTP answer", as the XHR upload paths use.
+    throw new ApiError('Could not reach the server. Check your connection and try again.', 0);
+  }
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     let code: string | undefined;
@@ -382,6 +390,12 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
       if (typeof body.code === 'string') code = body.code;
       reason = body.reason;
     } catch { /* keep */ }
+    // A gateway answering 502/503/504 with an HTML page carries no JSON
+    // `error`: name the outage instead of the bare status. A JSON error
+    // from the server itself still wins.
+    if ((res.status === 502 || res.status === 503 || res.status === 504) && msg === `HTTP ${res.status}`) {
+      msg = 'The server is not responding.';
+    }
     // The sign-in routes answer 401 for a wrong password, and a git host's
     // refused token comes back as 401 too: neither is about this session.
     if (res.status === 401 && !url.startsWith('/api/auth/') && code !== TOKEN_REJECTED && reason !== TOKEN_REJECTED) {
