@@ -22,6 +22,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   match that search.") or fails ("Search failed: …" with the server's error)
   instead of leaving an empty box. Refs #133.
 
+### Fixed
+- "Set as main document" in the file tree is only offered for `.tex` files
+  that are not already the main document, so a `.bib` file or an image can
+  no longer become the file a typeset starts from. Refs #132.
+
 ## [1.15.0] — 2026-11-17
 
 ### Added
