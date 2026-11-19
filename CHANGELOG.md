@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-11-19
+
 ### Added
 - Format document works on `.bib` files too: latexindent puts each field one
   level in and the closing brace back at the margin (#304).
