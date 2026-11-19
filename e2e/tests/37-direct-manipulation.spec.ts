@@ -1,6 +1,10 @@
 import { test, expect } from '../fixtures';
 import { createPaperProject, openProject, cleanup } from './helpers';
 
+async function meta(request: import('@playwright/test').APIRequestContext, id: string) {
+  return (await request.get(`/api/projects/${id}`)).json();
+}
+
 /**
  * The parts of the interface that answer the pointer directly: the pane
  * divider, the menus that open at it, and the notifications that leave it.
@@ -63,6 +67,29 @@ test.describe('direct manipulation', () => {
       await expect(page.getByTestId('branch-list')).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('branch-list')).toHaveCount(0);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('the file menu offers "Set as main document" only on .tex files', async ({ page, request }) => {
+    const id = await createPaperProject(request, 'Root Menu Paper');
+    try {
+      const doc = '\\documentclass{article}\\begin{document}Other root\\end{document}\n';
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'other.tex', content: doc } })).ok()).toBeTruthy();
+      await openProject(page, id);
+      // references.bib is not LaTeX: the menu never offers it as the main document.
+      await page.getByTestId('file-references.bib').click({ button: 'right' });
+      await expect(page.getByTestId('file-menu')).toBeVisible();
+      await expect(page.getByTestId('file-menu-set-root')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      // main.tex already is the main document: no offer there either.
+      await page.getByTestId('file-main.tex').click({ button: 'right' });
+      await expect(page.getByTestId('file-menu')).toBeVisible();
+      await expect(page.getByTestId('file-menu-set-root')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      // other.tex is LaTeX and not the main document: the offer is there, and it works.
+      await page.getByTestId('file-other.tex').click({ button: 'right' });
+      await page.getByTestId('file-menu-set-root').click();
+      await expect.poll(async () => (await meta(request, id)).rootFile).toBe('other.tex');
     } finally { await cleanup(request, id); }
   });
 
