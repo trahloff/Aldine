@@ -11,6 +11,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Format document works on `.bib` files too: latexindent puts each field one
   level in and the closing brace back at the margin (#304).
 
+### Fixed
+- The Cite panel says so when the paper search finds nothing ("No papers
+  match that search.") or fails ("Search failed: …" with the server's error)
+  instead of leaving an empty box. Refs #133.
+
 ## [1.15.0] — 2026-11-17
 
 ### Added
