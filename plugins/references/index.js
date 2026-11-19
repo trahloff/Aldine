@@ -79,7 +79,7 @@ export default {
           const seq = ++searchSeq;
           searching = true; searchStatus = ''; draw();
           aldine.fetch(`/api/references/search?q=${encodeURIComponent(q)}`)
-            .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
+            .then((r) => r.json().catch(() => null).then((body) => ({ ok: r.ok, body })))
             .then(({ ok, body }) => {
               if (seq !== searchSeq) return;
               if (ok && Array.isArray(body)) {
@@ -95,12 +95,12 @@ export default {
               }
               searching = false; draw();
             })
-            .catch((err) => {
+            .catch(() => {
               if (seq !== searchSeq) return;
-              // The request itself failed (offline, server down): the search
-              // box would otherwise go quiet with no explanation.
+              // The request itself failed (offline, server down): the browser's
+              // own wording ("Failed to fetch") names no remedy.
               results = [];
-              searchStatus = `Search failed: ${err?.message || 'could not reach the server'}`;
+              searchStatus = 'Search failed: could not reach the server.';
               searching = false; draw();
             });
         };
