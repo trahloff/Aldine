@@ -1756,7 +1756,7 @@ export default function Editor() {
       },
       { id: 'share', group: 'Project', title: 'Share or download the PDF…', run: () => setShareOpen(true) },
       { id: 'about', group: 'View', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
-      { id: 'connect-claude', group: 'View', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
+      { id: 'connect-claude', group: 'View', title: 'Connect Claude or ChatGPT (MCP connector)…', run: () => setConnectOpen(true) },
       ...(visualFile
         ? [{ id: 'mode', group: 'View', title: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', run: () => switchMode(mode === 'visual' ? 'source' : 'visual') }]
         : []),

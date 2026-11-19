@@ -19,7 +19,7 @@ describe('palette matching', () => {
   });
 
   it('takes the words of a query in any order', () => {
-    expect(matchScore('claude connect', 'Connect Claude (MCP connector)…')).not.toBeNull();
+    expect(matchScore('claude connect', 'Connect Claude or ChatGPT (MCP connector)…')).not.toBeNull();
   });
 
   it('ignores case and accents', () => {

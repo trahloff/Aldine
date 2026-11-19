@@ -4,9 +4,9 @@ import { useAuth } from './Auth';
 import { useToast } from './Toast';
 import Modal from './Modal';
 
-/** claude.ai calls the instance from Anthropic's cloud: plain http, loopback,
- *  RFC 1918 ranges and .local names never resolve from there. Claude Code
- *  (on the user's machine) reaches them fine. */
+/** claude.ai and ChatGPT call the instance from their providers' clouds:
+ *  plain http, loopback, RFC 1918 ranges and .local names never resolve from
+ *  there. Claude Code (on the user's machine) reaches them fine. */
 export function unreachableFromCloud(url: string): boolean {
   try {
     const u = new URL(url);
@@ -16,19 +16,21 @@ export function unreachableFromCloud(url: string): boolean {
   } catch { return true; }
 }
 
-type Client = 'cloud' | 'code';
+type Client = 'cloud' | 'code' | 'chatgpt';
 
-/** The address Claude is given: ALDINE_PUBLIC_URL when the server has one
+/** The address the assistant is given: ALDINE_PUBLIC_URL when the server has one
  *  (what its OAuth metadata names too), else the address this page came from. */
 export function useConnectorUrl(): string {
   const { publicUrl } = useAuth();
   return publicUrl ? `${publicUrl.replace(/\/+$/, '')}/mcp` : `${location.origin}${withBase('/mcp')}`;
 }
 
-/** How to add this instance to Claude: claude.ai (and Desktop and Cowork,
- *  which use the same connectors) or Claude Code. With auth on, Connect signs
+/** How to add this instance to claude.ai (and Desktop and Cowork, which use
+ *  the same connectors), Claude Code or ChatGPT. With auth on, Connect signs
  *  in and asks for the project scope; with auth off the instance has one
- *  static token, which only the operator knows, so it is named, never shown. */
+ *  static token, which only the operator knows, so it is named, never shown.
+ *  ChatGPT authenticates only with OAuth and cannot send that token as a
+ *  header, so it needs auth on. */
 export function ClaudeConnectSteps({ compact = false }: { compact?: boolean }) {
   const { mcpEnabled, authEnabled } = useAuth();
   const toast = useToast();
@@ -50,7 +52,7 @@ export function ClaudeConnectSteps({ compact = false }: { compact?: boolean }) {
   if (!mcpEnabled) {
     return (
       <p className="connect__text" data-testid="agent-connector-off">
-        The Claude connector is not enabled on this server. Whoever runs it sets <code>ALDINE_MCP=1</code> (docs/AGENT_API.md); Claude then reaches it at <code>{connectorUrl}</code>.
+        The MCP connector is not enabled on this server. Whoever runs it sets <code>ALDINE_MCP=1</code> (docs/AGENT_API.md); Claude and ChatGPT then reach it at <code>{connectorUrl}</code>.
       </p>
     );
   }
@@ -63,7 +65,7 @@ export function ClaudeConnectSteps({ compact = false }: { compact?: boolean }) {
   );
   const unreachable = (
     <p className="connect__text connect__text--quiet" data-testid="agent-connector-unreachable">
-      claude.ai, Claude Desktop and Cowork call this address from Anthropic's cloud and cannot reach it. Use Claude Code on this machine, or expose the instance over public HTTPS (docs/AGENT_API.md, “Reachability”).
+      claude.ai, Claude Desktop, Cowork and ChatGPT call this address from their providers' clouds and cannot reach it. Use Claude Code on this machine, or expose the instance over public HTTPS (docs/AGENT_API.md, “Reachability”).
     </p>
   );
   // The address appears once: on its own with a copy button where claude.ai
@@ -102,18 +104,35 @@ export function ClaudeConnectSteps({ compact = false }: { compact?: boolean }) {
     </ol>
   );
 
+  const chatgpt = authEnabled ? (
+    <>
+      <ol className="connect__steps" data-testid="connect-chatgpt-steps">
+        <li>In ChatGPT on the web, open Plugins, select +, then Add custom MCP server.</li>
+        <li>Name it Aldine and paste this address as the Server URL:{urlRow}</li>
+        <li>Choose OAuth for Authentication, accept the risk warning, and select Create as a plugin.</li>
+        <li>Install it, sign in to Aldine when asked, and pick the projects ChatGPT may touch.</li>
+      </ol>
+      <p className="connect__text connect__text--quiet">Whether you can add custom MCP servers depends on your ChatGPT plan and workspace settings.</p>
+    </>
+  ) : (
+    <p className="connect__text" data-testid="connect-chatgpt-needs-signin">
+      ChatGPT connects only through sign-in (OAuth) and cannot send this server's <code>X-Aldine-Token</code>. To connect ChatGPT, whoever runs the server turns on accounts with <code>AUTH_ENABLED=1</code> (docs/AGENT_API.md). Claude works with the token as it is.
+    </p>
+  );
+
   // Account settings keeps to one route so the token list stays in view; a
   // switch between clients only makes sense when claude.ai can reach us.
   if (compact || cloudBlocked) return <div className="connect" data-testid="claude-connect">{cloudBlocked ? code : cloudShort}</div>;
 
   return (
     <div className="connect" data-testid="claude-connect">
-      <div className="seg connect__clients" role="tablist" aria-label="Claude app">
+      <div className="seg connect__clients" role="tablist" aria-label="Assistant">
         <button role="tab" aria-selected={client === 'cloud'} className={`seg__btn ${client === 'cloud' ? 'seg__btn--active' : ''}`} onClick={() => setClient('cloud')} data-testid="connect-client-cloud">claude.ai, Desktop, Cowork</button>
         <button role="tab" aria-selected={client === 'code'} className={`seg__btn ${client === 'code' ? 'seg__btn--active' : ''}`} onClick={() => setClient('code')} data-testid="connect-client-code">Claude Code</button>
+        <button role="tab" aria-selected={client === 'chatgpt'} className={`seg__btn ${client === 'chatgpt' ? 'seg__btn--active' : ''}`} onClick={() => setClient('chatgpt')} data-testid="connect-client-chatgpt">ChatGPT</button>
       </div>
-      {client === 'cloud' ? cloudSteps : code}
-      <p className="connect__text connect__text--quiet">To check it, ask Claude to ping Aldine or to list your projects.</p>
+      {client === 'cloud' ? cloudSteps : client === 'code' ? code : chatgpt}
+      <p className="connect__text connect__text--quiet">To check it, ask {client === 'chatgpt' ? 'ChatGPT' : 'Claude'} to ping Aldine or to list your projects.</p>
     </div>
   );
 }
@@ -122,9 +141,9 @@ export function ClaudeConnectSteps({ compact = false }: { compact?: boolean }) {
 export default function ConnectClaudeModal({ onClose, onManage }: { onClose(): void; onManage?: () => void }) {
   const { authEnabled, mcpEnabled } = useAuth();
   return (
-    <Modal onClose={onClose} label="Connect Claude" width={520} testId="connect-claude">
-      <h2 style={{ marginBottom: 4 }}>Connect Claude</h2>
-      <p className="modal__sub" style={{ marginBottom: 12 }}>Claude reads, edits and typesets your projects through the Aldine connector.</p>
+    <Modal onClose={onClose} label="Connect Claude or ChatGPT" width={520} testId="connect-claude">
+      <h2 style={{ marginBottom: 4 }}>Connect Claude or ChatGPT</h2>
+      <p className="modal__sub" style={{ marginBottom: 12 }}>Your assistant reads, edits and typesets your projects through the Aldine MCP connector.</p>
       <ClaudeConnectSteps />
       <div className="modal__row" style={{ marginTop: 14 }}>
         {authEnabled && mcpEnabled && (

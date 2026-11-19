@@ -110,8 +110,8 @@ skip the Connect button and use the static-token path below.
    ([Anthropic's guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
    as of October 2026; on Team and Enterprise plans an owner adds it under
    Organization settings first). Name it,
-   paste the connector URL `https://<host>/mcp` (**Connect Claude** in
-   Aldine shows and copies it, with the steps for your server: in the
+   paste the connector URL `https://<host>/mcp` (**Connect Claude or
+   ChatGPT** in Aldine shows and copies it, with the steps for your server: in the
    command palette, in Project settings, and at the foot of the project
    list; with auth on, the Agent access card shows it too. It is
    `ALDINE_PUBLIC_URL` plus `/mcp`, and the boot log prints it as "MCP
@@ -309,6 +309,37 @@ they call your server from Anthropic's cloud, not from the desktop machine,
 so a private instance is not reachable this way even though the app runs
 next to it. Claude Desktop can also launch a local stdio server from its own
 configuration file, using the command from the previous section.
+
+## Connect from ChatGPT
+
+ChatGPT uses the same connector URL and the same Connect flow as claude.ai.
+Following OpenAI's guide
+([Add custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server),
+as of November 2026):
+
+1. In ChatGPT on the web, open **Plugins**, select **+**, then **Add custom
+   MCP server**.
+2. Name it, and enter `https://<host>/mcp` as the server URL (**Connect
+   Claude or ChatGPT → ChatGPT** in Aldine shows and copies it).
+3. Choose **OAuth** for authentication, accept the risk warning and select
+   **Create as a plugin**. Install it; Aldine's sign-in and consent page
+   appear as for Claude.
+
+Which plans and workspaces may add custom MCP servers, and whether write
+tools are allowed there, is OpenAI's to decide and has changed more than
+once; check
+[OpenAI's help article](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+for your plan. Writes ask for confirmation in ChatGPT unless a tool is
+marked read-only, which Aldine's read tools are.
+
+ChatGPT [authenticates only with OAuth](https://developers.openai.com/apps-sdk/build/auth)
+and cannot send custom API keys, so the static `X-Aldine-Token` path (auth
+off) does not work for it: turn on `AUTH_ENABLED` to connect ChatGPT. It
+calls from OpenAI's cloud, so the instance must be reachable over public
+HTTPS (see [Reachability](#reachability)). With
+`ALDINE_OAUTH_REGISTRATION=closed` ChatGPT cannot register itself; OpenAI
+documents predefined OAuth clients but not the callback URL to register
+for one, so that combination is untested.
 
 ## Only clients you registered
 
@@ -587,7 +618,7 @@ source checkout builds it with `npm run build:viewer -w apps/server` (part of
 ## Reachability
 
 claude.ai, Claude Desktop, Cowork and the mobile apps call your server from
-Anthropic's cloud. Your instance must accept HTTPS from the public internet
+Anthropic's cloud; ChatGPT calls it from OpenAI's. Your instance must accept HTTPS from the public internet
 at `https://<host>/mcp`, plus `/oauth/*` and `/.well-known/*` for Connect; a
 server behind a VPN, on a private network or on `localhost` will not connect,
 whichever app you use. Anthropic publishes the outbound range these calls
@@ -608,7 +639,7 @@ If you do not want to expose the instance:
   enabled for the node). Both terminate TLS for you.
 - **IP allowlisting** if you expose it anyway: restrict `/mcp`,
   `/oauth/token`, `/oauth/register` and `/.well-known/` to Anthropic's
-  outbound range and your own addresses. Do not restrict `/oauth/authorize`,
+  outbound range (and OpenAI's, if ChatGPT connects) and your own addresses. Do not restrict `/oauth/authorize`,
   `/api/oauth/*` or the PDF route: the consent page runs in the user's
   browser, and the viewer fetches the PDF from the browser's sandbox, not
   from Anthropic.
