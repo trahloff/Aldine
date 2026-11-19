@@ -149,7 +149,9 @@ test.describe('menu', () => {
       await row.focus();
       await page.keyboard.press('Shift+F10');
       await expect(menu).toBeVisible();
-      await expect(page.getByTestId('file-menu-root')).toBeFocused();
+      // references.bib is not LaTeX, so the menu starts at Rename, not at
+      // "Set as main document".
+      await expect(page.getByTestId('file-menu-rename')).toBeFocused();
       await page.keyboard.press('d');
       await expect(page.getByTestId('file-menu-delete')).toBeFocused();
       await expect(page.getByTestId('file-menu-delete')).toHaveClass(/menu__item--danger/);
@@ -160,12 +162,13 @@ test.describe('menu', () => {
       await expect(menu).toHaveCount(0);
       await expect(page.getByTestId('dialog-message').or(page.getByRole('dialog'))).toBeVisible();
       await page.keyboard.press('Escape');
-      // the main document is already the main document
+      // "Set as main document" is only for .tex files that are not already
+      // the main document: neither references.bib nor main.tex offers it.
       await row.click({ button: 'right' });
-      await expect(page.getByTestId('file-menu-root')).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(page.getByTestId('file-menu-set-root')).toHaveCount(0);
       await page.keyboard.press('Escape');
       await page.getByTestId('file-main.tex').click({ button: 'right' });
-      await expect(page.getByTestId('file-menu-root')).toHaveAttribute('aria-disabled', 'true');
+      await expect(page.getByTestId('file-menu-set-root')).toHaveCount(0);
     } finally { await cleanup(request, id); }
   });
 });
