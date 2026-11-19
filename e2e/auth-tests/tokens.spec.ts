@@ -95,6 +95,29 @@ async function clearOfFooter(page: import('@playwright/test').Page, testId: stri
 test.describe('agent access card at 1280×800', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
+  test('Connect Claude or ChatGPT: with sign-in on, the ChatGPT tab gives the OAuth steps and the connector URL', async ({ page }) => {
+    // what /api/auth/me says when ALDINE_PUBLIC_URL is a public HTTPS origin
+    await page.route('**/api/auth/me', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), publicUrl: 'https://papers.example.org' } });
+    });
+    await register(page, uniq());
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('open-connect-claude').click();
+    const modal = page.getByTestId('connect-claude');
+    await expect(modal.getByRole('heading', { name: 'Connect Claude or ChatGPT' })).toBeVisible();
+    await page.getByTestId('connect-client-chatgpt').click();
+    const steps = page.getByTestId('connect-chatgpt-steps');
+    await expect(steps).toBeVisible();
+    await expect(steps.locator('li')).toHaveCount(4);
+    await expect(steps).toContainText('Add custom MCP server');
+    await expect(steps).toContainText('Choose OAuth for Authentication');
+    await expect(page.getByTestId('agent-connector-url')).toHaveText('https://papers.example.org/mcp');
+    await expect(page.getByTestId('agent-connector-copy')).toBeVisible();
+    await expect(page.getByTestId('connect-chatgpt-needs-signin')).toHaveCount(0);
+    await expect(modal).toContainText('ask ChatGPT to ping Aldine');
+  });
+
   test('the create form and the shown-once token scroll clear of the footer and take focus; an empty name is marked on the field', async ({ page }) => {
     await register(page, uniq());
     // a project makes the form grow by a checklist that loads after it opened

@@ -16,16 +16,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   fetch wording, and a 502, 503 or 504 without a JSON error says "The server
   is not responding." instead of a bare "HTTP 502". Refs #134.
 - The merge and delete buttons in the branch menu now name the action and the branch for screen readers ("Merge revision into main", "Delete branch revision"). Refs #130.
-
-### Fixed
 - The Cite panel says so when the paper search finds nothing ("No papers
   match that search.") or fails ("Search failed: …" with the server's error)
   instead of leaving an empty box. Refs #133.
-
-### Fixed
 - "Set as main document" in the file tree is only offered for `.tex` files
   that are not already the main document, so a `.bib` file or an image can
   no longer become the file a typeset starts from. Refs #132.
+- Connect Claude or ChatGPT (the "…" menu and the command palette, formerly
+  Connect Claude) has a ChatGPT tab: add the connector URL as a custom MCP
+  server under Plugins with OAuth. ChatGPT cannot send the static
+  `X-Aldine-Token` header, so with sign-in off the tab says that ChatGPT
+  needs `AUTH_ENABLED=1`; on an address only Claude Code can reach, the
+  notice names ChatGPT too. docs/AGENT_API.md has a "Connect from ChatGPT"
+  section. Refs #336.
 
 ## [1.15.0] — 2026-11-17
 

@@ -30,6 +30,8 @@ test.describe('Connect Claude', () => {
         `claude mcp add --transport http aldine ${baseURL}/mcp --header "X-Aldine-Token: <ALDINE_MCP_TOKEN>"`,
       );
       await expect(page.getByTestId('agent-connector-unreachable')).toBeVisible();
+      await expect(page.getByTestId('agent-connector-unreachable')).toContainText('ChatGPT');
+      await expect(page.getByTestId('connect-client-chatgpt')).toHaveCount(0);
       await expect(modal).not.toContainText('aldine-e2e-mcp');
 
       await page.getByTestId('connect-done').click();
@@ -61,7 +63,7 @@ test.describe('Connect Claude', () => {
     }
   });
 
-  test('a server with a public HTTPS address: claude.ai steps first, Claude Code one switch away', async ({ page, request }) => {
+  test('a server with a public HTTPS address: claude.ai steps first, Claude Code and ChatGPT one switch away', async ({ page, request }) => {
     // what /api/auth/me says when ALDINE_PUBLIC_URL is set
     await page.route('**/api/auth/me', async (route) => {
       const res = await route.fetch();
@@ -83,6 +85,14 @@ test.describe('Connect Claude', () => {
       await expect(page.getByTestId('agent-claude-code-command')).toHaveText(
         'claude mcp add --transport http aldine https://papers.example.org/mcp --header "X-Aldine-Token: <ALDINE_MCP_TOKEN>"',
       );
+
+      // ChatGPT signs in with OAuth only and cannot send the token header:
+      // with auth off it gets the reason, not steps that cannot work
+      await page.getByTestId('connect-client-chatgpt').click();
+      await expect(page.getByTestId('connect-client-chatgpt')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('connect-chatgpt-needs-signin')).toContainText('AUTH_ENABLED=1');
+      await expect(page.getByTestId('connect-chatgpt-steps')).toHaveCount(0);
+      await expect(page.getByTestId('agent-connector-url')).toHaveCount(0);
     } finally {
       await cleanup(request, id);
     }

@@ -80,7 +80,7 @@ test.describe('menu', () => {
     const item = (name: string) => menu.getByRole('menuitem', { name });
     await expect(item('Appearance')).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(item('Connect Claude…')).toBeFocused();
+    await expect(item('Connect Claude or ChatGPT…')).toBeFocused();
     await page.keyboard.press('End');
     await expect(item('About & source')).toBeFocused();
     await page.keyboard.press('ArrowDown');
@@ -90,7 +90,7 @@ test.describe('menu', () => {
     await page.keyboard.press('Home');
     await expect(item('Appearance')).toBeFocused();
     await page.keyboard.press('c');
-    await expect(item('Connect Claude…')).toBeFocused();
+    await expect(item('Connect Claude or ChatGPT…')).toBeFocused();
     // opened from the keyboard: no entrance animation
     expect(await menu.evaluate((el) => el.getAnimations().length)).toBe(0);
     await page.keyboard.press('Home');

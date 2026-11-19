@@ -860,7 +860,7 @@ export default function Home() {
     ...(authEnabled && user ? [{ id: 'account', group: 'More', title: 'Account settings…', run: () => setShowAccount(true) }] : []),
     ...(admin && authEnabled ? [{ id: 'admin', group: 'More', title: 'Server admin: accounts and usage', run: () => navigate('/admin') }] : []),
     { id: 'about', group: 'More', title: 'About Aldine and its source code', run: () => setAboutOpen(true) },
-    { id: 'connect-claude', group: 'More', title: 'Connect Claude (MCP connector)…', run: () => setConnectOpen(true) },
+    { id: 'connect-claude', group: 'More', title: 'Connect Claude or ChatGPT (MCP connector)…', run: () => setConnectOpen(true) },
   ], [remotes, authEnabled, user, admin, trash, archived, projects, navigate, appearance]);
 
   const search = (

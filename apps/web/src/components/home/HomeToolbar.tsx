@@ -57,7 +57,7 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
   if (!a.accounts || !a.user) {
     return [
       appearanceSub,
-      { id: 'connect', label: 'Connect Claude…', onSelect: a.onConnect, testId: 'open-connect-claude' },
+      { id: 'connect', label: 'Connect Claude or ChatGPT…', onSelect: a.onConnect, testId: 'open-connect-claude' },
       { kind: 'separator' },
       ...helpItem(),
       { id: 'about', label: 'About & source', onSelect: a.onAbout, testId: 'open-about' },
@@ -68,7 +68,7 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
     { kind: 'separator' },
     { id: 'account', label: 'Account settings…', onSelect: a.onAccount, testId: 'user-name' },
     appearanceSub,
-    { id: 'connect', label: 'Connect Claude…', onSelect: a.onConnect, testId: 'open-connect-claude' },
+    { id: 'connect', label: 'Connect Claude or ChatGPT…', onSelect: a.onConnect, testId: 'open-connect-claude' },
     ...(a.admin ? [{ id: 'admin', label: 'Server admin', onSelect: a.onAdmin, testId: 'admin-link' } as MenuEntry] : []),
     { kind: 'separator' },
     ...helpItem(),
