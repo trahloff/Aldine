@@ -10,6 +10,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ### Added
 - Format document works on `.bib` files too: latexindent puts each field one
   level in and the closing brace back at the margin (#304).
+### Changed
+- Wrapped lines in the source editor continue under their own
+  indentation instead of at the left edge, so a long `\item` in a nested
+  list stays visibly inside it. Refs #332.
 ### Fixed
 - When the server cannot be reached, the web app says "Could not reach the
   server. Check your connection and try again." instead of the browser's

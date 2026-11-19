@@ -13,6 +13,7 @@ import { api, localUser } from '../api';
 import { citeCompletionSource, refCompletionSource, keyCommandCompletionSource, latexPackageCompletions, latexCloseBrackets, keyBraceGuard, citeHoverTooltip, warmBib } from '../editor/latexExtras';
 import { findKeymap, findPanel, gotoLineTop, openFind, restoreFind } from '../editor/findPanel';
 import { formatChanges } from '../editor/formatChanges';
+import { wrapIndent } from '../editor/wrapIndent';
 import { FORMAT_DOCUMENT_KEYS, matchesChord } from '../util/shortcuts';
 import { everydayCompletionSource, macroCompletionSource, pathCompletionSource } from '../editor/completions';
 import { spellcheckExtension } from '../editor/spellcheck';
@@ -601,7 +602,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
           EditorView.contentAttributes.of({ 'aria-label': `Text of ${filePath}` }),
           readOnlyComp.of(readOnly ? readOnlyDoc(ydoc) : []),
           loadGate.of(provider.isSynced ? [] : readOnlyDoc(ydoc)),
-          modeComp.of(mode === 'visual' ? visualExtensions(deps) : []),
+          modeComp.of(mode === 'visual' ? visualExtensions(deps) : wrapIndent),
           yCollab(ytext, awareness, { undoManager }),
           publishEditorFocus(awareness),
           agentMarks(ydoc, ytext, agentSeenRef.current),
@@ -753,7 +754,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   useEffect(() => {
     const view = viewRef.current, rc = reconfRef.current;
     if (!view || !rc) return;
-    view.dispatch({ effects: rc.modeComp.reconfigure(mode === 'visual' ? visualExtensions(rc.deps) : []) });
+    view.dispatch({ effects: rc.modeComp.reconfigure(mode === 'visual' ? visualExtensions(rc.deps) : wrapIndent) });
   }, [mode]);
   useEffect(() => {
     const view = viewRef.current, rc = reconfRef.current;
