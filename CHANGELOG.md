@@ -17,6 +17,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   is not responding." instead of a bare "HTTP 502". Refs #134.
 - The merge and delete buttons in the branch menu now name the action and the branch for screen readers ("Merge revision into main", "Delete branch revision"). Refs #130.
 
+### Fixed
+- The Cite panel says so when the paper search finds nothing ("No papers
+  match that search.") or fails ("Search failed: …" with the server's error)
+  instead of leaving an empty box. Refs #133.
+
 ## [1.15.0] — 2026-11-17
 
 ### Added

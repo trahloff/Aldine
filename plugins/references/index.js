@@ -40,6 +40,8 @@ export default {
         let results = [];
         let searching = false;
         let searchSeq = 0;
+        // What the last search ended with, when it ended with nothing to show.
+        let searchStatus = '';
 
         const addQuery = async (q, label) => {
           if (!q || busy) return;
@@ -73,17 +75,34 @@ export default {
         let searchTimer = null;
         const runSearch = () => {
           const q = searchTerm.trim();
-          if (q.length < 3) { results = []; searching = false; draw(); return; }
+          if (q.length < 3) { results = []; searchStatus = ''; searching = false; draw(); return; }
           const seq = ++searchSeq;
-          searching = true; draw();
+          searching = true; searchStatus = ''; draw();
           aldine.fetch(`/api/references/search?q=${encodeURIComponent(q)}`)
-            .then((r) => r.json())
-            .then((body) => {
+            .then((r) => r.json().catch(() => null).then((body) => ({ ok: r.ok, body })))
+            .then(({ ok, body }) => {
               if (seq !== searchSeq) return;
-              results = Array.isArray(body) ? body : [];
+              if (ok && Array.isArray(body)) {
+                results = body;
+                // Nothing came back for a query the user typed: say so, instead
+                // of leaving an empty box that looks like the search never ran.
+                searchStatus = body.length ? '' : 'No papers match that search.';
+              } else {
+                // The server answers a failed search with an `error` field
+                // (429 rate limit, 502 upstream failure): show its words.
+                results = [];
+                searchStatus = `Search failed: ${typeof body?.error === 'string' && body.error ? body.error : 'the search did not return results'}`;
+              }
               searching = false; draw();
             })
-            .catch(() => { if (seq === searchSeq) { searching = false; draw(); } });
+            .catch(() => {
+              if (seq !== searchSeq) return;
+              // The request itself failed (offline, server down): the browser's
+              // own wording ("Failed to fetch") names no remedy.
+              results = [];
+              searchStatus = 'Search failed: could not reach the server.';
+              searching = false; draw();
+            });
         };
         const onSearchInput = (v) => {
           searchTerm = v;
@@ -185,6 +204,7 @@ export default {
 
         function draw() {
           hits.replaceChildren(...(searching ? [h('div', { class: 'spinner', style: { margin: '6px auto' } })] : []),
+            ...(searchStatus ? [h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 }, dataset: { testid: 'reference-search-status' } }, searchStatus)] : []),
             ...results.slice(0, 12).map((hit) => h('button', {
               class: 'tree__item',
               style: { height: 'auto', padding: '6px 8px', display: 'block' },
@@ -195,7 +215,7 @@ export default {
               h('div', { style: line1 }, hit.title),
               h('div', { style: line2 }, [hit.authors, hit.year, hit.venue].filter(Boolean).join(' · ')),
             )));
-          hits.style.display = searching || results.length ? 'flex' : 'none';
+          hits.style.display = searching || results.length || searchStatus ? 'flex' : 'none';
           queryInput.value = query;
           addButton.disabled = busy;
           addButton.textContent = busy ? 'Fetching…' : 'Add & cite';
