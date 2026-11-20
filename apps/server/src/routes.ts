@@ -433,8 +433,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { user, confirmToken, awaiting } = await auth.signUp(req.body.email, req.body.password, req.body.name);
       // An account waiting for approval gets no session: it could not use one.
       if (!awaiting) reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+      const returnTo = await inviteReturn(req.body.invite, user.email);
+      // Told only to someone holding the invitation's link: whether an
+      // invitation exists for a typed address is not the typist's to learn.
+      // The waiting account has no session for the invitation page to
+      // confirm with, so its link goes to the sign-in form (see auth.passwordSignIn).
+      const invited = awaiting && !!returnTo && !!user.email && await auth.admittedByInvitation([user.email]);
       // In the background: a mail failure never fails the sign-up.
-      const mailed = !!user.email && deliverConfirmation(user.email, confirmToken, true, awaiting, awaiting ? null : await inviteReturn(req.body.invite, user.email));
+      const mailed = !!user.email && deliverConfirmation(user.email, confirmToken, true, awaiting && !invited, awaiting ? null : returnTo);
+      if (invited) {
+        const confirm = mailed ? `Confirm your email address with the link we sent to ${user.email}, then sign in to answer the invitation.` : 'The administrator of this server has the link that confirms your email address. Once it is confirmed, sign in to answer the invitation.';
+        return { user, awaitingApproval: true, message: `Your account is created. ${confirm}` };
+      }
       if (awaiting) {
         const confirm = mailed ? `Confirm your email address with the link we sent to ${user.email}. ` : '';
         return { user, awaitingApproval: true, message: `Your account is created. ${confirm}${auth.AWAITING_APPROVAL}` };

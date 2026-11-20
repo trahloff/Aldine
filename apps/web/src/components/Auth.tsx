@@ -282,7 +282,9 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
       setBusy(false);
     }
   };
-  const approvalNote = signupApproval && <p className="login__hint login__approval" data-testid="auth-approval-note">An administrator of this server approves new accounts before they can sign in.</p>;
+  const approvalNote = signupApproval && <p className="login__hint login__approval" data-testid="auth-approval-note">{invite
+    ? 'An administrator of this server approves new accounts before they can sign in. An account with the address or ORCID iD this invitation is for needs no approval.'
+    : 'An administrator of this server approves new accounts before they can sign in.'}</p>;
 
   const title = mode === 'login' ? (heading ?? 'Sign in to your projects.')
     : mode === 'register' ? (registerHeading ?? 'Create an account to get started.')

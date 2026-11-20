@@ -11,6 +11,7 @@ import { subkey } from './output-signing.js';
 import { SESSION_DAYS, firstExpiry, renewIfDue } from './sessions.js';
 import { avatarVersion, removeAvatar } from './avatars.js';
 import { removeAllPersonalRepos } from './templaterepos.js';
+import { recipientKeys, stateOf } from './invites.js';
 
 /** A provider's name for use inside a sentence ("sign in with single sign-on"). */
 const providerLabel = (id: string) => {
@@ -43,8 +44,9 @@ export const ADMIN_EMAILS = new Set(
 /**
  * Who may create an account (ALDINE_SIGNUP). `open`, the default: anyone who
  * reaches the server. `approval`: every account created from then on waits
- * until an administrator approves it on /admin; accounts that already exist
- * are not touched. Any other value means `approval`, the stricter of the two,
+ * until an administrator approves it on /admin, unless an open invitation
+ * names its confirmed address or ORCID iD (admittedByInvitation); accounts
+ * that already exist are not touched. Any other value means `approval`, the stricter of the two,
  * and is warned about at boot (as OIDC_EMAIL_VERIFIED falls back to `require`).
  */
 export type SignupMode = 'open' | 'approval';
@@ -189,7 +191,7 @@ async function createAccount(email: string | null, password: string, name?: stri
     subject,
     ...(confirm ? { emailPending: confirm.pending } : {}),
   };
-  if (SIGNUP_MODE === 'approval' && !adminByAddress(user)) user.disabledAt = createdAt;
+  if (SIGNUP_MODE === 'approval' && !(await approvesItself(user))) user.disabledAt = createdAt;
   await db().createUser(user);
   return { user, confirmToken: confirm?.token ?? null };
 }
@@ -255,12 +257,37 @@ function adminByAddress(u: User): boolean {
   return !u.emailPending && !!u.email && ADMIN_EMAILS.has(u.email.toLowerCase());
 }
 
-/** An administrator's account that waits (its address was confirmed, or put
- *  on the list, after it was created) is approved here instead of refused:
- *  nobody else might be there to approve it. */
+/**
+ * A pending, unexpired invitation to one of `keys` (confirmed addresses and
+ * ORCID iDs, as recipientKeys gives them), sent by an account that is not
+ * disabled, to a project that is not in the trash: an approved member vouches
+ * for the person, so ALDINE_SIGNUP=approval does not hold them for an
+ * administrator. Never pass an address nobody confirmed.
+ */
+export async function admittedByInvitation(keys: string[]): Promise<boolean> {
+  if (!keys.length) return false;
+  const now = Date.now();
+  for (const inv of await db().listInvitationsTo(keys)) {
+    if (stateOf(inv, now) !== 'pending') continue;
+    const [by, meta] = await Promise.all([db().getUser(inv.invitedBy), db().readMeta(inv.projectId)]);
+    if (by && !by.disabledAt && meta && !meta.deletedAt) return true;
+  }
+  return false;
+}
+
+/** The account needs nobody's approval: an administrator's, or one an open
+ *  invitation admits. An address still pending counts for neither. */
+async function approvesItself(u: User): Promise<boolean> {
+  if (adminByAddress(u)) return true;
+  return admittedByInvitation(recipientKeys({ email: u.email, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}) }));
+}
+
+/** An account that waits but approvesItself (its address was confirmed, put
+ *  on the list, or invited after it was created) is approved here instead of
+ *  refused: nobody else might be there to approve it. */
 async function refuseDisabled(user: User): Promise<void> {
   if (awaitingApproval(user)) {
-    if (!adminByAddress(user)) throw new AwaitingApprovalError(AWAITING_APPROVAL);
+    if (!(await approvesItself(user))) throw new AwaitingApprovalError(AWAITING_APPROVAL);
     await enableAccount(user.id);
     delete user.disabledAt;
     return;
@@ -305,7 +332,7 @@ export async function passwordSignIn(email: string, password: string, confirmTok
     }
     delete user.emailPending;
     emailConfirmed = true;
-    if (!adminByAddress(user)) {
+    if (!(await approvesItself(user))) {
       announceWaiting(user);
       throw new AwaitingApprovalError(`Your email address is confirmed. ${AWAITING_APPROVAL}`);
     }
@@ -573,8 +600,8 @@ export async function resetPassword(token: string, next: string): Promise<number
   await db().updateUser(user);
   await db().deleteReset(token);
   await revokeUser(user.id);
-  // An administrator's account approves itself at its next sign-in instead.
-  if (confirms && awaitingApproval(user) && !adminByAddress(user)) announceWaiting(user);
+  // An account that approvesItself does so at its next sign-in instead.
+  if (confirms && awaitingApproval(user) && !(await approvesItself(user))) announceWaiting(user);
   return revokeAgentAccess(user.id);
 }
 

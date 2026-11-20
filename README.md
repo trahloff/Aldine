@@ -144,8 +144,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   No compose file passes this variable through; add it under `environment:`
   of the `app` service. `ALDINE_SIGNUP=approval` keeps every new account,
   password or single sign-on, waiting until an administrator approves it on
-  `/admin`; with email set up, the administrators get a mail when one starts
-  waiting.
+  `/admin`, unless a project invitation is for its proven address; with email
+  set up, the administrators get a mail when one starts waiting.
 - **Your name next to ours**: `ALDINE_INSTANCE_NAME`, a logo, your website and
   a support contact (`ALDINE_SUPPORT`) show who runs the instance and whom to
   ask for help, beside Aldine's own name, on the sign-in page, the project

@@ -137,6 +137,39 @@ test.describe('sign-up with approval', () => {
     await admin.context().close();
   });
 
+  test('a password sign-up from an invitation needs no approval once its address is confirmed', async ({ browser }) => {
+    const email = `invited${uid()}@test.com`;
+    const admin = await ownBrowser(browser);
+    await signInAdmin(admin);
+    const project = await (await admin.request.post('/api/projects', { data: { name: `Invited ${uid()}` } })).json();
+    const invited = await admin.request.post(`/api/projects/${project.id}/invitations`, { data: { to: email } });
+    expect(invited.ok(), await invited.text()).toBeTruthy();
+    const inviteId = (await invited.json()).invitations.find((i: { to: string }) => i.to === email).id;
+
+    const person = await ownBrowser(browser);
+    await person.goto(`/invite/${inviteId}`);
+    await person.getByTestId('auth-switch').click();
+    await expect(person.getByTestId('auth-approval-note')).toHaveText('An administrator of this server approves new accounts before they can sign in. An account with the address or ORCID iD this invitation is for needs no approval.');
+    await expect(person.getByTestId('auth-email')).toHaveValue(email);
+    await person.getByTestId('auth-name').fill('Invited Person');
+    await person.getByTestId('auth-password').fill('password123');
+    await person.getByTestId('auth-submit').click();
+    await expect(person.getByTestId('auth-waiting')).toHaveText('Your account is created. The administrator of this server has the link that confirms your email address. Once it is confirmed, sign in to answer the invitation.');
+
+    // Nobody approves it: the confirmation link opened on the sign-in form lets it in.
+    await person.goto(`/?confirm_email=${encodeURIComponent(await confirmationToken(person, email))}`);
+    await person.getByTestId('auth-email').fill(email);
+    await person.getByTestId('auth-password').fill('password123');
+    await person.getByTestId('auth-submit').click();
+    await expect(person.getByTestId('home-invitation').filter({ hasText: project.name })).toBeVisible({ timeout: 15_000 });
+    await expect(person.getByTestId('new-project')).toBeVisible();
+
+    await admin.goto('/admin');
+    await expect(admin.getByTestId('admin-user-row').filter({ hasText: email }).getByTestId('admin-status-active')).toBeVisible();
+    await person.context().close();
+    await admin.context().close();
+  });
+
   test('disabling and enabling an approved account works as before', async ({ browser }) => {
     const email = `plain${uid()}@test.com`;
     const person = await ownBrowser(browser);
