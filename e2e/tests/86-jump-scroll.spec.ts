@@ -244,3 +244,113 @@ for (const mode of ['source', 'visual'] as const) {
     });
   });
 }
+
+test.describe('a jump while the source still coasts (#338)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => { localStorage.setItem('aldine.editorMode', 'source'); localStorage.setItem('aldine.autoTypeset', '0'); });
+  });
+
+  test('wheel events from a scroll begun over the editor do not carry it off the target', async ({ page, request }) => {
+    const id = await seed(request, 'Coasting jump');
+    try {
+      await openProject(page, id);
+      const items = page.getByTestId('outline-item');
+      await expect(items).toHaveCount(18);
+      const item = items.nth(13);
+      const at = (await item.boundingBox())!;
+      // A trackpad's momentum: the scroller the gesture began on keeps getting
+      // its wheel events, at wherever the pointer is now, and keeps scrolling.
+      await page.locator('.cm-scroller').evaluate((el, p) => new Promise<void>((started) => {
+        const t0 = performance.now();
+        const step = () => {
+          el.dispatchEvent(new WheelEvent('wheel', { deltaY: 60, clientX: p.x, clientY: p.y, bubbles: true }));
+          el.scrollTop += 60;
+          if (performance.now() - t0 < 2000) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+        setTimeout(started, 200);
+      }), { x: at.x + at.width / 2, y: at.y + at.height / 2 });
+      await item.click();
+      await page.waitForTimeout(2000);
+      await expectCaretOnScreen(page, 'Main section 14');
+
+      // A wheel over the editor is the reader's own: the jump lets go.
+      await items.nth(2).click();
+      await expectCaretOnScreen(page, 'Main section 3');
+      const sb = (await page.locator('.cm-scroller').boundingBox())!;
+      await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+      await page.mouse.wheel(0, 6000);
+      await expect.poll(() => page.evaluate(() => {
+        const caret = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect();
+        const box = document.querySelector('.cm-scroller')!.getBoundingClientRect();
+        return !caret || caret.bottom < box.top;
+      })).toBe(true);
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => {
+        const caret = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect();
+        const box = document.querySelector('.cm-scroller')!.getBoundingClientRect();
+        return !caret || caret.bottom < box.top;
+      })).toBe(true);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
+
+/**
+ * acmart and its kind keep the title block until \maketitle typesets it, so
+ * SyncTeX answers with the \maketitle line for a double-click on the
+ * abstract. This package stores and typesets it the same way, and adds a
+ * line of its own as acmart adds its reference format; any TeX Live can
+ * compile it.
+ */
+const TITLE_STY = [
+  '\\long\\def\\storeabstract#1{\\long\\gdef\\@storedabstract{#1}}',
+  '\\renewcommand\\maketitle{\\noindent Reference format printed by the class.\\par\\@storedabstract\\par}',
+  '',
+].join('\n');
+const TITLE_BLOCK = [
+  '\\documentclass{article}',
+  '\\usepackage{titleblock}',
+  '\\begin{document}',
+  '\\storeabstract{%',
+  'Coastal wetlands store carbon in their sediments for centuries.',
+  '}',
+  ...Array.from({ length: 300 }, (_, k) => `% filler ${k} keeps the abstract far above the body`),
+  '\\maketitle',
+  ...Array.from({ length: 40 }, (_, k) => [`\\section{Part ${k + 1}}`, para(k), '']).flat(),
+  '\\end{document}',
+  '',
+].join('\n');
+
+test.describe('a double-click on a title block that \\maketitle typesets (#338)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => { localStorage.setItem('aldine.editorMode', 'source'); localStorage.setItem('aldine.autoTypeset', '0'); });
+  });
+
+  test('lands on the source line of the clicked text, or says why it lands on \\maketitle', async ({ page, request }) => {
+    const id = await createProject(request, 'Title block jump');
+    try {
+      for (const [path, content] of Object.entries({ 'main.tex': TITLE_BLOCK, 'titleblock.sty': TITLE_STY })) {
+        const res = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path, content } });
+        expect(res.ok()).toBeTruthy();
+      }
+      await openProject(page, id);
+      await page.getByTestId('typeset-button').click();
+      await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 120_000 });
+      const span = (text: string) => page.getByTestId('pdf-text').first().locator('span', { hasText: text }).first();
+
+      // From the far end of the source.
+      await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      await span('Coastal wetlands').dblclick();
+      await expectCaretOnScreen(page, 'Coastal wetlands store carbon');
+
+      await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      await span('Reference format').dblclick();
+      await expect(page.getByText('This part of the title block is typeset by \\maketitle, so the jump lands there')).toBeVisible();
+      await expectCaretOnScreen(page, '\\maketitle');
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});

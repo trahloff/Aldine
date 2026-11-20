@@ -47,8 +47,9 @@ interface Props {
    *  would only fail. */
   hasTex?: boolean;
   onFirstOpen(): void;
-  /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points. */
-  onInverse?(page: number, x: number, y: number): void;
+  /** Inverse SyncTeX: user double-clicked at (page, pdfX, pdfY) in PDF points,
+   *  on `text` of the page's text layer (none off it or from the keyboard). */
+  onInverse?(page: number, x: number, y: number, text?: string): void;
   /** Set while the errors list is out of sight (the editor pane is hidden): brings it back. */
   onShowErrors?(): void;
   /** Receives the page on screen and the page count; null while no PDF shows. */
@@ -975,7 +976,8 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     if (!info) return;
     const rect = target.getBoundingClientRect();
     const scale = rect.height / info.view.height;
-    onInverse(idx + 1, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
+    const span = hit.closest('.pdf-text') && hit.closest('span');
+    onInverse(idx + 1, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale, span?.textContent ?? '');
   };
 
   return (

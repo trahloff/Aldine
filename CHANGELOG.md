@@ -35,6 +35,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   no longer opens as an empty document that then overwrites it. The
   editor refuses to load it until it can be read again, and a refresh
   that cannot read a file keeps its open document as it is. Refs #342.
+- A double-click in the PDF lands on its line while the source is still
+  coasting from a trackpad scroll. The scroll kept sending its momentum to
+  the editor after the pointer had moved to the PDF, which counted as the
+  reader scrolling, ended the jump and carried the editor past the target;
+  only a scroll with the pointer over the editor ends a jump now. Refs #338.
+- A double-click on the title, authors or abstract of a class that
+  typesets them at `\maketitle` (acmart, amsart and others) opens
+  the source line that holds the clicked text, instead of the `\maketitle`
+  line SyncTeX names for the whole block. When no line above `\maketitle`
+  holds it, such as the class's own "ACM Reference Format", the jump lands on
+  `\maketitle` and says why. Refs #338.
 
 ## [1.16.0] — 2026-11-19
 

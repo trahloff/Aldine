@@ -1558,7 +1558,7 @@ export default function Editor() {
   compileIdRef.current = compile.result?.compileId;
 
   // Inverse SyncTeX: double-click in the PDF → open the source file at that line.
-  const onPdfInverse = useCallback(async (page: number, x: number, y: number) => {
+  const onPdfInverse = useCallback(async (page: number, x: number, y: number, text?: string) => {
     if (pdfStaleRef.current) toast('This preview is from the last successful typeset — fix the errors and typeset again to jump accurately');
     try {
       const res = await api.synctex(id, branch, { direction: 'inverse', page, x, y, compileId: compileIdRef.current });
@@ -1577,7 +1577,8 @@ export default function Editor() {
       if (match) file = match.path;
       revealRef.current('editor');
       if (file && files.some((f) => f.path === file)) setActiveFile(file);
-      if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line), 80));
+      const onTitleBlock = () => toast('This part of the title block is typeset by \\maketitle, so the jump lands there');
+      if (!Number.isNaN(line)) requestAnimationFrame(() => setTimeout(() => codeRef.current?.gotoLine(line, { clicked: text ?? '', onTitleBlock }), 80));
     } catch (err: any) {
       // 409: the preview on screen and the SyncTeX on disk are different runs.
       if (err instanceof ApiError && err.status === 409) { toast(err.message); return; }

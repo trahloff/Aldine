@@ -39,6 +39,7 @@ import { readOnlyDoc } from '../editor/readOnly';
 import { openDoc, parkDoc } from '../editor/docCache';
 import { captureSpot, clampSpot, fileSpots, spotScroll, spotSelection } from '../editor/fileSpots';
 import { jumpEffects, jumpHold } from '../editor/jumpHold';
+import { titleBlockJump } from '../editor/titleBlock';
 import { watchSync, reconnectProvider, type SyncState } from '../editor/syncStatus';
 import { citationEdit } from '../editor/citeInsert';
 
@@ -80,11 +81,20 @@ function reanchor<R extends { from: number; to: number; quote?: string }>(doc: T
 /** The text a search showed on either side of a match, on its line. */
 export interface MatchContext { before: string; after: string }
 
+export interface GotoOptions {
+  flash?: boolean;
+  /** Fires (with the line count) when the line is past the end of the doc. */
+  onClamped?: (lines: number) => void;
+  /** The PDF text a SyncTeX jump came from, to place a jump to \maketitle (titleBlock.ts). */
+  clicked?: string;
+  /** A jump to \maketitle that the clicked text could not place. */
+  onTitleBlock?: () => void;
+}
+
 export interface CodePaneHandle {
   /** Deferred until the collab doc has synced: a fresh pane holds an empty
    *  document until then, and line N of nothing is line 1. */
-  /** onClamped fires (with the line count) when `line` is past the end of the doc. */
-  gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }): void;
+  gotoLine(line: number, opts?: GotoOptions): void;
   /** Select from..to, re-anchored by `quote` (and the text around it) when
    *  edits moved it, and scroll it into view; deferred like gotoLine.
    *  Selection only: no document change. */
@@ -279,7 +289,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   agentSeenRef.current = agentSeenAt;
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
-    | { kind: 'line'; line: number; flash: boolean; onClamped?: (lines: number) => void }
+    | { kind: 'line'; line: number; opts: GotoOptions }
     | { kind: 'range'; from: number; to: number; quote: string; focus: boolean; context?: MatchContext }
     | null
   >(null);
@@ -293,9 +303,16 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
     if (focus) view.focus();
   };
 
-  const applyGoto = (view: EditorView, line: number, flash: boolean, onClamped?: (lines: number) => void) => {
-    const l = Math.min(Math.max(1, line), view.state.doc.lines);
+  const applyGoto = (view: EditorView, line: number, opts: GotoOptions) => {
+    const { flash = false, onClamped, clicked, onTitleBlock } = opts;
+    let l = Math.min(Math.max(1, line), view.state.doc.lines);
     if (line > view.state.doc.lines) onClamped?.(view.state.doc.lines);
+    if (clicked !== undefined) {
+      const lines = Array.from({ length: l }, (_, i) => view.state.doc.line(i + 1).text);
+      const jump = titleBlockJump(lines, l, clicked);
+      if (jump.kind === 'found') l = jump.line;
+      else if (jump.kind === 'maketitle') onTitleBlock?.();
+    }
     const pos = view.state.doc.line(l).from;
     const effects = [...jumpEffects(pos), ...(flash ? [flashLine.of(pos)] : [])];
     view.dispatch({ selection: { anchor: pos }, effects });
@@ -310,12 +327,12 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   };
 
   useImperativeHandle(ref, () => ({
-    gotoLine(line: number, opts?: { flash?: boolean; onClamped?: (lines: number) => void }) {
+    gotoLine(line: number, opts: GotoOptions = {}) {
       const view = viewRef.current;
       // Before the view exists (handle is live from the first commit, the
       // view from the mount effect) or before the doc has synced: queue it.
-      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'line', line, flash: !!opts?.flash, onClamped: opts?.onClamped }; return; }
-      applyGoto(view, line, !!opts?.flash, opts?.onClamped);
+      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'line', line, opts }; return; }
+      applyGoto(view, line, opts);
     },
     selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }) {
       const view = viewRef.current;
@@ -643,7 +660,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       pendingGoto.current = null;
       const back = restore;
       restore = null;
-      if (goto?.kind === 'line') applyGoto(view, goto.line, goto.flash, goto.onClamped);
+      if (goto?.kind === 'line') applyGoto(view, goto.line, goto.opts);
       else if (goto?.kind === 'range') applyRange(view, goto.from, goto.to, goto.quote, goto.focus, goto.context);
       else if (back) {
         const s = clampSpot(back, view.state.doc.length);
