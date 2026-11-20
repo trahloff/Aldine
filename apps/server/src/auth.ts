@@ -94,7 +94,9 @@ export type { User } from './db/types.js';
 /** `avatar`: version of the stored profile picture, served at /api/users/:id/avatar. */
 /** `commitEmail`: the account's own commit author address. Only for the
  *  person themself (their /api/auth/me) and the commits their requests make. */
-export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string }
+/** `guest`: someone without an account, here on one project's share link
+ *  (guest.ts); never set for an account. */
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string; guest?: true }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';

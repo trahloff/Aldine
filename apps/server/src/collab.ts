@@ -11,6 +11,7 @@ import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { replaceFileDurable } from './durable.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess, canEdit } from './authz.js';
+import { guestFromRequest } from './guest.js';
 import { linkAccessEnds } from './sharelinks.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 import { noteEdit, AGENT_EDITOR, editorOf } from './activity.js';
@@ -464,6 +465,11 @@ const authHook = AUTH_ENABLED ? {
       user = bearer.user;
     } else {
       user = await userFromRequest(requestHeaders.cookie as string | undefined);
+      // Without a session, a guest of this document's project only (guest.ts).
+      if (!user) {
+        const guest = await guestFromRequest(requestHeaders.cookie as string | undefined, parsed.projectId);
+        if (guest && guest !== 'ended') user = guest;
+      }
     }
     if (!user) throw new Error('Not authenticated');
     let meta;

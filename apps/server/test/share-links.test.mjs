@@ -66,7 +66,7 @@ eq(normalizeShare(read, 'x'), read, 'a share in the new shape stays as it is');
 const L = (await json('POST', '/api/projects', owner, { name: 'Legacy' })).id;
 await db().writeMeta({ ...(await db().readMeta(L)), share: { mode: 'link', collaborators: [] } });
 eq((await json('GET', `/api/projects/${L}`, stan)).role, 'edit', "an old link-shared project still opens at its address, with the old link's role");
-eq((await json('GET', `/api/projects/${L}`, owner)).share, { mode: 'link', collaborators: [], links: [{ id: 'address', role: 'edit', createdAt: (await db().readMeta(L)).createdAt, joined: 0 }] }, 'the owner sees it as a link without a token');
+eq((await json('GET', `/api/projects/${L}`, owner)).share, { mode: 'link', collaborators: [], links: [{ id: 'address', role: 'edit', createdAt: (await db().readMeta(L)).createdAt, guests: false, joined: 0, joinedGuests: 0 }] }, 'the owner sees it as a link without a token');
 await json('DELETE', `/api/projects/${L}/links/address`, owner);
 eq((await call('GET', `/api/projects/${L}`, stan)).statusCode, 403, 'revoking the address link closes the address');
 eq((await json('GET', `/api/projects/${L}`, owner)).share, { mode: 'private', collaborators: [] }, 'a revoked link is not shown, and the share reads as private');

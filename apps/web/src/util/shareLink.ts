@@ -34,12 +34,14 @@ export function forgetShareLink(projectId: string, store: SafeStore = safeSessio
  * the project loads: each of the editor's first requests would be refused
  * until the server has let this account in. `problem` says why a link no
  * longer works; a link the server could not answer for stays for next time.
+ * A guest (`asGuest`) is in already: the link has nothing more to give.
  */
-export function useShareLinkJoin(projectId: string): { ready: boolean; problem?: string } {
-  const [state, setState] = useState<{ ready: boolean; problem?: string }>(() => ({ ready: !pendingShareLink(projectId) }));
+export function useShareLinkJoin(projectId: string, asGuest = false): { ready: boolean; problem?: string } {
+  const [state, setState] = useState<{ ready: boolean; problem?: string }>(() => ({ ready: asGuest || !pendingShareLink(projectId) }));
   useEffect(() => {
     const token = pendingShareLink(projectId);
-    if (!token) { setState({ ready: true }); return; }
+    if (asGuest) forgetShareLink(projectId);
+    if (!token || asGuest) { setState({ ready: true }); return; }
     let live = true;
     api.joinShareLink(projectId, token).then(
       () => { forgetShareLink(projectId); if (live) setState({ ready: true }); },
@@ -50,6 +52,6 @@ export function useShareLinkJoin(projectId: string): { ready: boolean; problem?:
       },
     );
     return () => { live = false; };
-  }, [projectId]);
+  }, [projectId, asGuest]);
   return state;
 }

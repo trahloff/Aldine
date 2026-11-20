@@ -400,6 +400,7 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
   const [role, setRole] = useState<ShareRole>('review');
   const [label, setLabel] = useState('');
   const [expiry, setExpiry] = useState('');
+  const [guests, setGuests] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   // Shown after a copy that failed (no clipboard on a plain-http address).
   const [shown, setShown] = useState<string | null>(null);
@@ -408,7 +409,7 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
     try {
       await navigator.clipboard.writeText(shareLinkUrl(project.id, link));
       setShown(null);
-      toast(made ? 'Link created and copied. Anyone signed in who opens it gets its role.' : 'Link copied', 'ok');
+      toast(made ? (link.guests ? 'Link created and copied. Anyone who opens it gets its role, with or without an account.' : 'Link created and copied. Anyone signed in who opens it gets its role.') : 'Link copied', 'ok');
     } catch {
       setShown(link.id);
       toast(made ? 'Link created. Copy it from below and send it yourself.' : 'Could not copy the link: select it below and copy it yourself', made ? 'ok' : 'error');
@@ -417,10 +418,11 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
   const create = async () => {
     setBusy('new');
     try {
-      const r = await api.createShareLink(project.id, { role, ...(label.trim() ? { label: label.trim() } : {}), ...(expiry ? { expiresAt: endOfDay(expiry) } : {}) });
+      const r = await api.createShareLink(project.id, { role, ...(label.trim() ? { label: label.trim() } : {}), ...(expiry ? { expiresAt: endOfDay(expiry) } : {}), ...(guests ? { guests: true } : {}) });
       onChange(r);
       setLabel('');
       setExpiry('');
+      setGuests(false);
       await copy(r.link, true);
     } catch (err: any) {
       toast(`Could not create the link: ${err.message}`, 'error');
@@ -448,6 +450,28 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
       setBusy(null);
     }
   };
+  const toggleGuests = async (link: ShareLinkInfo) => {
+    const name = link.label ? `“${link.label}”` : 'this link';
+    if (link.guests && (link.joinedGuests ?? 0) > 0) {
+      const n = link.joinedGuests ?? 0;
+      const ok = await dialogs.confirm({
+        title: `Turn off guests for ${name}?`,
+        body: `${n === 1 ? 'The guest who came in through it loses' : `The ${n} guests who came in through it lose`} access to “${project.name}” now, and anyone of them with it open is cut off. People with an account keep the access the link gave them.`,
+        confirmLabel: 'Turn off guests',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setBusy(link.id);
+    try {
+      onChange(await api.setShareLinkGuests(project.id, link.id, !link.guests));
+      toast(link.guests ? 'Only people with an account can use the link now' : 'Anyone with the link can join now, no account needed', 'ok');
+    } catch (err: any) {
+      toast(`Could not change the link: ${err.message}`, 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
   const expiryText = (l: ShareLinkInfo) => {
     if (!l.expiresAt) return 'No expiry';
     const at = new Date(l.expiresAt);
@@ -458,7 +482,7 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
   return (
     <section className="share__invites" aria-labelledby="share-links-label" data-testid="share-links">
       <div className="menu__label share__label" id="share-links-label">Share links</div>
-      <p className="settings__hint">Anyone signed in who opens a link gets its role. Revoking a link locks its people out at once; people you invited keep their access.</p>
+      <p className="settings__hint">Anyone signed in who opens a link gets its role; a link can also let people in as guests, without an account, under a name they give. Guests never typeset. Revoking a link locks its people out at once; people you invited keep their access.</p>
       {links.length > 0 && (
         <ul role="list" className="share__invite-list">
           {links.map((l) => (
@@ -467,10 +491,16 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
                 <span className="share__invite-to" data-testid="share-link-label">{l.label || (l.token ? 'Unnamed link' : 'Project address')}</span>
                 <span className="share__invite-state" data-testid="share-link-role">{ROLE_NAME[l.role]}</span>
                 <span className="share__invite-state" data-testid="share-link-expiry">{expiryText(l)}</span>
-                <span className="share__invite-state" data-testid="share-link-joined">{l.joined === 1 ? '1 person joined' : `${l.joined} people joined`}</span>
+                <span className="share__invite-state" data-testid="share-link-joined">{l.joined === 1 ? '1 person joined' : `${l.joined} people joined`}{l.joinedGuests ? `, ${l.joinedGuests === 1 ? '1 guest' : `${l.joinedGuests} guests`}` : ''}</span>
+                {l.guests && <span className="share__invite-state" data-testid="share-link-guests">No account needed</span>}
               </div>
               <div className="share__invite-actions">
                 <button className="btn btn--small" onClick={() => copy(l)} data-testid="share-link-copy">Copy link</button>
+                {l.token && (
+                  <button className="btn btn--small btn--ghost" disabled={busy === l.id} onClick={() => toggleGuests(l)} data-testid="share-link-toggle-guests">
+                    {l.guests ? 'Turn off guests' : 'Allow guests'}
+                  </button>
+                )}
                 <button className="btn btn--small btn--ghost" disabled={busy === l.id} onClick={() => revoke(l)} data-testid="share-link-revoke">Revoke</button>
               </div>
               {shown === l.id && <LinkField link={shareLinkUrl(project.id, l)} to={l.label || 'this link'} />}
@@ -483,6 +513,10 @@ function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary
           aria-label="Name of the new link (optional)" data-testid="share-link-new-label" />
         <RoleSelect value={role} onChange={setRole} label="What people with the new link can do" testId="share-link-new-role" />
       </div>
+      <label className="share__guests settings__hint" style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '0 0 6px' }}>
+        <input type="checkbox" checked={guests} onChange={(e) => setGuests(e.target.checked)} data-testid="share-link-new-guests" />
+        Anyone with the link, no account needed
+      </label>
       <div className="share__invite-field">
         <label className="settings__hint" htmlFor="share-link-new-expiry" style={{ margin: 0 }}>Expires after</label>
         <input id="share-link-new-expiry" className="input" type="date" min={todayInput()} value={expiry} onChange={(e) => setExpiry(e.target.value)} data-testid="share-link-new-expiry" />

@@ -124,10 +124,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   if (fs.existsSync(indexFile)) {
     const indexHtml = renderIndexHtml(fs.readFileSync(indexFile, 'utf8'));
     // No page of the app renders inside another page's frame: the OAuth
-    // consent page grants account access on a single click.
+    // consent page grants account access on a single click. A share link's
+    // token arrives in the page's query and must not leave in a Referer.
     const sendIndex = (_req: unknown, reply: FastifyReply) => reply
       .header('content-security-policy', "frame-ancestors 'none'")
       .header('x-frame-options', 'DENY')
+      .header('referrer-policy', 'same-origin')
       .type('text/html').send(stampInstance(indexHtml));
     // The raw index.html never goes on the wire: '/' has its own route, the
     // static plugin is told not to serve directory indexes or the file itself,

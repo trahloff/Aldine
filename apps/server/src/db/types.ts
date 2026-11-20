@@ -80,8 +80,12 @@ export interface ShareLink {
   expiresAt?: string;
   revokedAt?: string;
   /** Who came in through it, so access ends with the link. `id` is an
-   *  account id. */
-  members?: Array<{ id: string; at: string }>;
+   *  account id, or `guest:<random>` for a guest (guest.ts), who also has
+   *  the `name` they gave. */
+  members?: Array<{ id: string; at: string; name?: string }>;
+  /** People without an account may come in through it as guests. Absent on
+   *  links made before guests existed, which then admit accounts only. */
+  guests?: boolean;
 }
 
 export interface ProjectMeta {

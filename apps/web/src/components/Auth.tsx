@@ -1,13 +1,15 @@
 import { createContext, useContext, useEffect, useState, type JSX } from 'react';
+import { useLocation } from 'react-router-dom';
 import { BASE_PATH, withBase } from '../basePath';
-import { api, ApiError, AuthUser, OAuthProviderInfo } from '../api';
+import { api, ApiError, AuthUser, OAuthProviderInfo, type GuestInfo } from '../api';
 import Wordmark from './Wordmark';
 import { OperatorCredit, SupportLink } from './Operator';
 import { INSTANCE } from '../instance';
 import { useDocumentTitle } from '../util/documentTitle';
 import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
 import { projectOfPath } from '../util/projectResume';
-import { keepShareLink } from '../util/shareLink';
+import { keepShareLink, pendingShareLink } from '../util/shareLink';
+import GuestJoin from './GuestJoin';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -33,9 +35,13 @@ interface AuthState {
   clearEmailNotice(): void;
   setUser(u: AuthUser | null): void;
   refresh(): Promise<void>;
+  /** Not signed in, and a guest in this project through a share link: the
+   *  project's page opens, nothing else does (GuestScope). */
+  guest: GuestInfo | null;
+  setGuest(g: GuestInfo | null): void;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {}, guest: null, setGuest: () => {} });
 
 const CONFIRM_PARAM = 'confirm_email';
 const CONFIRMED = 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.';
@@ -56,6 +62,22 @@ const SELF_GATED_PREFIXES = ['/invite/'];
 
 export function useAuth() { return useContext(Ctx); }
 
+/** The project whose page this is, base path stripped, or null. */
+function pageProject(): string | null {
+  const path = window.location.pathname;
+  return path.startsWith(BASE_PATH) ? projectOfPath(path.slice(BASE_PATH.length) || '/') : null;
+}
+
+/** A guest's access covers their project's page alone: anywhere else the
+ *  app is signed out, and the sign-in form comes up. Inside the router. */
+export function GuestScope({ children }: { children: React.ReactNode }) {
+  const { user, guest, setGuest } = useAuth();
+  const { pathname } = useLocation();
+  const away = !user && !!guest && projectOfPath(pathname) !== guest.projectId;
+  useEffect(() => { if (away) setGuest(null); }, [away]);
+  return away ? null : <>{children}</>;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
@@ -68,15 +90,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sendsEmail, setSendsEmail] = useState(false);
   const [signupApproval, setSignupApproval] = useState(false);
   const [emailNotice, setEmailNotice] = useState<EmailNotice | null>(null);
+  const [guest, setGuest] = useState<GuestInfo | null>(null);
   // Arriving from a confirmation link (…/?confirm_email=…). The token stays in
   // the address bar until it is used, so a reload on the sign-in form keeps it.
   const [confirmToken, setConfirmToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get(CONFIRM_PARAM));
 
   const refresh = async () => {
     try {
-      const me = await api.me();
+      const me = await api.me(pageProject());
       setAuthEnabled(me.authEnabled);
       setUser(me.user);
+      setGuest(me.guest ?? null);
       setAdmin(!!me.admin);
       setProviders(me.providers || []);
       setPasswordAuth(me.passwordAuth !== false);
@@ -121,8 +145,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasResetToken = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('reset_token');
   const selfGated = typeof window !== 'undefined' && (SELF_GATED_PATHS.some((p) => window.location.pathname === withBase(p))
     || SELF_GATED_PREFIXES.some((p) => window.location.pathname.startsWith(withBase(p))));
-  if (authEnabled && (!user || hasResetToken) && !selfGated) {
-    return (
+  const projectId = typeof window !== 'undefined' ? pageProject() : null;
+  const guestHere = !user && !!guest && guest.projectId === projectId;
+  if (authEnabled && (!user || hasResetToken) && !selfGated && !(guestHere && !hasResetToken)) {
+    const signIn = (
       <LoginScreen
         providers={providers}
         passwordAuth={passwordAuth}
@@ -145,9 +171,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }}
       />
     );
+    // A share link to the project may let people in without an account.
+    const token = !user && projectId ? linkTokenOnArrival(projectId) : null;
+    if (token && projectId) return <GuestJoin key={projectId} projectId={projectId} token={token} signIn={signIn} onJoined={setGuest} />;
+    return signIn;
   }
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh, guest: user ? null : guest, setGuest }}>{children}</Ctx.Provider>;
+}
+
+/** The share link token project `projectId`'s page came with, kept for
+ *  the session and dropped from the address bar (a reload keeps it; a
+ *  referrer or a bookmark does not get it). */
+function linkTokenOnArrival(projectId: string): string | null {
+  const rest = keepShareLink(projectId, window.location.search);
+  if (rest !== null) window.history.replaceState(window.history.state, '', window.location.pathname + rest + window.location.hash);
+  return pendingShareLink(projectId);
 }
 
 type Mode = 'login' | 'register' | 'forgot' | 'reset';

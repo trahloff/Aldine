@@ -42,9 +42,16 @@ export interface ShareLinkInfo {
   label?: string;
   createdAt: string;
   expiresAt?: string;
-  /** People who came in through it. */
+  /** People who came in through it, guests included. */
   joined: number;
+  /** People without an account may come in through it as guests. Absent from servers before guests. */
+  guests?: boolean;
+  /** Guests among `joined`. */
+  joinedGuests?: number;
 }
+/** Someone without an account, here on one project's share link: `name` is
+ *  how the others see them (with "(guest)"). */
+export interface GuestInfo { projectId: string; id: string; name: string }
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -68,6 +75,8 @@ export interface ProjectSummary {
   canEdit?: boolean;
   /** What you may do here. Absent from servers before 1.17. */
   role?: ShareRole;
+  /** You are a guest here (no account): no typesetting, nothing an account has. */
+  guest?: boolean;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
   remote?: RemoteLink | null;
   /** Server-side push after every autosave commit on main (owner-only toggle). */
@@ -785,7 +794,8 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  /** `project`: the page is that project's; the answer then names the guest this browser is there, if any. */
+  me: (project?: string | null) => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval'; guest?: GuestInfo }>(`/api/auth/me${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   /** Whether the account keeps a Zotero key for its next link; the key itself never comes back. */
   zoteroKey: () => req<{ saved: boolean; userID?: number; username?: string | null }>('/api/zotero/key'),
   forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),
@@ -848,11 +858,20 @@ export const api = {
   share: (id: string, collaborators: string[], previous?: string[], role?: ShareRole) =>
     req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ collaborators, previous, role }) }),
   /** A new share link; `expiresAt` is an ISO time. The answer carries it as `link`. */
-  createShareLink: (id: string, link: { role: ShareRole; label?: string; expiresAt?: string }) =>
+  createShareLink: (id: string, link: { role: ShareRole; label?: string; expiresAt?: string; guests?: boolean }) =>
     req<ProjectSummary & { link: ShareLinkInfo }>(`/api/projects/${id}/links`, { method: 'POST', body: JSON.stringify(link) }),
   /** Ends the link's access at once, for everyone who came in through it. */
   revokeShareLink: (id: string, link: string) =>
     req<ProjectSummary>(`/api/projects/${id}/links/${link}`, { method: 'DELETE' }),
+  /** Let guests in through a link, or no longer (which ends the guests it let in). */
+  setShareLinkGuests: (id: string, link: string, guests: boolean) =>
+    req<ProjectSummary>(`/api/projects/${id}/links/${link}`, { method: 'PATCH', body: JSON.stringify({ guests }) }),
+  /** What a link offers someone not signed in. */
+  peekShareLink: (project: string, token: string) =>
+    req<{ project: string; role: ShareRole; guests: boolean; label?: string }>('/api/share-links/peek', { method: 'POST', body: JSON.stringify({ project, token }) }),
+  /** Come in through a share link as a guest, under `name`. */
+  joinAsGuest: (project: string, token: string, name: string) =>
+    req<{ ok: true; projectId: string; role: ShareRole; guest: GuestInfo }>('/api/share-links/guest', { method: 'POST', body: JSON.stringify({ project, token, name }) }),
   /** Come in through a share link's token. */
   joinShareLink: (project: string, token: string) =>
     req<{ ok: true; projectId: string; role: ShareRole }>('/api/share-links/join', { method: 'POST', body: JSON.stringify({ project, token }) }),

@@ -40,9 +40,10 @@ import { readAvatar, syncAvatar } from './avatars.js';
 import { instance } from './instance.js';
 import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, roleOf, type ListAccess } from './authz.js';
-import { ADDRESS_LINK_ID, LINK_ID_RE, LINK_TOKEN_RE, MAX_ACTIVE_LINKS, MAX_LINK_LABEL, MAX_LINK_MEMBERS, anyActiveLink, isShareRole, linkActive, linkByToken, linkExpired, linksOf, newLinkId, newLinkToken, ownerLinkView, pruneLinks, rolesOf, type ShareLink, type ShareRole } from './sharelinks.js';
+import { ADDRESS_LINK_ID, LINK_ID_RE, isGuestId, LINK_TOKEN_RE, MAX_ACTIVE_LINKS, MAX_LINK_LABEL, MAX_LINK_MEMBERS, anyActiveLink, isShareRole, linkActive, linkByToken, linkExpired, linksOf, newLinkId, newLinkToken, ownerLinkView, pruneLinks, rolesOf, type ShareLink, type ShareRole } from './sharelinks.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
+import { cleanGuestName, guestCookie, guestDisplayName, guestEntry, guestFromRequest, newGuestId } from './guest.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, guestJoinLimiter, guestLinkLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, invalidBranchName, publicBase } from './util.js';
@@ -173,6 +174,7 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
     // False for "Can review" and "Can view": the editor opens read-only.
     canEdit: user !== undefined ? canEdit(meta, user) : undefined,
     role: user !== undefined ? roleOf(meta, user) ?? undefined : undefined,
+    guest: user?.guest,
     zotero: z ? {
       libraryPrefix: z.libraryPrefix,
       collectionKey: z.collectionKey,
@@ -254,6 +256,23 @@ const VIEWER_READS_REFUSED = new Set(['/api/projects/:id/zotero/search']);
 const roleMay = (role: ShareRole, method: string, route: string | undefined) => role === 'edit' || (method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
   ? !VIEWER_READS_REFUSED.has(route ?? '')
   : (role === 'review' ? REVIEWER_WRITES : VIEWER_WRITES).has(route ?? ''));
+/** What a guest (guest.ts) may reach at all, before their link's role
+ *  narrows it further (roleMay): their project's text, comments, history
+ *  and latest PDF. Never a typeset or another use of the compiler, nor
+ *  anything an account has (lists, copies, settings, branches, remotes,
+ *  linked accounts, sharing), so a route added later is closed to guests
+ *  until it is listed here. */
+const GUEST_ROUTES = new Set([
+  ...['', '/files', '/file', '/comments', '/output', '/output/exists', '/compile-status', '/labels', '/bib', '/search', '/wordcount',
+    '/branches', '/branches/unmerged', '/log', '/changes', '/commit/:hash/diff', '/diff-baseline', '/baseline-changes', '/thumbnail', '/archive',
+  ].map((r) => `GET /api/projects/:id${r}`),
+  ...['/synctex', '/comments', '/comments/:cid/reply', '/comments/:cid/resolve', '/comments/:cid/accept', '/file/rename', '/replace', '/commit'].map((r) => `POST /api/projects/:id${r}`),
+  'DELETE /api/projects/:id/comments/:cid', 'PUT /api/projects/:id/file', 'DELETE /api/projects/:id/file',
+]);
+const guestMay = (method: string, route: string | undefined) => GUEST_ROUTES.has(`${method === 'HEAD' ? 'GET' : method} ${route ?? ''}`);
+const GUEST_NO_TYPESET = 'Guests see the PDF the others typeset and cannot typeset it themselves. Sign in to typeset.';
+const GUEST_REFUSED = 'Guests cannot do this. Sign in or create an account to do it.';
+const GUEST_ENDED = 'Your guest access to this project has ended: the owner turned the link off, it expired, or it no longer admits guests. Ask the owner for a new link.';
 const VIEW_ONLY = 'You can view this project, not change it. Ask its owner for edit access.';
 const REVIEW_ONLY = 'You can review this project: comment and suggest changes, not change it. Ask its owner for edit access.';
 
@@ -318,11 +337,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // sendsEmail: confirmation and reset links go out by mail; without it they
   // are in the server log for the operator to pass on. signup: ALDINE_SIGNUP,
   // so the sign-up form can say up front that new accounts wait for approval.
-  app.get('/api/auth/me', async (req) => {
+  // `?project=`: the page is that project's, and without an account the
+  // answer names the guest this browser is there (guest.ts), if any.
+  app.get<{ Querystring: { project?: string } }>('/api/auth/me', async (req) => {
     const user = reqUser(req);
+    const project = req.query.project;
+    let guest: { projectId: string; id: string; name: string } | undefined;
+    if (!user && auth.AUTH_ENABLED && typeof project === 'string' && PROJECT_ID_RE.test(project)) {
+      const g = await guestFromRequest(req.headers.cookie, project);
+      if (g && g !== 'ended') guest = { projectId: project, id: g.id, name: g.name };
+    }
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
       mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
+      ...(guest ? { guest } : {}),
     };
   });
 
@@ -788,12 +816,20 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     // Renewed on API requests only: a shared cache may store the public
     // response of a static file, Set-Cookie and all.
     const session = auth.AUTH_ENABLED ? await auth.resumeSession(req.headers.cookie, req.url.startsWith('/api/')) : null;
-    const user = session?.user ?? null;
+    let user = session?.user ?? null;
+    // A guest is someone only on their own project's routes: everywhere
+    // else the request is anonymous, so no account surface can see one.
+    const projectId = (req.params as { id?: string } | undefined)?.id;
+    if (!user && auth.AUTH_ENABLED && projectId !== undefined && req.routeOptions.url?.startsWith('/api/projects/:id')) {
+      const guest = await guestFromRequest(req.headers.cookie, projectId);
+      if (guest === 'ended') (req as any)._guestEnded = true;
+      else if (guest) user = guest;
+    }
     (req as any)._user = user;
     // A route that sets the session cookie itself (sign-in, sign-out, a
     // password change) sets it after this, and the browser keeps the last.
     if (session?.cookie) reply.header('set-cookie', session.cookie);
-    if (user) noteActivity(user.id);
+    if (user && !user.guest) noteActivity(user.id);
   });
   await registerAdminRoutes(app, reqUser);
 
@@ -830,7 +866,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       let meta: store.ProjectMeta;
       try { meta = await store.readMeta(id); } catch { return reply.code(404).send({ error: 'project not found' }); }
       const user = reqUser(req);
-      if (!user) return reply.code(401).send({ error: 'Sign in required' });
+      if (!user) return (req as any)._guestEnded ? reply.code(403).send({ error: GUEST_ENDED, code: 'guest-ended' }) : reply.code(401).send({ error: 'Sign in required' });
       const role = roleOf(meta, user);
       if (!role) return reply.code(403).send({ error: 'You do not have access to this project' });
       // Project-scoped tokens: enforce the scope here, in the one shared guard,
@@ -841,6 +877,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
       if (scope && !tokenMayUseProjectRoute(req.method, req.routeOptions.url)) {
         return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
+      }
+      if (user.guest && !guestMay(req.method, route)) {
+        return reply.code(403).send({ error: route === '/api/projects/:id/compile' ? GUEST_NO_TYPESET : GUEST_REFUSED, code: 'guest' });
       }
       if (!roleMay(role, req.method, route)) return reply.code(403).send({ error: role === 'review' ? REVIEW_ONLY : VIEW_ONLY });
       return;
@@ -1058,7 +1097,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   const linksNarrowed = (before: ShareLink[], after: ShareLink[]) => before.some((l) => {
     if (!linkActive(l)) return false;
     const now = after.find((x) => x.id === l.id);
-    return !now || !linkActive(now) || now.role !== l.role;
+    return !now || !linkActive(now) || now.role !== l.role || (!!l.guests && !now.guests);
   });
 
   // ---------- sharing (owner only) ----------
@@ -1161,8 +1200,9 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   // Each link has its own token and role; the owner names it, may give it an
   // expiry, and revokes it. Revoking or expiring ends the access of everyone
   // who came in through it, open sessions included, and no one else's.
-  const linkError = (body: { role?: unknown; label?: unknown; expiresAt?: unknown }, partial: boolean): string | null => {
+  const linkError = (body: { role?: unknown; label?: unknown; expiresAt?: unknown; guests?: unknown }, partial: boolean): string | null => {
     if (!(partial && body.role === undefined) && !isShareRole(body.role)) return 'role must be "edit", "review" or "view"';
+    if (body.guests !== undefined && typeof body.guests !== 'boolean') return 'guests must be true or false';
     if (body.label !== undefined && body.label !== null && (typeof body.label !== 'string' || body.label.length > MAX_LINK_LABEL)) return `A link's name is at most ${MAX_LINK_LABEL} characters`;
     if (body.expiresAt !== undefined && body.expiresAt !== null) {
       const at = typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : NaN;
@@ -1173,7 +1213,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   };
   const cleanLabel = (label: unknown) => (typeof label === 'string' ? label.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() : '');
 
-  app.post<{ Params: { id: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown } }>('/api/projects/:id/links', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown; guests?: unknown } }>('/api/projects/:id/links', async (req, reply) => {
     const meta = await requireOwner(req, reply, 'create share links');
     if (!meta) return;
     if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Share links need accounts' });
@@ -1186,14 +1226,17 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       id: newLinkId(), token: newLinkToken(), role: body.role as ShareRole, createdAt: new Date().toISOString(),
       ...(label ? { label } : {}),
       ...(typeof body.expiresAt === 'string' ? { expiresAt: new Date(Date.parse(body.expiresAt)).toISOString() } : {}),
+      ...(body.guests === true ? { guests: true } : {}),
     };
     const saved = await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), [...linksOf(m), link]) }));
     return { ...(await publicMeta(saved, reqUser(req))), link: ownerLinkView(link) };
   });
 
-  // A new name, role or expiry (null clears the name or the expiry). A
-  // narrower role applies to open sessions at once.
-  app.patch<{ Params: { id: string; link: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown } }>('/api/projects/:id/links/:link', async (req, reply) => {
+  // A new name, role, expiry (null clears the name or the expiry) or guest
+  // setting. A narrower role applies to open sessions at once; closing a
+  // link to guests also forgets its guests, so opening it again later
+  // brings none of them back.
+  app.patch<{ Params: { id: string; link: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown; guests?: unknown } }>('/api/projects/:id/links/:link', async (req, reply) => {
     const meta = await requireOwner(req, reply, 'change share links');
     if (!meta) return;
     const body = req.body ?? {};
@@ -1201,14 +1244,20 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (bad) return reply.code(400).send({ error: bad });
     const before = linksOf(meta).find((l) => l.id === req.params.link && !l.revokedAt);
     if (!before) return reply.code(404).send({ error: 'No such share link on this project' });
+    if (body.guests === true && !before.token) return reply.code(400).send({ error: 'The project\'s address admits accounts only. Make a new link for guests.' });
     const saved = await store.updateMeta(meta.id, (m) => ({
       ...m,
       share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => {
         if (l.id !== before.id) return l;
-        const { label: _l, expiresAt: _e, ...rest } = l;
+        const { label: _l, expiresAt: _e, guests: _g, members, ...rest } = l;
         const label = body.label === undefined ? l.label : cleanLabel(body.label);
         const expiresAt = body.expiresAt === undefined ? l.expiresAt : typeof body.expiresAt === 'string' ? new Date(Date.parse(body.expiresAt)).toISOString() : undefined;
-        return { ...rest, role: isShareRole(body.role) ? body.role : l.role, ...(label ? { label } : {}), ...(expiresAt ? { expiresAt } : {}) };
+        const guests = body.guests === undefined ? !!l.guests : body.guests === true;
+        const kept = guests ? members : members?.filter((x) => !isGuestId(x.id));
+        return {
+          ...rest, role: isShareRole(body.role) ? body.role : l.role, ...(label ? { label } : {}), ...(expiresAt ? { expiresAt } : {}),
+          ...(guests ? { guests: true } : {}), ...(kept?.length ? { members: kept } : {}),
+        };
       })),
     }));
     if (linksNarrowed([before], linksOf(saved))) recheckSessions(meta.id);
@@ -1259,6 +1308,80 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       meta = saved;
     }
     return { ok: true, projectId: meta.id, role: roleOf(meta, user) };
+  });
+
+  /** The active link `token` opens on project `projectId`, or the reply
+   *  that says why there is none (sent). */
+  const activeLinkFor = async (reply: FastifyReply, projectId: string, token: string): Promise<{ meta: store.ProjectMeta; link: ShareLink } | null> => {
+    const unknown = () => { reply.code(404).send({ error: 'This share link does not work. Check that you copied all of it, or ask the project owner for a new one.', code: 'unknown' }); return null; };
+    if (!PROJECT_ID_RE.test(projectId) || !LINK_TOKEN_RE.test(token)) return unknown();
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(projectId); } catch { return unknown(); }
+    if (meta.deletedAt) return unknown();
+    const link = linkByToken(meta, token);
+    if (!link) return unknown();
+    if (link.revokedAt) { reply.code(410).send({ error: 'The owner turned this share link off. Ask them for a new one.', code: 'revoked' }); return null; }
+    if (linkExpired(link)) { reply.code(410).send({ error: `This share link expired on ${link.expiresAt!.slice(0, 10)}. Ask the project owner for a new one.`, code: 'expired' }); return null; }
+    return { meta, link };
+  };
+  const bodyString = (v: unknown) => (typeof v === 'string' ? v : '');
+
+  // What a link offers someone who is not signed in, before they choose
+  // between joining as a guest and signing in: the token is the credential,
+  // so this says no more than the link itself would.
+  app.post<{ Body: { project?: unknown; token?: unknown } }>('/api/share-links/peek', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Share links need accounts' });
+    if (!(await visitLimiter.take(clientKey(req, reqUser(req)?.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+    const found = await activeLinkFor(reply, bodyString(req.body?.project), bodyString(req.body?.token));
+    if (!found) return;
+    const { meta, link } = found;
+    return { project: meta.name, role: link.role, guests: !!link.guests, ...(link.label ? { label: link.label } : {}) };
+  });
+
+  // Come in as a guest: no account, a name, and the link's token. The guest
+  // is recorded on the link like an account (and counts toward its member
+  // places), and this browser gets a guest cookie for the project
+  // (guest.ts). A browser that is already a guest through the same link
+  // keeps its guest and only changes the name.
+  app.post<{ Body: { project?: unknown; token?: unknown; name?: unknown } }>('/api/share-links/guest', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Share links need accounts' });
+    if (reqUser(req)) {
+      return reply.code(409).send({ error: 'You are signed in. Open the link again to join with your account.', code: 'signed-in' });
+    }
+    if (!(await guestJoinLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many guests joined from this network just now. Try again in a minute.' });
+    const name = cleanGuestName(req.body?.name);
+    if (!name) return reply.code(400).send({ error: 'Enter the name the others see you by, up to 60 characters.', code: 'name' });
+    const found = await activeLinkFor(reply, bodyString(req.body?.project), bodyString(req.body?.token));
+    if (!found) return;
+    const { meta, link } = found;
+    if (!link.guests) return reply.code(403).send({ error: 'This link opens the project for accounts only. Sign in or create an account to open it.', code: 'account-only' });
+    const prev = guestEntry(req.headers.cookie, meta.id);
+    const kept = prev && prev.linkId === link.id && link.members?.some((m) => m.id === prev.guestId) ? prev.guestId : null;
+    const full = () => reply.code(409).send({ error: `${MAX_LINK_MEMBERS} people have joined through this link already. Ask the project owner for a new one.`, code: 'full' });
+    if (!kept) {
+      if ((link.members?.length ?? 0) >= MAX_LINK_MEMBERS) return full();
+      if (!(await guestLinkLimiter.take(`${meta.id}:${link.id}`))) return reply.code(429).send({ error: 'Many guests joined through this link just now. Try again in a minute.' });
+    }
+    const guestId = kept ?? newGuestId();
+    const at = new Date().toISOString();
+    let refused: 'revoked' | 'account-only' | 'full' | null = null;
+    await store.updateMeta(meta.id, (m) => {
+      const now = linksOf(m).find((l) => l.id === link.id);
+      // Changed since the read above: revoked, expired, closed to guests or full.
+      if (!now || !linkActive(now)) { refused = 'revoked'; return null; }
+      if (!now.guests) { refused = 'account-only'; return null; }
+      const members = now.members ?? [];
+      const mine = members.find((x) => x.id === guestId);
+      if (!mine && members.length >= MAX_LINK_MEMBERS) { refused = 'full'; return null; }
+      if (!mine && kept) { refused = 'revoked'; return null; }
+      const next = mine ? members.map((x) => (x.id === guestId ? { ...x, name } : x)) : [...members, { id: guestId, at, name }];
+      return { ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => (l.id === link.id ? { ...l, members: next } : l))) };
+    });
+    if (refused === 'full') return full();
+    if (refused === 'account-only') return reply.code(403).send({ error: 'This link opens the project for accounts only. Sign in or create an account to open it.', code: 'account-only' });
+    if (refused) return reply.code(410).send({ error: 'The owner turned this share link off. Ask them for a new one.', code: 'revoked' });
+    reply.header('set-cookie', guestCookie(req.headers.cookie, meta.id, link.id, guestId));
+    return { ok: true, projectId: meta.id, role: link.role, guest: { projectId: meta.id, id: guestId, name: guestDisplayName(name) } };
   });
 
   /** The address an invitation link is copied with: the configured public

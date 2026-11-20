@@ -313,6 +313,15 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
   and project lists included, and nobody the owner invited by name. Link
   sharing from before 1.17 keeps working at the project's address as one
   link the owner can revoke.
+- **AUTH-11** — The owner lets a share link admit guests. Someone without an
+  account opens it in a fresh browser, gives a name (the link's name filled
+  in), and works with the link's role in that project only, shown to the
+  others as "Name (guest)" on their cursor, comments and commits. A guest
+  never typesets and reaches nothing an account has (project list, copies,
+  settings, branches, tokens, remotes, invitations). Revoking the link, its
+  expiry or turning guests off ends their access at once. Joins are rate
+  limited per address and per link, and guests count toward the link's
+  500 places.
 - **AUTH-9** — Opening someone else's project for the first time puts none
   of Claude's earlier work up for review. Revert asks first, saying whose
   commits it undoes, and offers Undo.

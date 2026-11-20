@@ -133,7 +133,8 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   open or not, with match case, whole word and regular expressions; Replace
   all changes open documents live for everyone and lands as one commit.
 - **Multi-user auth** (optional): set `AUTH_ENABLED=1` for login, per-project
-  ownership, and sharing (invite-only or link). Google, GitHub & ORCID SSO,
+  ownership, and sharing (invitations, or share links with a role, an
+  expiry and, if the owner allows it, guests without an account). Google, GitHub & ORCID SSO,
   your own OpenID Connect provider (Keycloak, Authentik, Authelia, Pocket ID;
   [docs/OIDC.md](docs/OIDC.md)), or email/password (scrypt-hashed, revocable HTTP-only-cookie sessions);
   `ALDINE_SSO_ONLY=1` disables passwords entirely. Off by default

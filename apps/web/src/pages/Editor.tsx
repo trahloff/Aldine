@@ -136,6 +136,8 @@ const VIEWER_REFUSES = new Set([...SHOWCASE_REFUSES].filter((c) => c !== 'commen
 const FORMATTABLE = /\.(tex|sty|cls|bib)$/i;
 /** Palette commands that reconfigure the project, which a link visitor may not (with the engine ones). */
 const VISITOR_REFUSES = new Set(['stop-on-error', 'manual-commits']);
+/** Palette commands a guest (no account) is refused, with the engine and remote ones: no typesetting, nothing an account has. */
+const GUEST_REFUSES = new Set([...VISITOR_REFUSES, 'typeset', 'typeset-clean', 'make-copy', 'connect-claude', 'format-document', 'newbranch']);
 
 /** The card over the editor when the session ends while it is open. */
 const SESSION_ENDED: ProjectLoadError = { reason: 'signed-out', message: 'Sign in required', status: 401 };
@@ -277,12 +279,17 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled, user, setUser } = useAuth();
+  const { authEnabled, user, setUser, guest } = useAuth();
+  // A guest (no account, here on a share link) never typesets: they see
+  // the PDF the others typeset. A ref, for the typeset callbacks.
+  const asGuest = authEnabled && !user && guest?.projectId === id;
+  const guestRef = useRef(asGuest);
+  guestRef.current = asGuest;
   // Who collaborators and comment threads see: the account when there is one;
   // the browser's anonymous "Writer N" is only right without accounts (the
   // server applies the same rule to commits).
   const [localName, setLocalNameState] = useState(() => localUser().name);
-  const identity = useMemo(() => (authEnabled && user ? accountIdentity(user) : { ...localUser(), name: localName }), [authEnabled, user, localName]);
+  const identity = useMemo(() => (authEnabled && user ? accountIdentity(user) : asGuest && guest ? accountIdentity({ id: guest.id, name: guest.name }) : { ...localUser(), name: localName }), [authEnabled, user, asGuest, guest, localName]);
   // Bumped whenever the branch's history may have moved (files signal, a
   // revert, an agent session ending) so an open History panel refetches.
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -448,11 +455,11 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
         else showInPlace('unreachable');
       } else if (status === 403 && !open) {
         showInPlace('denied');
-      } else if (status === 401) {
+      } else if (status === 401 && !(open && guestRef.current)) {
         if (open) setSessionEnded(true);
         else showInPlace('signed-out');
       } else {
-        toast(status === 403 ? 'You no longer have access to this project' : err.code === 'trashed' ? err.message : 'Project not found', 'error');
+        toast(err.code === 'guest-ended' || err.code === 'trashed' ? err.message : status === 403 || status === 401 ? 'You no longer have access to this project' : 'Project not found', 'error');
         navigate('/');
       }
       return null;
@@ -466,17 +473,18 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     try {
       await api.getProject(id);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) { setSessionEnded(true); return; }
-      if (!(err instanceof ApiError) || (err.status !== 403 && err.status !== 404)) return;
-      toast(err.status === 403 ? `You no longer have access to “${project?.name ?? 'this project'}”` : err.code === 'trashed' ? err.message : 'Project not found', 'error');
+      if (err instanceof ApiError && err.status === 401 && !guestRef.current) { setSessionEnded(true); return; }
+      if (!(err instanceof ApiError) || (err.status !== 401 && err.status !== 403 && err.status !== 404)) return;
+      toast(err.code === 'guest-ended' || err.code === 'trashed' ? err.message : err.status === 404 ? 'Project not found' : `You no longer have access to “${project?.name ?? 'this project'}”`, 'error');
       navigate('/');
     }
   }, [id, project?.name]);
 
-  useEffect(() => onSignedOut(() => { if (openedRef.current === id) setSessionEnded(true); }), [id]);
+  // A guest has no session to end: their access ending is the project's 403.
+  useEffect(() => onSignedOut(() => { if (openedRef.current === id && !guestRef.current) setSessionEnded(true); }), [id]);
 
   // The project list's "opened" and, for a share-link visitor, its listing.
-  useEffect(() => { api.markOpened(id, branch).catch(() => { /* the list is a convenience */ }); }, [id, branch]);
+  useEffect(() => { if (!asGuest) api.markOpened(id, branch).catch(() => { /* the list is a convenience */ }); }, [id, branch, asGuest]);
 
   // Whole-document word count (the include graph from the root file). The
   // status bar swaps the active file's server count for the live editor count,
@@ -623,6 +631,15 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     const clean = !!opts?.clean;
     const draft = !clean && !!opts?.draft;
     const trigger = opts?.trigger ?? 'user';
+    if (guestRef.current) {
+      try {
+        const { result: run } = await api.compileStatus(id, branch);
+        if (branchRef.current !== branch || !run || !shouldAdoptRun(shownRunIdRef.current, run.runId, false)) return;
+        shownRunIdRef.current = run.runId;
+        setCompile({ status: run.ok ? 'ok' : 'error', result: run, trigger: 'adopted' });
+      } catch { /* the PDF on screen stays */ }
+      return;
+    }
     if (compilingRef.current) {
       pendingRef.current = true;
       if (!draft) pendingFullRef.current = true;
@@ -1224,7 +1241,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   /** A co-author's typeset finished: with auto-typeset on, the preview follows
    *  the text this tab already shows them typing, without a run of its own. */
   const onTypesetFinished = useCallback(async () => {
-    if (!autoRef.current || compilingRef.current) return; // our own run is the newer one
+    if ((!autoRef.current && !guestRef.current) || compilingRef.current) return; // our own run is the newer one
     let st;
     try { st = await api.compileStatus(id, branch); } catch { return; }
     if (branchRef.current !== branch || !st.result) return;
@@ -1868,11 +1885,15 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     for (const c of pluginCommands) cmds.push({ id: `plugin-${c.id}`, group: c.group || 'Plugins', title: c.title, keywords: c.keywords, run: () => c.run() });
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
+    if (asGuest) {
+      return cmds.filter((c) => !GUEST_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-')
+        && !(project?.canEdit === false && VIEWER_REFUSES.has(c.id)) && !(c.id === 'comment' && project?.role === 'view'));
+    }
     if (authEnabled && project?.canEdit === false) return cmds.filter((c) => !VIEWER_REFUSES.has(c.id) && !(c.id === 'comment' && project.role === 'view') && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, project?.role, previewing, phone, shown, formatDocument]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, project?.role, previewing, phone, shown, formatDocument, asGuest]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -2008,7 +2029,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             onSwitch={switchBranch}
             onChanged={() => { loadProject(); loadFiles(); }}
             onPublish={!project.remote && isProjectOwner && !locked ? () => setPublishOpen(true) : undefined}
-            readOnly={locked}
+            readOnly={locked || asGuest}
             manual={!!project.manualCommits}
           />
         )}
@@ -2038,7 +2059,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             );
           })}
         </div>
-        <div className="toolbar__group split-btn">
+        {!asGuest && <div className="toolbar__group split-btn">
           <button
             className="btn btn--primary split-btn__main"
             onClick={() => doCompile()}
@@ -2065,7 +2086,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
           >
             <IconChevronDown />
           </MenuButton>
-        </div>
+        </div>}
         <button
           className="btn btn--ghost toolbar__more"
           onClick={(e) => setMoreOpen({ keyboard: e.detail === 0 })}
@@ -2112,7 +2133,14 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
           <button className="btn btn--small btn--primary" onClick={copyShowcase} disabled={copying} data-testid="showcase-copy">{copying ? 'Copying…' : 'Make a copy'}</button>
         </div>
       )}
-      {viewOnly && (
+      {asGuest && (
+        <div className="showcase-note" role="status" data-testid="guest-note">
+          <span className="showcase-note__text">You’re a guest here, as {guest?.name}. {project.role === 'edit'
+            ? 'You can edit the text with the others.'
+            : project.role === 'review' ? 'You can comment and suggest changes.' : 'You can read the project.'} The PDF is the one the others typeset last; sign in to typeset it yourself.</span>
+        </div>
+      )}
+      {viewOnly && !asGuest && (
         <div className="showcase-note" role="status" data-testid="view-only-note">
           <span className="showcase-note__text">{project.role === 'view'
             ? <>You can view this project. To comment or edit, ask {project.ownerName || 'its owner'} for access.</>
@@ -2314,7 +2342,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 onDelete={deleteComment}
                 onReply={replyToComment}
                 onAccept={acceptSuggestion}
-                canDelete={(c) => !authEnabled || (!!project.isMember && !viewOnly) || (!!c.authorId && c.authorId === user?.id)}
+                canDelete={(c) => !authEnabled || (!!project.isMember && !viewOnly) || (!!c.authorId && c.authorId === (user?.id ?? (asGuest ? guest?.id : undefined)))}
                 canAccept={!locked}
                 fileOrder={Object.keys(docWords?.files ?? {})}
                 active={activeComment}
