@@ -300,21 +300,24 @@ test.describe('a jump while the source still coasts (#338)', () => {
 /**
  * acmart and its kind keep the title block until \maketitle typesets it, so
  * SyncTeX answers with the \maketitle line for a double-click on the
- * abstract. This preamble stores and typesets it the same way, which any TeX
- * Live can compile.
+ * abstract. This package stores and typesets it the same way, and adds a
+ * line of its own as acmart adds its reference format; any TeX Live can
+ * compile it.
  */
+const TITLE_STY = [
+  '\\long\\def\\storeabstract#1{\\long\\gdef\\@storedabstract{#1}}',
+  '\\renewcommand\\maketitle{\\noindent Reference format printed by the class.\\par\\@storedabstract\\par}',
+  '',
+].join('\n');
 const TITLE_BLOCK = [
-  '\\documentclass{article}', // 1
-  '\\makeatletter', // 2
-  '\\long\\def\\storeabstract#1{\\long\\gdef\\@storedabstract{#1}}', // 3
-  '\\renewcommand\\maketitle{\\noindent Reference format printed by the class.\\par\\@storedabstract\\par}', // 4
-  '\\makeatother', // 5
-  '\\begin{document}', // 6
-  '\\storeabstract{%', // 7
-  'Coastal wetlands store carbon in their sediments for centuries.', // 8
-  '}', // 9
+  '\\documentclass{article}',
+  '\\usepackage{titleblock}',
+  '\\begin{document}',
+  '\\storeabstract{%',
+  'Coastal wetlands store carbon in their sediments for centuries.',
+  '}',
   ...Array.from({ length: 300 }, (_, k) => `% filler ${k} keeps the abstract far above the body`),
-  '\\maketitle', // 310
+  '\\maketitle',
   ...Array.from({ length: 40 }, (_, k) => [`\\section{Part ${k + 1}}`, para(k), '']).flat(),
   '\\end{document}',
   '',
@@ -328,8 +331,10 @@ test.describe('a double-click on a title block that \\maketitle typesets (#338)'
   test('lands on the source line of the clicked text, or says why it lands on \\maketitle', async ({ page, request }) => {
     const id = await createProject(request, 'Title block jump');
     try {
-      const res = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: TITLE_BLOCK } });
-      expect(res.ok()).toBeTruthy();
+      for (const [path, content] of Object.entries({ 'main.tex': TITLE_BLOCK, 'titleblock.sty': TITLE_STY })) {
+        const res = await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path, content } });
+        expect(res.ok()).toBeTruthy();
+      }
       await openProject(page, id);
       await page.getByTestId('typeset-button').click();
       await expect(page.locator('canvas.pdf-page').first()).toBeVisible({ timeout: 120_000 });
