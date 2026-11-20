@@ -10,6 +10,11 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
  * target, which in a long document drifts thousands of pixels off screen.
  * The hold re-centres the target while the heights settle, until the reader
  * scrolls, clicks or types.
+ *
+ * A scroll gesture keeps sending its wheel events, a trackpad's momentum
+ * included, to the scroller it began on after the pointer has moved away, so
+ * a jump made from the PDF while the source still coasts gets them too. Only
+ * a wheel over the editor is the reader's; the others are held against.
  */
 
 const holdJump = StateEffect.define<number>({ map: (pos, changes) => changes.mapPos(pos) });
@@ -21,7 +26,7 @@ const AFTER_FIX_MS = 500;
 const MAX_MS = 5000;
 /** The target counts as placed while it sits this far (of the height) from either edge. */
 const BAND = 0.15;
-const USER_EVENTS = ['wheel', 'mousedown', 'touchstart'] as const;
+const USER_EVENTS = ['mousedown', 'touchstart'] as const;
 
 /** Effects that scroll `pos` to the middle of the editor and keep it there while heights settle. */
 export function jumpEffects(pos: number): StateEffect<unknown>[] {
@@ -37,8 +42,17 @@ class Hold {
   constructor(readonly view: EditorView) {
     // On the scroller, not the content: dragging the scrollbar is the reader's too.
     for (const type of USER_EVENTS) view.scrollDOM.addEventListener(type, this.release, { passive: true });
+    view.scrollDOM.addEventListener('wheel', this.wheel, { passive: true });
     view.dom.addEventListener('keydown', this.release);
   }
+
+  wheel = (e: WheelEvent) => {
+    if (this.pos < 0) return;
+    const box = this.view.scrollDOM.getBoundingClientRect();
+    const over = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+    if (over) { this.release(); return; }
+    this.until = Math.min(this.started + MAX_MS, Math.max(this.until, performance.now() + AFTER_FIX_MS));
+  };
 
   update(u: ViewUpdate) {
     for (const tr of u.transactions) {
@@ -88,6 +102,7 @@ class Hold {
   destroy() {
     this.release();
     for (const type of USER_EVENTS) this.view.scrollDOM.removeEventListener(type, this.release);
+    this.view.scrollDOM.removeEventListener('wheel', this.wheel);
     this.view.dom.removeEventListener('keydown', this.release);
   }
 }
