@@ -8,6 +8,7 @@ import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
 import ProjectUnavailable, { type ProjectLoadError } from '../components/ProjectUnavailable';
 import { forgetProjectResume } from '../util/projectResume';
+import { forgetShareLink, keepShareLink, pendingShareLink } from '../util/shareLink';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
@@ -154,6 +155,10 @@ export default function Editor() {
   const imported = (useLocation().state as { import?: ImportedProject['import'] } | null)?.import;
   const toast = useToast();
   const dialogs = useDialogs();
+  // A share link's token leaves the address bar before anything loads, so
+  // it is neither bookmarked nor sent on as a referrer.
+  const [linkQuery] = useState(() => keepShareLink(id, window.location.search));
+  useEffect(() => { if (linkQuery !== null) navigate({ search: linkQuery, hash: window.location.hash }, { replace: true }); }, [linkQuery]);
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   useDocumentTitle(project?.name);
@@ -430,6 +435,21 @@ export default function Editor() {
   const loadProject = useCallback(async () => {
     // A sign-in that started here has come back: Home must not bring it here again.
     forgetProjectResume();
+    // A share link's token: kept through a sign-in, spent once the server
+    // has let this account in, and dropped when the link no longer works.
+    let linkProblem: string | undefined;
+    const token = pendingShareLink(id);
+    if (token) {
+      try {
+        await api.joinShareLink(id, token);
+        forgetShareLink(id);
+      } catch (err: any) {
+        if (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 401 && err.status !== 429) {
+          forgetShareLink(id);
+          linkProblem = err.message;
+        }
+      }
+    }
     try {
       const p = await api.getProject(id);
       setProject(p);
@@ -441,7 +461,7 @@ export default function Editor() {
       const open = openedRef.current === id;
       // A project still on screen is one this page showed before, or this one
       // after its session ended.
-      const showInPlace = (reason: ProjectLoadError['reason']) => { setProject(null); setLoadError({ reason, message: err.message, status }); };
+      const showInPlace = (reason: ProjectLoadError['reason']) => { setProject(null); setLoadError({ reason, message: err.message, status, ...(linkProblem ? { linkProblem } : {}) }); };
       if (status === 0 || status >= 500) {
         if (open) toast(`Could not refresh the project: ${err.message}`, 'error');
         else showInPlace('unreachable');
@@ -1332,10 +1352,11 @@ export default function Editor() {
 
   const startComment = useCallback(() => {
     if (!activeFile || project?.readOnly) return;
+    if (authEnabled && project?.role === 'view') { toast('You can view this project, not comment on it. Ask its owner for review access.', 'info'); return; }
     const sel = codeRef.current?.getSelection();
     if (!sel) { toast('Select some text to comment on first.', 'info'); return; }
     setComposing(sel);
-  }, [activeFile, project?.readOnly, toast]);
+  }, [activeFile, project?.readOnly, project?.role, authEnabled, toast]);
 
   // The composer closes only once the server has the comment: a refusal
   // leaves it open with the text, and Comment tries again.
@@ -1865,11 +1886,11 @@ export default function Editor() {
     for (const c of pluginCommands) cmds.push({ id: `plugin-${c.id}`, group: c.group || 'Plugins', title: c.title, keywords: c.keywords, run: () => c.run() });
     // A showcase refuses every write; these commands would only fail or open nothing.
     if (project?.readOnly) return cmds.filter((c) => !SHOWCASE_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
-    if (authEnabled && project?.canEdit === false) return cmds.filter((c) => !VIEWER_REFUSES.has(c.id) && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
+    if (authEnabled && project?.canEdit === false) return cmds.filter((c) => !VIEWER_REFUSES.has(c.id) && !(c.id === 'comment' && project.role === 'view') && !c.id.startsWith('engine-') && !c.id.startsWith('remote-'));
     // Someone here on a share link may not reconfigure the project: these would only be refused.
     if (authEnabled && project && !project.isMember) return cmds.filter((c) => !VISITOR_REFUSES.has(c.id) && !c.id.startsWith('engine-'));
     return cmds;
-  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, previewing, phone, shown, formatDocument]);
+  }, [pluginCommands, files, activeFile, id, branch, auto, spellcheck, vim, toggleVim, changeMarks, toggleChangeMarks, doCompile, toggleAuto, jumpToPdf, jumpToSource, compile.result != null, setEngine, setStopOnFirstError, project?.stopOnFirstError, setManualCommits, project?.manualCommits, project?.remote, project?.readOnly, project?.isOwner, project?.isMember, authEnabled, insertAtCursor, loadFiles, loadProject, toast, ignored, setIgnored, draftTypeset, startComment, keys.typeset, keys.jump, keys.comment, keys.search, openSearch, sidebarHidden, setSidebar, mode, paneMode, appearance, reviewClaudeEdits, onDeleted, identity, project?.rootFile, project?.canEdit, project?.role, previewing, phone, shown, formatDocument]);
 
   const allProblems = compile.result?.errors?.filter((e) => e.type !== 'typesetting') || [];
   const errors = allProblems.filter((e) => e.type !== 'warning' || !ignored.includes(warningKey(e.message)));
@@ -1953,6 +1974,8 @@ export default function Editor() {
   // "Can view": the files are as read-only as a showcase's, comments are not.
   const viewOnly = authEnabled && project.canEdit === false && !project.readOnly;
   const locked = !!project.readOnly || viewOnly;
+  // "Can view" reads and typesets; it neither comments nor replies.
+  const noComments = !!project.readOnly || (viewOnly && project.role === 'view');
 
   // The documents a typeset can start from: the ones with \documentclass, and the main one.
 
@@ -2017,7 +2040,7 @@ export default function Editor() {
         <PaletteTrigger label="Search files and commands" onOpen={() => setPaletteOpen(true)} />
         <button className="btn toolbar__wide" onClick={() => setShareOpen(true)} data-testid="share-project" title={canManageSharing ? 'Invite collaborators, share by link, download the PDF or the source' : 'Download the PDF or the source'}>Share</button>
         <button className="btn toolbar__wide" onClick={() => setSettingsOpen(true)} data-testid="project-settings-open" title="Project settings: compiler, main document, TeX Live">Settings</button>
-        {!project.readOnly && (
+        {!noComments && (
           <button className="btn toolbar__wide" onClick={startComment} data-testid="add-comment" title={`Comment on the selected text (${keys.comment})`}>
             Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
           </button>
@@ -2088,7 +2111,7 @@ export default function Editor() {
               { id: 'mode', label: mode === 'visual' ? 'Switch to Source editing' : 'Switch to Visual editing', onSelect: () => switchMode(mode === 'visual' ? 'source' : 'visual'), testId: 'more-mode' } as MenuEntry,
             ] : []),
             { kind: 'separator' },
-            ...(!project.readOnly ? [{ id: 'comment', label: 'Comment on the selection', onSelect: startComment, testId: 'more-comment' } as MenuEntry] : []),
+            ...(!noComments ? [{ id: 'comment', label: 'Comment on the selection', onSelect: startComment, testId: 'more-comment' } as MenuEntry] : []),
             { id: 'share', label: 'Share…', onSelect: () => setShareOpen(true), testId: 'more-share' },
             { id: 'settings', label: 'Settings…', onSelect: () => setSettingsOpen(true), testId: 'more-settings' },
             ...(users.length > 1 ? [{ kind: 'hint', label: `Here now: ${users.map((u) => u.name).join(', ')}`, testId: 'more-presence' } as MenuEntry] : []),
@@ -2109,7 +2132,9 @@ export default function Editor() {
       )}
       {viewOnly && (
         <div className="showcase-note" role="status" data-testid="view-only-note">
-          <span className="showcase-note__text">You can view this project and comment on it. To edit it, ask {project.ownerName || 'its owner'} for edit access.</span>
+          <span className="showcase-note__text">{project.role === 'view'
+            ? <>You can view this project. To comment or edit, ask {project.ownerName || 'its owner'} for access.</>
+            : <>You can review this project: comment on it and suggest changes. To edit it, ask {project.ownerName || 'its owner'} for edit access.</>}</span>
         </div>
       )}
 
@@ -2311,7 +2336,8 @@ export default function Editor() {
                 canAccept={!locked}
                 fileOrder={Object.keys(docWords?.files ?? {})}
                 active={activeComment}
-                readOnly={!!project.readOnly}
+                readOnly={noComments}
+                {...(!project.readOnly ? { readOnlyNote: 'No comments yet. You can view this project, not comment on it.' } : {})}
               />
             </div>
             {/* Always mounted, like the plugin panels: the query, the toggles

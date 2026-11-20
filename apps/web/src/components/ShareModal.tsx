@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { withBase } from '../basePath';
-import { api, ProjectSummary, type ShareRole } from '../api';
+import { api, ProjectSummary, type ShareLinkInfo, type ShareRole } from '../api';
 import { useToast } from './Toast';
 import { useAuth } from './Auth';
 import Modal from './Modal';
@@ -43,7 +43,6 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   const [applied, setApplied] = useState<ProjectSummary | null>(null);
   const toast = useToast();
   const dialogs = useDialogs();
-  const shareUrl = `${location.origin}${withBase(`/p/${project.id}`)}`;
   const fileStem = (project.name || 'document').replace(/[\\/:*?"<>|]/g, '-');
   const outputs = useOutputFiles(downloads?.pdfUrl ?? null);
   const bbl = outputs.find((f) => f.name.endsWith('.bbl'));
@@ -51,21 +50,16 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   // Accepting adds people to the list while the page that opened this
   // dialog still holds the old one: start from the server's.
   const [base, setBase] = useState(project.share?.collaborators || []);
-  const [savedMode, setSavedMode] = useState(project.share?.mode || 'private');
-  // Roles: the entries that can only view, what the link allows, and the
-  // role the people typed into the field get.
-  const [viewers, setViewers] = useState(project.share?.viewers || []);
-  const [linkRole, setLinkRole] = useState<ShareRole>(project.share?.linkRole || 'edit');
+  // Roles: the entries that cannot edit, and the role the people typed into
+  // the field get.
+  const [roles, setRoles] = useState(project.share?.roles || {});
+  const [links, setLinks] = useState<ShareLinkInfo[]>(project.share?.links || []);
   const [inviteRole, setInviteRole] = useState<ShareRole>('edit');
   // A change made here is newer than the server's answer to the fetches
   // below: one to the share for the project's, one to an invitation for the list's.
   const changed = useRef(false);
   const invitesChanged = useRef(false);
   const changeInvites = (list: OwnerInvitation[]) => { invitesChanged.current = true; setInvites(list); };
-  // The mode a radio click is applying; the link is offered only once the
-  // server has it, so a copied link always opens.
-  const [switching, setSwitching] = useState<'private' | 'link' | null>(null);
-  const mode = switching ?? savedMode;
   useEffect(() => {
     if (!invitations) return;
     api.projectInvitations(project.id)
@@ -74,14 +68,13 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     api.getProject(project.id).then((p) => {
       if (!p.share || changed.current) return;
       setBase(p.share.collaborators);
-      setSavedMode(p.share.mode);
-      setViewers(p.share.viewers || []);
-      setLinkRole(p.share.linkRole || 'edit');
+      setRoles(p.share.roles || {});
+      setLinks(p.share.links || []);
     }).catch(() => {});
   }, [invitations, project.id]);
 
   const typedEntries = () => emails.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean);
-  // The mode applies on click; only the address field waits for Save.
+  // Links and roles apply on click; only the address field waits for Save.
   const unsaved = () => (invitations ? typedEntries().length > 0 : typedEntries().join(',') !== base.join(','));
   const finish = () => (result ? onSaved(result.updated) : applied ? onSaved(applied) : onClose());
   const close = async () => {
@@ -99,37 +92,11 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     finish();
   };
 
-  const switchMode = async (next: 'private' | 'link') => {
-    if (next === savedMode || switching) return;
+  /** A change to the links, applied already. */
+  const linksChanged = (updated: ProjectSummary) => {
     changed.current = true;
-    setSwitching(next);
-    try {
-      const updated = await api.shareMode(project.id, next);
-      setSavedMode(updated.share?.mode || next);
-      setApplied(updated);
-      toast(next === 'link'
-        ? `Link sharing on: anyone signed in with the link can ${updated.share?.linkRole === 'view' ? 'view' : 'edit'}`
-        : 'Link sharing off: only you and your collaborators can open the project', 'ok');
-    } catch (err: any) {
-      toast(`Could not change link sharing: ${err.message}`, 'error');
-    } finally {
-      setSwitching(null);
-    }
-  };
-
-  const changeLinkRole = async (next: ShareRole) => {
-    if (next === linkRole || switching) return;
-    changed.current = true;
-    setLinkRole(next);
-    try {
-      const updated = await api.shareMode(project.id, 'link', next);
-      setLinkRole(updated.share?.linkRole || 'edit');
-      setApplied(updated);
-      toast(`Anyone signed in with the link can ${next} now`, 'ok');
-    } catch (err: any) {
-      setLinkRole(linkRole);
-      toast(`Could not change what the link allows: ${err.message}`, 'error');
-    }
+    setLinks(updated.share?.links || []);
+    setApplied(updated);
   };
 
   /** One person's role, with access or invited. */
@@ -137,25 +104,16 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     changed.current = true;
     try {
       const updated = await api.setRole(project.id, who, role);
-      setViewers(updated.share?.viewers || []);
+      setRoles(updated.share?.roles || {});
       setApplied(updated);
-      toast(role === 'view' ? `${who} can only view now` : `${who} can edit now`, 'ok');
+      toast(`${who} ${ROLE_DOES[role]} now`, 'ok');
     } catch (err: any) {
       toast(`Could not change what ${who} can do: ${err.message}`, 'error');
     }
   };
 
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      toast('Link copied', 'ok');
-    } catch {
-      toast('Could not copy the link — select it and copy manually', 'error');
-    }
-  };
-
   const save = async () => {
-    if (busy || switching) return;
+    if (busy) return;
     // Separators people actually paste: commas, semicolons, newlines.
     const typed = typedEntries();
     const bad = typed.filter((e) => !EMAIL_RE.test(e) && !ORCID_RE.test(e));
@@ -169,9 +127,9 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     changed.current = true;
     try {
       const open = new Set(invites.filter((i) => i.state === 'pending').map((i) => i.to));
-      const updated = await api.share(project.id, savedMode, list, base, invitations ? inviteRole : undefined);
+      const updated = await api.share(project.id, list, base, invitations ? inviteRole : undefined);
       if (updated.invitations) changeInvites(updated.invitations);
-      setViewers(updated.share?.viewers || []);
+      setRoles(updated.share?.roles || {});
       const added = addedEntries(base, list).filter((c) => !open.has(c));
       if (added.length === 0) {
         toast('Sharing updated', 'ok');
@@ -189,8 +147,8 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   const remove = async (who: string) => {
     const ok = await dialogs.confirm({
       title: `Remove ${who}?`,
-      body: savedMode === 'link'
-        ? `${who} is no longer a collaborator, but anyone signed in with the link can still open “${project.name}”. To keep them out, choose Invite only as well.`
+      body: links.length
+        ? `${who} loses access to “${project.name}” right away, unless a share link you gave them still lets them in. If they have it open, their edits stop reaching the project. To let them back in, invite them again.`
         : `${who} loses access to “${project.name}” right away. If they have it open, their edits stop reaching the project. To let them back in, invite them again.`,
       confirmLabel: 'Remove access',
       danger: true,
@@ -200,7 +158,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
     try {
       const updated = await api.removeCollaborator(project.id, who);
       setBase(updated.share?.collaborators || []);
-      setViewers(updated.share?.viewers || []);
+      setRoles(updated.share?.roles || {});
       setApplied(updated);
       toast(`Removed ${who}`, 'ok');
     } catch (err: any) {
@@ -209,7 +167,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
   };
 
   const list = invitations && invites.length > 0 && (
-    <InvitationList projectId={project.id} invites={invites} onChange={changeInvites} viewers={viewers} onRole={changeRole} />
+    <InvitationList projectId={project.id} invites={invites} onChange={changeInvites} roles={roles} onRole={changeRole} />
   );
 
   return (
@@ -225,22 +183,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
           </div>
         ) : canManage ? (
           <>
-            <p className="modal__sub">{invitations ? 'Choose who can open this project, and whether they can edit it or only view it.' : 'Choose who can open and edit this project.'}</p>
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-              <input type="radio" name="share-mode" checked={mode === 'private'} disabled={busy || !!switching} onChange={() => switchMode('private')} data-testid="share-private" />
-              <span><strong>Invite only</strong> — you and the collaborators below</span>
-            </label>
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-              <input type="radio" name="share-mode" checked={mode === 'link'} disabled={busy || !!switching} onChange={() => switchMode('link')} data-testid="share-link" />
-              <span><strong>Anyone signed in with the link</strong>{invitations ? '' : ' can edit'} — once they open it, it stays in their project list until they remove it</span>
-            </label>
-            {savedMode === 'link' && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-                {invitations && <RoleSelect value={linkRole} onChange={changeLinkRole} disabled={!!switching} label="What people with the link can do" testId="share-link-role" />}
-                <code data-testid="share-url" style={{ flex: '1 1 auto', minWidth: '6em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--text-s)' }}>{shareUrl}</code>
-                <button className="btn btn--small" style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={copyLink} data-testid="share-copy-link">Copy link</button>
-              </div>
-            )}
+            <p className="modal__sub">{invitations ? 'Choose who can open this project, and whether they can edit it, review it or only view it.' : 'Choose who can open and edit this project.'}</p>
             <label htmlFor="share-emails" className="modal__sub" style={{ display: 'block', margin: '0 0 4px' }}>{invitations ? 'Invite people by email or ORCID iD, comma-separated' : 'Collaborator emails or ORCID iDs, comma-separated'}</label>
             <div className="share__invite-field">
               <input
@@ -255,9 +198,10 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
               />
               {invitations && <RoleSelect value={inviteRole} onChange={setInviteRole} label="What the people you invite can do" testId="share-invite-role" />}
             </div>
-            {authEnabled && <p className="settings__hint" id="share-emails-hint">Each person gets an invitation, and has access once they accept it. People who can view read, typeset and comment; they cannot change the files.</p>}
-            {invitations && base.length > 0 && <PeopleList people={base} viewers={viewers} onRemove={remove} onRole={changeRole} />}
+            {authEnabled && <p className="settings__hint" id="share-emails-hint">Each person gets an invitation, and has access once they accept it. People who can review read, typeset, comment and suggest changes; people who can view read and typeset. Neither can change the files.</p>}
+            {invitations && base.length > 0 && <PeopleList people={base} roles={roles} onRemove={remove} onRole={changeRole} />}
             {list}
+            {invitations && <ShareLinks project={project} links={links} onChange={linksChanged} />}
           </>
         ) : (
           <p className="modal__sub">Download the typeset PDF or the whole source.</p>
@@ -287,7 +231,7 @@ export default function ShareModal({ project, canManage = true, downloads, onClo
           ) : canManage ? (
             <>
               <button className="btn" onClick={close} data-testid="share-close">Close</button>
-              <button className="btn btn--primary" onClick={save} disabled={busy || !!switching} data-testid="share-save">Save</button>
+              <button className="btn btn--primary" onClick={save} disabled={busy} data-testid="share-save">Save</button>
             </>
           ) : (
             <button className="btn" onClick={onClose} data-testid="share-close">Close</button>
@@ -316,22 +260,26 @@ function useOutputFiles(pdfUrl: string | null): OutputFile[] {
   return pdfUrl ? found : [];
 }
 
-/** "Can edit" or "Can view". */
+/** What each role lets a person do, after their name. */
+const ROLE_DOES: Record<ShareRole, string> = { edit: 'can edit', review: 'can comment and suggest changes', view: 'can only view' };
+
+/** "Can edit", "Can review" or "Can view". */
 function RoleSelect({ value, onChange, label, testId, disabled = false }: { value: ShareRole; onChange(role: ShareRole): void; label: string; testId: string; disabled?: boolean }) {
   return (
     <select className="input share__role" value={value} disabled={disabled} aria-label={label} data-testid={testId}
-      onChange={(e) => onChange(e.target.value === 'view' ? 'view' : 'edit')}>
+      onChange={(e) => onChange(e.target.value === 'view' ? 'view' : e.target.value === 'review' ? 'review' : 'edit')}>
       <option value="edit">Can edit</option>
+      <option value="review">Can review</option>
       <option value="view">Can view</option>
     </select>
   );
 }
 
-/** Whether `who` is one of the entries that can only view. */
-const roleOf = (viewers: string[], who: string): ShareRole => (viewers.some((v) => v.toLowerCase() === who.toLowerCase()) ? 'view' : 'edit');
+/** The role of `who`, one of the entries with access or invited. */
+const roleOf = (roles: Record<string, 'review' | 'view'>, who: string): ShareRole => roles[who.toLowerCase()] ?? roles[who.toUpperCase()] ?? roles[who] ?? 'edit';
 
 /** Who has accepted an invitation, each with their role and a way to take their access away. */
-function PeopleList({ people, viewers, onRemove, onRole }: { people: string[]; viewers: string[]; onRemove(who: string): Promise<void>; onRole(who: string, role: ShareRole): Promise<void> }) {
+function PeopleList({ people, roles, onRemove, onRole }: { people: string[]; roles: Record<string, 'review' | 'view'>; onRemove(who: string): Promise<void>; onRole(who: string, role: ShareRole): Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const run = async (who: string, work: () => Promise<void>) => {
     setBusy(who);
@@ -344,7 +292,7 @@ function PeopleList({ people, viewers, onRemove, onRole }: { people: string[]; v
         {people.map((who) => (
           <li key={who} className="share__person" data-testid="person-row" data-to={who}>
             <span className="share__invite-to" data-testid="person-name">{who}</span>
-            <RoleSelect value={roleOf(viewers, who)} disabled={busy === who} onChange={(role) => run(who, () => onRole(who, role))} label={`What ${who} can do`} testId="person-role" />
+            <RoleSelect value={roleOf(roles, who)} disabled={busy === who} onChange={(role) => run(who, () => onRole(who, role))} label={`What ${who} can do`} testId="person-role" />
             <button className="btn btn--small btn--ghost" disabled={busy === who} onClick={() => run(who, () => onRemove(who))}
               aria-label={`Remove ${who}`} data-testid="person-remove">Remove</button>
           </li>
@@ -357,7 +305,7 @@ function PeopleList({ people, viewers, onRemove, onRole }: { people: string[]; v
 /** The project's open, declined and expired invitations, each with what the
  *  owner can do about it. The link works only for the person invited, so it
  *  is safe to send any way the owner likes. */
-function InvitationList({ projectId, invites, onChange, viewers, onRole }: { projectId: string; invites: OwnerInvitation[]; onChange(list: OwnerInvitation[]): void; viewers: string[]; onRole(who: string, role: ShareRole): Promise<void> }) {
+function InvitationList({ projectId, invites, onChange, roles, onRole }: { projectId: string; invites: OwnerInvitation[]; onChange(list: OwnerInvitation[]): void; roles: Record<string, 'review' | 'view'>; onRole(who: string, role: ShareRole): Promise<void> }) {
   const { sendsEmail } = useAuth();
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
@@ -397,7 +345,7 @@ function InvitationList({ projectId, invites, onChange, viewers, onRole }: { pro
             <div className="share__invite-line">
               <span className="share__invite-to">{inv.to}</span>
               <span className={`share__invite-state share__invite-state--${inv.state}`} data-testid="invite-state">{invitationStatus(inv)}</span>
-              <RoleSelect value={roleOf(viewers, inv.to)} disabled={busy === inv.id} label={`What ${inv.to} can do`} testId="invite-role"
+              <RoleSelect value={roleOf(roles, inv.to)} disabled={busy === inv.id} label={`What ${inv.to} can do`} testId="invite-role"
                 onChange={(role) => { setBusy(inv.id); void onRole(inv.to, role).finally(() => setBusy(null)); }} />
             </div>
             <div className="share__invite-actions">
@@ -433,4 +381,113 @@ function LinkField({ link, to }: { link: string; to: string }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
   return <input ref={ref} className="input share__invite-link" readOnly value={link} aria-label={`Invite link for ${to}`} data-testid="invite-link" />;
+}
+
+/** The address a link opens: the project's own, with the link's token. */
+export const shareLinkUrl = (projectId: string, link: Pick<ShareLinkInfo, 'token'>) =>
+  `${location.origin}${withBase(`/p/${projectId}`)}${link.token ? `?link=${link.token}` : ''}`;
+
+/** The end of the chosen day in the owner's time zone, as an ISO time. */
+const endOfDay = (day: string) => new Date(`${day}T23:59:59`).toISOString();
+const todayInput = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const ROLE_NAME: Record<ShareRole, string> = { edit: 'Can edit', review: 'Can review', view: 'Can view' };
+
+/** The project's share links, each with its own role, name and expiry, and
+ *  a way to make one and to revoke one. */
+function ShareLinks({ project, links, onChange }: { project: Pick<ProjectSummary, 'id' | 'name'>; links: ShareLinkInfo[]; onChange(updated: ProjectSummary): void }) {
+  const toast = useToast();
+  const dialogs = useDialogs();
+  const [role, setRole] = useState<ShareRole>('review');
+  const [label, setLabel] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  // Shown after a copy that failed (no clipboard on a plain-http address).
+  const [shown, setShown] = useState<string | null>(null);
+
+  const copy = async (link: ShareLinkInfo, made = false) => {
+    try {
+      await navigator.clipboard.writeText(shareLinkUrl(project.id, link));
+      setShown(null);
+      toast(made ? 'Link created and copied. Anyone signed in who opens it gets its role.' : 'Link copied', 'ok');
+    } catch {
+      setShown(link.id);
+      toast(made ? 'Link created. Copy it from below and send it yourself.' : 'Could not copy the link: select it below and copy it yourself', made ? 'ok' : 'error');
+    }
+  };
+  const create = async () => {
+    setBusy('new');
+    try {
+      const r = await api.createShareLink(project.id, { role, ...(label.trim() ? { label: label.trim() } : {}), ...(expiry ? { expiresAt: endOfDay(expiry) } : {}) });
+      onChange(r);
+      setLabel('');
+      setExpiry('');
+      await copy(r.link, true);
+    } catch (err: any) {
+      toast(`Could not create the link: ${err.message}`, 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const revoke = async (link: ShareLinkInfo) => {
+    const name = link.label ? `“${link.label}”` : 'this link';
+    const who = link.token ? (link.joined === 1 ? 'The person who came in through it loses' : link.joined > 1 ? `The ${link.joined} people who came in through it lose` : 'Everyone who came in through it loses') : 'Everyone who opened the project at its address, without being invited, loses';
+    const ok = await dialogs.confirm({
+      title: `Revoke ${name}?`,
+      body: `${who} access to “${project.name}” now, and anyone with it open is cut off. People you invited by email or ORCID iD keep their access. A revoked link cannot be turned back on: to let people in again, create a new link.`,
+      confirmLabel: 'Revoke link',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(link.id);
+    try {
+      onChange(await api.revokeShareLink(project.id, link.id));
+      toast(link.label ? `Revoked “${link.label}”` : 'Link revoked', 'ok');
+    } catch (err: any) {
+      toast(`Could not revoke the link: ${err.message}`, 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const expiryText = (l: ShareLinkInfo) => {
+    if (!l.expiresAt) return 'No expiry';
+    const at = new Date(l.expiresAt);
+    const day = at.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    return at.getTime() <= Date.now() ? `Expired ${day}` : `Expires ${day}`;
+  };
+
+  return (
+    <section className="share__invites" aria-labelledby="share-links-label" data-testid="share-links">
+      <div className="menu__label share__label" id="share-links-label">Share links</div>
+      <p className="settings__hint">Anyone signed in who opens a link gets its role. Revoking a link locks its people out at once; people you invited keep their access.</p>
+      {links.length > 0 && (
+        <ul role="list" className="share__invite-list">
+          {links.map((l) => (
+            <li key={l.id} className="share__invite" data-testid="share-link-row" data-link-id={l.id}>
+              <div className="share__invite-line">
+                <span className="share__invite-to" data-testid="share-link-label">{l.label || (l.token ? 'Unnamed link' : 'Project address')}</span>
+                <span className="share__invite-state" data-testid="share-link-role">{ROLE_NAME[l.role]}</span>
+                <span className="share__invite-state" data-testid="share-link-expiry">{expiryText(l)}</span>
+                <span className="share__invite-state" data-testid="share-link-joined">{l.joined === 1 ? '1 person joined' : `${l.joined} people joined`}</span>
+              </div>
+              <div className="share__invite-actions">
+                <button className="btn btn--small" onClick={() => copy(l)} data-testid="share-link-copy">Copy link</button>
+                <button className="btn btn--small btn--ghost" disabled={busy === l.id} onClick={() => revoke(l)} data-testid="share-link-revoke">Revoke</button>
+              </div>
+              {shown === l.id && <LinkField link={shareLinkUrl(project.id, l)} to={l.label || 'this link'} />}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="share__invite-field" data-testid="share-link-new">
+        <input className="input" placeholder="Name, e.g. Reviewers" value={label} maxLength={80} onChange={(e) => setLabel(e.target.value)}
+          aria-label="Name of the new link (optional)" data-testid="share-link-new-label" />
+        <RoleSelect value={role} onChange={setRole} label="What people with the new link can do" testId="share-link-new-role" />
+      </div>
+      <div className="share__invite-field">
+        <label className="settings__hint" htmlFor="share-link-new-expiry" style={{ margin: 0 }}>Expires after</label>
+        <input id="share-link-new-expiry" className="input" type="date" min={todayInput()} value={expiry} onChange={(e) => setExpiry(e.target.value)} data-testid="share-link-new-expiry" />
+        <button className="btn btn--small" disabled={busy === 'new'} onClick={create} data-testid="share-link-create">Create link</button>
+      </div>
+    </section>
+  );
 }

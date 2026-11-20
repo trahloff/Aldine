@@ -344,21 +344,23 @@ test.describe('auth', () => {
     await carol.close();
   });
 
-  test('share from the editor toolbar: owner-only access, link mode, copyable link', async ({ page, browser }) => {
+  test('share from the editor toolbar: owner-only access, a share link, invite links', async ({ page, browser }) => {
     const email = uniq();
     await register(page, email);
     const proj = await (await page.request.post('/api/projects', { data: { name: 'Toolbar Share' } })).json();
     await page.goto(`/p/${proj.id}`);
     await expect(page.getByTestId('editor-shell')).toBeVisible();
 
-    // the owner sees Share; the dialog opens with the current (private) mode
+    // the owner sees Share; the dialog opens with no share links yet
     await page.getByTestId('share-project').click();
     await expect(page.getByTestId('share-modal')).toBeVisible();
-    await expect(page.getByTestId('share-private')).toBeChecked();
+    await expect(page.getByTestId('share-link-row')).toHaveCount(0);
 
-    // switching to link mode reveals the URL to send
-    await page.getByTestId('share-link').check();
-    await expect(page.getByTestId('share-url')).toContainText(`/p/${proj.id}`);
+    // a link applies when it is created
+    await page.getByTestId('share-link-new-role').selectOption('edit');
+    await page.getByTestId('share-link-create').click();
+    await expect(page.getByTestId('share-link-row')).toHaveCount(1);
+    await expect(page.getByTestId('share-link-label')).toHaveText('Unnamed link');
     await page.getByTestId('share-emails').fill('not-an-email');
     await page.getByTestId('share-save').click();
     await expect(page.getByTestId('share-modal')).toBeVisible(); // refused, still open
@@ -386,11 +388,11 @@ test.describe('auth', () => {
     const carol = await browser.newContext();
     await carol.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
     const carolPage = await carol.newPage();
-    await carolPage.goto(`/p/${proj.id}`);
+    await carolPage.goto(`/p/${proj.id}?link=${after.share.links[0].token}`);
     await expect(carolPage.getByTestId('editor-shell')).toBeVisible();
     await carolPage.getByTestId('share-project').click();
     await expect(carolPage.getByTestId('share-downloads')).toBeVisible();
-    await expect(carolPage.getByTestId('share-private')).toHaveCount(0);
+    await expect(carolPage.getByTestId('share-links')).toHaveCount(0);
     await expect(carolPage.getByTestId('share-save')).toHaveCount(0);
     await carolPage.getByTestId('share-close').click();
     await carolPage.getByTestId('branch-menu').click();
@@ -399,51 +401,112 @@ test.describe('auth', () => {
     await carol.close();
   });
 
-  test('the link mode applies when chosen: a link copied without Save opens for another account, and Invite only shuts it', async ({ browser }) => {
+  test('share links: one per role, each opens for another account with its role, and revoking one shuts its people out at once', async ({ browser }) => {
     // its own client address keeps it off the sign-in limit the suite shares
-    const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const headers = { 'x-forwarded-for': '203.0.113.62' };
+    const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'], extraHTTPHeaders: headers });
     const page = await owner.newPage();
-    await register(page, uniq());
-    const proj = await (await page.request.post('/api/projects', { data: { name: 'Link Without Save' } })).json();
+    await register(page, uniq(), 'password123', 'Lina Link');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Links For Everyone' } })).json();
+    await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'LINK-TEXT stays.\n' } });
     await page.goto(`/p/${proj.id}`);
-    await expect(page.getByTestId('editor-shell')).toBeVisible();
+    await expect(page.locator('.cm-content')).toContainText('LINK-TEXT');
 
+    // one link per role, each with a name; the one for reviewers expires
+    const urls: Record<string, string> = {};
     await page.getByTestId('share-project').click();
-    await page.getByTestId('share-link').check();
-    await expect(page.locator('.toast', { hasText: 'Link sharing on' })).toBeVisible();
-    await page.getByTestId('share-copy-link').click();
-    await expect(page.locator('.toast', { hasText: 'Link copied' })).toBeVisible();
-    const link = await page.evaluate(() => navigator.clipboard.readText());
-    expect(link).toMatch(new RegExp(`/p/${proj.id}$`));
-    await page.keyboard.press('Escape'); // nothing typed, so nothing to ask about
-    await expect(page.getByTestId('share-modal')).toHaveCount(0);
+    for (const [role, label] of [['edit', 'Co-authors'], ['review', 'Reviewers'], ['view', 'Readers']] as const) {
+      await page.getByTestId('share-link-new-label').fill(label);
+      await page.getByTestId('share-link-new-role').selectOption(role);
+      if (role === 'review') await page.getByTestId('share-link-new-expiry').fill('2099-12-31');
+      await page.getByTestId('share-link-create').click();
+      await expect(page.locator('.toast', { hasText: 'Link created and copied' }).last()).toBeVisible();
+      urls[role] = await page.evaluate(() => navigator.clipboard.readText());
+      expect(urls[role]).toMatch(new RegExp(`/p/${proj.id}\\?link=[A-Za-z0-9_-]{43}$`));
+    }
+    const rows = page.getByTestId('share-link-row');
+    await expect(rows).toHaveCount(3);
+    const reviewersRow = rows.filter({ hasText: 'Reviewers' });
+    await expect(reviewersRow.getByTestId('share-link-role')).toHaveText('Can review');
+    await expect(reviewersRow.getByTestId('share-link-expiry')).toContainText('2099');
+    await expect(rows.filter({ hasText: 'Readers' }).getByTestId('share-link-expiry')).toHaveText('No expiry');
+    await page.getByTestId('share-close').click();
 
-    const visitor = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.62' } });
-    await visitor.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
-    const visitorPage = await visitor.newPage();
-    await visitorPage.goto(link);
-    await expect(visitorPage.getByTestId('editor-shell')).toBeVisible();
-    await expect(visitorPage.locator('.cm-content')).toBeVisible();
+    const visitor = async (name: string) => {
+      const ctx = await browser.newContext({ extraHTTPHeaders: headers });
+      await ctx.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name } });
+      return { ctx, page: await ctx.newPage() };
+    };
+    // the address alone opens nothing
+    const stranger = await visitor('Stan Stranger');
+    await stranger.page.goto(`/p/${proj.id}`);
+    await expect(stranger.page.getByTestId('project-denied')).toBeVisible();
 
-    // typed addresses are what can still be unsaved: closing asks first
+    // Can edit: types, and the owner sees it
+    const ed = await visitor('Ed Editor');
+    await ed.page.goto(urls.edit);
+    await expect(ed.page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    await expect(ed.page).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await expect(ed.page.getByTestId('view-only-note')).toHaveCount(0);
+    await ed.page.locator('.cm-content').click();
+    await ed.page.keyboard.press('End');
+    await ed.page.keyboard.type(' EDITOR-EDIT');
+    await expect(page.locator('.cm-content')).toContainText('EDITOR-EDIT', { timeout: 15_000 });
+
+    // Can review: cannot type, comments and suggests
+    const rita = await visitor('Rita Reviewer');
+    await rita.page.goto(urls.review);
+    await expect(rita.page.getByTestId('view-only-note')).toContainText('You can review this project: comment on it and suggest changes.');
+    await expect(rita.page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    await rita.page.locator('.cm-content').click();
+    await rita.page.keyboard.type('TYPED-BY-RITA');
+    await expect(rita.page.locator('.cm-content')).not.toContainText('TYPED-BY-RITA');
+    const line = await rita.page.locator('.cm-line').first().boundingBox();
+    await rita.page.mouse.dblclick(line!.x + 30, line!.y + line!.height / 2);
+    await rita.page.getByTestId('add-comment').click();
+    await rita.page.getByTestId('comment-body').fill('A REVIEWER NOTE');
+    await rita.page.getByTestId('comment-submit').click();
+    await expect(rita.page.getByTestId('review-panel')).toContainText('A REVIEWER NOTE');
+    await page.getByTestId('tab-review').click();
+    await expect(page.getByTestId('review-panel')).toContainText('A REVIEWER NOTE', { timeout: 15_000 });
+
+    // Can view: reads only, no comments
+    const vic = await visitor('Vic Viewer');
+    await vic.page.goto(urls.view);
+    await expect(vic.page.getByTestId('view-only-note')).toContainText('You can view this project.');
+    await expect(vic.page.locator('.cm-content')).toContainText('LINK-TEXT');
+    await expect(vic.page.getByTestId('add-comment')).toHaveCount(0);
+    expect((await vic.ctx.request.post(`/api/projects/${proj.id}/comments`, { data: { branch: 'main', file: 'main.tex', anchor: { from: 0, to: 4, quote: 'LINK' }, body: 'x' } })).status()).toBe(403);
+
+    // each is on their list, through a link
+    await rita.page.goto('/');
+    await expect(rita.page.getByTestId(`project-menu-${proj.id}`)).toBeVisible();
+    await rita.page.goto(`/p/${proj.id}`);
+    await expect(rita.page.getByTestId('view-only-note')).toBeVisible();
+
+    // revoking the review link asks first, then shuts Rita out at once
     await page.getByTestId('share-project').click();
-    await expect(page.getByTestId('share-link')).toBeChecked();
-    await page.getByTestId('share-emails').fill('someone@example.edu');
+    await reviewersRow.getByTestId('share-link-revoke').click();
+    await expect(page.getByTestId('dialog-title')).toHaveText('Revoke “Reviewers”?');
+    await expect(page.getByRole('dialog').last()).toContainText('The person who came in through it loses access');
+    await expect(page.getByRole('dialog').last()).toContainText('People you invited by email or ORCID iD keep their access.');
+    await page.getByTestId('dialog-confirm').click();
+    await expect(page.locator('.toast', { hasText: 'Revoked “Reviewers”' })).toBeVisible();
+    await expect(rows).toHaveCount(2);
     await page.getByTestId('share-close').click();
-    await expect(page.getByTestId('dialog-title')).toHaveText('Close without inviting?');
-    await page.getByTestId('dialog-cancel').click();
-    await expect(page.getByTestId('share-emails')).toHaveValue('someone@example.edu');
-    await page.getByTestId('share-emails').fill('');
+    // her open editor is cut off and sent home
+    await expect(rita.page.locator('.toast', { hasText: 'You no longer have access' })).toBeVisible({ timeout: 15_000 });
+    expect((await rita.ctx.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    await expect(rita.page.getByTestId(`project-menu-${proj.id}`)).toHaveCount(0);
+    // and the link says so when opened again
+    await rita.page.goto(urls.review);
+    await expect(rita.page.getByTestId('project-denied-link')).toContainText('turned this share link off');
+    // the others keep theirs
+    expect((await ed.ctx.request.get(`/api/projects/${proj.id}`)).status()).toBe(200);
+    expect((await vic.ctx.request.get(`/api/projects/${proj.id}`)).status()).toBe(200);
 
-    // Invite only applies at once too, and shuts the visitor out
-    await page.getByTestId('share-private').check();
-    await expect(page.locator('.toast', { hasText: 'Link sharing off' })).toBeVisible();
-    await expect(page.getByTestId('share-url')).toHaveCount(0);
-    await page.getByTestId('share-close').click();
-    await expect(page.getByTestId('share-modal')).toHaveCount(0);
-    expect((await visitor.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    for (const v of [stranger, ed, rita, vic]) await v.ctx.close();
     await owner.close();
-    await visitor.close();
   });
 
   test('a project that will not open says why in place: the account, the invitation if one waits, or Try again', async ({ browser }) => {
@@ -1713,7 +1776,7 @@ test.describe('names and the trash', () => {
 });
 
 test.describe('view-only sharing', () => {
-  test('someone invited as Can view reads and comments, cannot change the files, and edits as soon as the owner lets them', async ({ browser }) => {
+  test('someone invited as Can review reads and comments, cannot change the files, and edits as soon as the owner lets them', async ({ browser }) => {
     const headers = { 'x-forwarded-for': '203.0.113.81' };
     const owner = await browser.newContext({ extraHTTPHeaders: headers });
     const page = await owner.newPage();
@@ -1726,7 +1789,7 @@ test.describe('view-only sharing', () => {
     await reader.request.post('/api/auth/register', { data: { email: rEmail, password: 'password123', name: 'Rhea Reader' } });
     await confirmEmail(reader.request, rEmail);
 
-    // the owner invites her as Can view
+    // the owner invites her as Can review
     await page.goto(`/p/${proj.id}`);
     await expect(page.locator('.cm-content')).toContainText('READER-TEXT');
     await page.getByTestId('share-project').click();
@@ -1737,16 +1800,16 @@ test.describe('view-only sharing', () => {
     expect(field.width).toBeGreaterThan(role.width * 2);
     expect(role.x + role.width).toBeLessThanOrEqual(dialog.x + dialog.width);
     await page.getByTestId('share-emails').fill(rEmail);
-    await page.getByTestId('share-invite-role').selectOption('view');
+    await page.getByTestId('share-invite-role').selectOption('review');
     await page.getByTestId('share-save').click();
     await expect(page.getByTestId('share-invite-result')).toBeVisible();
-    await expect(page.locator(`[data-testid="invite-row"][data-to="${rEmail}"]`).getByTestId('invite-role')).toHaveValue('view');
+    await expect(page.locator(`[data-testid="invite-row"][data-to="${rEmail}"]`).getByTestId('invite-role')).toHaveValue('review');
     await page.getByTestId('share-done').click();
     await acceptInvitation(reader.request, proj.id);
 
     const rp = await reader.newPage();
     await rp.goto(`/p/${proj.id}`);
-    await expect(rp.getByTestId('view-only-note')).toContainText('You can view this project and comment on it. To edit it, ask Olive Owner for edit access.');
+    await expect(rp.getByTestId('view-only-note')).toContainText('You can review this project: comment on it and suggest changes. To edit it, ask Olive Owner for edit access.');
     await expect(rp.locator('.cm-content')).toContainText('READER-TEXT');
     await expect(rp.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
     await rp.locator('.cm-content').click();
@@ -1770,7 +1833,7 @@ test.describe('view-only sharing', () => {
     // Can edit, from the owner's list of people
     await page.getByTestId('share-project').click();
     const row = page.locator(`[data-testid="person-row"][data-to="${rEmail}"]`);
-    await expect(row.getByTestId('person-role')).toHaveValue('view');
+    await expect(row.getByTestId('person-role')).toHaveValue('review');
     await row.getByTestId('person-role').selectOption('edit');
     await expect(page.locator('.toast', { hasText: `${rEmail} can edit now` })).toBeVisible();
     await page.getByTestId('share-close').click();
@@ -1783,46 +1846,6 @@ test.describe('view-only sharing', () => {
     await expect(page.locator('.cm-content')).toContainText('NOW-EDITING', { timeout: 15_000 });
     await owner.close();
     await reader.close();
-  });
-
-  test('a view-only link lets a signed-in visitor read and comment; Can edit on the link lets them type', async ({ browser }) => {
-    const headers = { 'x-forwarded-for': '203.0.113.82' };
-    const owner = await browser.newContext({ extraHTTPHeaders: headers });
-    const page = await owner.newPage();
-    await register(page, uniq(), 'password123', 'Lina Link');
-    const proj = await (await page.request.post('/api/projects', { data: { name: 'Link For Readers' } })).json();
-    await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'LINK-TEXT stays.\n' } });
-    await page.goto(`/p/${proj.id}`);
-    await page.getByTestId('share-project').click();
-    await page.getByTestId('share-link').check();
-    await expect(page.locator('.toast', { hasText: 'Link sharing on: anyone signed in with the link can edit' })).toBeVisible();
-    await page.getByTestId('share-link-role').selectOption('view');
-    await expect(page.locator('.toast', { hasText: 'Anyone signed in with the link can view now' })).toBeVisible();
-    await page.getByTestId('share-close').click();
-
-    const visitor = await browser.newContext({ extraHTTPHeaders: headers });
-    await visitor.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123', name: 'Vic Visitor' } });
-    const vp = await visitor.newPage();
-    await vp.goto(`/p/${proj.id}`);
-    await expect(vp.getByTestId('view-only-note')).toBeVisible();
-    await expect(vp.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
-    await vp.locator('.cm-content').click();
-    await vp.keyboard.type('TYPED-BY-VISITOR');
-    await expect(vp.locator('.cm-content')).not.toContainText('TYPED-BY-VISITOR');
-    expect((await visitor.request.post(`/api/projects/${proj.id}/comments`, { data: { branch: 'main', file: 'main.tex', anchor: { from: 0, to: 4, quote: 'LINK' }, body: 'visitor note' } })).ok()).toBeTruthy();
-
-    await page.getByTestId('share-project').click();
-    await expect(page.getByTestId('share-link-role')).toHaveValue('view');
-    await page.getByTestId('share-link-role').selectOption('edit');
-    await expect(page.locator('.toast', { hasText: 'Anyone signed in with the link can edit now' })).toBeVisible();
-    await page.getByTestId('share-close').click();
-    await expect(vp.getByTestId('view-only-note')).toHaveCount(0, { timeout: 15_000 });
-    await vp.locator('.cm-content').click();
-    await vp.keyboard.press('End');
-    await vp.keyboard.type(' VISITOR-EDIT');
-    await expect(page.locator('.cm-content')).toContainText('VISITOR-EDIT', { timeout: 15_000 });
-    await owner.close();
-    await visitor.close();
   });
 
   test("a viewer's agent reads through the Agent API and is refused every write", async ({ browser, baseURL }) => {
@@ -1917,11 +1940,10 @@ test.describe('share dialog', () => {
     await page.route(`**/api/projects/${proj.id}`, late(3000));
     await page.route(`**/api/projects/${proj.id}/invitations`, late(6000));
     await page.getByTestId('share-project').click();
-    await page.getByTestId('share-link').check();
-    await expect(page.locator('.toast', { hasText: 'Link sharing on' })).toBeVisible();
+    await page.getByTestId('share-link-create').click();
+    await expect(page.getByTestId('share-link-row')).toHaveCount(1);
     await page.waitForTimeout(3500);
-    await expect(page.getByTestId('share-link'), 'the old "Invite only" did not come back').toBeChecked();
-    await expect(page.getByTestId('share-url')).toBeVisible();
+    await expect(page.getByTestId('share-link-row'), 'the old, empty list of links did not come back').toHaveCount(1);
 
     const invitee = uniq();
     await page.getByTestId('share-emails').fill(invitee);
@@ -1931,7 +1953,7 @@ test.describe('share dialog', () => {
     await page.waitForTimeout(3500);
     await expect(row, 'the old, empty list did not replace it').toBeVisible();
     await page.unrouteAll({ behavior: 'ignoreErrors' });
-    expect((await (await page.request.get(`/api/projects/${proj.id}`)).json()).share.mode, 'the save kept link sharing on').toBe('link');
+    expect((await (await page.request.get(`/api/projects/${proj.id}`)).json()).share.mode, 'the save kept the link').toBe('link');
     await owner.close();
   });
 });

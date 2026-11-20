@@ -1,6 +1,7 @@
 import { ADMIN_EMAILS, AUTH_ENABLED, PublicUser, getUser } from './auth.js';
 import { ProjectMeta } from './store.js';
 import { normalizeEntry } from './invites.js';
+import { linkRoleFor, rolesOf, widerRole, type ShareRole } from './sharelinks.js';
 
 /**
  * Is this user a member of the project — its owner or someone the owner
@@ -28,30 +29,41 @@ function entriesOf(meta: ProjectMeta, user: PublicUser): string[] {
 export const isListed = isMember;
 
 /**
- * May this user open/edit this project? Membership, plus the link-mode grant.
- * Defined in terms of isMember so the two can never drift — a new membership
- * channel added to isMember is honoured by listing and access alike.
+ * What this user may do in the project, or null when they may not open it:
+ * the widest of what the owner gave them by name (`share.roles`, "edit"
+ * when absent) and what the project's active share links give them
+ * (sharelinks.ts). Defined over isMember so the two can never drift.
+ *   edit:   everything a member does.
+ *   review: read, typeset, download, comment and suggest; change nothing.
+ *   view:   read, typeset and download; no comments either.
  */
+export function roleOf(meta: ProjectMeta, user: PublicUser | null, now = Date.now()): ShareRole | null {
+  if (!AUTH_ENABLED || !meta.ownerId) return isMember(meta, user) ? 'edit' : null;
+  if (!user) return null;
+  if (meta.ownerId === user.id) return 'edit';
+  const roles = rolesOf(meta);
+  let best: ShareRole | null = null;
+  for (const c of entriesOf(meta, user)) best = widerRole(best, roles[normalizeEntry(c)] ?? 'edit');
+  return widerRole(best, linkRoleFor(meta, user.id, now));
+}
+
+/** May this user open this project? */
 export function canAccess(meta: ProjectMeta, user: PublicUser | null): boolean {
-  if (isMember(meta, user)) return true;
-  return !!user && meta.share?.mode === 'link';
+  return roleOf(meta, user) !== null;
 }
 
 /**
  * May this user change the project: its files, branches, history and
- * settings? Everyone who may open it, except a person the owner shares with
- * as "Can view" (`share.viewers`) and a link visitor while the link is
- * view-only (`share.linkRole`). A person with both a role and the link gets
- * the wider of the two: the link lets them in as anyone signed in would be.
- * Comments are not changes: viewers comment and reply (routes.ts lists what
- * they may still send).
+ * settings? Only with the role "edit" (roleOf).
  */
 export function canEdit(meta: ProjectMeta, user: PublicUser | null): boolean {
-  if (!canAccess(meta, user)) return false;
-  if (!AUTH_ENABLED || !meta.ownerId || meta.ownerId === user!.id) return true;
-  const viewers = new Set((meta.share?.viewers ?? []).map(normalizeEntry));
-  if (entriesOf(meta, user!).some((c) => !viewers.has(normalizeEntry(c)))) return true;
-  return meta.share?.mode === 'link' && meta.share.linkRole !== 'view';
+  return roleOf(meta, user) === 'edit';
+}
+
+/** May this user write review comments and suggestions? */
+export function canComment(meta: ProjectMeta, user: PublicUser | null): boolean {
+  const role = roleOf(meta, user);
+  return role === 'edit' || role === 'review';
 }
 
 export type ListAccess = 'owner' | 'member' | 'link';

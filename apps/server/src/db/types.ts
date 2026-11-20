@@ -64,6 +64,26 @@ export interface Comment {
   replies: Reply[];
 }
 
+export type ShareRole = 'edit' | 'review' | 'view';
+
+/** A link that lets people in with one role. */
+export interface ShareLink {
+  /** Public handle: the owner's routes name the link by it. */
+  id: string;
+  /** The secret its URL carries. Absent on the link carried over from link
+   *  sharing before 1.17: its URL is the project's own address, and it lets
+   *  in everyone signed in who has it. */
+  token?: string;
+  role: ShareRole;
+  label?: string;
+  createdAt: string;
+  expiresAt?: string;
+  revokedAt?: string;
+  /** Who came in through it, so access ends with the link. `id` is an
+   *  account id. */
+  members?: Array<{ id: string; at: string }>;
+}
+
 export interface ProjectMeta {
   id: string;
   name: string;
@@ -80,14 +100,22 @@ export interface ProjectMeta {
   createdVia?: 'agent';
   ownerId?: string;
   share?: {
-    mode: 'private' | 'link';
+    /** Written before 1.17 only, read as `links` (sharelinks.ts): 'link'
+     *  let everyone signed in open the project at its own address. */
+    mode?: 'private' | 'link';
     collaborators: string[];
-    /** Entries (as `collaborators` stores them) the owner shares with as "Can
-     *  view". An entry here grants nothing by itself: it is the role an entry
-     *  of `collaborators`, or an open invitation to it, has. */
+    /** Written before 1.17 only: the entries that could "view" then, which
+     *  could comment, so they read as `roles` "review". */
     viewers?: string[];
-    /** What a link visitor may do; absent is 'edit', the link before roles. */
+    /** Written before 1.17 only: what the address link allowed. */
     linkRole?: 'edit' | 'view';
+    /** The role of each entry (as `collaborators` stores it) that is not
+     *  "Can edit". An entry here grants nothing by itself: it is the role an
+     *  entry of `collaborators`, or an open invitation to it, has. */
+    roles?: Record<string, 'review' | 'view'>;
+    /** Share links, revoked ones included. Present on every share written
+     *  from 1.17: its absence marks a share to read the legacy fields of. */
+    links?: ShareLink[];
   };
   zotero?: {
     apiKey: string;
@@ -386,6 +414,11 @@ export interface DataStore {
    *  the rest of the metadata, the rest of `share` included: two accepts
    *  landing together must both stay. False when the project does not exist. */
   addShareEntry(projectId: string, entry: string): Promise<boolean>;
+  /** Read, change and write one project's metadata with no other write in
+   *  between: `change` returns the metadata to store, or null to store
+   *  nothing. Resolves to what is stored afterwards, null when the project
+   *  does not exist. `change` must not await. */
+  updateMeta(id: string, change: (meta: ProjectMeta) => ProjectMeta | null): Promise<ProjectMeta | null>;
 
   // review comments (stored per project)
   loadComments(projectId: string): Promise<Comment[]>;

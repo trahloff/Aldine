@@ -5,6 +5,7 @@ import { projectsDir, worktreesDir } from './config.js';
 import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHiddenPath, isHiddenName, latexEscape } from './util.js';
 import { db } from './db/index.js';
 import type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
+import { normalizeMeta } from './sharelinks.js';
 
 export type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
 
@@ -34,7 +35,16 @@ export function git(dir: string): SimpleGit {
 export async function readMeta(id: string): Promise<ProjectMeta> {
   const m = await db().readMeta(id);
   if (!m) throw new Error('project not found');
-  return m;
+  return normalizeMeta(m);
+}
+
+/** Read, change and write one project's metadata with no write in between
+ *  (DataStore.updateMeta), its share in the 1.17 shape. Throws 'project not
+ *  found' when it is absent. */
+export async function updateMeta(id: string, change: (meta: ProjectMeta) => ProjectMeta | null): Promise<ProjectMeta> {
+  const m = await db().updateMeta(id, (raw) => change(normalizeMeta(raw)));
+  if (!m) throw new Error('project not found');
+  return normalizeMeta(m);
 }
 
 export function writeMeta(meta: ProjectMeta): Promise<void> {
@@ -104,7 +114,7 @@ export function resetProjectOpenBranch(id: string, branch: string): Promise<void
 }
 
 export function listProjects(): Promise<ProjectMeta[]> {
-  return db().listMeta();
+  return db().listMeta().then((all) => all.map(normalizeMeta));
 }
 
 /** The project's remote link, reading the pre-GitLab `github` field as provider 'github'. */
@@ -157,7 +167,7 @@ export async function createProject(name: string, files?: Record<string, string 
 
   const rootFile = written.includes('main.tex') ? 'main.tex' : written.find((f) => f.endsWith('.tex')) || '';
   const meta: ProjectMeta = { id, name, rootFile, engine: 'pdf', createdAt: new Date().toISOString() };
-  if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+  if (ownerId) { meta.ownerId = ownerId; meta.share = { collaborators: [], links: [] }; }
   if (opts.createdVia) meta.createdVia = opts.createdVia;
   await writeMeta(meta);
   return meta;
@@ -223,7 +233,7 @@ export async function copyProject(source: ProjectMeta, name: string, ownerId?: s
   const meta: ProjectMeta = { id, name, rootFile: source.rootFile, engine: source.engine, createdAt: new Date().toISOString() };
   if (source.stopOnFirstError !== undefined) meta.stopOnFirstError = source.stopOnFirstError;
   if (source.manualCommits !== undefined) meta.manualCommits = source.manualCommits;
-  if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+  if (ownerId) { meta.ownerId = ownerId; meta.share = { collaborators: [], links: [] }; }
   await writeMeta(meta);
   return meta;
 }

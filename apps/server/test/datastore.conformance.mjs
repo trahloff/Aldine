@@ -434,6 +434,16 @@ async function runSuite(store, label) {
   check((await store.readMeta(`zz${t}`)) === null, `${label}: and creates nothing`);
   await throws(() => store.addShareEntry('../evil', 'ada@example.org'), 'bad project id', `${label}: addShareEntry bad id throws`);
 
+  // read-change-write with nothing in between
+  const bump = (m) => ({ ...m, share: { ...m.share, links: [...(m.share.links ?? []), { id: `l${(m.share.links ?? []).length}`, role: 'view', createdAt: 'x' }] } });
+  await Promise.all([store.updateMeta(older.id, bump), store.updateMeta(older.id, bump), store.updateMeta(older.id, bump)]);
+  eq((await store.readMeta(older.id)).share.links.map((l) => l.id), ['l0', 'l1', 'l2'], `${label}: three updateMeta at once each see the one before`);
+  eq((await store.updateMeta(older.id, () => null)).share.links.length, 3, `${label}: updateMeta writing nothing answers what is stored`);
+  eq((await store.readMeta(older.id)).name, 'Renamed', `${label}: and updateMeta keeps the rest`);
+  check((await store.updateMeta(`zz${t}`, bump)) === null, `${label}: updateMeta of a missing project is null`);
+  check((await store.readMeta(`zz${t}`)) === null, `${label}: and creates nothing`);
+  await throws(() => store.updateMeta('../evil', bump), 'bad project id', `${label}: updateMeta bad id throws`);
+
   await store.deleteMeta(older.id);
   check((await store.readMeta(older.id)) === null, `${label}: deleteMeta`);
 

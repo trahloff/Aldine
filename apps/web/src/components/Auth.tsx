@@ -7,6 +7,7 @@ import { INSTANCE } from '../instance';
 import { useDocumentTitle } from '../util/documentTitle';
 import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
 import { projectOfPath } from '../util/projectResume';
+import { keepShareLink } from '../util/shareLink';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -132,7 +133,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Shown in place of a project's page: an SSO sign-in comes back to it.
           const path = window.location.pathname;
           const id = path.startsWith(BASE_PATH) ? projectOfPath(path.slice(BASE_PATH.length)) : null;
-          if (id) projectSignInStarts(id); else appSignInStarts();
+          // A share link's token goes along: the provider's callback drops the query.
+          if (id) { keepShareLink(id, window.location.search); projectSignInStarts(id); } else appSignInStarts();
         }}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
         confirmToken={confirmToken && !user ? confirmToken : undefined}

@@ -20,6 +20,8 @@ interface Props {
   onAccept(c: Comment): void;
   /** A read-only showcase: threads can be read, not answered, resolved or deleted. */
   readOnly?: boolean;
+  /** What the empty list says while `readOnly`. */
+  readOnlyNote?: string;
   /** Whether this person may delete the thread (the server's rule: their own, or any as an editing member). */
   canDelete?(c: Comment): boolean;
   /** Whether suggestions can be applied here: not by someone who can only view. */
@@ -70,7 +72,7 @@ function ReplyBox({ c, onReply }: { c: Comment; onReply(c: Comment, body: string
   );
 }
 
-export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile, onReveal, onResolve, onDelete, onReply, onAccept, readOnly = false, canDelete = () => true, canAccept = !readOnly, fileOrder = [], active = null }: Props) {
+export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile, onReveal, onResolve, onDelete, onReply, onAccept, readOnly = false, readOnlyNote = 'Comments are off on this read-only showcase.', canDelete = () => true, canAccept = !readOnly, fileOrder = [], active = null }: Props) {
   const ordered = reviewOrder(comments, fileOrder);
   const open = ordered.filter((c) => !c.resolved);
   const resolved = ordered.filter((c) => c.resolved);
@@ -118,7 +120,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
       {load === 'ok' && comments.length === 0 && (
         <p style={{ color: 'var(--text-2)', padding: 8, fontSize: 'var(--text-s)' }} data-testid="review-empty">
           {readOnly
-            ? 'Comments are off on this read-only showcase.'
+            ? readOnlyNote
             : <>Select text in the editor and click <strong>Comment</strong> to start a review thread.</>}
         </p>
       )}
