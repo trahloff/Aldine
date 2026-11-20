@@ -809,7 +809,8 @@ export const api = {
   /** `invite`: signing up from that invitation's page; the confirmation link leads back to it. */
   register: (email: string, password: string, name?: string, invite?: string) =>
     req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}) }) }),
-  logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  /** `redirect`: the identity provider's sign-out page, after a single sign-on session when OIDC_LOGOUT=idp. */
+  logout: () => req<{ ok: boolean; redirect?: string }>('/api/auth/logout', { method: 'POST' }),
   signInMethods: () => req<SignInMethods>('/api/auth/sign-in-methods'),
   /** The provider's sign-in page to go to; a 403 with code `reauth-required` asks for the password. */
   connectSignIn: (provider: string, password?: string) =>

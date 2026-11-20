@@ -8,6 +8,8 @@ import type { Page } from '@playwright/test';
  * re-run against the kept .data-auth starts from the same situation.
  */
 const OIDC = `http://localhost:${Number(process.env.E2E_AUTH_OIDC_PORT || 4930)}`;
+/** The server started with OIDC_LOGOUT=idp. */
+const LOGOUT = process.env.ALDINE_AUTH_LOGOUT_URL || `http://localhost:${Number(process.env.E2E_AUTH_LOGOUT_PORT || 3211)}`;
 const uid = () => `${Date.now()}${Math.floor(Math.random() * 1e4)}`;
 
 interface Persona { code: string; sub: string; claims: Record<string, unknown> }
@@ -20,15 +22,15 @@ async function persona(claims: Record<string, unknown> = {}): Promise<Persona> {
   return p;
 }
 
-async function toIdp(page: Page) {
-  await page.goto('/');
+async function toIdp(page: Page, origin = '') {
+  await page.goto(`${origin}/`);
   await expect(page.getByTestId('oauth-oidc')).toHaveText('Continue with single sign-on');
   await page.getByTestId('oauth-oidc').click();
   await expect(page).toHaveURL(/\/application\/o\/authorize\//);
 }
 
-async function signIn(page: Page, p: Persona) {
-  await toIdp(page);
+async function signIn(page: Page, p: Persona, origin = '') {
+  await toIdp(page, origin);
   await page.getByTestId(`oidc-persona-${p.code}`).click();
 }
 
@@ -167,5 +169,46 @@ test.describe('OIDC sign-in', () => {
     await expect(page.getByTestId('oauth-consent')).toBeVisible({ timeout: 15_000 });
     expect(page.url()).toContain('/oauth/authorize');
     await expect(page.getByTestId('oauth-client-name')).toContainText('OIDC Connect e2e');
+  });
+});
+
+test.describe('OIDC sign-out at the identity provider (OIDC_LOGOUT=idp)', () => {
+  test('signing out of a single sign-on session continues at the IdP end-session endpoint', async ({ page }) => {
+    const p = await persona();
+    await signIn(page, p, LOGOUT);
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    expect((await page.context().cookies(LOGOUT)).some((c) => c.name === 'aldine_session')).toBeTruthy();
+
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('oidc-end-session')).toBeVisible();
+    const at = new URL(page.url());
+    expect(`${at.origin}${at.pathname}`).toBe(`${OIDC}/application/o/aldine/end-session/`);
+    const hint = at.searchParams.get('id_token_hint')!;
+    const claims = JSON.parse(Buffer.from(hint.split('.')[1], 'base64url').toString());
+    expect(claims.sub).toBe(p.sub);
+    expect(claims.aud).toBe('aldine-e2e');
+    expect(at.searchParams.get('client_id')).toBe('aldine-e2e');
+    expect(at.searchParams.get('post_logout_redirect_uri')).toBe(`${LOGOUT}/`);
+    expect(at.searchParams.get('state')).toBeTruthy();
+    expect((await page.context().cookies(LOGOUT)).some((c) => c.name === 'aldine_session')).toBeFalsy();
+
+    await page.getByTestId('oidc-end-session-back').click();
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    expect((await (await page.request.get(`${LOGOUT}/api/auth/me`)).json()).user).toBeNull();
+  });
+
+  test('a password account signs out locally, without a redirect', async ({ page }) => {
+    const email = `pw${uid()}@example.org`;
+    const reg = await page.request.post(`${LOGOUT}/api/auth/register`, { data: { email, password: 'password123', name: 'Password Person' } });
+    expect(reg.ok()).toBeTruthy();
+    await page.goto(`${LOGOUT}/`);
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    const logout = page.waitForResponse((r) => r.url().endsWith('/api/auth/logout'));
+    await page.getByTestId('account-menu').click();
+    await page.getByTestId('logout').click();
+    expect(await (await logout).json()).toEqual({ ok: true });
+    await expect(page.getByTestId('auth-email')).toBeVisible();
+    expect(new URL(page.url()).origin).toBe(LOGOUT);
   });
 });

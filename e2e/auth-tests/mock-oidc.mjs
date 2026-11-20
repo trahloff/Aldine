@@ -50,6 +50,10 @@ export function createMockOidc(opts = {}) {
     discoveryHits: 0,
     /** Pad the discovery document with this many bytes (oversized responses). */
     discoveryPadding: 0,
+    /** Advertise end_session_endpoint (RP-Initiated Logout 1.0). */
+    endSession: true,
+    /** Query of the last request to the end-session endpoint. */
+    lastEndSession: null,
   };
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const rogue = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -115,11 +119,19 @@ export function createMockOidc(opts = {}) {
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: state.authMethods,
         scopes_supported: ['openid', 'email', 'profile', 'groups'],
+        ...(state.endSession ? { end_session_endpoint: `${origin}${issuerPath}end-session/` } : {}),
         ...(state.discoveryPadding ? { padding: 'x'.repeat(state.discoveryPadding) } : {}),
         authorization_response_iss_parameter_supported: state.issParam,
       };
       if (state.algs) doc.id_token_signing_alg_values_supported = state.algs;
       return json(200, doc);
+    }
+    if (url.pathname === `${issuerPath}end-session/`) {
+      state.lastEndSession = Object.fromEntries(url.searchParams);
+      const back = url.searchParams.get('post_logout_redirect_uri');
+      const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><title>Mock OIDC</title><h1 data-testid="oidc-end-session">Signed out (mock OIDC)</h1>${back ? `<a data-testid="oidc-end-session-back" href="${esc(back)}">Back to the app</a>` : ''}`);
     }
     if (url.pathname === `${issuerPath}jwks/`) return state.jwksDown ? json(503, { error: 'unavailable' }) : json(200, { keys: [jwk] });
 

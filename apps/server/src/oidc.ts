@@ -31,6 +31,7 @@ interface Discovery {
   token_endpoint: string;
   jwks_uri: string;
   userinfo_endpoint?: string;
+  end_session_endpoint?: string;
   id_token_signing_alg_values_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
   authorization_response_iss_parameter_supported?: boolean;
@@ -82,7 +83,59 @@ export function oidcConfigWarnings(env: NodeJS.ProcessEnv = process.env): string
   if (missing.length) out.push(`[aldine] OIDC sign-in is off: ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set (found ${present.join(', ')})`);
   const ev = env.OIDC_EMAIL_VERIFIED?.trim().toLowerCase();
   if (ev && ev !== 'require' && ev !== 'trust') out.push(`[aldine] OIDC_EMAIL_VERIFIED=${JSON.stringify(env.OIDC_EMAIL_VERIFIED!.trim().slice(0, 40))} is neither "require" nor "trust"; using "require"`);
+  const lo = env.OIDC_LOGOUT?.trim().toLowerCase();
+  if (lo && lo !== 'local' && lo !== 'idp') out.push(`[aldine] OIDC_LOGOUT=${JSON.stringify(env.OIDC_LOGOUT!.trim().slice(0, 40))} is neither "local" nor "idp"; using "local"`);
+  if (env.OIDC_LOGOUT_URL?.trim() && !oidcLogoutUrlOverride(env)) out.push('[aldine] OIDC_LOGOUT_URL is not an http(s) URL; ignoring it');
   return out;
+}
+
+/** `idp`: sign-out continues at the identity provider (RP-Initiated Logout 1.0); anything else is `local`. */
+export function oidcLogoutMode(env: NodeJS.ProcessEnv = process.env): 'local' | 'idp' {
+  return env.OIDC_LOGOUT?.trim().toLowerCase() === 'idp' ? 'idp' : 'local';
+}
+
+/** OIDC_LOGOUT_URL when it is an http(s) URL; it replaces the discovery document's end_session_endpoint. */
+export function oidcLogoutUrlOverride(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = env.OIDC_LOGOUT_URL?.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null;
+  } catch { return null; }
+}
+
+/**
+ * The boot warning for OIDC_LOGOUT=idp when the identity provider advertises
+ * no end_session_endpoint and OIDC_LOGOUT_URL does not name one: sign-out
+ * then stays local.
+ */
+export function oidcLogoutWarning(d: { end_session_endpoint?: string }, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (oidcLogoutMode(env) !== 'idp' || oidcLogoutUrlOverride(env) || d.end_session_endpoint) return null;
+  return '[aldine] OIDC_LOGOUT=idp, but the identity provider advertises no end_session_endpoint and OIDC_LOGOUT_URL is not set; sign-out ends the Aldine session only';
+}
+
+/**
+ * Where the browser goes after signing out of a session that began with
+ * `idToken`: the IdP's end-session URL with id_token_hint, client_id,
+ * post_logout_redirect_uri and state, or null when sign-out stays local
+ * (OIDC_LOGOUT is not `idp`, or there is no endpoint to send it to). The
+ * Aldine session is already gone by then, so a failed discovery only costs
+ * the IdP step.
+ */
+export async function oidcLogoutRedirect(idToken: string, defaultReturnTo: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  const c = oidcConfig(env);
+  if (!c || oidcLogoutMode(env) !== 'idp') return null;
+  let endpoint = oidcLogoutUrlOverride(env);
+  if (!endpoint) {
+    try { endpoint = (await discover(c.issuer)).end_session_endpoint ?? null; } catch { return null; }
+  }
+  if (!endpoint) return null;
+  const u = new URL(endpoint);
+  u.searchParams.set('id_token_hint', idToken);
+  u.searchParams.set('client_id', c.clientId);
+  u.searchParams.set('post_logout_redirect_uri', env.OIDC_POST_LOGOUT_REDIRECT_URI?.trim() || defaultReturnTo);
+  u.searchParams.set('state', crypto.randomBytes(12).toString('base64url'));
+  return u.href;
 }
 
 const TLS_CODE = /^(CERT_|DEPTH_ZERO_SELF_SIGNED_CERT$|SELF_SIGNED_CERT_IN_CHAIN$|UNABLE_TO_|ERR_TLS_|ERR_SSL_|HOSTNAME_MISMATCH$)/;
@@ -115,7 +168,8 @@ export function oidcBootLine(env: NodeJS.ProcessEnv = process.env): string | nul
   const c = oidcConfig(env);
   if (!c) return null;
   const groups = c.allowedGroups.length ? ` groups=${c.allowedGroups.join(',')}` : '';
-  return `[aldine] OIDC sign-in: issuer=${c.issuer} client=${c.clientId} (${c.clientSecret ? 'confidential' : 'public, PKCE only'})${groups}`;
+  const logout = oidcLogoutMode(env) === 'idp' ? ' logout=idp' : '';
+  return `[aldine] OIDC sign-in: issuer=${c.issuer} client=${c.clientId} (${c.clientSecret ? 'confidential' : 'public, PKCE only'})${groups}${logout}`;
 }
 
 /** Stable, issuer-bound account subject for an ID token's (iss, sub). */
@@ -202,6 +256,7 @@ async function fetchDiscovery(issuer: string): Promise<Discovery> {
     token_endpoint: checkUrl(doc.token_endpoint, 'token endpoint', local),
     jwks_uri: checkUrl(doc.jwks_uri, 'JWKS URI', local),
     userinfo_endpoint: doc.userinfo_endpoint ? checkUrl(doc.userinfo_endpoint, 'userinfo endpoint', local) : undefined,
+    end_session_endpoint: doc.end_session_endpoint ? checkUrl(doc.end_session_endpoint, 'end session endpoint', local) : undefined,
     id_token_signing_alg_values_supported: Array.isArray(doc.id_token_signing_alg_values_supported) ? doc.id_token_signing_alg_values_supported : undefined,
     token_endpoint_auth_methods_supported: Array.isArray(doc.token_endpoint_auth_methods_supported) ? doc.token_endpoint_auth_methods_supported : undefined,
     authorization_response_iss_parameter_supported: doc.authorization_response_iss_parameter_supported === true,
@@ -427,6 +482,6 @@ export const oidc: OAuthProvider = {
       || (c.allowedGroups.length > 0 && groupsOf(claims[c.groupsClaim]) === null);
     const info = needsInfo ? await userinfo(d, access, claims.sub as string) : null;
     checkGroups(claims, info, c);
-    return profileFrom(claims, info, c);
+    return { ...profileFrom(claims, info, c), idToken: tok.id_token };
   },
 };

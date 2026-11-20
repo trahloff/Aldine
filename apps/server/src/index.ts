@@ -16,7 +16,7 @@ import { ensureSigningSecret } from './output-signing.js';
 import { AUTH_ENABLED, signupConfigWarnings } from './auth.js';
 import { registrationConfigWarnings } from './oauth/registration.js';
 import { backfillMissingLastEdits, flushActivity } from './activity.js';
-import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings } from './oidc.js';
+import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings, oidcLogoutWarning } from './oidc.js';
 import { startTemplatePreviews } from './templatepreviews.js';
 
 // Never let a stray rejection take down the collaboration server.
@@ -62,7 +62,10 @@ if (AUTH_ENABLED) {
     console.log(line);
     // Warms the discovery cache; an unreachable IdP is logged, never fatal.
     const c = oidcConfig()!;
-    discover(c.issuer).catch((err) => console.warn(`[aldine] OIDC discovery failed (sign-in will retry): ${err.message}`));
+    discover(c.issuer).then((d) => {
+      const warning = oidcLogoutWarning(d);
+      if (warning) console.warn(warning);
+    }, (err) => console.warn(`[aldine] OIDC discovery failed (sign-in will retry): ${err.message}`));
   }
 }
 
