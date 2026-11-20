@@ -8,7 +8,6 @@ import { useAuth } from '../components/Auth';
 import ShareModal from '../components/ShareModal';
 import ProjectUnavailable, { type ProjectLoadError } from '../components/ProjectUnavailable';
 import { forgetProjectResume } from '../util/projectResume';
-import { forgetShareLink, keepShareLink, pendingShareLink } from '../util/shareLink';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
@@ -145,7 +144,8 @@ const SESSION_ENDED: ProjectLoadError = { reason: 'signed-out', message: 'Sign i
  *  dialog leaves for its exit animation has no role. */
 const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]');
 
-export default function Editor() {
+/** `linkProblem`: why the share link the page was opened with let nobody in. */
+export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const branch = params.get('branch') || 'main';
@@ -155,10 +155,6 @@ export default function Editor() {
   const imported = (useLocation().state as { import?: ImportedProject['import'] } | null)?.import;
   const toast = useToast();
   const dialogs = useDialogs();
-  // A share link's token leaves the address bar before anything loads, so
-  // it is neither bookmarked nor sent on as a referrer.
-  const [linkQuery] = useState(() => keepShareLink(id, window.location.search));
-  useEffect(() => { if (linkQuery !== null) navigate({ search: linkQuery, hash: window.location.hash }, { replace: true }); }, [linkQuery]);
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   useDocumentTitle(project?.name);
@@ -435,21 +431,6 @@ export default function Editor() {
   const loadProject = useCallback(async () => {
     // A sign-in that started here has come back: Home must not bring it here again.
     forgetProjectResume();
-    // A share link's token: kept through a sign-in, spent once the server
-    // has let this account in, and dropped when the link no longer works.
-    let linkProblem: string | undefined;
-    const token = pendingShareLink(id);
-    if (token) {
-      try {
-        await api.joinShareLink(id, token);
-        forgetShareLink(id);
-      } catch (err: any) {
-        if (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 401 && err.status !== 429) {
-          forgetShareLink(id);
-          linkProblem = err.message;
-        }
-      }
-    }
     try {
       const p = await api.getProject(id);
       setProject(p);
@@ -476,7 +457,7 @@ export default function Editor() {
       }
       return null;
     }
-  }, [id]);
+  }, [id, linkProblem]);
 
   // The collab server refused the open document. The project route says
   // why: access taken away, or the project gone. Anything else (a network
