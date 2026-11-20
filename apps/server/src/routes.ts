@@ -35,7 +35,7 @@ import { aiAutoFix, aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
-import { issuerIsLoopback } from './oidc.js';
+import { issuerIsLoopback, oidcLogoutRedirect } from './oidc.js';
 import { readAvatar, syncAvatar } from './avatars.js';
 import { instance } from './instance.js';
 import * as email from './email.js';
@@ -476,9 +476,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post('/api/auth/logout', async (req, reply) => {
-    await auth.destroySession(auth.sidFromRequest(req.headers.cookie)); // revoke this session server-side
+    const idToken = await auth.destroySession(auth.sidFromRequest(req.headers.cookie)); // revoke this session server-side
     reply.header('set-cookie', auth.clearCookie());
-    return { ok: true };
+    // Only a session that began with an OpenID Connect sign-in holds an ID token.
+    const redirect = idToken ? await oidcLogoutRedirect(idToken, `${publicBase(req)}/`) : null;
+    return redirect ? { ok: true, redirect } : { ok: true };
   });
 
   // change password (logged in): revokes all sessions and agent credentials,
@@ -569,7 +571,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const shift = req.body?.minutes != null ? Number(req.body.minutes) * 60_000 : Number(req.body?.days) * 864e5;
       if (!sid || !s || !(shift > 0)) return reply.code(400).send({ error: 'Send a session cookie and a number of days or minutes' });
       await db().deleteSession(sid);
-      await db().createSession(sid, s.userId, s.exp - shift, s.createdAt - shift);
+      await db().createSession(sid, s.userId, s.exp - shift, s.createdAt - shift, s.idToken);
       reply.header('set-cookie', auth.sessionCookie(sid, Math.floor((s.exp - shift - Date.now()) / 1000)));
       return { ok: true };
     });
@@ -680,7 +682,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         const profile = await provider.exchange(q.code, callbackUrl(req, provider.id), oauth.attemptFrom(secret), callback);
         const user = await auth.findOrCreateOAuth(profile, provider.id);
         syncAvatar(user.id, provider.id, profile.picture, { allowLoopbackHttp: provider.id === 'oidc' && issuerIsLoopback() }).catch(() => {});
-        reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
+        reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id, Date.now(), profile.idToken)));
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
         if (err instanceof auth.AwaitingApprovalError) return signInFailed(req, reply, 403, err.message, 'Waiting for approval');

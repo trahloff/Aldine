@@ -277,8 +277,8 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  // Schema 1 is the current tables without sessions.created_at, sign_in_links and users.commit_email.
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
+  // Schema 1 is the current tables without sessions.created_at, sessions.id_token, sign_in_links and users.commit_email.
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
   raw.prepare('INSERT INTO sessions(sid,user_id,exp) VALUES(?,?,?)').run('old', 'ada', later);
   raw.close();
   const s = new SqliteStore(file);
@@ -286,7 +286,7 @@ async function readAll(s) {
   eq(await s.getSession('old'), { userId: 'ada', exp: later, createdAt: later - 30 * 86_400_000 }, 'a session from schema 1 began 30 days before its expiry');
   await s.close();
   const after = new DatabaseSync(file);
-  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 4, 'and the file is at schema 4');
+  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 5, 'and the file is at schema 5');
   after.close();
 }
 
@@ -299,7 +299,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=1');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -308,7 +308,7 @@ async function readAll(s) {
   eq(await upgraded.listSignInLinks('ada'), [link], 'and read back');
   await upgraded.close();
   const check2 = new DatabaseSync(file);
-  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 4, 'the file is at schema 4');
+  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 5, 'the file is at schema 5');
   check2.close();
 }
 
@@ -321,7 +321,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE users DROP COLUMN commit_email; PRAGMA user_version=3');
+  raw.exec('ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE sessions DROP COLUMN id_token; PRAGMA user_version=3');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -329,6 +329,25 @@ async function readAll(s) {
   eq([kept.email, kept.commitEmail], [ada.email, undefined], 'the account stays, without a commit email');
   await upgraded.updateUser({ ...kept, commitEmail: 'ada@users.noreply.github.com' });
   eq((await upgraded.getUser('ada')).commitEmail, 'ada@users.noreply.github.com', 'and can store one after the upgrade');
+  await upgraded.close();
+}
+
+// ---- a file from 1.16 (schema 4) gets sessions.id_token, keeping its sessions ----
+{
+  const file = at(freshDir(), SQLITE_FILE);
+  const first = new SqliteStore(file);
+  await first.init();
+  await first.createSession('kept', 'ada', later, later - 1000);
+  await first.close();
+  const { DatabaseSync } = await loadSqlite();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE sessions DROP COLUMN id_token; PRAGMA user_version=4');
+  raw.close();
+  const upgraded = new SqliteStore(file);
+  await upgraded.init();
+  eq(await upgraded.getSession('kept'), { userId: 'ada', exp: later, createdAt: later - 1000 }, 'a session from schema 4 stays, without an ID token');
+  await upgraded.createSession('oidc', 'ada', later, later - 1000, 'h.p.s');
+  eq((await upgraded.getSession('oidc')).idToken, 'h.p.s', 'and an OIDC session stores one after the upgrade');
   await upgraded.close();
 }
 

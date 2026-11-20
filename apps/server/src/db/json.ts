@@ -29,7 +29,7 @@ export interface StoreDump {
 
 /** sessions.json as written before `createdAt` existed, too. */
 type StoredSession = Omit<SessionRow, 'createdAt'> & { createdAt?: number };
-const sessionRow = (r: StoredSession): SessionRow => ({ userId: r.userId, exp: r.exp, createdAt: r.createdAt ?? r.exp - PRE_RENEWAL_SESSION_MS });
+const sessionRow = (r: StoredSession): SessionRow => ({ userId: r.userId, exp: r.exp, createdAt: r.createdAt ?? r.exp - PRE_RENEWAL_SESSION_MS, ...(r.idToken ? { idToken: r.idToken } : {}) });
 
 const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
 const byCreated = (a: Invitation, b: Invitation) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
@@ -342,11 +342,11 @@ export class JsonStore implements DataStore {
 
   // ---- sessions ----
   private sessions() { return this.read<Record<string, StoredSession>>(this.sessionsPath, {}); }
-  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
+  async createSession(sid: string, userId: string, exp: number, createdAt: number, idToken?: string) {
     const s = this.sessions();
     const now = Date.now();
     for (const [k, v] of Object.entries(s)) if (v.exp < now) delete s[k]; // opportunistic prune
-    s[sid] = { userId, exp, createdAt };
+    s[sid] = { userId, exp, createdAt, ...(idToken ? { idToken } : {}) };
     this.write(this.sessionsPath, s);
   }
   async getSession(sid: string) { const r = this.sessions()[sid]; return r ? sessionRow(r) : null; }

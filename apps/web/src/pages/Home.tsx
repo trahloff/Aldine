@@ -845,7 +845,12 @@ export default function Home() {
     onConnect: () => setConnectOpen(true),
     onAbout: () => setAboutOpen(true),
     onAdmin: () => navigate('/admin'),
-    onSignOut: async () => { await api.logout(); safeSession.remove(cacheKey); setUser(null); },
+    onSignOut: async () => {
+      const res = await api.logout();
+      safeSession.remove(cacheKey);
+      if (res.redirect) { window.location.assign(res.redirect); return; }
+      setUser(null);
+    },
   };
 
   const paletteCommands: Command[] = useMemo(() => [

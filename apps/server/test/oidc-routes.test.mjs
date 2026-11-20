@@ -135,6 +135,55 @@ mock.addPersona({ code: 'eve', sub: 'eve-1', claims: { name: 'Eve', email: 'eve@
   check(injected.body.includes('cancelled or refused (error)'), `only a well-formed error code is shown (${injected.body.slice(-300)})`);
 }
 
+// ---- sign-out: local by default, at the IdP with OIDC_LOGOUT=idp ----
+{
+  const signedIn = async () => {
+    const s = await start({ code: 'ada' });
+    return `aldine_session=${cookieValue(await callback(s.query, s.cookie), 'aldine_session')}`;
+  };
+  const logout = (cookie) => app.inject({ method: 'POST', url: '/x/api/auth/logout', headers: { cookie } });
+  let cookie = await signedIn();
+  let r = await logout(cookie);
+  eq(r.json(), { ok: true }, 'OIDC_LOGOUT unset: no redirect');
+  eq((await get('/x/api/auth/me', cookie)).json().user, null, 'and the session is gone');
+
+  process.env.OIDC_LOGOUT = 'idp';
+  cookie = await signedIn();
+  r = await logout(cookie);
+  const to = new URL(r.json().redirect);
+  eq(to.origin + to.pathname, `${mock.origin}/application/o/aldine/end-session/`, 'redirects to the end_session_endpoint');
+  check(to.searchParams.get('id_token_hint')?.split('.').length === 3, 'with the ID token as id_token_hint');
+  eq(to.searchParams.get('client_id'), 'aldine-e2e', 'and the client id');
+  eq(to.searchParams.get('post_logout_redirect_uri'), 'https://aldine.test/x/', 'returning to the public URL by default');
+  check(/^[\w-]{16}$/.test(to.searchParams.get('state') || ''), 'with a random state');
+  check(cookiesOf(r).some((c) => c.startsWith('aldine_session=;')), 'the session cookie is cleared');
+  eq((await get('/x/api/auth/me', cookie)).json().user, null, 'the session is gone before the redirect');
+  eq((await logout(cookie)).json(), { ok: true }, 'a second sign-out of the ended session has nothing to send to the IdP');
+
+  // A session that did not begin at the IdP (password, GitHub, Google, ORCID) holds no ID token.
+  const { createSession } = await import('../src/auth.ts');
+  const me = (await get('/x/api/auth/me', await signedIn())).json().user;
+  eq((await logout(`aldine_session=${await createSession(me.id)}`)).json(), { ok: true }, 'a session without an ID token never redirects');
+
+  process.env.OIDC_POST_LOGOUT_REDIRECT_URI = 'https://aldine.test/x/signed-out';
+  process.env.OIDC_LOGOUT_URL = 'https://sso.example.org/logout?tenant=1';
+  const custom = new URL((await logout(await signedIn())).json().redirect);
+  eq(custom.origin + custom.pathname, 'https://sso.example.org/logout', 'OIDC_LOGOUT_URL replaces the endpoint');
+  eq(custom.searchParams.get('tenant'), '1', 'keeping its own query');
+  eq(custom.searchParams.get('post_logout_redirect_uri'), 'https://aldine.test/x/signed-out', 'OIDC_POST_LOGOUT_REDIRECT_URI is sent');
+  delete process.env.OIDC_LOGOUT_URL;
+  delete process.env.OIDC_POST_LOGOUT_REDIRECT_URI;
+
+  mock.state.endSession = false;
+  resetOidcCache();
+  cookie = await signedIn();
+  eq((await logout(cookie)).json(), { ok: true }, 'no end_session_endpoint and no OIDC_LOGOUT_URL: local sign-out');
+  eq((await get('/x/api/auth/me', cookie)).json().user, null, 'which still ends the session');
+  mock.state.endSession = true;
+  resetOidcCache();
+  delete process.env.OIDC_LOGOUT;
+}
+
 // ---- refused consent, group restriction, IdP down ----
 {
   const s = await start({ code: 'ada' });

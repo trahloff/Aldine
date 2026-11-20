@@ -38,6 +38,9 @@ All configuration is environment variables. `OIDC_ISSUER` and
 | `OIDC_ALLOWED_GROUPS` | unset | Comma-separated group names. When set, only members of at least one may sign in with OIDC; everyone else sees "your account is not in a group that may use this Aldine instance". Unset: everyone the IdP authenticates gets in. It gates OIDC sign-in only, not password accounts; see [Access control](#access-control). |
 | `OIDC_GROUPS_CLAIM` | `groups` | The claim that lists the groups. Read from the ID token, or from the userinfo endpoint when the ID token has none. A single string counts as one group. |
 | `OIDC_EMAIL_VERIFIED` | `require` | `require`: Aldine uses the address only when the IdP says `email_verified: true`. `trust`: it uses whatever address the IdP sends. See below before choosing `trust`. |
+| `OIDC_LOGOUT` | `local` | `local`: *Sign out* ends the Aldine session only. `idp`: after ending it, Aldine sends the browser to the IdP's `end_session_endpoint` (RP-Initiated Logout). See [Signing out](#signing-out). |
+| `OIDC_POST_LOGOUT_REDIRECT_URI` | `<ALDINE_PUBLIC_URL>/` | With `OIDC_LOGOUT=idp`: where the IdP sends the browser afterwards, as `post_logout_redirect_uri`. Register it at the IdP. |
+| `OIDC_LOGOUT_URL` | unset | With `OIDC_LOGOUT=idp`: the sign-out URL to use instead of the discovery document's `end_session_endpoint`, for an IdP that does not advertise one or to send people to a page of your own. |
 
 The boot log names the issuer, the client ID and whether the client is public
 or confidential (`[aldine] OIDC sign-in: issuer=… client=… (confidential)`);
@@ -45,7 +48,8 @@ the secret is never printed. When some `OIDC_*` variables are set but
 `OIDC_ISSUER` or `OIDC_CLIENT_ID` is missing (a typo such as `OIDC_CLIENTID`),
 the boot log says which one and the feature stays off. An
 `OIDC_EMAIL_VERIFIED` value other than `require` or `trust` is also logged, and
-treated as `require`.
+treated as `require`; so is an `OIDC_LOGOUT` value other than `local` or
+`idp` (treated as `local`).
 
 Discovery is fetched when Aldine starts and cached for an hour. When the hourly
 refresh fails, Aldine keeps using the last good document and retries every 15
@@ -240,6 +244,41 @@ a picture that only signed-in IdP users may load still shows.
 - `ALDINE_AVATARS=0` turns all of this off: Aldine fetches nothing and shows
   initials.
 
+## Signing out
+
+By default *Sign out* ends the Aldine session and nothing else. The person
+stays signed in at the IdP, so the next click on the single sign-on button
+signs them straight back in without a prompt. With `ALDINE_SSO_ONLY=1` on a
+shared or lab machine, that looks as if signing out did not work.
+
+`OIDC_LOGOUT=idp` adds the IdP's sign-out (OpenID Connect RP-Initiated
+Logout 1.0). Aldine first ends its own session and clears the cookie, then
+sends the browser to the IdP's `end_session_endpoint` with:
+
+- `id_token_hint`: the ID token of the sign-in, which Aldine keeps with the
+  session and deletes with it
+- `client_id`: `OIDC_CLIENT_ID`
+- `post_logout_redirect_uri`: `OIDC_POST_LOGOUT_REDIRECT_URI`, by default
+  `<ALDINE_PUBLIC_URL>/`
+- `state`: a random value
+
+What happens next is up to the IdP: it may end its own session, ask whether
+to sign out of every application, or sign out of Aldine alone, and then
+returns the browser to `post_logout_redirect_uri` if that URI is registered
+for the client. Register it, or most IdPs stop on their own page.
+
+- Only sessions that began with an OIDC sign-in go to the IdP. Password,
+  GitHub, Google and ORCID sessions sign out as before. Sessions signed in
+  before the upgrade carry no ID token and sign out locally once.
+- The endpoint comes from the discovery document, checked like the other
+  endpoints (`https`, or `http` to `localhost` for a local IdP).
+  `OIDC_LOGOUT_URL` replaces it; Aldine appends the same parameters.
+- When the IdP advertises no `end_session_endpoint` and `OIDC_LOGOUT_URL` is
+  not set, the boot log says so and sign-out stays local.
+- Signing out at the IdP does not end Aldine sessions on other browsers or
+  devices (no back-channel logout); see [Access control](#access-control) for
+  ending them.
+
 ## Access control
 
 - Accounts created by single sign-on never have a password. Aldine refuses to
@@ -369,6 +408,23 @@ Authentik's addresses. That is safe only while users cannot change their own
 address: keep *Allow users to change email* off under **System → Settings**
 (off by default) and do not grant `goauthentik.io/user/can-change-email` in a
 group's attributes.
+
+To sign out of Authentik too when people sign out of Aldine
+([Signing out](#signing-out)):
+
+1. On the provider, add `https://aldine.example.com/` to the post logout
+   redirect URIs (newer versions list them separately; older ones take them
+   under *Redirect URIs/Origins*).
+2. Set the provider's *Invalidation flow* to
+   `default-provider-invalidation-flow`, which asks whether to sign out of
+   Authentik as well or of Aldine only.
+3. Discovery already advertises the endpoint
+   (`https://auth.example.com/application/o/aldine/end-session/`), so one more
+   line is enough:
+
+```
+OIDC_LOGOUT=idp
+```
 
 ### Authelia
 

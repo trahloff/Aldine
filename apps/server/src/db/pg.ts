@@ -141,6 +141,8 @@ export class PgStore implements DataStore {
       -- 1.9: the sign-in each session began with, for the cap on renewals.
       ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at bigint;
       UPDATE sessions SET created_at = exp - ${PRE_RENEWAL_SESSION_MS} WHERE created_at IS NULL;
+      -- The ID token of an OpenID Connect sign-in, for RP-initiated logout.
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS id_token text;
       -- Single sign-on identities connected to password accounts (Sign-in methods).
       CREATE TABLE IF NOT EXISTS sign_in_links (
         subject text PRIMARY KEY, user_id text NOT NULL, provider text NOT NULL, created_at text NOT NULL,
@@ -218,14 +220,14 @@ export class PgStore implements DataStore {
   }
 
   // ---- sessions ----
-  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
+  async createSession(sid: string, userId: string, exp: number, createdAt: number, idToken?: string) {
     await this.pool.query(`DELETE FROM sessions WHERE exp < $1`, [Date.now()]);
-    await this.pool.query(`INSERT INTO sessions(sid,user_id,exp,created_at) VALUES($1,$2,$3,$4)`, [sid, userId, exp, createdAt]);
+    await this.pool.query(`INSERT INTO sessions(sid,user_id,exp,created_at,id_token) VALUES($1,$2,$3,$4,$5)`, [sid, userId, exp, createdAt, idToken ?? null]);
   }
   // A node still on an earlier release inserts rows without created_at.
   async getSession(sid: string): Promise<SessionRow | null> {
-    const { rows } = await this.pool.query(`SELECT user_id, exp, COALESCE(created_at, exp - ${PRE_RENEWAL_SESSION_MS}) AS created_at FROM sessions WHERE sid=$1`, [sid]);
-    return rows[0] ? { userId: rows[0].user_id, exp: Number(rows[0].exp), createdAt: Number(rows[0].created_at) } : null;
+    const { rows } = await this.pool.query(`SELECT user_id, exp, COALESCE(created_at, exp - ${PRE_RENEWAL_SESSION_MS}) AS created_at, id_token FROM sessions WHERE sid=$1`, [sid]);
+    return rows[0] ? { userId: rows[0].user_id, exp: Number(rows[0].exp), createdAt: Number(rows[0].created_at), ...(rows[0].id_token ? { idToken: rows[0].id_token as string } : {}) } : null;
   }
   async renewSession(sid: string, exp: number) {
     const { rows } = await this.pool.query(

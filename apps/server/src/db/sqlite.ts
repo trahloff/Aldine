@@ -85,6 +85,8 @@ const MIGRATIONS = [
   );`,
   // 1.11: the account's own author email for commits (Account settings).
   `ALTER TABLE users ADD COLUMN commit_email text;`,
+  // The ID token of an OpenID Connect sign-in, for RP-initiated logout.
+  `ALTER TABLE sessions ADD COLUMN id_token text;`,
 ];
 
 /** What `PRAGMA user_version` holds once every migration ran. A file with
@@ -239,7 +241,7 @@ export class SqliteStore implements DataStore {
     };
     try {
       await copy(() => 'users.json', d.users, (u) => this.createUser(u));
-      await copy(() => 'sessions.json', d.sessions, (s) => this.createSession(s.sid, s.userId, s.exp, s.createdAt));
+      await copy(() => 'sessions.json', d.sessions, (s) => this.createSession(s.sid, s.userId, s.exp, s.createdAt, s.idToken));
       await copy(() => 'resets.json', d.resets, (r) => this.createReset(r.token, r.userId, r.exp));
       await copy(() => 'tokens.json', d.tokens, (t) => this.createToken(t));
       await copy(() => 'oauth_clients.json', d.oauthClients, (c) => this.createOAuthClient(c));
@@ -348,15 +350,15 @@ export class SqliteStore implements DataStore {
   async findUserBySubject(subject: string) { const r = this.get(`SELECT * FROM users WHERE subject=?1`, subject); return r ? this.rowToUser(r) : null; }
 
   // ---- sessions ----
-  async createSession(sid: string, userId: string, exp: number, createdAt: number) {
+  async createSession(sid: string, userId: string, exp: number, createdAt: number, idToken?: string) {
     this.tx(() => {
       this.run(`DELETE FROM sessions WHERE exp < ?1`, Date.now());
-      this.run(`INSERT INTO sessions(sid,user_id,exp,created_at) VALUES(?1,?2,?3,?4)`, sid, userId, exp, createdAt);
+      this.run(`INSERT INTO sessions(sid,user_id,exp,created_at,id_token) VALUES(?1,?2,?3,?4,?5)`, sid, userId, exp, createdAt, idToken ?? null);
     });
   }
   async getSession(sid: string) {
-    const r = this.get(`SELECT user_id, exp, created_at FROM sessions WHERE sid=?1`, sid);
-    return r ? { userId: r.user_id as string, exp: Number(r.exp), createdAt: Number(r.created_at) } : null;
+    const r = this.get(`SELECT user_id, exp, created_at, id_token FROM sessions WHERE sid=?1`, sid);
+    return r ? { userId: r.user_id as string, exp: Number(r.exp), createdAt: Number(r.created_at), ...(r.id_token ? { idToken: r.id_token as string } : {}) } : null;
   }
   async renewSession(sid: string, exp: number) {
     return this.run(`UPDATE sessions SET exp=?2 WHERE sid=?1 AND exp < ?2`, sid, exp) > 0;

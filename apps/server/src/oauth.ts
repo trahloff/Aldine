@@ -21,6 +21,9 @@ export interface OAuthProfile {
   subject?: string;
   /** Profile picture URL (or base64 data: URI) the provider reports; avatars.ts fetches it. */
   picture?: string;
+  /** The raw ID token (OpenID Connect only). It is kept with the session as
+   *  the sign-out id_token_hint, never on the account. */
+  idToken?: string;
 }
 
 /**

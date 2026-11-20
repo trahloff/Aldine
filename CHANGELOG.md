@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Signing out of a single sign-on session can sign out at the identity
+  provider too (OpenID Connect RP-Initiated Logout): with `OIDC_LOGOUT=idp`
+  Aldine ends its session, then sends the browser to the IdP's
+  `end_session_endpoint` with `id_token_hint`, `client_id` and
+  `post_logout_redirect_uri` (`OIDC_POST_LOGOUT_REDIRECT_URI`, default
+  `<ALDINE_PUBLIC_URL>/`). `OIDC_LOGOUT_URL` overrides the endpoint; an IdP
+  without one is named in the boot log and sign-out stays local. Password,
+  GitHub, Google and ORCID sign-outs are unchanged. docs/OIDC.md has a
+  "Signing out" section with the Authentik setup. Refs #348.
 ### Fixed
 - A Zotero sync commits only the synced `.bib` file. Other changed files
   stay uncommitted until the regular autosave, so the sync commit can no

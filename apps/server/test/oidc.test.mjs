@@ -55,6 +55,19 @@ eq(oidcMod.oidcConfigWarnings({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c' })
 }
 check(oidcMod.oidcConfigWarnings({ OIDC_CLIENT_SECRET: 's' })[0].includes('OIDC_ISSUER and OIDC_CLIENT_ID are not set'), 'a lone secret warns about both');
 check(oidcMod.oidcConfigWarnings({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_EMAIL_VERIFIED: 'false' })[0].includes('neither "require" nor "trust"'), 'an unknown OIDC_EMAIL_VERIFIED warns');
+{
+  const base = { OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c' };
+  eq(oidcMod.oidcConfigWarnings({ ...base, OIDC_LOGOUT: 'IdP' }), [], 'OIDC_LOGOUT is case-insensitive');
+  check(oidcMod.oidcConfigWarnings({ ...base, OIDC_LOGOUT: 'global' })[0].includes('neither "local" nor "idp"'), 'an unknown OIDC_LOGOUT warns');
+  eq(oidcMod.oidcLogoutMode({ OIDC_LOGOUT: 'global' }), 'local', 'and means local');
+  check(oidcMod.oidcConfigWarnings({ ...base, OIDC_LOGOUT_URL: 'javascript:alert(1)' })[0].includes('OIDC_LOGOUT_URL is not an http(s) URL'), 'a non-http OIDC_LOGOUT_URL warns');
+  eq(oidcMod.oidcLogoutUrlOverride({ OIDC_LOGOUT_URL: 'javascript:alert(1)' }), null, 'and is ignored');
+  check(oidcMod.oidcLogoutWarning({}, { ...base, OIDC_LOGOUT: 'idp' })?.includes('no end_session_endpoint'), 'idp without an endpoint warns at boot');
+  eq(oidcMod.oidcLogoutWarning({}, { ...base, OIDC_LOGOUT: 'idp', OIDC_LOGOUT_URL: 'https://sso/logout' }), null, 'OIDC_LOGOUT_URL silences it');
+  eq(oidcMod.oidcLogoutWarning({ end_session_endpoint: 'https://i/end' }, { ...base, OIDC_LOGOUT: 'idp' }), null, 'an advertised endpoint silences it');
+  eq(oidcMod.oidcLogoutWarning({}, base), null, 'local sign-out never warns');
+  check(oidcMod.oidcBootLine({ ...base, OIDC_LOGOUT: 'idp' }).endsWith(' logout=idp'), 'the boot line names IdP sign-out');
+}
 eq(oidcMod.oidcConfigWarnings({ OIDC_ISSUER: 'https://i', OIDC_CLIENT_ID: 'c', OIDC_EMAIL_VERIFIED: 'Trust' }), [], 'known values in any case do not warn');
 
 // ---- boot line: issuer, client and client type, never the secret ----
@@ -145,8 +158,9 @@ eq(oauth.attemptFrom('abc'), oauth.attemptFrom('abc'), 'attempt is a pure functi
 
 // ---- happy path, confidential client with client_secret_basic ----
 const alice = persona({ name: 'Alice Liddell', email: 'Alice@Example.org', groups: ['staff'] });
-const prof = await signIn(alice);
+const { idToken, ...prof } = await signIn(alice);
 eq(prof, { email: 'Alice@Example.org', name: 'Alice Liddell', subject: oidcMod.oidcSubject(mock.issuer, alice.sub) }, 'verified email, name, issuer-bound subject');
+eq(JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url')).sub, alice.sub, 'the raw ID token comes back for the sign-out id_token_hint');
 eq(mock.state.lastTokenAuth, 'client_secret_basic', 'client_secret_basic by default');
 
 // OIDC_ISSUER without the trailing slash still discovers; tokens are checked against the IdP's spelling.

@@ -140,7 +140,11 @@ export interface RemoteLink {
 export interface ResetRow { userId: string; exp: number }
 /** `createdAt` (ms) is the sign-in the session began with; renewing it
  *  moves `exp` alone (sessions.ts). */
-export interface SessionRow extends ResetRow { createdAt: number }
+export interface SessionRow extends ResetRow {
+  createdAt: number;
+  /** The ID token of an OpenID Connect sign-in, sent back as id_token_hint at sign-out. */
+  idToken?: string;
+}
 /** A session stored before `createdAt` existed began exactly this long
  *  before its `exp`: nothing renewed sessions then. */
 export const PRE_RENEWAL_SESSION_MS = 30 * 864e5;
@@ -320,7 +324,7 @@ export interface DataStore {
   deleteUser(id: string): Promise<void>;
 
   // sessions (revocable)
-  createSession(sid: string, userId: string, exp: number, createdAt: number): Promise<void>;
+  createSession(sid: string, userId: string, exp: number, createdAt: number, idToken?: string): Promise<void>;
   getSession(sid: string): Promise<SessionRow | null>;
   /** Move the session's expiry to `exp`, writing that field alone, and
    *  report whether it did. A session deleted meanwhile (sign-out, a

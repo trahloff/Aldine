@@ -179,6 +179,15 @@ async function runSuite(store, label) {
   check((await store.getSession(sid)) === null, `${label}: and does not bring it back`);
   check(!(await store.renewSession(`missing-${t}`, exp)), `${label}: renewSession of an unknown session reports nothing`);
 
+  // An OpenID Connect session keeps its ID token through a renewal; the token goes with the session.
+  const oidcSid = `oidc-${t}`;
+  await store.createSession(oidcSid, user.id, exp, signedIn, 'header.payload.signature');
+  eq(await store.getSession(oidcSid), { userId: user.id, exp, createdAt: signedIn, idToken: 'header.payload.signature' }, `${label}: getSession returns the ID token`);
+  check(await store.renewSession(oidcSid, exp + 1000), `${label}: an OIDC session renews`);
+  eq((await store.getSession(oidcSid)).idToken, 'header.payload.signature', `${label}: renewSession keeps the ID token`);
+  await store.deleteSession(oidcSid);
+  check((await store.getSession(oidcSid)) === null, `${label}: deleteSession drops the ID token with the session`);
+
   // ---- renewal with use (sessions.ts), on a fake clock ----
   {
     const DAY = 864e5;

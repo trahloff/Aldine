@@ -579,15 +579,19 @@ export async function resetPassword(token: string, next: string): Promise<number
 }
 
 // ---------- sessions (revocable) ----------
-/** `issuedAt` other than now is for the test hooks only. */
-export async function createSession(userId: string, issuedAt = Date.now()): Promise<string> {
+/** `issuedAt` other than now is for the test hooks only; `idToken` comes from an OpenID Connect sign-in. */
+export async function createSession(userId: string, issuedAt = Date.now(), idToken?: string): Promise<string> {
   const sid = crypto.randomBytes(24).toString('base64url');
-  await db().createSession(sid, userId, firstExpiry(issuedAt), issuedAt);
+  await db().createSession(sid, userId, firstExpiry(issuedAt), issuedAt, idToken);
   return sid;
 }
 
-export async function destroySession(sid: string | undefined): Promise<void> {
-  if (sid) await db().deleteSession(sid);
+/** Ends the session; returns its OpenID Connect ID token, if it had one, for the IdP sign-out. */
+export async function destroySession(sid: string | undefined): Promise<string | undefined> {
+  if (!sid) return undefined;
+  const s = await db().getSession(sid);
+  await db().deleteSession(sid);
+  return s?.idToken;
 }
 
 export async function revokeUser(userId: string): Promise<void> {
