@@ -98,6 +98,18 @@ function readSnapshot(name: string): Uint8Array | null {
   console.error(`[collab] ignoring the snapshot of ${name} (${damage}); the document loads from its file`);
   return null;
 }
+/** A file's text, or null when nothing is at the path. Any other read error
+ *  (EIO, EACCES, a stale network mount) throws: read as empty, it would diff
+ *  a loaded doc down to nothing and the next store would write that out. */
+function readIfPresent(abs: string): string | null {
+  try {
+    return fs.readFileSync(abs, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw err;
+  }
+}
 function deleteSnapshot(name: string): void {
   lastSnapshot.delete(name);
   try { fs.rmSync(snapPath(name), { force: true }); } catch { /* best effort */ }
@@ -540,8 +552,9 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     if (tombstoned.has(documentName)) throw new Error('file was deleted');
     await ensureWorktree(projectId, branch);
     const abs = safeJoin(branchDir(projectId, branch), filePath); // no document for a path safeJoin refuses
-    let raw = '';
-    try { raw = fs.readFileSync(abs, 'utf8'); } catch { /* new file → empty */ }
+    // Absent is a new file (or one git deleted while the doc was unloaded):
+    // empty. An unreadable file refuses the load instead.
+    const raw = readIfPresent(abs) ?? '';
     // Compared and seeded as LF: against the file's own CRLF bytes every load
     // would count the doc as changed on disk and reseed it. Read before the
     // early return so a doc synced from a peer still writes the file's endings.
@@ -1110,8 +1123,14 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;
     loaded.add(parsed.filePath);
     const abs = safeJoin(branchDir(projectId, branch), parsed.filePath);
-    let raw: string | null = null;
-    try { raw = fs.readFileSync(abs, 'utf8'); } catch { raw = null; }
+    let raw: string | null;
+    try {
+      raw = readIfPresent(abs);
+    } catch (err) {
+      // Unreadable is not deleted: the doc keeps its text and its snapshot.
+      console.error(`[collab] could not read ${parsed.filePath} to refresh its doc: ${(err as Error).message}`);
+      return;
+    }
     if (raw === null) {
       // File deleted on disk (merge/reset). A doc no editor shows goes with
       // it: a tab keeps the files it left loaded for a quick switch back,

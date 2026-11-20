@@ -1,6 +1,6 @@
 import { readMeta, writeMeta, writeFile, fileExists, ProjectMeta } from './store.js';
 import { flushBranchDocs, refreshBranchDocsFromDisk } from './collab.js';
-import { autoCommit, ensureWorktree } from './gitops.js';
+import { commitPaths, ensureWorktree } from './gitops.js';
 import { paperBibFormat, type BibFormat } from './bibload.js';
 import { db } from './db/index.js';
 
@@ -156,9 +156,11 @@ export async function syncProject(projectId: string, branch = 'main', force = fa
   refreshBranchDocsFromDisk(projectId, branch, [z.bibFile]);
   const updated: ProjectMeta = { ...meta, zotero: { ...z, lastVersion: result.version, lastSyncedAt: new Date().toISOString(), format } };
   await writeMeta(updated);
-  // autoCommit, not commitAll: a whole-tree sweep would sign an agent edit
-  // pending in the autosave window as the sync, with no Claude commit to review.
-  await autoCommit(projectId, branch, `aldine: sync Zotero library into ${z.bibFile}`).catch(() => {});
+  // The bib file only: every other change stays in the working tree for the
+  // autosave, which commits pending agent edits under their own attribution.
+  // A sweep here would sign them, and whatever else differs on disk (a file a
+  // failed read or another replica emptied), as the sync.
+  await commitPaths(projectId, branch, [z.bibFile], `aldine: sync Zotero library into ${z.bibFile}`).catch(() => {});
   const itemCount = (result.bib.match(/^@/gm) || []).length;
   return { synced: true, bibFile: z.bibFile, itemCount, format };
 }
