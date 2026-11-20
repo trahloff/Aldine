@@ -83,11 +83,13 @@ test.describe(`deployed instance${BASE ? ` under ${BASE}` : ''}`, () => {
       await page.keyboard.press('Escape');
     }
 
-    // the share link is the public URL of this project (sharing exists only with sign-in)
+    // a share link opens this project under the public URL (sharing exists only with sign-in)
     if (authed) {
       await page.getByTestId('share-project').click();
-      await page.getByTestId('share-link').check();
-      await expect(page.getByTestId('share-url')).toHaveText(`${page.url().split('/p/')[0]}/p/${projectId}`);
+      await page.getByTestId('share-link-create').click();
+      await expect(page.getByTestId('share-link-row')).toHaveCount(1);
+      const token = (await (await page.request.get(`${BASE}/api/projects/${projectId}`)).json()).share.links[0].token;
+      expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
       await page.keyboard.press('Escape');
     }
 

@@ -14,8 +14,13 @@ const INVITATION_ID_RE = /^[0-9a-f]{32}$/;
  * unique-constrained); project metadata and comments are JSONB (read/written
  * wholesale); usage is an upsert with an atomic increment.
  */
+interface PgClient {
+  query(text: string, params?: unknown[]): Promise<{ rows: any[] }>;
+  release(): void;
+}
 interface PgPool {
   query(text: string, params?: unknown[]): Promise<{ rows: any[] }>;
+  connect(): Promise<PgClient>;
   end(): Promise<void>;
 }
 
@@ -45,7 +50,14 @@ export class PgStore implements DataStore {
     const pool = new Pool({ connectionString: this.connectionString, max: Number(process.env.PG_POOL_MAX || 10) });
     // Route every query through a NUL-stripping wrapper so text columns (name,
     // email, …) can't 500 on a pasted U+0000 — jsonb() already guards jsonb columns.
-    this.pool = { query: (text, params) => pool.query(text, stripNulParams(params)), end: () => pool.end() };
+    this.pool = {
+      query: (text, params) => pool.query(text, stripNulParams(params)),
+      connect: async () => {
+        const client = await pool.connect();
+        return { query: (text: string, params?: unknown[]) => client.query(text, stripNulParams(params)), release: () => client.release() };
+      },
+      end: () => pool.end(),
+    };
     // Postgres may still be starting when we come up (compose starts both at once).
     // Retry the first connection with backoff instead of crash-looping.
     for (let attempt = 1; ; attempt++) {
@@ -398,6 +410,24 @@ export class PgStore implements DataStore {
       [projectId, entry],
     );
     return rows.length === 1;
+  }
+  async updateMeta(id: string, change: (meta: ProjectMeta) => ProjectMeta | null) {
+    if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(`SELECT data FROM project_meta WHERE id=$1 FOR UPDATE`, [id]);
+      if (!rows[0]) { await client.query('ROLLBACK'); return null; }
+      const next = change(rows[0].data as ProjectMeta);
+      if (next) await client.query(`UPDATE project_meta SET data=$2 WHERE id=$1`, [id, jsonb(next)]);
+      await client.query('COMMIT');
+      return next ?? (rows[0].data as ProjectMeta);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
   async listMeta() {
     const { rows } = await this.pool.query(`SELECT data FROM project_meta ORDER BY created_at DESC`);

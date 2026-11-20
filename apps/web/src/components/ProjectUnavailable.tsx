@@ -15,6 +15,8 @@ export interface ProjectLoadError {
   message: string;
   /** HTTP status; 0 when the request never got an answer. */
   status: number;
+  /** Why the share link this page was opened with did not let the account in. */
+  linkProblem?: string;
 }
 
 /** A session that ended while the project was open: the sign-in happens
@@ -83,7 +85,8 @@ export default function ProjectUnavailable({ projectId, error, onRetry, inPlace 
       {error.reason === 'denied' ? (
         <div className="login__card consent" data-testid="project-denied">
           <h1 className="home__brand"><Wordmark height={21} /></h1>
-          <h2 className="consent__title invite__title">{invite ? `You’re invited to “${invite.project.name}”` : 'You don’t have access to this project'}</h2>
+          <h2 className="consent__title invite__title">{invite ? `You’re invited to “${invite.project.name}”` : error.linkProblem ? 'This share link no longer works' : 'You don’t have access to this project'}</h2>
+          {error.linkProblem && !invite && <p className="consent__hint" data-testid="project-denied-link">{error.linkProblem}</p>}
           <p className="consent__hint">
             {who && <>You’re signed in as <strong data-testid="project-denied-account">{who}</strong>. </>}
             {invite

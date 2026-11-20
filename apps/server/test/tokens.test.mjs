@@ -202,7 +202,7 @@ for (const key of TOKEN_WRITES) {
 res = await app.inject({ method: 'PUT', url: `/api/projects/${guarded.id}/file`, headers: fullBearer, payload: { path: 'agent.tex', content: 'by token\n' } });
 check(res.statusCode === 200 && store.readFile(guarded.id, 'main', 'agent.tex').toString() === 'by token\n', 'a token still writes a file');
 res = await app.inject({ method: 'POST', url: `/api/projects/${guarded.id}/share`, headers: { cookie }, payload: { mode: 'link', collaborators: [] } });
-check(res.statusCode === 200 && (await store.readMeta(guarded.id)).share.mode === 'link', 'a browser session still changes sharing');
+check(res.statusCode === 200 && (await store.readMeta(guarded.id)).share.links.some((l) => l.id === 'address' && !l.revokedAt), 'a browser session still changes sharing');
 res = await app.inject({ method: 'DELETE', url: `/api/projects/${guarded.id}/branches?name=side`, headers: { cookie } });
 check(res.statusCode === 200, 'a browser session still deletes a branch');
 

@@ -148,7 +148,7 @@ function chipsFor(p: ProjectSummary, accounts: boolean, myId: string | null): { 
   if (accounts && p.ownerId) {
     if (ownerChipShown(p, accounts)) {
       const owner = p.ownerName || 'someone';
-      const t = (p.access === 'link' ? `Opened through a link from ${owner}` : `${p.ownerName || 'Someone'}’s project`) + (p.canEdit === false ? ' · you can view it' : '');
+      const t = (p.access === 'link' ? `Opened through a link from ${owner}` : `${p.ownerName || 'Someone'}’s project`) + (p.canEdit === false ? (p.role === 'review' ? ' · you can review it' : ' · you can view it') : '');
       out.push({
         sr: t,
         node: (
@@ -159,7 +159,8 @@ function chipsFor(p: ProjectSummary, accounts: boolean, myId: string | null): { 
         ),
       });
     } else if (p.share?.mode === 'link') {
-      const t = `Anyone signed in with the link can ${p.share.linkRole === 'view' ? 'view' : 'edit'}`;
+      const n = p.share.links?.filter((l) => !l.expiresAt || Date.parse(l.expiresAt) > Date.now()).length ?? 0;
+      const t = n > 1 ? `${n} share links let people in` : 'A share link lets people in';
       out.push({ sr: t, node: <Chip key="link" title={t} testId={`shared-link-${p.id}`}><IconLink width={11} height={11} /><span className="chip__text">Link</span></Chip> });
     } else if (p.share?.collaborators.length) {
       const n = p.share.collaborators.length;

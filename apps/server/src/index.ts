@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { instance } from './instance.js';
 import { buildApp, isCollabUpgrade } from './app.js';
-import { hocuspocus, shutdownFlushSet, closeProjectConnections, closeUserConnections, onAutoCommit } from './collab.js';
+import { hocuspocus, shutdownFlushSet, closeProjectConnections, closeUserConnections, onAutoCommit, closeExpiredLinkSessions } from './collab.js';
 import { scheduleAutopush } from './autopush.js';
 import { checkProvisioning, deprovisionProject } from './provision.js';
 import { TRASH_DAYS } from './trash.js';
@@ -81,6 +81,9 @@ const sweepTrash = () => store.purgeExpiredTrash(TRASH_DAYS, async (meta) => { a
   .catch((err) => console.error('[aldine] trash purge failed', err));
 sweepTrash();
 setInterval(sweepTrash, 24 * 60 * 60 * 1000).unref();
+// A share link's expiry reaches the sockets it let in within this interval;
+// REST requests are refused from the moment it passes.
+setInterval(() => { closeExpiredLinkSessions(); }, 15_000).unref();
 // Projects from before last edits were recorded get one from their history,
 // in the background; the project list asks for any this misses.
 backfillMissingLastEdits().catch((err) => console.error('[aldine] last-edit backfill failed', err));

@@ -11,6 +11,7 @@ import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { replaceFileDurable } from './durable.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
 import { canAccess, canEdit } from './authz.js';
+import { linkAccessEnds } from './sharelinks.js';
 import { redisAvailable, createDedicatedClient } from './redis.js';
 import { noteEdit, AGENT_EDITOR, editorOf } from './activity.js';
 import { diffSpans } from './textdiff.js';
@@ -470,16 +471,36 @@ const authHook = AUTH_ENABLED ? {
     // The trash locks everyone out, as the HTTP guard does: trashProject drops the sockets, and this refuses their reconnect.
     if (meta.deletedAt) throw new Error('project not found');
     if (!canAccess(meta, user)) throw new Error('Access denied');
-    // "Can view" connects like a showcase visitor: edits are dropped, the
-    // awareness (presence) still flows. Sharing changes close the sockets,
-    // so a new role takes effect on the reconnect.
+    // "Can review" and "Can view" connect like a showcase visitor: edits are
+    // dropped, the awareness (presence) still flows; comments and
+    // suggestions go over REST. Sharing changes close the sockets, so a new
+    // role takes effect on the reconnect.
     if (!canEdit(meta, user) || protectedProjects.has(parsed.projectId)) connection.readOnly = true;
     // Becomes connection.context: the only per-socket identity we keep, so
     // onlineUserIds can count people rather than sockets, and the project
     // list can name who typed last.
-    return { userId: user.id, userName: user.name || user.email || null };
+    // A link's expiry ends access to an open socket too (closeExpiredLinkSessions).
+    const accessUntil = linkAccessEnds(meta, user.id);
+    return { userId: user.id, userName: user.name || user.email || null, ...(accessUntil !== null ? { accessUntil } : {}) };
   },
 } : {};
+
+/**
+ * Close this node's sockets whose access came through a share link that has
+ * expired since they connected. The client reconnects and the auth hook
+ * decides again: someone who has access another way resumes. Returns how
+ * many it closed.
+ */
+export function closeExpiredLinkSessions(now = Date.now()): number {
+  let closed = 0;
+  hocuspocus.documents.forEach((doc) => {
+    for (const c of doc.getConnections()) {
+      const until = (c.context as { accessUntil?: number } | undefined)?.accessUntil;
+      if (typeof until === 'number' && until <= now) { c.close({ code: 4205, reason: 'Reset Connection' }); closed++; }
+    }
+  });
+  return closed;
+}
 
 /** Distinct signed-in users with an open collab socket on this node. Empty
  *  with auth off (sockets carry no identity then). */

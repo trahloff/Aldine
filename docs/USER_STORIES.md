@@ -301,10 +301,18 @@ in `auth-tests/auth.spec.ts`. Issue #241.*
 - **AUTH-7** — An invitation by email or ORCID iD grants nothing until the
   invited person accepts it; its link opens nothing for another account; on
   a server without email it waits on the invitee's Home page.
-- **AUTH-8** — The owner shares as "Can edit" or "Can view", per person and
-  for the link. Someone who can view reads, typesets and comments; the REST
-  routes, the collab socket and the Agent API refuse their changes, and a
-  role changed while they have the project open applies at once.
+- **AUTH-8** — The owner shares as "Can edit", "Can review" or "Can view",
+  per person and per share link. Someone who can review reads, typesets,
+  comments and suggests changes; someone who can view reads and typesets.
+  The REST routes, the collab socket and the Agent API refuse their changes,
+  and a role changed while they have the project open applies at once.
+- **AUTH-10** — A project has several share links, each with its own token,
+  role, optional name and optional expiry. Someone signed in comes in only
+  through a link's token, not the project's address. Revoking a link, or its
+  expiry, shuts out everyone who came in through it at once, open editors
+  and project lists included, and nobody the owner invited by name. Link
+  sharing from before 1.17 keeps working at the project's address as one
+  link the owner can revoke.
 - **AUTH-9** — Opening someone else's project for the first time puts none
   of Claude's earlier work up for review. Revert asks first, saying whose
   commits it undoes, and offers Undo.

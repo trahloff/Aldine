@@ -39,7 +39,8 @@ import { issuerIsLoopback, oidcLogoutRedirect } from './oidc.js';
 import { readAvatar, syncAvatar } from './avatars.js';
 import { instance } from './instance.js';
 import * as email from './email.js';
-import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, type ListAccess } from './authz.js';
+import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, roleOf, type ListAccess } from './authz.js';
+import { ADDRESS_LINK_ID, LINK_ID_RE, LINK_TOKEN_RE, MAX_ACTIVE_LINKS, MAX_LINK_LABEL, MAX_LINK_MEMBERS, anyActiveLink, isShareRole, linkActive, linkByToken, linkExpired, linksOf, newLinkId, newLinkToken, ownerLinkView, pruneLinks, rolesOf, type ShareLink, type ShareRole } from './sharelinks.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
@@ -162,15 +163,16 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
   const owner = user !== undefined && isOwner(meta, user);
   return {
     ...rest,
-    share: share && (owner ? share : { mode: share.mode, collaborators: [], ...(share.linkRole ? { linkRole: share.linkRole } : {}) }),
+    share: share && shareView(meta, owner),
     ownerId,
     ownerName: await ownerName(meta),
     remote: link,
     github: link?.provider === 'github' ? link : undefined,
     isOwner: user !== undefined ? isOwner(meta, user) : undefined,
     isMember: user !== undefined ? isMember(meta, user) : undefined,
-    // False for "Can view": the editor opens read-only, comments stay open.
+    // False for "Can review" and "Can view": the editor opens read-only.
     canEdit: user !== undefined ? canEdit(meta, user) : undefined,
+    role: user !== undefined ? roleOf(meta, user) ?? undefined : undefined,
     zotero: z ? {
       libraryPrefix: z.libraryPrefix,
       collectionKey: z.collectionKey,
@@ -182,6 +184,17 @@ async function publicMeta(meta: store.ProjectMeta, user?: auth.PublicUser | null
     } : null,
     thumb: await projectThumb(meta),
   };
+}
+
+/** The share as a response carries it. `mode` says whether some link lets
+ *  people in, as before 1.17. Only the owner sees the roster, the roles and
+ *  the links with their tokens; revoked links are not shown at all. */
+function shareView(meta: store.ProjectMeta, owner: boolean) {
+  const mode = anyActiveLink(meta) ? 'link' as const : 'private' as const;
+  if (!owner) return { mode, collaborators: [] as string[] };
+  const roles = rolesOf(meta);
+  const links = linksOf(meta).filter((l) => !l.revokedAt).map(ownerLinkView);
+  return { mode, collaborators: meta.share?.collaborators ?? [], ...(Object.keys(roles).length ? { roles } : {}), ...(links.length ? { links } : {}) };
 }
 
 /** Whose project list a request reads and writes: the account, or with
@@ -222,23 +235,27 @@ async function requireMember(req: any, reply: any, action: string): Promise<stor
   return meta;
 }
 
-/** What a person who can only view (authz.canEdit) may still send: building
- *  the document, their own project list and copy (like downloading it), and
- *  review comments. Every other write answers VIEW_ONLY, so a route added
- *  later is closed to viewers until it is listed here. */
+/** What a person who may not edit (authz.roleOf) may still send: building
+ *  the document, their own project list and copy (like downloading it),
+ *  and, with "review", review comments. Every other write answers
+ *  VIEW_ONLY, so a route added later is closed to them until it is listed here. */
 const VIEWER_WRITES = new Set([
   '/api/projects/:id/compile', '/api/projects/:id/synctex',
   '/api/projects/:id/opened', '/api/projects/:id/listing', '/api/projects/:id/copy',
-  '/api/projects/:id/comments', '/api/projects/:id/comments/:cid/reply', '/api/projects/:id/comments/:cid/resolve', '/api/projects/:id/comments/:cid',
   '/api/projects/:id/agent-activity/seen',
+]);
+const REVIEWER_WRITES = new Set([
+  ...VIEWER_WRITES,
+  '/api/projects/:id/comments', '/api/projects/:id/comments/:cid/reply', '/api/projects/:id/comments/:cid/resolve', '/api/projects/:id/comments/:cid',
 ]);
 /** Reads closed to viewers: they reach the owner's linked accounts only to
  *  change the document (a citation search inserts what it finds). */
 const VIEWER_READS_REFUSED = new Set(['/api/projects/:id/zotero/search']);
-const viewerMay = (method: string, route: string | undefined) => (method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+const roleMay = (role: ShareRole, method: string, route: string | undefined) => role === 'edit' || (method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
   ? !VIEWER_READS_REFUSED.has(route ?? '')
-  : VIEWER_WRITES.has(route ?? ''));
+  : (role === 'review' ? REVIEWER_WRITES : VIEWER_WRITES).has(route ?? ''));
 const VIEW_ONLY = 'You can view this project, not change it. Ask its owner for edit access.';
+const REVIEW_ONLY = 'You can review this project: comment and suggest changes, not change it. Ask its owner for edit access.';
 
 /** The Zotero link runs on the owner's own API key: an account an
  *  administrator disabled lends it to nobody. */
@@ -814,7 +831,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       try { meta = await store.readMeta(id); } catch { return reply.code(404).send({ error: 'project not found' }); }
       const user = reqUser(req);
       if (!user) return reply.code(401).send({ error: 'Sign in required' });
-      if (!canAccess(meta, user)) return reply.code(403).send({ error: 'You do not have access to this project' });
+      const role = roleOf(meta, user);
+      if (!role) return reply.code(403).send({ error: 'You do not have access to this project' });
       // Project-scoped tokens: enforce the scope here, in the one shared guard,
       // so no per-route copy can drift.
       const scope = (req as any)._tokenScope as auth.TokenScope | null;
@@ -824,7 +842,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (scope && !tokenMayUseProjectRoute(req.method, req.routeOptions.url)) {
         return reply.code(403).send({ error: 'Access tokens cannot use this route — sign in to do this' });
       }
-      if (!viewerMay(req.method, route) && !canEdit(meta, user)) return reply.code(403).send({ error: VIEW_ONLY });
+      if (!roleMay(role, req.method, route)) return reply.code(403).send({ error: role === 'review' ? REVIEW_ONLY : VIEW_ONLY });
       return;
     }
     // non-id routes: require sign-in for the project list / create / import
@@ -1003,30 +1021,59 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   const isListedInvitation = (i: store.Invitation) => ['pending', 'declined', 'expired'].includes(stateOf(i));
   /** A share as stored: roles only where they differ from "Can edit". */
-  const shareOf = (mode: 'private' | 'link', collaborators: string[], viewers: string[] | undefined, linkRole: 'edit' | 'view' | undefined): NonNullable<store.ProjectMeta['share']> => ({
-    mode, collaborators, ...(viewers?.length ? { viewers } : {}), ...(linkRole === 'view' ? { linkRole } : {}),
+  const shareOf = (collaborators: string[], roles: Record<string, 'review' | 'view'>, links: ShareLink[]): NonNullable<store.ProjectMeta['share']> => ({
+    collaborators, ...(Object.keys(roles).length ? { roles } : {}), links: pruneLinks(links),
   });
-  /** `viewers` kept to the entries in `keep`, with each of `set` given `role`. */
-  const withRoles = (viewers: string[] | undefined, keep: string[], set: string[], role: 'edit' | 'view'): string[] => {
-    const next = new Set((viewers ?? []).map(normalizeEntry).filter((c) => keep.includes(c)));
-    for (const c of set) { if (role === 'view') next.add(c); else next.delete(c); }
-    return [...next];
+  /** `roles` kept to the entries in `keep`, with each of `set` given `role`. */
+  const withRoles = (roles: Record<string, 'review' | 'view'>, keep: string[], set: string[], role: ShareRole): Record<string, 'review' | 'view'> => {
+    const next: Record<string, 'review' | 'view'> = {};
+    for (const [c, r] of Object.entries(roles)) if (keep.includes(normalizeEntry(c))) next[normalizeEntry(c)] = r;
+    for (const c of set) { if (role === 'edit') delete next[c]; else next[c] = role; }
+    return next;
   };
+  const allEntries = (roles: Record<string, 'review' | 'view'>) => Object.keys(roles).map(normalizeEntry);
+  /** Sockets close and reconnect, which re-runs the access check: the
+   *  still-allowed resume under their role now, the rest are refused. The
+   *  event reaches peer nodes (multi-node deploys) with the same effect. */
+  const recheckSessions = (projectId: string) => {
+    closeProjectConnections(projectId);
+    publishProjectEvent({ type: 'access-changed', projectId });
+  };
+  /** `links` with every active one revoked at `at`. */
+  const revokeAll = (links: ShareLink[], at: string) => links.map((l) => (l.revokedAt ? l : { ...l, revokedAt: at }));
+  /** `mode` as clients before 1.17 send it: 'link' puts back the link at the
+   *  project's address if no active link lets people in, 'private' revokes
+   *  every link. `linkRole` is that address link's role. */
+  const applyMode = (links: ShareLink[], mode: unknown, linkRole: unknown): ShareLink[] => {
+    const at = new Date().toISOString();
+    if (mode === 'private') return revokeAll(links, at);
+    if (mode !== 'link') return links;
+    const role: ShareRole = linkRole === 'view' ? 'review' : isShareRole(linkRole) ? linkRole : 'edit';
+    const address = links.find((l) => !l.token && linkActive(l));
+    if (address) return isShareRole(linkRole) ? links.map((l) => (l === address ? { ...l, role } : l)) : links;
+    if (links.some((l) => linkActive(l))) return links;
+    return [...links.filter((l) => l.id !== ADDRESS_LINK_ID), { id: ADDRESS_LINK_ID, role, createdAt: at }];
+  };
+  /** Does some link let fewer people in, or with a narrower role, than before? */
+  const linksNarrowed = (before: ShareLink[], after: ShareLink[]) => before.some((l) => {
+    if (!linkActive(l)) return false;
+    const now = after.find((x) => x.id === l.id);
+    return !now || !linkActive(now) || now.role !== l.role;
+  });
 
   // ---------- sharing (owner only) ----------
-  // The share list is the only source of access. With accounts on, an address
-  // or ORCID iD added to it becomes an invitation instead, and joins the list
-  // when its person accepts (POST /api/invitations/:invite/accept).
-  // `linkRole` sets what link visitors may do (kept when absent); `role` is
-  // the role of the entries this save adds (edit when absent).
-  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[]; previous?: string[]; linkRole?: 'edit' | 'view'; role?: 'edit' | 'view' } }>(
+  // The share list and the share links are the only sources of access. With
+  // accounts on, an address or ORCID iD added to the list becomes an
+  // invitation instead, and joins the list when its person accepts
+  // (POST /api/invitations/:invite/accept). `role` is the role of the entries
+  // this save adds (edit when absent); `mode` and `linkRole` are read as
+  // applyMode says.
+  app.post<{ Params: { id: string }; Body: { mode?: 'private' | 'link'; collaborators?: string[]; previous?: string[]; linkRole?: ShareRole; role?: ShareRole } }>(
     '/api/projects/:id/share', async (req, reply) => {
       const meta = await store.readMeta(req.params.id);
       const user = reqUser(req);
       if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
-      const mode = req.body?.mode === 'link' ? 'link' : 'private';
-      const linkRole = req.body?.linkRole === 'view' || req.body?.linkRole === 'edit' ? req.body.linkRole : (meta.share?.linkRole ?? 'edit');
-      const role = req.body?.role === 'view' ? 'view' : 'edit';
+      const role: ShareRole = isShareRole(req.body?.role) ? req.body!.role! : 'edit';
       const prev = (meta.share?.collaborators || []).map(normalizeEntry);
       // An entry is an email address or an ORCID iD (the only way to invite a
       // researcher whose ORCID account shares no email).
@@ -1034,19 +1081,16 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         ? [...new Set(req.body!.collaborators.map((c) => normalizeEntry(String(c).trim())).filter((c) => isOrcidId(c) || isEmailAddress(c)))].slice(0, MAX_SHARE_ENTRIES)
         : prev;
       const added = requested.filter((c) => !prev.includes(c));
+      const links = applyMode(linksOf(meta), req.body?.mode, req.body?.linkRole);
       // Gaining access needs no socket to reconnect: only a share that lets
       // fewer people in drops them (below).
-      const narrows = (list: string[]) => (meta.share?.mode === 'link' && mode !== 'link') || prev.some((c) => !list.includes(c))
-        || (mode === 'link' && (meta.share?.linkRole ?? 'edit') !== linkRole);
+      const narrows = (list: string[]) => linksNarrowed(linksOf(meta), links) || prev.some((c) => !list.includes(c));
       if (!auth.AUTH_ENABLED || !user) {
         // Nobody signs in to accept anything: the list is the share.
         const revoke = narrows(requested);
-        meta.share = shareOf(mode, requested, withRoles(meta.share?.viewers, requested, added, role), linkRole);
+        meta.share = shareOf(requested, withRoles(rolesOf(meta), requested, added, role), links);
         await store.writeMeta(meta);
-        if (revoke) {
-          closeProjectConnections(meta.id);
-          publishProjectEvent({ type: 'access-changed', projectId: meta.id });
-        }
+        if (revoke) recheckSessions(meta.id);
         return { ...(await publicMeta(meta, user)), invited: 0, notEmailed: added.filter((c) => !isOrcidId(c)), reason: 'accounts-off' };
       }
       const own = new Set([...recipientKeys(user), ...(user.email ? [user.email.toLowerCase()] : [])]);
@@ -1068,64 +1112,153 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const revoke = narrows(kept);
       // A role stays with its entry while the entry is shared, or invited on
       // the dialog's list (Invite again keeps it).
-      const viewers = withRoles(meta.share?.viewers, [...kept, ...invitations.filter((i) => isListedInvitation(i)).map((i) => i.to)], fresh, role);
-      meta.share = shareOf(mode, kept, viewers, linkRole);
-      await store.writeMeta(meta);
-      // Access is checked when a collab socket connects, so a session already
-      // in the document would survive being revoked. Drop this project's
-      // sockets: clients reconnect and re-authenticate, which re-runs the
-      // check — the still-allowed resume, the revoked are refused. The event
-      // reaches peer nodes (multi-node deploys) with the same effect.
-      if (revoke) {
-        closeProjectConnections(meta.id);
-        publishProjectEvent({ type: 'access-changed', projectId: meta.id });
-      }
-      const staged = await stageInvitations(meta, user, fresh);
-      const report = await sendInvitations(staged, meta, user);
-      return { ...(await publicMeta(meta, user)), ...report, invitations: await ownerInvitations(req, meta.id) };
+      const roles = withRoles(rolesOf(meta), [...kept, ...invitations.filter((i) => isListedInvitation(i)).map((i) => i.to)], fresh, role);
+      // `mode` applies to the links as they are when this writes: a revoke or
+      // a visitor coming in meanwhile stays.
+      const saved = await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(kept, roles, applyMode(linksOf(m), req.body?.mode, req.body?.linkRole)) }));
+      if (revoke) recheckSessions(meta.id);
+      const staged = await stageInvitations(saved, user, fresh);
+      const report = await sendInvitations(staged, saved, user);
+      return { ...(await publicMeta(saved, user)), ...report, invitations: await ownerInvitations(req, meta.id) };
     });
 
   // Take one person off the share list, and nothing else: unlike a save of
   // the whole list, a dialog holding an older list cannot re-invite someone
-  // removed elsewhere. With a link share they can still open the project
-  // through the link.
+  // removed elsewhere. A share link they came in through still lets them in.
   app.delete<{ Params: { id: string; entry: string } }>('/api/projects/:id/collaborators/:entry', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     const user = reqUser(req);
     if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
     const entry = normalizeEntry(req.params.entry.trim());
-    const list = meta.share?.collaborators || [];
-    if (!list.some((c) => normalizeEntry(c) === entry)) return reply.code(404).send({ error: `${entry} has no access to remove` });
-    meta.share = shareOf(meta.share?.mode || 'private', list.filter((c) => normalizeEntry(c) !== entry), meta.share?.viewers?.filter((c) => normalizeEntry(c) !== entry), meta.share?.linkRole);
-    await store.writeMeta(meta);
-    // As in the share route: drop the sockets so the removed person's
-    // session re-authenticates and is refused.
-    closeProjectConnections(meta.id);
-    publishProjectEvent({ type: 'access-changed', projectId: meta.id });
-    return publicMeta(meta, user);
+    if (!(meta.share?.collaborators || []).some((c) => normalizeEntry(c) === entry)) return reply.code(404).send({ error: `${entry} has no access to remove` });
+    const saved = await store.updateMeta(meta.id, (m) => {
+      const list = (m.share?.collaborators || []).filter((c) => normalizeEntry(c) !== entry);
+      return { ...m, share: shareOf(list, withRoles(rolesOf(m), allEntries(rolesOf(m)).filter((c) => c !== entry), [], 'edit'), linksOf(m)) };
+    });
+    recheckSessions(meta.id);
+    return publicMeta(saved, user);
   });
 
-  // "Can edit" or "Can view" for one person with access or with an open
-  // invitation. Their sockets reconnect under the new role at once.
+  // "Can edit", "Can review" or "Can view" for one person with access or
+  // with an open invitation. Their sockets reconnect under the new role at once.
   app.put<{ Params: { id: string; entry: string }; Body: { role?: unknown } }>('/api/projects/:id/collaborators/:entry', async (req, reply) => {
     const meta = await store.readMeta(req.params.id);
     const user = reqUser(req);
     if (!isOwner(meta, user)) return reply.code(403).send({ error: 'Only the owner can change sharing' });
     const role = req.body?.role;
-    if (role !== 'edit' && role !== 'view') return reply.code(400).send({ error: 'role must be "edit" or "view"' });
+    if (!isShareRole(role)) return reply.code(400).send({ error: 'role must be "edit", "review" or "view"' });
     const entry = normalizeEntry(req.params.entry.trim());
     const shared = (meta.share?.collaborators || []).some((c) => normalizeEntry(c) === entry);
     const invited = !shared && (await store.listProjectInvitations(meta.id)).some((i) => i.to === entry && isListedInvitation(i));
     if (!shared && !invited) return reply.code(404).send({ error: `${entry} has no access or open invitation` });
-    const viewers = withRoles(meta.share?.viewers, (meta.share?.viewers ?? []).map(normalizeEntry), [entry], role);
-    const changed = viewers.length !== (meta.share?.viewers ?? []).length;
-    meta.share = shareOf(meta.share?.mode || 'private', meta.share?.collaborators || [], viewers, meta.share?.linkRole);
-    await store.writeMeta(meta);
-    if (changed && shared) {
-      closeProjectConnections(meta.id);
-      publishProjectEvent({ type: 'access-changed', projectId: meta.id });
+    const changed = (rolesOf(meta)[entry] ?? 'edit') !== role;
+    const saved = await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(m.share?.collaborators || [], withRoles(rolesOf(m), allEntries(rolesOf(m)), [entry], role), linksOf(m)) }));
+    if (changed && shared) recheckSessions(meta.id);
+    return publicMeta(saved, user);
+  });
+
+  // ---------- share links (owner only) ----------
+  // Each link has its own token and role; the owner names it, may give it an
+  // expiry, and revokes it. Revoking or expiring ends the access of everyone
+  // who came in through it, open sessions included, and no one else's.
+  const linkError = (body: { role?: unknown; label?: unknown; expiresAt?: unknown }, partial: boolean): string | null => {
+    if (!(partial && body.role === undefined) && !isShareRole(body.role)) return 'role must be "edit", "review" or "view"';
+    if (body.label !== undefined && body.label !== null && (typeof body.label !== 'string' || body.label.length > MAX_LINK_LABEL)) return `A link's name is at most ${MAX_LINK_LABEL} characters`;
+    if (body.expiresAt !== undefined && body.expiresAt !== null) {
+      const at = typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : NaN;
+      if (Number.isNaN(at)) return 'expiresAt must be an ISO 8601 date';
+      if (at <= Date.now()) return 'Choose an expiry date in the future';
     }
-    return publicMeta(meta, user);
+    return null;
+  };
+  const cleanLabel = (label: unknown) => (typeof label === 'string' ? label.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() : '');
+
+  app.post<{ Params: { id: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown } }>('/api/projects/:id/links', async (req, reply) => {
+    const meta = await requireOwner(req, reply, 'create share links');
+    if (!meta) return;
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Share links need accounts' });
+    const body = req.body ?? {};
+    const bad = linkError(body, false);
+    if (bad) return reply.code(400).send({ error: bad });
+    if (linksOf(meta).filter((l) => linkActive(l)).length >= MAX_ACTIVE_LINKS) return reply.code(400).send({ error: `A project can have ${MAX_ACTIVE_LINKS} share links at once. Revoke one first.` });
+    const label = cleanLabel(body.label);
+    const link: ShareLink = {
+      id: newLinkId(), token: newLinkToken(), role: body.role as ShareRole, createdAt: new Date().toISOString(),
+      ...(label ? { label } : {}),
+      ...(typeof body.expiresAt === 'string' ? { expiresAt: new Date(Date.parse(body.expiresAt)).toISOString() } : {}),
+    };
+    const saved = await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), [...linksOf(m), link]) }));
+    return { ...(await publicMeta(saved, reqUser(req))), link: ownerLinkView(link) };
+  });
+
+  // A new name, role or expiry (null clears the name or the expiry). A
+  // narrower role applies to open sessions at once.
+  app.patch<{ Params: { id: string; link: string }; Body: { role?: unknown; label?: unknown; expiresAt?: unknown } }>('/api/projects/:id/links/:link', async (req, reply) => {
+    const meta = await requireOwner(req, reply, 'change share links');
+    if (!meta) return;
+    const body = req.body ?? {};
+    const bad = linkError(body, true);
+    if (bad) return reply.code(400).send({ error: bad });
+    const before = linksOf(meta).find((l) => l.id === req.params.link && !l.revokedAt);
+    if (!before) return reply.code(404).send({ error: 'No such share link on this project' });
+    const saved = await store.updateMeta(meta.id, (m) => ({
+      ...m,
+      share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => {
+        if (l.id !== before.id) return l;
+        const { label: _l, expiresAt: _e, ...rest } = l;
+        const label = body.label === undefined ? l.label : cleanLabel(body.label);
+        const expiresAt = body.expiresAt === undefined ? l.expiresAt : typeof body.expiresAt === 'string' ? new Date(Date.parse(body.expiresAt)).toISOString() : undefined;
+        return { ...rest, role: isShareRole(body.role) ? body.role : l.role, ...(label ? { label } : {}), ...(expiresAt ? { expiresAt } : {}) };
+      })),
+    }));
+    if (linksNarrowed([before], linksOf(saved))) recheckSessions(meta.id);
+    return publicMeta(saved, reqUser(req));
+  });
+
+  app.delete<{ Params: { id: string; link: string } }>('/api/projects/:id/links/:link', async (req, reply) => {
+    const meta = await requireOwner(req, reply, 'revoke share links');
+    if (!meta) return;
+    if (!linksOf(meta).some((l) => l.id === req.params.link && !l.revokedAt)) return reply.code(404).send({ error: 'No such share link on this project' });
+    const at = new Date().toISOString();
+    const saved = await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => (l.id === req.params.link && !l.revokedAt ? { ...l, revokedAt: at } : l))) }));
+    recheckSessions(meta.id);
+    return publicMeta(saved, reqUser(req));
+  });
+
+  // Come in through a share link: the link's token is the only credential,
+  // and the account is recorded on the link so that access ends with it.
+  // Off the /api/projects/:id surface because the caller has no access yet.
+  app.post<{ Body: { project?: unknown; token?: unknown } }>('/api/share-links/join', async (req, reply) => {
+    const user = reqUser(req);
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Share links need accounts' });
+    if (!user) return reply.code(401).send({ error: 'Sign in required' });
+    if (!(await visitLimiter.take(clientKey(req, user.id)))) return reply.code(429).send({ error: 'Rate limit reached — please slow down' });
+    const projectId = typeof req.body?.project === 'string' ? req.body.project : '';
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const unknown = () => reply.code(404).send({ error: 'This share link does not work. Check that you copied all of it, or ask the project owner for a new one.', code: 'unknown' });
+    if (!PROJECT_ID_RE.test(projectId) || !LINK_TOKEN_RE.test(token)) return unknown();
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(projectId); } catch { return unknown(); }
+    if (meta.deletedAt) return unknown();
+    const link = linkByToken(meta, token);
+    if (!link) return unknown();
+    if (link.revokedAt) return reply.code(410).send({ error: 'The owner turned this share link off. Ask them for a new one.', code: 'revoked' });
+    if (linkExpired(link)) return reply.code(410).send({ error: `This share link expired on ${link.expiresAt!.slice(0, 10)}. Ask the project owner for a new one.`, code: 'expired' });
+    if (!link.members?.some((m) => m.id === user.id)) {
+      if ((link.members?.length ?? 0) >= MAX_LINK_MEMBERS) return reply.code(409).send({ error: `${MAX_LINK_MEMBERS} people have joined through this link already. Ask the project owner for a new one.`, code: 'full' });
+      const at = new Date().toISOString();
+      let refused = false;
+      const saved = await store.updateMeta(meta.id, (m) => {
+        const now = linksOf(m).find((l) => l.id === link.id);
+        // Revoked or expired since the read above: no one comes in.
+        if (!now || !linkActive(now)) { refused = true; return null; }
+        if (now.members?.some((x) => x.id === user.id)) return null;
+        return { ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => (l.id === link.id ? { ...l, members: [...(l.members ?? []), { id: user.id, at }] } : l))) };
+      });
+      if (refused) return reply.code(410).send({ error: 'The owner turned this share link off. Ask them for a new one.', code: 'revoked' });
+      meta = saved;
+    }
+    return { ok: true, projectId: meta.id, role: roleOf(meta, user) };
   });
 
   /** The address an invitation link is copied with: the configured public
@@ -1219,7 +1352,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   // Invite one address or iD: a new person, or again after a decline or expiry.
   // `role` sets the invited entry's role; absent keeps the one it had (Invite again).
-  app.post<{ Params: { id: string }; Body: { to?: string; role?: 'edit' | 'view' } }>('/api/projects/:id/invitations', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { to?: string; role?: ShareRole } }>('/api/projects/:id/invitations', async (req, reply) => {
     const meta = await requireOwner(req, reply, 'invite people');
     if (!meta) return;
     const user = reqUser(req);
@@ -1234,9 +1367,8 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (kept.length + open.length + 1 > MAX_SHARE_ENTRIES) return reply.code(400).send({ error: `A project has room for ${MAX_SHARE_ENTRIES} collaborators and open invitations together` });
     if (!(await takeInvite(user, reply))) return;
     const role = req.body?.role;
-    if (role === 'edit' || role === 'view') {
-      meta.share = shareOf(meta.share?.mode || 'private', kept, withRoles(meta.share?.viewers, (meta.share?.viewers ?? []).map(normalizeEntry), [entry], role), meta.share?.linkRole);
-      await store.writeMeta(meta);
+    if (isShareRole(role)) {
+      await store.updateMeta(meta.id, (m) => ({ ...m, share: shareOf(m.share?.collaborators ?? [], withRoles(rolesOf(m), allEntries(rolesOf(m)), [entry], role), linksOf(m)) }));
     }
     const staged = await stageInvitations(meta, user, [entry]);
     const report = await sendInvitations(staged, meta, user);
@@ -1408,7 +1540,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       const meta = await store.readMeta(req.params.id); // re-read inside the mutex
       if (meta.ownerId) return reply.code(409).send({ error: 'This project already has an owner' });
       meta.ownerId = user.id;
-      meta.share = { mode: 'private', collaborators: [] };
+      meta.share = { collaborators: [], links: [] };
       await store.writeMeta(meta);
       closeProjectConnections(meta.id);
       publishProjectEvent({ type: 'access-changed', projectId: meta.id });
@@ -3156,7 +3288,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         remote: { provider: p.id, fullName: info.fullName, owner: info.owner, repo: info.name, remoteBranch, cloneUrl: info.cloneUrl, ...(conn.baseUrl ? { baseUrl: conn.baseUrl } : {}), connectedBy: remoteUserId(req) },
       };
       const ownerId = reqUser(req)?.id;
-      if (ownerId) { meta.ownerId = ownerId; meta.share = { mode: 'private', collaborators: [] }; }
+      if (ownerId) { meta.ownerId = ownerId; meta.share = { collaborators: [], links: [] }; }
       await store.writeMeta(meta);
       if (ownToken) await remotes.setProjectConnection(id, p.id, conn);
       noteEdit(meta.id, 'main', editorOf(reqUser(req)));

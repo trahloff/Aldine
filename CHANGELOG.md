@@ -8,6 +8,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ## [Unreleased]
 
 ### Added
+- Share links: a project can have several, each with its own token and
+  role ("Can edit", "Can review" or "Can view"), an optional name, and an
+  optional expiry date. Create, copy and revoke them in the Share dialog.
+  Revoking a link, or its expiry, shuts out everyone who came in through it
+  at once, their open editor and their project list included; people you
+  invited by email or ORCID iD keep their access. Visitors still sign in.
+  A project's address alone no longer lets anyone in, except on a project
+  that had link sharing on before this release: that link carries over as
+  "Project address" and keeps working until you revoke it. Refs #328.
+- "Can review", for people and for links: read, typeset, comment and
+  suggest changes, without changing the files. "Can view" now reads and
+  typesets only, without comments. Everyone who was "Can view" before
+  (and the old view-only link) is "Can review" now, so nobody loses
+  anything they could do. Refs #328.
 - Signing out of a single sign-on session can sign out at the identity
   provider too (OpenID Connect RP-Initiated Logout): with `OIDC_LOGOUT=idp`
   Aldine ends its session, then sends the browser to the IdP's

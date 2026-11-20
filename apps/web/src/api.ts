@@ -32,7 +32,19 @@ export interface SignInMethods {
 /** Page 1 of the last successful typeset on `branch`. `w`/`h` are the image's
  *  pixel size (the page's aspect ratio); `v` changes whenever the image does. */
 export interface ProjectThumb { branch: string; w: number; h: number; v: string }
-export type ShareRole = 'edit' | 'view';
+export type ShareRole = 'edit' | 'review' | 'view';
+/** A share link as its owner sees it. No `token`: the link that link
+ *  sharing before 1.17 became, whose URL is the project's own address. */
+export interface ShareLinkInfo {
+  id: string;
+  token?: string;
+  role: ShareRole;
+  label?: string;
+  createdAt: string;
+  expiresAt?: string;
+  /** People who came in through it. */
+  joined: number;
+}
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -46,14 +58,16 @@ export interface ProjectSummary {
   /** Owner or invited collaborator — false for someone here via a share link.
    *  Gates the affordances the server restricts to members. */
   isMember?: boolean;
-  /** `collaborators` is empty unless you are the owner (the server does not
-   *  disclose other people's invite list). `viewers`: the owner's entries,
-   *  people with access or invitations, who can only view; `linkRole`: what
-   *  the link lets visitors do (absent is edit). */
-  share?: { mode: 'private' | 'link'; collaborators: string[]; viewers?: string[]; linkRole?: ShareRole } | null;
-  /** False for someone who can only view: the editor opens read-only, and
-   *  comments stay open. Absent from older servers, which have no roles. */
+  /** `mode`: whether some share link lets people in. `collaborators`,
+   *  `roles` and `links` are the owner's alone (the server does not disclose
+   *  other people's invite list). `roles`: the entries, people with access or
+   *  invitations, that cannot edit. */
+  share?: { mode: 'private' | 'link'; collaborators: string[]; roles?: Record<string, 'review' | 'view'>; links?: ShareLinkInfo[] } | null;
+  /** False for someone who can review or view: the editor opens read-only.
+   *  Absent from older servers, which have no roles. */
   canEdit?: boolean;
+  /** What you may do here. Absent from servers before 1.17. */
+  role?: ShareRole;
   zotero: { libraryPrefix: string; collectionKey?: string; bibFile: string; lastSyncedAt?: string; username?: string } | null;
   remote?: RemoteLink | null;
   /** Server-side push after every autosave commit on main (owner-only toggle). */
@@ -831,13 +845,18 @@ export const api = {
   /** `previous`: the list the dialog started from, so that only what the
    *  owner took off it is removed (someone may have accepted meanwhile). */
   /** `role`: what the people this save adds may do once they accept. */
-  share: (id: string, mode: 'private' | 'link', collaborators: string[], previous?: string[], role?: ShareRole) =>
-    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, collaborators, previous, role }) }),
-  /** Changes only who the link lets in: without a list the server keeps the
-   *  people with access as they are. */
-  shareMode: (id: string, mode: 'private' | 'link', linkRole?: ShareRole) =>
-    req<ProjectSummary>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ mode, linkRole }) }),
-  /** "Can edit" or "Can view" for a person with access or an invitation. */
+  share: (id: string, collaborators: string[], previous?: string[], role?: ShareRole) =>
+    req<ProjectSummary & InviteReport>(`/api/projects/${id}/share`, { method: 'POST', body: JSON.stringify({ collaborators, previous, role }) }),
+  /** A new share link; `expiresAt` is an ISO time. The answer carries it as `link`. */
+  createShareLink: (id: string, link: { role: ShareRole; label?: string; expiresAt?: string }) =>
+    req<ProjectSummary & { link: ShareLinkInfo }>(`/api/projects/${id}/links`, { method: 'POST', body: JSON.stringify(link) }),
+  /** Ends the link's access at once, for everyone who came in through it. */
+  revokeShareLink: (id: string, link: string) =>
+    req<ProjectSummary>(`/api/projects/${id}/links/${link}`, { method: 'DELETE' }),
+  /** Come in through a share link's token. */
+  joinShareLink: (project: string, token: string) =>
+    req<{ ok: true; projectId: string; role: ShareRole }>('/api/share-links/join', { method: 'POST', body: JSON.stringify({ project, token }) }),
+  /** "Can edit", "Can review" or "Can view" for a person with access or an invitation. */
   setRole: (id: string, entry: string, role: ShareRole) =>
     req<ProjectSummary>(`/api/projects/${id}/collaborators/${encodeURIComponent(entry)}`, { method: 'PUT', body: JSON.stringify({ role }) }),
   /** Takes one address or ORCID iD off the people with access. */

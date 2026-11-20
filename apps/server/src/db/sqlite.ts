@@ -494,6 +494,18 @@ export class SqliteStore implements DataStore {
       return true;
     });
   }
+  async updateMeta(id: string, change: (meta: ProjectMeta) => ProjectMeta | null) {
+    if (!PROJECT_ID_RE.test(id)) throw new Error('bad project id');
+    return this.tx(() => {
+      const r = this.get(`SELECT data FROM project_meta WHERE id=?1`, id);
+      if (!r) return null;
+      const meta = parse<ProjectMeta>(r.data);
+      const next = change(meta);
+      if (!next) return meta;
+      this.run(`UPDATE project_meta SET data=?2 WHERE id=?1`, id, json(next));
+      return next;
+    });
+  }
   async listMeta() {
     return this.all(`SELECT data FROM project_meta ORDER BY created_at DESC, id`).map((r) => parse<ProjectMeta>(r.data));
   }

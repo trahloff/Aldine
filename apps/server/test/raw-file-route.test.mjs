@@ -75,7 +75,7 @@ meta.share = { mode: 'private', collaborators: ['member@example.com'] };
 await store.writeMeta(meta);
 const id = meta.id;
 const other = await store.createProject('Other', { 'main.tex': files['main.tex'] }, ownerUser.id);
-const setShare = async (mode) => { const m = await store.readMeta(id); m.share = { ...m.share, mode }; await store.writeMeta(m); };
+const setShare = async (mode) => { const m = await store.readMeta(id); m.share = { ...m.share, links: mode === 'link' ? [{ id: 'address', role: 'edit', createdAt: m.createdAt }] : [] }; await store.writeMeta(m); };
 
 const get = (rel, headers = { cookie: owner }, branch = 'main') =>
   app.inject({ method: 'GET', url: `/api/projects/${id}/file?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(rel)}&v=1`, headers });

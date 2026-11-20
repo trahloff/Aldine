@@ -481,6 +481,16 @@ export class JsonStore implements DataStore {
     this.write(file, meta);
     return true;
   }
+  // Synchronous from load to write, so no other call runs in between.
+  async updateMeta(id: string, change: (meta: ProjectMeta) => ProjectMeta | null) {
+    const file = this.metaPath(id);
+    const meta = this.load<ProjectMeta>(file);
+    if (!meta) return null;
+    const next = change(meta);
+    if (!next) return meta;
+    this.write(file, next);
+    return next;
+  }
   async listMeta() {
     if (!fs.existsSync(this.metaDir)) return [];
     const out: ProjectMeta[] = [];

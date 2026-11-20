@@ -1,6 +1,7 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Link, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useNavigate, useParams } from 'react-router-dom';
+import { keepShareLink, useShareLinkJoin } from './util/shareLink';
 import Home from './pages/Home';
 import { BASE_PATH } from './basePath';
 import { ToastProvider } from './components/Toast';
@@ -27,7 +28,14 @@ const Invite = lazy(() => import('./pages/Invite'));
  *  first (its tree, its open file, its connections) carries over. */
 function ProjectEditor() {
   const { id = '' } = useParams();
-  return <Editor key={id} />;
+  const navigate = useNavigate();
+  // A share link's token leaves the address bar before anything loads, so
+  // it is neither bookmarked nor sent on as a referrer.
+  const [linkQuery] = useState(() => keepShareLink(id, window.location.search));
+  useEffect(() => { if (linkQuery !== null) navigate({ search: linkQuery, hash: window.location.hash }, { replace: true }); }, [linkQuery]);
+  const join = useShareLinkJoin(id);
+  if (!join.ready) return <div className="editor-shell" />;
+  return <Editor key={id} linkProblem={join.problem} />;
 }
 
 function NotFound() {
