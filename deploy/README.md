@@ -402,9 +402,21 @@ changes the password keeps its exemption).
 `ALDINE_SIGNUP=approval` (with `AUTH_ENABLED=1`) lets in only the people you
 approve. Every account created from then on starts out waiting: a password
 sign-up, and the first sign-in with Google, GitHub, ORCID or OpenID Connect.
-An invitation to a project does not skip it. Accounts that already exist keep
-working, and accounts still waiting when you switch back to `open` keep
-waiting until you approve them.
+Accounts that already exist keep working, and accounts still waiting when
+you switch back to `open` keep waiting until you approve them.
+
+An invitation to a project skips the wait: someone who already has an
+account vouches for the person. An account is approved by itself when an
+open invitation (not expired, withdrawn or answered, sent by an account that
+is not disabled, to a project not in the trash) is for its proven address or
+ORCID iD. A single sign-on account with the invited address or iD signs in
+at once. A password sign-up with the invited address waits until its
+confirmation link (or a password reset) proves the address, then signs in
+and finds the invitation on its home page. Signing up from the invitation's
+page with any other address waits for you like any other sign-up, and an
+account already waiting is approved at its next sign-in once someone
+invites it. Every account with a project can invite, so anyone you approve
+can bring people in; to turn one away, delete it on `/admin`.
 
 - A waiting account cannot sign in. It is told "An administrator of this
   server approves new accounts. You can sign in once they have." only after
@@ -609,7 +621,7 @@ override file.
 | `AUTH_ENABLED` | `1` = multi-user login, ownership, sharing. Unset = single-tenant, no login |
 | `ALDINE_ADMIN_EMAILS` | Comma-separated emails that may open `/admin` (accounts, active users, projects, compile time) and disable, confirm, reset or delete accounts there (see [Managing accounts](#managing-accounts)). Never project content; needs `AUTH_ENABLED=1` to mean anything. A password account counts only once it has confirmed its address (see [Sign-up and invites](#sign-up-and-invites)) |
 | `ALDINE_SSO_ONLY` | `1` = disable password auth entirely (SSO only) |
-| `ALDINE_SIGNUP` | `open` (default) = anyone who reaches the instance can create an account; `approval` = every account created from then on, password or single sign-on, waits until an administrator approves it on `/admin` (see [Approving new accounts](#approving-new-accounts)). Accounts that already exist are not affected. Any other value counts as `approval` and is warned about at boot |
+| `ALDINE_SIGNUP` | `open` (default) = anyone who reaches the instance can create an account; `approval` = every account created from then on, password or single sign-on, waits until an administrator approves it on `/admin`, unless an open project invitation is for its proven address or ORCID iD (see [Approving new accounts](#approving-new-accounts)). Accounts that already exist are not affected. Any other value counts as `approval` and is warned about at boot |
 | `GOOGLE_OAUTH_CLIENT_ID/SECRET` | Google SSO |
 | `GITHUB_LOGIN_CLIENT_ID/SECRET` | GitHub SSO (login), on github.com; `GITHUB_URL` does not move sign-in |
 | `ORCID_CLIENT_ID/SECRET`, `ORCID_SANDBOX` | ORCID SSO (login); `ORCID_SANDBOX=1` targets sandbox.orcid.org |

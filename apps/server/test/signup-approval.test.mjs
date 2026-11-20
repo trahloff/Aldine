@@ -10,8 +10,13 @@
  *    administrators and ends on a "Waiting for approval" page
  *  - an address on ALDINE_ADMIN_EMAILS: a provider's never waits; a typed
  *    one waits until its link confirms it, then the account approves itself
- *  - an invitation does not skip approval; a reset link confirms the
- *    address and mails the administrators like the confirmation link
+ *  - an open invitation to the proven address or ORCID iD skips approval:
+ *    single sign-on at once, a password sign-up once its link confirms the
+ *    address; another address, an unconfirmed one, an expired or withdrawn
+ *    invitation, or one from a disabled account does not; an account already
+ *    waiting is approved at its next sign-in once invited
+ *  - a reset link confirms the address and mails the administrators like
+ *    the confirmation link
  *  - Enable on /admin approves (logged as "approved", mailed to the person);
  *    enabling an account an administrator disabled mails nobody
  *  - accounts from before, and accounts an administrator disabled, are not
@@ -216,11 +221,79 @@ mock.addPersona({ code: 'second', sub: 'second-1', claims: { name: 'Second', ema
   check(!logged('waiting for approval: second@example.org'), 'without an announcement');
 }
 
-// ---- an invitation does not skip approval ----
+// ---- an open invitation skips approval ----
 {
   const project = (await call('POST', '/api/projects', root, { name: 'Shared' })).json();
-  eq((await call('POST', `/api/projects/${project.id}/invitations`, root, { to: 'invitee@example.org' })).statusCode, 200, 'invite an address');
-  eq((await register('invitee@example.org', 'Invitee')).json().awaitingApproval, true, 'the invited person waits like anyone else');
+  const invite = async (to) => {
+    eq((await call('POST', `/api/projects/${project.id}/invitations`, root, { to })).statusCode, 200, `invite ${to}`);
+    return (await db().listInvitationsTo([to])).find((i) => i.status === 'pending');
+  };
+  const inviteeInv = await invite('invitee@example.org');
+
+  // A password sign-up from the invitation's page: the typed address proves nothing yet.
+  const reg = await call('POST', '/api/auth/register', null, { email: 'invitee@example.org', password: 'password123', name: 'Invitee', invite: inviteeInv.id });
+  eq(reg.json().awaitingApproval, true, 'an unconfirmed invited address still waits');
+  check(!cookieOf(reg), 'with no session');
+  eq(reg.json().message, 'Your account is created. Confirm your email address with the link we sent to invitee@example.org, then sign in to answer the invitation.', 'the reply says the invitation lets it in once confirmed');
+  const welcome = await mailTo('invitee@example.org', 'confirm_email=');
+  check(!welcome.text.includes('an administrator of this server approves'), 'the welcome mail does not promise an administrator');
+  const link = linkToken(welcome.text, 'confirm_email');
+  check(link, 'the link opens the sign-in form, where a waiting account confirms');
+  eq((await login('invitee@example.org')).json().error, auth.AWAITING_APPROVAL, 'without the link it waits');
+  const ok = await login('invitee@example.org', 'password123', link);
+  eq(ok.statusCode, 200, `the link confirms the address and the invitation approves it (${ok.body})`);
+  eq(ok.json().emailConfirmed, true, 'the reply says the link was used');
+  const cookie = cookieOf(ok);
+  check(cookie, 'with a session');
+  const u = await db().findUserByEmail('invitee@example.org');
+  check(!u.disabledAt && !u.emailPending, 'approved and confirmed');
+  eq((await call('GET', '/api/invitations', cookie)).json().map((i) => i.id), [inviteeInv.id], 'the home page lists the invitation');
+  eq((await call('POST', `/api/invitations/${inviteeInv.id}/accept`, cookie, {})).statusCode, 200, 'and it accepts it');
+  await settle();
+  eq(countTo('root@example.org', 'invitee@example.org (signs in'), 0, 'no administrator is asked');
+  check(!logged('waiting for approval: invitee@example.org'), 'nor is it announced');
+
+  // Signed up from the link with another address: an ordinary waiting sign-up.
+  const other = await call('POST', '/api/auth/register', null, { email: 'other@example.org', password: 'password123', name: 'Other', invite: inviteeInv.id });
+  eq(other.json().message, `Your account is created. Confirm your email address with the link we sent to other@example.org. ${auth.AWAITING_APPROVAL}`, 'another address waits like anyone else');
+  const otherLink = linkToken((await mailTo('other@example.org', 'confirm_email=')).text, 'confirm_email');
+  eq((await login('other@example.org', 'password123', otherLink)).json().error, `Your email address is confirmed. ${auth.AWAITING_APPROVAL}`, 'and keeps waiting once confirmed');
+
+  // An invitation found without its link: approved, but the reply does not say so.
+  await invite('quiet@example.org');
+  eq((await register('quiet@example.org', 'Quiet')).json().message, `Your account is created. Confirm your email address with the link we sent to quiet@example.org. ${auth.AWAITING_APPROVAL}`, 'a typed address learns nothing about invitations');
+  const quietLink = linkToken((await mailTo('quiet@example.org', 'confirm_email=')).text, 'confirm_email');
+  eq((await login('quiet@example.org', 'password123', quietLink)).statusCode, 200, 'yet confirming it approves the account');
+
+  // Single sign-on with the invited address, or the invited ORCID iD: in at once.
+  await invite('ivy@example.org');
+  mock.addPersona({ code: 'ivy', sub: 'ivy-1', claims: { name: 'Ivy', email: 'ivy@example.org', email_verified: true } });
+  const ivy = await sso('ivy');
+  eq(ivy.statusCode, 302, `an invited provider address signs in at once (${ivy.body})`);
+  check(cookieOf(ivy), 'with a session');
+  check(!auth.awaitingApproval(await db().findUserByEmail('ivy@example.org')), 'and does not wait');
+  const iD = '0000-0002-1825-0097';
+  await invite(iD);
+  const orcid = await auth.findOrCreateOAuth({ email: null, name: 'Josiah', subject: `orcid:${iD}` }, 'orcid');
+  check(!auth.awaitingApproval(await db().getUser(orcid.id)), 'an invited ORCID iD does not wait');
+
+  // Invitations that no longer stand.
+  const lateInv = await invite('late@example.org');
+  await db().setInvitation({ ...lateInv, expiresAt: new Date(Date.now() - 1000).toISOString() });
+  mock.addPersona({ code: 'late', sub: 'late-1', claims: { name: 'Late', email: 'late@example.org', email_verified: true } });
+  eq((await sso('late')).statusCode, 403, 'an expired invitation does not let in');
+  const goneInv = await invite('gone@example.org');
+  eq((await call('DELETE', `/api/projects/${project.id}/invitations/${goneInv.id}`, root)).statusCode, 200, 'withdraw an invitation');
+  mock.addPersona({ code: 'gone', sub: 'gone-1', claims: { name: 'Gone', email: 'gone@example.org', email_verified: true } });
+  eq((await sso('gone')).statusCode, 403, 'a withdrawn invitation does not let in');
+  await db().setInvitation({ ...goneInv, id: crypto.randomBytes(16).toString('hex'), to: 'shady@example.org', invitedBy: 'off-one', status: 'pending', respondedAt: null });
+  mock.addPersona({ code: 'shady', sub: 'shady-1', claims: { name: 'Shady', email: 'shady@example.org', email_verified: true } });
+  eq((await sso('shady')).statusCode, 403, 'an invitation from a disabled account does not let in');
+
+  // Waiting already, then invited: approved at the next sign-in.
+  await invite('late@example.org');
+  eq((await sso('late')).statusCode, 302, 'a waiting account signs in once an open invitation names it');
+  check(!auth.awaitingApproval(await db().findUserByEmail('late@example.org')), 'and no longer waits');
 }
 
 // ---- a reset link confirms the address, and announces the account ----
@@ -237,10 +310,10 @@ mock.addPersona({ code: 'second', sub: 'second-1', claims: { name: 'Second', ema
 // ---- /admin: counted, marked, approved ----
 {
   const stats = (await call('GET', '/api/admin/stats', root)).json();
-  eq(stats.users.awaitingApproval, 4, 'stats count the waiting accounts (newbie, sam, invitee, resetter)');
+  eq(stats.users.awaitingApproval, 6, 'stats count the waiting accounts (newbie, sam, other, gone, shady, resetter)');
   const rows = (await call('GET', '/api/admin/users', root)).json();
   const row = (email) => rows.find((u) => u.email === email);
-  eq(rows.filter((u) => u.awaitingApproval).map((u) => u.email).sort(), ['invitee@example.org', 'newbie@example.org', 'resetter@example.org', 'sam@example.org'], 'rows mark exactly those');
+  eq(rows.filter((u) => u.awaitingApproval).map((u) => u.email).sort(), ['gone@example.org', 'newbie@example.org', 'other@example.org', 'resetter@example.org', 'sam@example.org', 'shady@example.org'], 'rows mark exactly those');
   eq([row('off@example.org').awaitingApproval, !!row('off@example.org').disabledAt], [false, true], 'an account an administrator disabled is disabled, not waiting');
   eq(row('old@example.org').awaitingApproval, false, 'an account from before does not wait');
 
@@ -269,7 +342,7 @@ mock.addPersona({ code: 'second', sub: 'second-1', claims: { name: 'Second', ema
   await settle();
   eq(smtp.mails.length, before, 'enabling a disabled account mails nobody');
   eq((await login('old@example.org')).statusCode, 200, 'and it signs in');
-  eq((await call('GET', '/api/admin/stats', root)).json().users.awaitingApproval, 2, 'two accounts still wait');
+  eq((await call('GET', '/api/admin/stats', root)).json().users.awaitingApproval, 4, 'four accounts still wait');
 }
 
 // ---- configuration ----
