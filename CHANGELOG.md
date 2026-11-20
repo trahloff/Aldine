@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- A Zotero sync commits only the synced `.bib` file. Other changed files
+  stay uncommitted until the regular autosave, so the sync commit can no
+  longer carry an edit to, or the emptying of, another file such as
+  `main.tex`. Refs #342.
+- A file that exists but cannot be read (a disk or network-volume error)
+  no longer opens as an empty document that then overwrites it. The
+  editor refuses to load it until it can be read again, and a refresh
+  that cannot read a file keeps its open document as it is. Refs #342.
+
 ## [1.16.0] — 2026-11-19
 
 ### Added

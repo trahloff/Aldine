@@ -274,21 +274,24 @@ log = await gitops.log(p11.id, 'main');
 check(log[0].message === 'aldine: autosave' && (await gitops.commitDiff(p11.id, log[0].hash)).stat.includes('human.tex'), `the next fire sweeps the person's file (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
 check(log[1].author === 'Claude' && log[1].message === 'aldine: agent edit' && (await gitops.commitDiff(p11.id, log[1].hash)).stat.includes('main.tex'), 'and the agent delta landed under Claude with the retry title');
 
-// ---- a Zotero sync inside the agent window is a whole-tree commit a
-// person triggers: it must land Claude's pending delta under Claude first
-// and hold only the synced .bib itself ----
+// ---- a Zotero sync inside the agent window commits the synced .bib and
+// nothing else: Claude's pending delta stays for the fire, which lands it
+// under Claude ----
 const { syncProject } = await import('../src/zotero.ts');
 const p12 = await store.createProject('Split Zotero sync', {});
 await agentWrite(p12.id, 'main.tex', 'agent sentence\n', 'Tighten the abstract');
 await store.writeMeta({ ...(await store.readMeta(p12.id)), zotero: { apiKey: 'k', userId: 1, libraryPrefix: 'users/1', bibFile: 'references.bib' } });
 const synced = await syncProject(p12.id);
 check(synced.synced === true && synced.itemCount === 1, `the sync lands the mock library (got ${JSON.stringify(synced)})`);
+await gitops.autoCommit(p12.id, 'main');
 log = await gitops.log(p12.id, 'main');
-const titles12 = log.slice(0, 2).map((c) => `${c.author}: ${c.message}`);
-check(log[0].message === 'aldine: sync Zotero library into references.bib' && log[0].author !== 'Claude', `the sync commit is newest and not Claude's (got ${JSON.stringify(titles12)})`);
-const syncStat = (await gitops.commitDiff(p12.id, log[0].hash)).stat;
+const titles12 = log.map((c) => `${c.author}: ${c.message}`);
+const syncCommit = log.find((c) => c.message === 'aldine: sync Zotero library into references.bib');
+check(syncCommit && syncCommit.author !== 'Claude', `the sync commit is not Claude's (got ${JSON.stringify(titles12)})`);
+const syncStat = (await gitops.commitDiff(p12.id, syncCommit.hash)).stat;
 check(syncStat.includes('references.bib') && !syncStat.includes('main.tex'), 'the sync commit holds only the .bib');
-check(log[1].author === 'Claude' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p12.id, log[1].hash)).stat.includes('main.tex'), "Claude's pending edit committed first, under Claude and its intent");
+const agentCommit = log.find((c) => c.message === 'Tighten the abstract');
+check(agentCommit?.author === 'Claude' && (await gitops.commitDiff(p12.id, agentCommit.hash)).stat.includes('main.tex'), `Claude's pending edit commits under Claude and its intent (got ${JSON.stringify(titles12)})`);
 
 // ---- the MCP commit tool's primitive fails the same way: a checkpoint git
 // refuses puts the attribution back, so the next sweep cannot sign the
