@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/sso/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-24",
+      "dateModified": "2026-11-21",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -215,6 +215,9 @@ OIDC_LABEL=University login</code></pre>
 <tr><th scope="row"><code>OIDC_ALLOWED_GROUPS</code></th><td>unset</td><td>Comma-separated group names. When set, only members of at least one of them may sign in with OpenID Connect. Unset: everyone the provider authenticates gets in. It does not affect password accounts; see <a href="#access">access control</a>.</td></tr>
 <tr><th scope="row"><code>OIDC_GROUPS_CLAIM</code></th><td><code>groups</code></td><td>The claim that lists the groups. Read from the ID token, or from the userinfo endpoint when the ID token has none. A single string counts as one group.</td></tr>
 <tr><th scope="row"><code>OIDC_EMAIL_VERIFIED</code></th><td><code>require</code></td><td><code>require</code>: Aldine uses the address only when the provider says <code>email_verified: true</code>. <code>trust</code>: it uses whatever address the provider sends. Read <a href="#accounts">accounts and email addresses</a> before choosing <code>trust</code>.</td></tr>
+<tr><th scope="row"><code>OIDC_LOGOUT</code></th><td><code>local</code></td><td><code>local</code>: Sign out ends the Aldine session only. <code>idp</code>: Aldine then sends the browser to the provider's sign-out page as well. See <a href="#sign-out">signing out</a>.</td></tr>
+<tr><th scope="row"><code>OIDC_POST_LOGOUT_REDIRECT_URI</code></th><td><code>&lt;ALDINE_PUBLIC_URL&gt;/</code></td><td>With <code>OIDC_LOGOUT=idp</code>: where the provider sends the browser afterwards. Register it with the provider.</td></tr>
+<tr><th scope="row"><code>OIDC_LOGOUT_URL</code></th><td>unset</td><td>With <code>OIDC_LOGOUT=idp</code>: a sign-out URL to use instead of the discovery document's <code>end_session_endpoint</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -222,6 +225,10 @@ OIDC_LABEL=University login</code></pre>
 <pre><code>[aldine] OIDC sign-in: issuer=https://auth.example.com/application/o/aldine/ client=aldine (confidential)</code></pre>
 <p>When some <code>OIDC_*</code> variables are set but <code>OIDC_ISSUER</code> or <code>OIDC_CLIENT_ID</code> is missing (a typo such as <code>OIDC_CLIENTID</code>), the log says which one and the feature stays off. A value of <code>OIDC_EMAIL_VERIFIED</code> other than <code>require</code> or <code>trust</code> is logged and treated as <code>require</code>.</p>
 <p>The discovery document is fetched when Aldine starts and cached for an hour. When the hourly refresh fails, Aldine keeps the last good document and retries every 15 seconds. A provider that is down does not stop Aldine or the other sign-in methods.</p>
+
+<h3 id="sign-out">Signing out</h3>
+<p>By default, Sign out ends the Aldine session and nothing else. The person stays signed in at the provider, so the next click on the single sign-on button signs them straight back in. On a shared machine with <code>ALDINE_SSO_ONLY=1</code> that looks as if signing out did not work.</p>
+<p>With <code>OIDC_LOGOUT=idp</code>, Aldine ends its own session and then sends the browser to the provider's <code>end_session_endpoint</code> (OpenID Connect RP-Initiated Logout) with <code>id_token_hint</code>, <code>client_id</code> and <code>post_logout_redirect_uri</code>. Register that URI with the provider, or most providers stop on their own page. Only sessions that began with an OpenID Connect sign-in go to the provider; sessions from before the upgrade sign out locally once. A provider without an <code>end_session_endpoint</code> is named in the boot log, and sign-out stays local unless <code>OIDC_LOGOUT_URL</code> is set. Sessions on other devices are not ended (no back-channel logout).</p>
 
 <h3 id="private-ca">A private CA or a self-signed certificate</h3>
 <p>Aldine checks the provider's TLS certificate against Node's built-in CA list. If the provider uses an internal CA, mount the CA certificate into the <code>app</code> container and point <code>NODE_EXTRA_CA_CERTS</code> at it:</p>
@@ -435,7 +442,7 @@ OIDC_LABEL=Dex</code></pre>
 <li>SAML and LDAP.</li>
 <li>Several OpenID Connect providers at once. There is one per instance, next to Google, GitHub and ORCID.</li>
 <li>Making someone an administrator through a group.</li>
-<li>Signing out of the identity provider when signing out of Aldine.</li>
+<li>Back-channel logout: signing out at the identity provider does not end Aldine sessions on other devices.</li>
 </ul>
 <div class="cta-row">
 <a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>

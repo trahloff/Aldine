@@ -51,6 +51,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   without one is named in the boot log and sign-out stays local. Password,
   GitHub, Google and ORCID sign-outs are unchanged. docs/OIDC.md has a
   "Signing out" section with the Authentik setup. Refs #348.
+
 ### Changed
 - With `ALDINE_SIGNUP=approval`, a project invitation skips the
   administrator's approval. An account whose proven address or ORCID iD has
@@ -60,6 +61,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   once its confirmation link or a password reset proves the address. A
   sign-up with any other address still waits, and the invitation page's
   sign-up form says which address skips the wait. Refs #328.
+
 ### Fixed
 - A Zotero sync commits only the synced `.bib` file. Other changed files
   stay uncommitted until the regular autosave, so the sync commit can no
