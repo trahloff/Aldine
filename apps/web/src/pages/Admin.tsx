@@ -198,7 +198,10 @@ export default function Admin() {
                 <tbody>
                   {listed.map((u) => (
                     <tr key={u.id} data-testid="admin-user-row">
-                      <td>{u.name}{u.admin && <span className="admin__badge" title="On the admin list">admin</span>}</td>
+                      <td>
+                        {u.name}{u.admin && <span className="admin__badge" title="On the admin list">admin</span>}
+                        {u.awaitingApproval && u.signupNote && <div className="admin__note" title={u.signupNote} data-testid="admin-signup-note">“{u.signupNote}”</div>}
+                      </td>
                       <td>{u.email || <span className="admin__muted">no email</span>}</td>
                       <td>
                         {!u.email ? <span className="admin__muted">—</span>

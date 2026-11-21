@@ -321,7 +321,7 @@ mock.addPersona({ code: 'second', sub: 'second-1', claims: { name: 'Second', ema
   eq(approved.statusCode, 200, 'Enable approves');
   eq([approved.json().awaitingApproval, approved.json().disabledAt], [false, undefined], 'the row is an ordinary account now');
   check(logs.some((l) => l.startsWith('[aldine] admin root@example.org') && l.includes(`approved newbie@example.org [${newbie.id}]`)), 'the log says approved');
-  const m = await mailTo('newbie@example.org', 'Your Aldine account is approved');
+  const m = await mailTo('newbie@example.org', 'Your Aldine account is ready');
   check(m.text.includes('An administrator approved your account on the Aldine server at https://aldine.test') && m.text.includes('https://aldine.test/'), 'the person is told, with a link to sign in');
   const r = await login('newbie@example.org');
   eq(r.statusCode, 200, 'the approved account signs in');
@@ -329,7 +329,7 @@ mock.addPersona({ code: 'second', sub: 'second-1', claims: { name: 'Second', ema
 
   const samRow = row('sam@example.org');
   eq((await call('POST', `/api/admin/users/${samRow.id}/enable`, root, {})).statusCode, 200, 'approve the single sign-on account');
-  await mailTo('sam@example.org', 'Your Aldine account is approved');
+  await mailTo('sam@example.org', 'Your Aldine account is ready');
   eq((await sso('sam')).statusCode, 302, 'and it signs in through the provider');
 
   // Disable and enable an ordinary account: as before the mode.

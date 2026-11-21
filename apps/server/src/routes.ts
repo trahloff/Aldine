@@ -481,14 +481,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   };
 
   // `invite`: signed up on that invitation's page, where the confirmation link returns.
-  app.post<{ Body: { email: string; password: string; name?: string; invite?: unknown } }>('/api/auth/register', async (req, reply) => {
+  // `note`: what the person will use Aldine for, kept only while the account waits for approval.
+  app.post<{ Body: { email: string; password: string; name?: string; invite?: unknown; note?: unknown } }>('/api/auth/register', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if (auth.SSO_ONLY) return passwordDisabled(reply);
     if (!(await registerLimiter.take(clientKey(req)))) return reply.code(429).send({ error: 'Too many accounts created — try again later' });
     const bad = badCredentials(req.body);
     if (bad) return reply.code(400).send({ error: bad });
     try {
-      const { user, confirmToken, awaiting } = await auth.signUp(req.body.email, req.body.password, req.body.name);
+      const { user, confirmToken, awaiting } = await auth.signUp(req.body.email, req.body.password, req.body.name, req.body.note);
       // An account waiting for approval gets no session: it could not use one.
       if (!awaiting) reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id)));
       const returnTo = await inviteReturn(req.body.invite, user.email);
@@ -631,6 +632,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const link = loggedConfirmations.get(String(req.query.email || '').trim().toLowerCase());
       return link ? { link } : reply.code(404).send({ error: 'No confirmation link was logged for that address' });
     });
+    // The mails logged for an address for want of a transport, oldest first.
+    app.get<{ Querystring: { to?: string } }>('/api/test/mails', async (req) => ({ mails: email.loggedMailsTo(String(req.query.to || '')) }));
     // The caller's session and its cookie as if signed in `days` (or
     // `minutes`) earlier: what only an older session sees (renewals, the
     // Sign-in methods password check).
@@ -668,21 +671,54 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // These routes are browser navigations: a person who lands here from the
   // IdP gets a page with a way back, API clients keep the JSON body. No free
   // text from the request URL reaches the page (only an RFC 6749 error code).
-  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string, title = 'Sign-in failed', backTo = { href: '/', label: 'Back to sign-in' }) => {
+  // `noteToken`: the page also takes the waiting account's sign-up note
+  // (auth.addSignupNote); its form posts to this origin only.
+  const signInFailed = (req: FastifyRequest, reply: FastifyReply, code: number, error: string, title = 'Sign-in failed', backTo = { href: '/', label: 'Back to sign-in' }, noteToken?: string) => {
     if (!/\btext\/html\b/.test(String(req.headers.accept || ''))) return reply.code(code).send({ error });
     const back = `${config.basePath}${backTo.href}`;
+    const form = noteToken ? `<form method="post" action="${escapeHtml(`${config.basePath}/api/auth/signup-note`)}" data-testid="signup-note-form">
+<label for="note">What will you use Aldine for? <span>(optional)</span></label>
+<p class="hint" id="note-hint">For example your research group and institution. The administrators of this server read it before they approve your account. You can send one note.</p>
+<textarea id="note" name="note" rows="3" maxlength="${auth.NOTE_MAX}" aria-describedby="note-hint" data-testid="signup-note"></textarea>
+<input type="hidden" name="token" value="${escapeHtml(noteToken)}">
+<button type="submit" data-testid="signup-note-submit">Send note</button>
+</form>` : '';
     return reply.code(code)
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-store')
-      .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+      .header('content-security-policy', `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action ${noteToken ? "'self'" : "'none'"}; frame-ancestors 'none'`)
       .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} · Aldine</title><style>
 :root{color-scheme:light dark;--bg:#f7f6f3;--fg:#1d1c1a;--muted:#6b6862;--card:#fff;--line:#e3e0da;--accent:#2f5d8a}
 @media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe8;--muted:#a3a09a;--card:#1f1f1c;--line:#34332f;--accent:#8fb5dc}}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:0 16px}
 main{max-width:30rem;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px 28px}
 h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);font-weight:600}
-</style></head><body><main><h1>${escapeHtml(title)}</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p><a data-testid="sign-in-error-back" href="${escapeHtml(back)}">${escapeHtml(backTo.label)}</a></main></body></html>`);
+form{margin:0 0 1.25rem;padding-top:1rem;border-top:1px solid var(--line)}label{display:block;font-weight:600;margin-bottom:.25rem}label span{font-weight:400;color:var(--muted)}
+.hint{font-size:.9em;margin-bottom:.5rem}textarea{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:.75rem;resize:vertical}
+button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0;border-radius:6px;padding:6px 14px;cursor:pointer}
+</style></head><body><main><h1>${escapeHtml(title)}</h1><p data-testid="sign-in-error">${escapeHtml(error)}</p>${form}<a data-testid="sign-in-error-back" href="${escapeHtml(back)}">${escapeHtml(backTo.label)}</a></main></body></html>`);
   };
+
+  // The waiting page's note form (signInFailed), or a client sending JSON.
+  // The form parser exists only inside this plugin: a global one would let a
+  // cross-site <form> reach the JSON /api routes. The token, not a cookie,
+  // proves the account, so a cross-site post without it changes nothing.
+  await app.register(async (sub) => {
+    sub.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 16 * 1024 }, (_req, body, done) => {
+      try { done(null, Object.fromEntries(new URLSearchParams(String(body)))); } catch (err) { done(err as Error); }
+    });
+    sub.post<{ Body: { token?: unknown; note?: unknown } }>('/api/auth/signup-note', { bodyLimit: 16 * 1024 }, async (req, reply) => {
+      if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'not found' });
+      if (!(await loginLimiter.take(clientKey(req)))) return signInFailed(req, reply, 429, 'Too many attempts. Wait a moment and try again.', 'Note not sent');
+      try {
+        await auth.addSignupNote(req.body?.token, req.body?.note);
+      } catch (err: any) {
+        return signInFailed(req, reply, 400, err.message, 'Note not sent');
+      }
+      if (!/\btext\/html\b/.test(String(req.headers.accept || ''))) return { ok: true };
+      return signInFailed(req, reply, 200, `Thanks. The administrators of this server read your note before they approve your account. ${auth.AWAITING_APPROVAL}`, 'Note sent');
+    });
+  });
 
   app.get<{ Params: { provider: string } }>('/api/auth/oauth/:provider', async (req, reply) => {
     const provider = auth.AUTH_ENABLED ? oauth.getProvider(req.params.provider) : undefined;
@@ -754,7 +790,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         reply.header('set-cookie', auth.sessionCookie(await auth.createSession(user.id, Date.now(), profile.idToken)));
         return reply.redirect(`${config.basePath}/`);
       } catch (err: any) {
-        if (err instanceof auth.AwaitingApprovalError) return signInFailed(req, reply, 403, err.message, 'Waiting for approval');
+        if (err instanceof auth.AwaitingApprovalError) return signInFailed(req, reply, 403, err.message, 'Waiting for approval', undefined, err.noteToken);
         return signInFailed(req, reply, 400, `${signInName(provider.label)} failed: ${err.message}`);
       }
     });

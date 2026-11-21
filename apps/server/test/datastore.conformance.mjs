@@ -49,6 +49,18 @@ async function runSuite(store, label) {
   await store.updateUser({ ...user, name: 'Ada L.' });
   eq((await store.getUser(user.id)).name, 'Ada L.', `${label}: updateUser`);
 
+  // ---- signupNote: what a sign-up that waits for approval wrote ----
+  check((await store.getUser(user.id)).signupNote === undefined, `${label}: signupNote absent by default`);
+  await store.updateUser({ ...(await store.getUser(user.id)), signupNote: 'Thesis group, Example University' });
+  eq((await store.getUser(user.id)).signupNote, 'Thesis group, Example University', `${label}: updateUser writes signupNote`);
+  eq((await store.listUsers()).find((u) => u.id === user.id).signupNote, 'Thesis group, Example University', `${label}: listUsers carries signupNote`);
+  const { signupNote: _noNote, ...withoutNote } = await store.getUser(user.id);
+  await store.updateUser(withoutNote);
+  check((await store.getUser(user.id)).signupNote === undefined, `${label}: updateUser without it clears signupNote`);
+  const noted = { id: `un-${t}`, email: `n-${t}@example.com`, name: 'Noa', salt: 's', hash: 'h', createdAt: new Date().toISOString(), signupNote: 'Lab of Example' };
+  await store.createUser(noted);
+  eq(await store.getUser(noted.id), noted, `${label}: signupNote roundtrips through createUser/getUser`);
+
   // ---- commitEmail: the account's own author address for commits ----
   check((await store.getUser(user.id)).commitEmail === undefined, `${label}: commitEmail absent by default`);
   await store.updateUser({ ...(await store.getUser(user.id)), commitEmail: 'ada@users.noreply.github.com' });

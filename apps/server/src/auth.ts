@@ -151,6 +151,18 @@ function cleanName(name: unknown): string {
   return name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, NAME_MAX).replace(/[\ud800-\udbff]$/, '').trim();
 }
 
+/** Longest note a sign-up that waits for approval keeps ("what will you use Aldine for?"). */
+export const NOTE_MAX = 500;
+/** A sign-up note as stored: one line, no control characters, empty when
+ *  there is none. Throws when it is longer than NOTE_MAX: the form stops
+ *  there, so a longer one is not a person's note to shorten silently. */
+export function cleanNote(note: unknown): string {
+  if (typeof note !== 'string') return '';
+  const clean = note.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim();
+  if (clean.length > NOTE_MAX) throw new Error(`Keep the note to ${NOTE_MAX} characters or fewer.`);
+  return clean;
+}
+
 /** A fresh one-time confirmation link: the secret for the link, the digest for the store. */
 /** Older links kept working on an instance that sends no email. */
 const EARLIER_LINKS = 5;
@@ -166,13 +178,14 @@ export async function register(email: string | null, password: string, name?: st
 }
 
 /** Password sign-up. `confirmToken` goes into the confirmation link only,
- *  never into a response. An account `awaiting` approval gets no session. */
-export async function signUp(email: string, password: string, name?: string): Promise<{ user: PublicUser; confirmToken: string; awaiting: boolean }> {
-  const r = await createAccount(email, password, name);
+ *  never into a response. An account `awaiting` approval gets no session.
+ *  `note` is kept only on an account that waits. */
+export async function signUp(email: string, password: string, name?: string, note?: unknown): Promise<{ user: PublicUser; confirmToken: string; awaiting: boolean }> {
+  const r = await createAccount(email, password, name, undefined, undefined, cleanNote(note));
   return { user: pub(r.user), confirmToken: r.confirmToken!, awaiting: awaitingApproval(r.user) };
 }
 
-async function createAccount(email: string | null, password: string, name?: string, provider?: string, subject?: string): Promise<{ user: User; confirmToken: string | null }> {
+async function createAccount(email: string | null, password: string, name?: string, provider?: string, subject?: string, note = ''): Promise<{ user: User; confirmToken: string | null }> {
   email = email ? email.trim().toLowerCase() : null;
   if (email === null && !(provider && subject)) throw new Error('Enter a valid email address');
   if (email !== null && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address');
@@ -193,7 +206,10 @@ async function createAccount(email: string | null, password: string, name?: stri
     subject,
     ...(confirm ? { emailPending: confirm.pending } : {}),
   };
-  if (SIGNUP_MODE === 'approval' && !(await approvesItself(user))) user.disabledAt = createdAt;
+  if (SIGNUP_MODE === 'approval' && !(await approvesItself(user))) {
+    user.disabledAt = createdAt;
+    if (note) user.signupNote = note;
+  }
   await db().createUser(user);
   return { user, confirmToken: confirm?.token ?? null };
 }
@@ -250,8 +266,50 @@ export const ACCOUNT_DISABLED = 'This account is disabled. Ask the administrator
 /** Said, like ACCOUNT_DISABLED, only to someone who just proved the identity. */
 export const AWAITING_APPROVAL = 'An administrator of this server approves new accounts. You can sign in once they have.';
 /** A sign-in refused because the account waits for approval; `code` tells a
- *  client this refusal from a wrong password. */
-export class AwaitingApprovalError extends Error { readonly code = 'awaiting-approval'; }
+ *  client this refusal from a wrong password. `noteToken`: the account has no
+ *  sign-up note yet, and this lets the page that says so take one
+ *  (addSignupNote). Set only after the identity was proven. */
+export class AwaitingApprovalError extends Error {
+  readonly code = 'awaiting-approval';
+  constructor(message: string, readonly noteToken?: string) { super(message); }
+}
+
+/** How long the waiting page's note form works. */
+const NOTE_TOKEN_TTL_MS = 60 * 60 * 1000;
+const noteMac = (userId: string, exp: number) => crypto.createHmac('sha256', subkey('signup-note')).update(JSON.stringify([userId, exp])).digest('base64url');
+/** The waiting account's leave to add its note, without a session: a single
+ *  sign-on account that waits has none, and gets this on the page that says
+ *  it waits. Undefined when the account has a note already. */
+function noteTokenFor(u: User, now = Date.now()): string | undefined {
+  if (u.signupNote) return undefined;
+  const exp = now + NOTE_TOKEN_TTL_MS;
+  return `${u.id}.${exp}.${noteMac(u.id, exp)}`;
+}
+
+/**
+ * Add the sign-up note to the account `token` was issued for. Once: an
+ * account that has a note keeps it. Refused when the token is forged or
+ * expired, or the account no longer waits. Announced like a new waiting
+ * account, with the note, so the administrators read it where they read the first mail.
+ */
+export async function addSignupNote(token: unknown, note: unknown): Promise<void> {
+  const [id, expRaw, mac, extra] = typeof token === 'string' ? token.split('.') : [];
+  const exp = Number(expRaw);
+  const expected = id && Number.isFinite(exp) ? Buffer.from(noteMac(id, exp)) : null;
+  const given = Buffer.from(mac || '');
+  if (extra !== undefined || !expected || expected.length !== given.length || !crypto.timingSafeEqual(expected, given) || exp < Date.now()) {
+    throw new Error('This form has expired. Sign in again to add your note.');
+  }
+  const clean = cleanNote(note);
+  if (!clean) throw new Error('Write a note first, or go back without one.');
+  const user = await db().getUser(id);
+  if (!user || !awaitingApproval(user)) throw new Error('Your account no longer waits for approval. Sign in again.');
+  if (user.signupNote) throw new Error('Your account has a note already. The administrators read it before they approve you.');
+  user.signupNote = clean;
+  await db().updateUser(user);
+  // An address nobody confirmed mails no administrator (see announceWaiting).
+  if (!user.emailPending) announceWaiting(user, true);
+}
 
 /** A confirmed address on ALDINE_ADMIN_EMAILS: the account is an
  *  administrator (as isAdmin decides), so it never waits for an approval. */
@@ -289,7 +347,7 @@ async function approvesItself(u: User): Promise<boolean> {
  *  refused: nobody else might be there to approve it. */
 async function refuseDisabled(user: User): Promise<void> {
   if (awaitingApproval(user)) {
-    if (!(await approvesItself(user))) throw new AwaitingApprovalError(AWAITING_APPROVAL);
+    if (!(await approvesItself(user))) throw new AwaitingApprovalError(AWAITING_APPROVAL, noteTokenFor(user));
     await enableAccount(user.id);
     delete user.disabledAt;
     return;
@@ -302,14 +360,17 @@ async function refuseDisabled(user: User): Promise<void> {
  * account when it is created, a password account once its address is
  * confirmed, so an address nobody confirmed never mails them. Logged always;
  * mailed to every address on ALDINE_ADMIN_EMAILS when the server sends email.
+ * `noteAdded`: the account waited already and has just added its note.
  */
-function announceWaiting(user: User): void {
+function announceWaiting(user: User, noteAdded = false): void {
   const account = user.email ?? orcidOf(user) ?? user.subject ?? user.id;
-  console.log(`[aldine] new account waiting for approval: ${account} [${user.id}]`);
+  console.log(noteAdded
+    ? `[aldine] account waiting for approval added a note: ${account} [${user.id}]`
+    : `[aldine] new account waiting for approval: ${account} [${user.id}]`);
   if (!mail.emailConfigured() || !config.publicUrl) return;
   const signIn = user.provider ? providerLabel(user.provider) : 'a password';
   for (const to of ADMIN_EMAILS) {
-    mail.sendMail(mail.approvalRequestMail(to, account, signIn, config.publicUrl, `${config.publicUrl}/admin`))
+    mail.sendMail(mail.approvalRequestMail(to, { account, signIn, instance: config.publicUrl, adminLink: `${config.publicUrl}/admin`, note: user.signupNote, noteAdded }))
       .catch((err) => console.error('[aldine] approval request email failed:', err?.message || err));
   }
 }
@@ -403,7 +464,7 @@ export async function findOrCreateOAuth(profile: OAuthProfile, provider: string)
   const { user } = await createAccount(email, '', profile.name, provider, profile.subject);
   if (awaitingApproval(user)) {
     announceWaiting(user);
-    throw new AwaitingApprovalError(`Your account is created. ${AWAITING_APPROVAL}`);
+    throw new AwaitingApprovalError(`Your account is created. ${AWAITING_APPROVAL}`, noteTokenFor(user));
   }
   return pub(user);
 }

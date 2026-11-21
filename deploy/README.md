@@ -456,15 +456,28 @@ can bring people in; to turn one away, delete it on `/admin`.
   signs in on the page it opens, and the address is confirmed; the page says
   the account now waits for approval. A completed password reset confirms
   the address too.
+- The sign-up form asks "What will you use Aldine for?" (optional, up to
+  500 characters on one line). A single sign-on account is asked on the
+  "Waiting for approval" page instead and can send one note there. The note
+  is the person's own text: `/admin` shows it beside the waiting account and
+  under Manage, and the administrators' email quotes it, marked as unchecked.
 - `/admin` counts the waiting accounts and lists them first, marked
   **Waiting for approval**. **Approve account** under Manage lets the person
-  sign in; to turn someone away, delete the account. With an email transport
-  and `ALDINE_PUBLIC_URL`, approving emails the person. Enabling an account
-  you disabled emails nobody, as before.
+  sign in; to turn someone away, delete the account. With `ALDINE_PUBLIC_URL`
+  set, approving emails the person a welcome: the account is ready, a
+  sign-in link, and three first steps (create or import a project, share it,
+  and where to send questions: the support contact from `ALDINE_SUPPORT` or
+  `/admin`, otherwise you and Aldine's issue tracker). Without an email
+  transport the server logs that mail instead of sending it. Enabling an
+  account you disabled emails nobody, as before.
+- `/signup` opens the sign-up form directly. Link a "Request access" button
+  on your own site there: new accounts land in the approval queue.
 - When an account starts waiting, every address on `ALDINE_ADMIN_EMAILS` gets
   an email with a link to `/admin`: for a single sign-on account when it is
   created, for a password account once its address is confirmed, so a
-  sign-up nobody confirms emails nobody. The server also logs
+  sign-up nobody confirms emails nobody. The mail quotes the sign-up note
+  when there is one; a single sign-on account that adds its note later
+  sends a second mail with it. The server also logs
   `[aldine] new account waiting for approval: <address> [<id>]`, with or
   without email.
 - An address on `ALDINE_ADMIN_EMAILS` does not wait once it is proven. A

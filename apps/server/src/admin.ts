@@ -79,6 +79,8 @@ export interface AdminUserRow {
   /** Created under ALDINE_SIGNUP=approval and not approved yet: disabled
    *  since it was created, and Enable approves it. */
   awaitingApproval: boolean;
+  /** What the person wrote at sign-up under ALDINE_SIGNUP=approval: their own text. */
+  signupNote?: string;
   /** On ALDINE_ADMIN_EMAILS with a confirmed address. */
   admin: boolean;
   projects: number;
@@ -143,6 +145,7 @@ async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
     emailPending: !!u.emailPending,
     ...(u.disabledAt ? { disabledAt: u.disabledAt } : {}),
     awaitingApproval: auth.awaitingApproval(u),
+    ...(u.signupNote ? { signupNote: u.signupNote } : {}),
     admin: isAdmin(auth.pub(u)),
     projects: owned.get(u.id)?.live || 0,
     trashedProjects: owned.get(u.id)?.trashed || 0,
@@ -315,8 +318,10 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
         const approving = auth.awaitingApproval(t.user);
         await auth.enableAccount(t.user.id);
         audit(t.actor, approving ? 'approved' : 'enabled', t.user);
-        if (approving && t.user.email && sendsEmail()) {
-          email.sendMail(email.approvedMail(t.user.email, config.publicUrl, `${config.publicUrl}/`))
+        // Without a transport sendMail logs the mail instead; without
+        // ALDINE_PUBLIC_URL there is no link to sign in with.
+        if (approving && t.user.email && config.publicUrl) {
+          email.sendMail(email.approvedMail(t.user.email, config.publicUrl, `${config.publicUrl}/`, supportSetting().support))
             .catch((err) => console.error('[aldine] approval email failed:', err?.message || err));
         }
       }

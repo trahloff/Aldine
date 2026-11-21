@@ -47,6 +47,23 @@ test.describe('auth', () => {
     await expect(page.getByTestId('auth-submit')).toBeVisible();
   });
 
+  test('/signup opens the form on creating an account, for a "Request access" link on another site', async ({ page }) => {
+    const email = uniq();
+    await page.goto('/signup');
+    await expect(page.getByTestId('auth-name')).toBeVisible();
+    await expect(page.getByTestId('auth-submit')).toHaveText('Create account');
+    await expect(page.getByTestId('auth-note'), 'nobody approves sign-ups here, so nothing asks why').toHaveCount(0);
+    await page.getByTestId('auth-email').fill(email);
+    await page.getByTestId('auth-password').fill('password123');
+    await page.getByTestId('auth-submit').click();
+    await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/$/);
+    // Signed in, the address leads home.
+    await page.goto('/signup');
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId('new-project')).toBeVisible();
+  });
+
   test('register, create a project, sign out, sign back in — project persists', async ({ page }) => {
     const email = uniq();
     await register(page, email);
