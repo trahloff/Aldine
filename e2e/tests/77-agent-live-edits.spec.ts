@@ -198,7 +198,7 @@ test.describe('Claude editing an open project', () => {
     }
   });
 
-  test('an edit where someone is typing is refused with user_editing, and lands once they move on', async ({ page, request }) => {
+  test('an edit where someone is typing is refused with user_editing, and lands once they pause, the cursor still there', async ({ page, request }) => {
     const id = await seed(request, 'Agent User Editing');
     const client = await connect();
     try {
@@ -207,17 +207,19 @@ test.describe('Claude editing an open project', () => {
       await page.locator('.cm-line', { hasText: 'Results improve steadily' }).click();
       await page.keyboard.press('End');
       await page.keyboard.press('ArrowLeft');
-      // the caret reaches the server as awareness, a moment after the click
-      await page.waitForTimeout(1000);
+      // typing (a keystroke and its undo leave the text as it was) a few characters from the change
+      await page.keyboard.type('x');
+      await page.keyboard.press('Backspace');
+      await page.waitForTimeout(500);
       const edit = { project: id, path: 'main.tex', edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results improve markedly across trials.' }] };
       const refused = await call(client, 'edit_file', edit);
       expect(refused.body).toMatchObject({ error: 'user_editing', edit_index: 0, editors: ['Ada'], path: 'main.tex' });
+      expect(refused.body.retry_after_ms).toBeGreaterThan(0);
       await page.waitForTimeout(500);
       await expect(page.locator('.cm-content')).toContainText('Results improve steadily across trials.');
 
-      // the person moves to another line: the same edit lands
-      await page.locator('.cm-line', { hasText: 'Closing remarks' }).click();
-      await page.waitForTimeout(1000);
+      // once the pause outlasts the hint, the same edit lands with the caret still parked there
+      await page.waitForTimeout(refused.body.retry_after_ms + 300);
       const applied = await call(client, 'edit_file', edit);
       expect(applied.body.applied).toBe(1);
       await expect(page.locator('.cm-content')).toContainText('Results improve markedly across trials.');

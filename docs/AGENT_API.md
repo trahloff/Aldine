@@ -17,6 +17,7 @@ who runs the instance. A shorter overview is at
 |---|---|
 | `ALDINE_MCP=1` | Serves `POST /mcp`. Unset: the route does not exist and the MCP SDK is never loaded. |
 | `ALDINE_PUBLIC_URL` | The public URL of the instance — origin plus the path prefix when Aldine is served under one (`https://aldine.example.com` or `https://server/internal/aldine`). The Connect flow names it as the OAuth issuer, the PDF links Claude hands out are absolute against it, and the in-chat PDF viewer is allowed to fetch from exactly that origin. Set it for anything beyond a local experiment; behind a proxy it is the only trustworthy value. |
+| `ALDINE_MCP_TYPING_GRACE_MS` | Optional, default `8000`. How long after a person's last keystroke an agent edit at or next to where they typed is held off (`user_editing`). `0` turns the guard off. |
 | `ALDINE_SIGNING_SECRET` | Optional. Signs the 15-minute PDF links. Unset, a random secret is generated once into `META_DIR/output-signing-secret` (mode 0600) and reused across restarts. Set it (at least 32 characters, `openssl rand -base64 32`; shorter values refuse to boot) when several app nodes do not share `META_DIR`, or to invalidate every outstanding link at once by rotating it. |
 
 Then choose how Claude authenticates. There is exactly one credential path
@@ -404,9 +405,9 @@ removed by deleting its record from `oauth_clients` in the datastore.
 | `list_projects` | Projects the credential can reach, with branches, root file and engine, and `canEdit`: false where the owner shares the project as "Can review" or "Can view", whose write tools are refused. | read-only |
 | `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `contentVersion` for conflict-safe writes (Versions and conflicts, below). | read-only |
 | `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line (`from_line`/`to_line`, echoed back; a window past the end or running backwards is an error). Text is decided by content, not extension. Returns `contentVersion` and `fileVersion`. | read-only |
-| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`); a quote holding someone's cursor or selection applies nothing and names them (`user_editing`). | destructive |
+| `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`); an edit at text someone is typing right now applies nothing and names them, with `retry_after_ms` (`user_editing`; `force: true` overrides it when the user asked for that edit). | destructive |
 | `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). In a document someone has open only the lines that differ are replaced, so their cursor stays where it was. Folders come into being with the first file written inside them; the first `.tex` written into a project with no main document becomes it (`newRoot`). | destructive |
-| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. An `edits` entry on a document someone has open lands per span like `edit_file`, and is refused like it under someone's cursor (`user_editing`); only a `content` entry replaces the file. | destructive |
+| `batch_write` | A multi-file change (`files[]` of `{path, content \| edits, base_version?}`, `message`) as one named commit; all-or-nothing. An `edits` entry on a document someone has open lands per span like `edit_file`, and is refused like it where someone is typing (`user_editing`, whose `blocked` names every held-up entry); only a `content` entry replaces the file. | destructive |
 | `compile` | Typesets with latexmk: errors before warnings (file, line, message, the source line as `context`, the tool behind a warning as `source`; every engine row names a file, a biber row names the `.bib` and its line; `errorsTotal` and `warningsTotal` count them), on failure 4 KB of the log around the first error, page count, a signed PDF link, a deep link into the editor; a missing package or a character pdflatex cannot typeset is reported as a `hint`. A project with no `.tex` file is told so. `clean: true` deletes the generated build files first and typesets from nothing. | additive |
 | `get_pdf_url` | A fresh signed link to the last typeset PDF without recompiling, whoever typeset it; it does not contain edits made since, so Claude is told to `compile` when it has written since its last run. | read-only |
 | `commit` | Commits any agent work still waiting on the branch (a write whose own commit git refused), as one named commit (`message`) under Claude's name; everything else pending stays for the anonymous autosave. Every write commits on its own as it lands, so the normal answer is `committed:false` with the current head and Claude's latest commits on the branch (`recentClaudeCommits`), not an error. | additive |
@@ -487,12 +488,22 @@ Quote-anchored edits have two errors of their own, also with nothing applied:
 around the nearest match — re-read, re-anchor, retry) and `ambiguous_anchor`
 (the quote matches several places; each candidate carries the `occurrence`
 that picks it — resend with it, no re-read needed). A third keeps Claude out
-of the sentence someone is typing: `user_editing`, when a person's cursor or
-selection in the open document touches an edit's quote (its ends included).
-`edit_index` names the edit and `editors` the people, nothing is applied, and
-Claude is told to edit other parts first or retry after a moment, at most
-twice, then ask the user whether to hold off. A person whose editor shows
-another file has no cursor in this one. Error results carry the
+of the sentence someone is typing: `user_editing`. Only what an edit changes
+counts (the quote less the start and end its replacement keeps), and per
+person only activity, never a resting cursor: someone who changed the text in
+the last `ALDINE_MCP_TYPING_GRACE_MS` (default 8000) and whose caret or
+selection is at the change or within 40 characters of it on its line, or
+someone who just selected text overlapping the change. The server times both
+itself (document updates by the client that sent them, cursor moves by
+awareness), so no client has to report anything. `edit_index` names the first
+held-up edit, `editors` its people, `blocked` every held-up edit (with `path`
+in `batch_write`), and `retry_after_ms` when their pause will be long enough;
+nothing is applied. Claude is told to edit other parts first or retry after
+that, at most twice, then ask the user whether to hold off. `force: true`
+applies the edit anyway — through the same merge, so nobody's typing is lost —
+and is meant only for an edit the user asked for in their current request; the
+result's `overrode` names who was typing, and the commit message says so. A
+person whose editor shows another file has no cursor in this one. Error results carry the
 same `path`, `branch`, `head` and `contentVersion` as a success.
 
 ## How attribution and review work

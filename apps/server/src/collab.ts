@@ -639,15 +639,21 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // the server made itself (a REST or tool write, a git rewrite, the agent)
   // is recorded by whatever made it, and one relayed from a peer node by
   // that node.
-  async onChange({ documentName, context, transactionOrigin }: { documentName: string; context?: { userId?: string; userName?: string | null }; transactionOrigin?: unknown }) {
+  async onChange({ documentName, context, transactionOrigin, document, update }: { documentName: string; context?: { userId?: string; userName?: string | null }; transactionOrigin?: unknown; document?: unknown; update?: Uint8Array }) {
     if (!transactionOrigin || typeof transactionOrigin !== 'object') return;
+    noteTyping(documentName, document, transactionOrigin, update);
     const parsed = parseDocName(documentName);
     if (!parsed || isSignalDoc(parsed.filePath)) return;
     noteEdit(parsed.projectId, parsed.branch, context?.userId ? editorOf({ id: context.userId, name: context.userName }) : null);
   },
   // Reclaim the change-tracking entry when Hocuspocus unloads an idle doc, so
   // the map is bounded by live docs and a reopened doc never trusts a stale hash.
+  async onAwarenessUpdate({ documentName, added, updated, removed, awareness }: { documentName: string; added: number[]; updated: number[]; removed: number[]; awareness: { getStates(): Map<number, any> } }) {
+    noteCursorMoves(documentName, [...added, ...updated], removed, awareness);
+  },
   async afterUnloadDocument({ documentName }: { documentName: string }) {
+    lastTyped.delete(documentName);
+    lastCursor.delete(documentName);
     lastWritten.delete(documentName);
     lastSnapshot.delete(documentName);
     crlfDocs.delete(documentName);
@@ -1063,43 +1069,113 @@ export function agentSessionActive(projectId: string, branch: string): boolean {
   return sessionLive(agentSessions.get(changesKey(projectId, branch)));
 }
 
+/** How long after a person's last keystroke their cursor still holds off an agent edit (ALDINE_MCP_TYPING_GRACE_MS). */
+export const TYPING_GRACE_MS = Math.max(0, Number(process.env.ALDINE_MCP_TYPING_GRACE_MS ?? '') || 8000);
+/** How far from a change, in characters on its own line, a typist's cursor still counts as at it. */
+export const TYPING_NEAR_CHARS = 40;
+
+/** Per open doc: when each Yjs client last changed its text, by this server's clock. */
+const lastTyped = new Map<string, Map<number, number>>();
+/** Per open doc: each client's last cursor (as published) and when it last moved. */
+const lastCursor = new Map<string, Map<number, { key: string; at: number }>>();
+
 /**
- * The people whose caret or selection in the open doc touches one of
- * `ranges`, ends included, with the first such range: an agent edit there
- * would land in the sentence they are typing (UX.md conflict etiquette).
- * Panes publish their cursor as Yjs relative positions; a pane parked on
- * another file publishes none. Null when nobody is there.
+ * Records who changed the text, by the server's clock: the awareness clients of
+ * the connection the update came over (inserts and deletes alike), plus the
+ * clients whose inserts it carries (an update relayed from another node has no
+ * connection here). A cursor move is not an update, so it never counts.
  */
-export function peopleEditingRanges(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>): { index: number; names: string[] } | null {
-  const doc = hocuspocus.documents.get(docName(projectId, branch, filePath)) as (Y.Doc & { awareness?: { clientID: number; getStates(): Map<number, any> } }) | undefined;
-  if (!doc?.awareness || !ranges.length) return null;
+function noteTyping(documentName: string, document: unknown, origin: object, update: Uint8Array | undefined): void {
+  const now = Date.now();
+  const ids = new Set<number>();
+  const ws = (origin as { webSocket?: unknown }).webSocket;
+  const clients: Set<number> | undefined = ws ? (document as { getClients?: (ws: unknown) => Set<number> })?.getClients?.(ws) : undefined;
+  if (clients) for (const id of clients) ids.add(id);
+  if (update) {
+    try { for (const st of Y.decodeUpdate(update).structs) ids.add(st.id.client); } catch { /* not a decodable v1 update */ }
+  }
+  if (!ids.size) return;
+  const map = lastTyped.get(documentName) ?? new Map<number, number>();
+  for (const id of ids) map.set(id, now);
+  lastTyped.set(documentName, map);
+}
+
+function noteCursorMoves(documentName: string, changed: number[], removed: number[], awareness: { getStates(): Map<number, any> }): void {
+  const now = Date.now();
+  const map = lastCursor.get(documentName) ?? new Map<number, { key: string; at: number }>();
+  const states = awareness.getStates();
+  for (const id of changed) {
+    const key = JSON.stringify(states.get(id)?.cursor ?? null);
+    if (map.get(id)?.key !== key) map.set(id, { key, at: now });
+  }
+  for (const id of removed) map.delete(id);
+  lastCursor.set(documentName, map);
+}
+
+/** A change's range widened by TYPING_NEAR_CHARS each way, never past the line it is on. */
+function nearWindow(text: string, r: { from: number; to: number }): { from: number; to: number } {
+  const lineStart = text.lastIndexOf('\n', r.from - 1) + 1;
+  const nl = text.indexOf('\n', r.to);
+  const lineEnd = nl === -1 ? text.length : nl;
+  return { from: Math.max(lineStart, r.from - TYPING_NEAR_CHARS), to: Math.min(lineEnd, r.to + TYPING_NEAR_CHARS) };
+}
+
+export interface EditBlock { index: number; names: string[]; retryAfterMs: number }
+
+/**
+ * The edits a person is working on right now, each with who and how long until
+ * their grace runs out. Per person, judged on their own activity only:
+ * - they changed the text within TYPING_GRACE_MS and their caret or selection
+ *   is at the edit's changed range or within TYPING_NEAR_CHARS of it on its line;
+ * - or their selection (not a bare caret) overlaps the changed range and they
+ *   made it within TYPING_GRACE_MS: they are about to replace that text.
+ * A cursor or selection left resting blocks nothing. `ranges` are the changed
+ * ranges (what differs between quote and replacement), not the quotes. Panes
+ * publish their cursor as Yjs relative positions; a pane parked on another
+ * file publishes none.
+ */
+export function peopleEditingRanges(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>, now = Date.now()): EditBlock[] {
+  const name = docName(projectId, branch, filePath);
+  const doc = hocuspocus.documents.get(name) as (Y.Doc & { awareness?: { clientID: number; getStates(): Map<number, any> } }) | undefined;
+  if (!doc?.awareness || !ranges.length || TYPING_GRACE_MS === 0) return [];
   const text = doc.getText(TEXT_KEY);
+  const content = text.toString();
+  const typed = lastTyped.get(name);
+  const moved = lastCursor.get(name);
   const at = (json: unknown): number | null => {
     try {
       const pos = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(json), doc);
       return pos && pos.type === text ? pos.index : null;
     } catch { return null; }
   };
-  let first = -1;
-  const names = new Map<number, Set<string>>();
+  const windows = ranges.map((r) => nearWindow(content, r));
+  const blocks = new Map<number, { names: Set<string>; retryAfterMs: number }>();
   for (const [clientId, state] of doc.awareness.getStates()) {
     if (clientId === doc.awareness.clientID) continue;
     const user = state?.user;
     const cursor = state?.cursor;
     if (!user || user.isAgent || !cursor?.anchor || !cursor?.head) continue;
+    const typedAgo = now - (typed?.get(clientId) ?? -Infinity);
+    const selectedAgo = now - (moved?.get(clientId)?.at ?? -Infinity);
+    const typing = typedAgo < TYPING_GRACE_MS;
+    if (!typing && selectedAgo >= TYPING_GRACE_MS) continue;
     const anchor = at(cursor.anchor);
     const head = at(cursor.head);
     if (anchor === null || head === null) continue;
     const lo = Math.min(anchor, head), hi = Math.max(anchor, head);
+    const who = typeof user.name === 'string' && user.name.trim() ? user.name.trim() : 'Someone';
     ranges.forEach((r, i) => {
-      if (lo > r.to || hi < r.from) return;
-      if (first === -1 || i < first) first = i;
-      const set = names.get(i) ?? new Set<string>();
-      set.add(typeof user.name === 'string' && user.name.trim() ? user.name.trim() : 'Someone');
-      names.set(i, set);
+      let wait = 0;
+      if (typing && !(lo > windows[i].to || hi < windows[i].from)) wait = TYPING_GRACE_MS - typedAgo;
+      if (hi > lo && selectedAgo < TYPING_GRACE_MS && !(lo > r.to || hi < r.from)) wait = Math.max(wait, TYPING_GRACE_MS - selectedAgo);
+      if (wait <= 0) return;
+      const b = blocks.get(i) ?? { names: new Set<string>(), retryAfterMs: 0 };
+      b.names.add(who);
+      b.retryAfterMs = Math.max(b.retryAfterMs, Math.ceil(wait));
+      blocks.set(i, b);
     });
   }
-  return first === -1 ? null : { index: first, names: [...names.get(first)!] };
+  return [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([index, b]) => ({ index, names: [...b.names], retryAfterMs: b.retryAfterMs }));
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */
