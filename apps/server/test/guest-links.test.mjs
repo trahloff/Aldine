@@ -107,9 +107,11 @@ check(/HttpOnly/.test(setCookie) && /SameSite=Lax/.test(setCookie) && /Path=\//.
 const gusView = await json('GET', `/api/projects/${P}`, gus);
 eq([gusView.role, gusView.guest, gusView.isMember, gusView.isOwner, gusView.canEdit], ['edit', true, false, false, true], 'the project tells the guest their role');
 eq(gusView.share, { mode: 'link', collaborators: [] }, 'a guest sees no links and no tokens');
-const me = await json('GET', `/api/auth/me?project=${P}`, gus);
-eq([me.user, me.guest?.name, me.guest?.projectId], [null, 'Gus Tester (guest)', P], '/me names the guest on their project page, and no account');
-eq((await json('GET', `/api/auth/me?project=${Q}`, gus)).guest, undefined, 'and on no other project');
+eq((await json('GET', '/api/auth/me', gus)).user, null, '/me names no account');
+const me = await json('GET', `/api/auth/guest?project=${P}`, gus);
+eq([me.guest?.name, me.guest?.projectId], ['Gus Tester (guest)', P], 'the guest on their project page');
+eq((await json('GET', `/api/auth/guest?project=${Q}`, gus)).guest, null, 'and on no other project');
+eq((await json('GET', `/api/auth/guest?project=${P}`, sam)).guest, null, 'and nobody signed in is a guest');
 eq((await json('GET', `/api/projects/${P}`, owner)).share.links.find((l) => l.id === edit.id).joinedGuests, 1, 'the owner sees one guest came in');
 
 eq((await call('PUT', `/api/projects/${P}/file`, gus, { path: 'guest.tex', content: 'Hello from a guest' })).statusCode, 200, 'an edit guest changes files');
@@ -156,7 +158,7 @@ const again = await guestJoin(edit.token, 'Gus T.', { cookie: gus.cookie });
 eq([again.res.statusCode, again.res.json().guest.id], [200, joined.json().guest.id], 'the same browser stays the same guest');
 eq((await json('GET', `/api/projects/${P}`, owner)).share.links.find((l) => l.id === edit.id).joined, 1, 'and takes one place on the link');
 gus.cookie = again.who.cookie;
-eq((await json('GET', `/api/auth/me?project=${P}`, gus)).guest.name, 'Gus T. (guest)', 'under the new name');
+eq((await json('GET', `/api/auth/guest?project=${P}`, gus)).guest.name, 'Gus T. (guest)', 'under the new name');
 
 // ---- review and view guests ----
 const { who: rae } = await guestJoin(review.token, 'Rae');
@@ -184,7 +186,7 @@ check(drops > 0, 'revoking drops the open sockets, guests\' too');
 const ended = await call('GET', `/api/projects/${P}`, rae);
 eq([ended.statusCode, ended.json().code], [403, 'guest-ended'], 'the guest is out at once, and told why');
 check(/not authenticated/i.test((await socket(rae)).mode), 'and their socket is refused when it reconnects');
-eq((await json('GET', `/api/auth/me?project=${P}`, rae)).guest, undefined, 'they are no guest there any more');
+eq((await json('GET', `/api/auth/guest?project=${P}`, rae)).guest, null, 'they are no guest there any more');
 eq((await guestJoin(review.token, 'Rae')).res.json().code, 'revoked', 'and the link says it was turned off');
 eq((await call('GET', `/api/projects/${P}`, gus)).json().role, 'edit', 'guests of the other links stay');
 

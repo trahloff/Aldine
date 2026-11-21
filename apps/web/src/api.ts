@@ -794,8 +794,9 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  /** `project`: the page is that project's; the answer then names the guest this browser is there, if any. */
-  me: (project?: string | null) => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval'; guest?: GuestInfo }>(`/api/auth/me${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  /** The guest this browser is in `project` without an account, if any. */
+  guestMe: (project: string) => req<{ guest: GuestInfo | null }>(`/api/auth/guest?project=${encodeURIComponent(project)}`),
   /** Whether the account keeps a Zotero key for its next link; the key itself never comes back. */
   zoteroKey: () => req<{ saved: boolean; userID?: number; username?: string | null }>('/api/zotero/key'),
   forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),

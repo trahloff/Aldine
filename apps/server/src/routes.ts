@@ -337,21 +337,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // sendsEmail: confirmation and reset links go out by mail; without it they
   // are in the server log for the operator to pass on. signup: ALDINE_SIGNUP,
   // so the sign-up form can say up front that new accounts wait for approval.
-  // `?project=`: the page is that project's, and without an account the
-  // answer names the guest this browser is there (guest.ts), if any.
-  app.get<{ Querystring: { project?: string } }>('/api/auth/me', async (req) => {
+  app.get('/api/auth/me', async (req) => {
     const user = reqUser(req);
-    const project = req.query.project;
-    let guest: { projectId: string; id: string; name: string } | undefined;
-    if (!user && auth.AUTH_ENABLED && typeof project === 'string' && PROJECT_ID_RE.test(project)) {
-      const g = await guestFromRequest(req.headers.cookie, project);
-      if (g && g !== 'ended') guest = { projectId: project, id: g.id, name: g.name };
-    }
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
       mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
-      ...(guest ? { guest } : {}),
     };
+  });
+
+  // The guest this browser is in project `?project=` without an account
+  // (guest.ts), or null.
+  app.get<{ Querystring: { project?: string } }>('/api/auth/guest', async (req) => {
+    const project = req.query.project;
+    if (reqUser(req) || !auth.AUTH_ENABLED || typeof project !== 'string' || !PROJECT_ID_RE.test(project)) return { guest: null };
+    const g = await guestFromRequest(req.headers.cookie, project);
+    return { guest: g && g !== 'ended' ? { projectId: project, id: g.id, name: g.name } : null };
   });
 
   // A signed-in person's profile picture, the server's own copy (avatars.ts).

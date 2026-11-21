@@ -97,10 +97,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = async () => {
     try {
-      const me = await api.me(pageProject());
+      const me = await api.me();
+      const page = pageProject();
+      const asGuest = me.authEnabled && !me.user && page ? (await api.guestMe(page).catch(() => ({ guest: null }))).guest : null;
       setAuthEnabled(me.authEnabled);
       setUser(me.user);
-      setGuest(me.guest ?? null);
+      setGuest(asGuest);
       setAdmin(!!me.admin);
       setProviders(me.providers || []);
       setPasswordAuth(me.passwordAuth !== false);
