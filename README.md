@@ -627,8 +627,10 @@ trademarks of their respective owners. Aldine is an independent project, not
 affiliated with or endorsed by any of them.
 
 Two things stated plainly, because finding them out later feels like a
-bait-and-switch. **A hosted Aldine service is planned**, and contributions are
-accepted under a [CLA](CLA.md) that permits relicensing, so a commercially
-licensed edition is possible in future. What will not change: the self-hosted
+bait-and-switch. **A hosted Aldine service is not ruled out**: if you would
+use one, [start a discussion](https://github.com/trahloff/Aldine/discussions)
+or open an issue. Contributions are accepted under a [CLA](CLA.md) that
+permits relicensing, so a commercially licensed edition is possible in
+future. What will not change: the self-hosted
 edition stays AGPL-3.0, and no feature that works today moves behind a paid
 tier. The name is handled separately in [TRADEMARK.md](TRADEMARK.md).
