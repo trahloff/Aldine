@@ -372,6 +372,18 @@ confirmed**:
   Invite again, counts once, mailed or not. Past that, the share dialog
   says so and saves nothing of the change, and Invite again is refused;
   the budget comes back gradually over the hour.
+- A **share link** may admit **guests**: people without an account who give
+  a name and work in that one project with the link's role. A guest is an
+  entry on the link and a signed `aldine_guest` cookie (HttpOnly,
+  SameSite=Lax, Secure like the session), never a session: it counts only
+  on its own project's routes and collab documents, and only while the link
+  is active and still admits guests. Guests never typeset and reach nothing
+  an account has. Joins are limited per client address
+  (`RL_GUEST_JOIN_BURST`, default 20, one more every 30 s) and per link
+  (`RL_GUEST_LINK_BURST`, default 50, one more every 20 s); behind a proxy,
+  set `TRUST_PROXY` so the limit sees the visitor's address. A link's token
+  is in the URL's query: keep it out of your proxy's access log if those
+  logs are shared.
 - **Without email** (no transport, no `ALDINE_PUBLIC_URL`, an unconfirmed
   owner, or over the mail limit) the invitation is made all the same. The
   share dialog says it was not mailed and offers Copy invite link, built from
@@ -660,6 +672,7 @@ override file.
 | `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
 | `RL_SHARE_BURST` | Invitations a project owner may make per hour (default 200): each address or ORCID iD invited from the share dialog, and each Invite again, counts once. Over it, the request is refused and nothing of it is saved |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
+| `RL_GUEST_JOIN_BURST`, `RL_GUEST_LINK_BURST` | Guests joining through share links without an account: per client address (default 20, one more every 30 s) and per link (default 50, one more every 20 s) |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
 | `ALDINE_SEARCH_MS` | Time a project search or replace may scan before it is stopped and refused (default 2000 ms). Each scan runs in a worker thread of its own; one per person and four per server at a time |
 | `ALDINE_COMPILE_PER_MIN` | Typesets per minute per client (default: no limit). Meant for a public demo under launch traffic |

@@ -68,14 +68,23 @@ export function linkByToken(meta: ProjectMeta, token: string): ShareLink | undef
   });
 }
 
-/** The widest role the project's active links give account `userId`: the
- *  address link gives it to everyone signed in, a token link to the people
- *  who came in through it. */
+/** Ids of guests (guest.ts); account ids never contain a colon. */
+export const GUEST_ID_PREFIX = 'guest:';
+export const isGuestId = (id: string) => id.startsWith(GUEST_ID_PREFIX);
+
+/** Does link `l` let `userId` in, when it is active? The address link lets
+ *  in every account and no guest; a token link the people who came in
+ *  through it, guests only while it still admits guests. */
+function admits(l: ShareLink, userId: string): boolean {
+  if (isGuestId(userId)) return !!l.token && !!l.guests && !!l.members?.some((m) => m.id === userId);
+  return !l.token || !!l.members?.some((m) => m.id === userId);
+}
+
+/** The widest role the project's active links give `userId`. */
 export function linkRoleFor(meta: ProjectMeta, userId: string, now = Date.now()): ShareRole | null {
   let best: ShareRole | null = null;
   for (const l of linksOf(meta)) {
-    if (!linkActive(l, now)) continue;
-    if (!l.token || l.members?.some((m) => m.id === userId)) best = widerRole(best, l.role);
+    if (linkActive(l, now) && admits(l, userId)) best = widerRole(best, l.role);
   }
   return best;
 }
@@ -85,7 +94,7 @@ export function linkRoleFor(meta: ProjectMeta, userId: string, now = Date.now())
 export function linkAccessEnds(meta: ProjectMeta, userId: string, now = Date.now()): number | null {
   let first: number | null = null;
   for (const l of linksOf(meta)) {
-    if (!l.expiresAt || !linkActive(l, now) || (l.token && !l.members?.some((m) => m.id === userId))) continue;
+    if (!l.expiresAt || !linkActive(l, now) || !admits(l, userId)) continue;
     const at = Date.parse(l.expiresAt);
     if (first === null || at < first) first = at;
   }
@@ -102,8 +111,9 @@ export function pruneLinks(links: ShareLink[]): ShareLink[] {
   return links.filter((l) => !(l.revokedAt && extra-- > 0));
 }
 
-/** What the owner's share dialog shows of a link: never who came in, only how many. */
+/** What the owner's share dialog shows of a link: never who came in, only
+ *  how many, guests among them. */
 export function ownerLinkView(l: ShareLink) {
   const { members, ...rest } = l;
-  return { ...rest, joined: members?.length ?? 0 };
+  return { ...rest, guests: !!l.guests, joined: members?.length ?? 0, joinedGuests: members?.filter((m) => isGuestId(m.id)).length ?? 0 };
 }

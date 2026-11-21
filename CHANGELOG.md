@@ -22,6 +22,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   typesets only, without comments. Everyone who was "Can view" before
   (and the old view-only link) is "Can review" now, so nobody loses
   anything they could do. Refs #328.
+- Guests on share links: the owner can let anyone with a link in without
+  an account ("Anyone with the link, no account needed" when creating it,
+  or Allow guests on an existing link; links made before stay accounts
+  only, and the project's address never admits guests). A guest gives a
+  name, prefilled with the link's name, and shows up as "Name (guest)" on
+  their cursor, comments, suggestions and commits. They work with the
+  link's role in that one project only: edit the text, or comment and
+  suggest, or read. Guests never typeset (they see the PDF the others
+  typeset last) and get nothing an account has: no project list, copies,
+  settings, branches, Agent API tokens, git remotes or invitations.
+  Revoking the link, its expiry, or Turn off guests ends their access at
+  once, open editors included. Joins are rate limited per address
+  (`RL_GUEST_JOIN_BURST`, default 20) and per link (`RL_GUEST_LINK_BURST`,
+  default 50), and guests count toward a link's 500 places. App pages now
+  send `Referrer-Policy: same-origin`, so a link's token never reaches
+  another site. Refs #328.
 - Signing out of a single sign-on session can sign out at the identity
   provider too (OpenID Connect RP-Initiated Logout): with `OIDC_LOGOUT=idp`
   Aldine ends its session, then sends the browser to the IdP's

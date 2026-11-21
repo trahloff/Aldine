@@ -6,7 +6,7 @@ import Home from './pages/Home';
 import { BASE_PATH } from './basePath';
 import { ToastProvider } from './components/Toast';
 import { DialogProvider } from './components/Dialogs';
-import { AuthProvider } from './components/Auth';
+import { AuthProvider, GuestScope, useAuth } from './components/Auth';
 import ErrorBoundary from './components/ErrorBoundary';
 import { startThemeSync } from './theme';
 // before the router: the editor's Back/Forward guard must hear a popstate first
@@ -33,7 +33,8 @@ function ProjectEditor() {
   // it is neither bookmarked nor sent on as a referrer.
   const [linkQuery] = useState(() => keepShareLink(id, window.location.search));
   useEffect(() => { if (linkQuery !== null) navigate({ search: linkQuery, hash: window.location.hash }, { replace: true }); }, [linkQuery]);
-  const join = useShareLinkJoin(id);
+  const { guest } = useAuth();
+  const join = useShareLinkJoin(id, guest?.projectId === id);
   if (!join.ready) return <div className="editor-shell" />;
   return <Editor key={id} linkProblem={join.problem} />;
 }
@@ -59,6 +60,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <AuthProvider>
           <BrowserRouter basename={BASE_PATH} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Suspense fallback={<div className="page-loading" />}>
+             <GuestScope>
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/p/:id" element={<ProjectEditor />} />
@@ -67,6 +69,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/invite/:id" element={<Invite />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+             </GuestScope>
             </Suspense>
           </BrowserRouter>
         </AuthProvider>

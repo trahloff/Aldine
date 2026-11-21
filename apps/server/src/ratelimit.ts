@@ -177,6 +177,10 @@ export const compileLimiter = compilePerMin > 0
 /** Review-mark writes (one per project open): 60 burst, 1/s — bounds datastore
  *  writes from a scripted session. */
 export const visitLimiter = new RateLimiter('visit', n(process.env.RL_VISIT_BURST, 60), 1);
+/** Guests joining through a share link without an account: per address,
+ *  and per link, so a leaked link cannot fill its member places in a burst. */
+export const guestJoinLimiter = new RateLimiter('guest-join', n(process.env.RL_GUEST_JOIN_BURST, 20), 1 / 30);
+export const guestLinkLimiter = new RateLimiter('guest-link', n(process.env.RL_GUEST_LINK_BURST, 50), 1 / 20);
 /** MCP requests: 60 burst, 1/s sustained — keyed per token digest (fallback IP) by the /mcp guard. */
 export const mcpLimiter = new RateLimiter('mcp', n(process.env.RL_MCP_BURST, 60), 1);
 

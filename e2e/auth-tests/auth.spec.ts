@@ -421,6 +421,8 @@ test.describe('auth', () => {
       if (role === 'review') await page.getByTestId('share-link-new-expiry').fill('2099-12-31');
       await page.getByTestId('share-link-create').click();
       await expect(page.locator('.toast', { hasText: 'Link created and copied' }).last()).toBeVisible();
+      // the toast of the link before may still be up: wait for this link in the clipboard
+      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}?link=`) && !Object.values(urls).includes(got); }).toBe(true);
       urls[role] = await page.evaluate(() => navigator.clipboard.readText());
       expect(urls[role]).toMatch(new RegExp(`/p/${proj.id}\\?link=[A-Za-z0-9_-]{43}$`));
     }
@@ -506,6 +508,90 @@ test.describe('auth', () => {
     expect((await vic.ctx.request.get(`/api/projects/${proj.id}`)).status()).toBe(200);
 
     for (const v of [stranger, ed, rita, vic]) await v.ctx.close();
+    await owner.close();
+  });
+
+  test('guest links: someone without an account joins under a name, edits live under it, never typesets, and is cut off by a revoke', async ({ browser }) => {
+    // its own client address keeps it off the sign-in and guest-join limits the suite shares
+    const headers = { 'x-forwarded-for': '203.0.113.64' };
+    const owner = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'], extraHTTPHeaders: headers });
+    const page = await owner.newPage();
+    await register(page, uniq(), 'password123', 'Gina Owner');
+    const proj = await (await page.request.post('/api/projects', { data: { name: 'Open To Guests' } })).json();
+    await page.request.put(`/api/projects/${proj.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'GUEST-TEXT stays.\n' } });
+    await page.goto(`/p/${proj.id}`);
+    await expect(page.locator('.cm-content')).toContainText('GUEST-TEXT');
+
+    // an edit link and a view link, both for anyone with the link, no account needed
+    const urls: Record<string, string> = {};
+    await page.getByTestId('share-project').click();
+    for (const [role, label] of [['edit', 'Workshop'], ['view', '']] as const) {
+      await page.getByTestId('share-link-new-label').fill(label);
+      await page.getByTestId('share-link-new-role').selectOption(role);
+      await page.getByTestId('share-link-new-guests').check();
+      await page.getByTestId('share-link-create').click();
+      await expect(page.locator('.toast', { hasText: 'with or without an account' }).last()).toBeVisible();
+      // the toast of the link before may still be up: wait for this link in the clipboard
+      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}?link=`) && !Object.values(urls).includes(got); }).toBe(true);
+      urls[role] = await page.evaluate(() => navigator.clipboard.readText());
+    }
+    const rows = page.getByTestId('share-link-row');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first().getByTestId('share-link-guests')).toHaveText('No account needed');
+    await page.getByTestId('share-close').click();
+
+    // a fresh browser with no account: asked for a name, the link's name filled in
+    const gwenCtx = await browser.newContext({ extraHTTPHeaders: headers });
+    const gwen = await gwenCtx.newPage();
+    await gwen.goto(urls.edit);
+    await expect(gwen.getByTestId('guest-join')).toContainText('You’re invited to “Open To Guests”');
+    await expect(gwen).toHaveURL(new RegExp(`/p/${proj.id}$`));
+    await expect(gwen.getByTestId('guest-name')).toHaveValue('Workshop');
+    await gwen.getByTestId('guest-name').fill('Gwen Guest');
+    await gwen.getByTestId('guest-join-submit').click();
+    await expect(gwen.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    await expect(gwen.getByTestId('guest-note')).toContainText('You’re a guest here, as Gwen Guest (guest). You can edit the text with the others.');
+    await expect(gwen.getByTestId('typeset-button')).toHaveCount(0);
+    // she types, and the owner sees the text and her name
+    await gwen.locator('.cm-content').click();
+    await gwen.keyboard.press('End');
+    await gwen.keyboard.type(' GUEST-EDIT');
+    await expect(page.locator('.cm-content')).toContainText('GUEST-EDIT', { timeout: 15_000 });
+    await expect(page.locator('[data-testid="presence-user"][data-name="Gwen Guest (guest)"]')).toHaveCount(1, { timeout: 15_000 });
+    // a reload keeps her in, as the same guest
+    await gwen.reload();
+    await expect(gwen.getByTestId('guest-note')).toContainText('Gwen Guest (guest)');
+    // nothing an account has: her guest cookie opens no project list
+    expect((await gwenCtx.request.get('/api/projects')).status()).toBe(401);
+
+    // a view guest reads, and cannot typeset
+    const veraCtx = await browser.newContext({ extraHTTPHeaders: headers });
+    const vera = await veraCtx.newPage();
+    await vera.goto(urls.view);
+    await expect(vera.getByTestId('guest-name')).toHaveValue('');
+    await vera.getByTestId('guest-name').fill('Vera');
+    await vera.getByTestId('guest-join-submit').click();
+    await expect(vera.getByTestId('guest-note')).toContainText('You can read the project.');
+    await expect(vera.locator('.cm-content')).toContainText('GUEST-TEXT');
+    await expect(vera.getByTestId('typeset-button')).toHaveCount(0);
+    await expect(vera.getByTestId('add-comment')).toHaveCount(0);
+    const typeset = await veraCtx.request.post(`/api/projects/${proj.id}/compile`, { data: { branch: 'main' } });
+    expect(typeset.status()).toBe(403);
+    expect((await typeset.json()).error).toContain('Guests see the PDF the others typeset');
+
+    // revoking the edit link cuts Gwen off at once, and she is signed out everywhere
+    await page.getByTestId('share-project').click();
+    await rows.filter({ hasText: 'Workshop' }).getByTestId('share-link-revoke').click();
+    await page.getByTestId('dialog-confirm').click();
+    await expect(page.locator('.toast', { hasText: 'Revoked “Workshop”' })).toBeVisible();
+    await page.getByTestId('share-close').click();
+    await expect(gwen.locator('.toast', { hasText: 'Your guest access to this project has ended' })).toBeVisible({ timeout: 15_000 });
+    await expect(gwen.getByTestId('auth-email')).toBeVisible();
+    expect((await gwenCtx.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
+    // Vera's link still works
+    expect((await veraCtx.request.get(`/api/projects/${proj.id}`)).status()).toBe(200);
+
+    for (const c of [gwenCtx, veraCtx]) await c.close();
     await owner.close();
   });
 

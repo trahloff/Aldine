@@ -30,7 +30,10 @@ for (const url of ['/', '/oauth/authorize?client_id=aldc_x&redirect_uri=https%3A
   check(res.body.includes('<div id="root">'), `${url} is the index`);
   eq(res.headers['content-security-policy'], "frame-ancestors 'none'", `${url} forbids framing by CSP`);
   eq(res.headers['x-frame-options'], 'DENY', `${url} forbids framing for browsers without frame-ancestors`);
+  eq(res.headers['referrer-policy'], 'same-origin', `${url} sends no Referer to other sites`);
 }
+const linked = await app.inject({ method: 'GET', url: `/p/abc123?link=${'A'.repeat(43)}` });
+eq(linked.headers['referrer-policy'], 'same-origin', 'a page opened with a share link token keeps it out of other sites\' Referer');
 const asset = await app.inject({ method: 'GET', url: '/assets/index-abc.js' });
 eq(asset.statusCode, 200, 'assets are still served');
 
