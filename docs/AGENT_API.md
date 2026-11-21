@@ -502,7 +502,14 @@ nothing is applied. Claude is told to edit other parts first or retry after
 that, at most twice, then ask the user whether to hold off. `force: true`
 applies the edit anyway — through the same merge, so nobody's typing is lost —
 and is meant only for an edit the user asked for in their current request; the
-result's `overrode` names who was typing, and the commit message says so. A
+result's `overrode` names who was typing, and the commit message says so. The
+people an edit waits on see a notice in their editor ("Claude wants to edit
+this paragraph"); **Allow now** lets the agent into that paragraph for a
+minute, however recently they typed. The announcement rides on the agent's
+awareness state as `agentWait` (`id`, the changed ranges as Yjs relative
+positions, the client IDs it waits on, `until`); the allow is the person's own
+awareness field `agentAllow: {id}`. It lapses after 60 s or when an agent edit
+lands in the file. A
 person whose editor shows another file has no cursor in this one. Error results carry the
 same `path`, `branch`, `head` and `contentVersion` as a success.
 

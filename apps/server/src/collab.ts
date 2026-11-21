@@ -628,8 +628,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   async afterLoadDocument({ documentName, document }: { documentName: string; document: AwarenessDoc }) {
     const parsed = parseDocName(documentName);
     if (parsed?.filePath === FILES_SIGNAL) { publishBranchAgent(parsed.projectId, parsed.branch); return; }
-    const live = agentPresence.get(documentName);
-    if (live && live.expiresAt > Date.now()) setAgentAwareness(document, live);
+    syncAgentAwareness(documentName, document);
   },
   async onStoreDocument({ documentName, document }) {
     writeDocToDisk(documentName, document);
@@ -654,6 +653,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   async afterUnloadDocument({ documentName }: { documentName: string }) {
     lastTyped.delete(documentName);
     lastCursor.delete(documentName);
+    agentAllows.delete(documentName);
     lastWritten.delete(documentName);
     lastSnapshot.delete(documentName);
     crlfDocs.delete(documentName);
@@ -951,12 +951,71 @@ type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void; getLocalSta
 
 const sessionLive = (s: AgentSession | undefined, now = Date.now()): boolean => !!s && (s.holds > 0 || s.expiresAt > now);
 
-function setAgentAwareness(doc: AwarenessDoc | undefined, live: AgentPresence): void {
-  const session = agentSessions.get(live.session);
-  // setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
-  // local state at doc creation, and y-protocols' setLocalStateField is a
-  // silent no-op on a null state — the agent would never appear.
-  doc?.awareness?.setLocalState({ user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(live.owners), startedAt: session?.startedAt ?? Date.now() } });
+/** An agent edit held off by people typing: what it would change (Yjs relative positions) and which clients it waits on, shown to them in the editor. */
+interface AgentWait { id: string; ranges: Array<{ from: unknown; to: unknown }>; clients: number[]; owners: Set<string>; until: number; timer: NodeJS.Timeout }
+/** How long a held-off edit is announced, and how long an "Allow now" for it holds. */
+export const AGENT_WAIT_MS = 60_000;
+const agentWaits = new Map<string, AgentWait>();
+/** Per doc: the ranges each client allowed the agent into, and when the server saw it. */
+const agentAllows = new Map<string, Map<number, { ranges: Array<{ from: unknown; to: unknown }>; at: number }>>();
+
+/**
+ * The server's awareness on a file's doc: the agent while its presence or a
+ * held-off edit is live (the latter as agentWait), nothing otherwise.
+ * setLocalState, not setLocalStateField: Hocuspocus nulls the server-side
+ * local state at doc creation, and y-protocols' setLocalStateField is a
+ * silent no-op on a null state — the agent would never appear.
+ */
+function syncAgentAwareness(name: string, doc = hocuspocus.documents.get(name) as AwarenessDoc | undefined): void {
+  if (!doc?.awareness) return;
+  const now = Date.now();
+  const live = agentPresence.get(name);
+  const presence = live && live.expiresAt > now ? live : null;
+  const found = agentWaits.get(name);
+  const wait = found && found.until > now ? found : null;
+  if (!presence && !wait) {
+    if (doc.awareness.getLocalState() !== null) doc.awareness.setLocalState(null);
+    return;
+  }
+  const session = presence ? agentSessions.get(presence.session) : undefined;
+  doc.awareness.setLocalState({
+    user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(presence?.owners ?? wait!.owners), startedAt: session?.startedAt ?? now },
+    ...(wait ? { agentWait: { id: wait.id, ranges: wait.ranges, clients: wait.clients, until: wait.until } } : {}),
+  });
+}
+
+function clearAgentWait(name: string): void {
+  const wait = agentWaits.get(name);
+  if (!wait) return;
+  clearTimeout(wait.timer);
+  agentWaits.delete(name);
+  syncAgentAwareness(name);
+}
+
+/**
+ * Tells the people an agent edit waits on, in their editor, what it would
+ * change: they can let it in at once ("Allow now"). One announcement per
+ * file, the latest; it lapses after AGENT_WAIT_MS or when an agent edit lands.
+ */
+export function announceAgentWait(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>, clients: number[], owner?: string | null): void {
+  const name = docName(projectId, branch, filePath);
+  const doc = hocuspocus.documents.get(name) as (Y.Doc & AwarenessDoc) | undefined;
+  if (!doc?.awareness || !ranges.length || !clients.length) return;
+  const text = doc.getText(TEXT_KEY);
+  const rel = (i: number) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text, Math.max(0, Math.min(i, text.length))));
+  const prev = agentWaits.get(name);
+  if (prev) clearTimeout(prev.timer);
+  const timer = setTimeout(() => { if (agentWaits.get(name)?.timer === timer) clearAgentWait(name); }, AGENT_WAIT_MS);
+  timer.unref?.();
+  agentWaits.set(name, {
+    id: crypto.randomBytes(6).toString('hex'),
+    ranges: ranges.map((r) => ({ from: rel(r.from), to: rel(r.to) })),
+    clients: [...new Set(clients)],
+    owners: new Set(owner ? [owner] : []),
+    until: Date.now() + AGENT_WAIT_MS,
+    timer,
+  });
+  syncAgentAwareness(name, doc);
 }
 
 /**
@@ -1028,8 +1087,7 @@ export function markAgentPresence(projectId: string, branch: string, filePath: s
   if (prev) clearTimeout(prev.timer);
   const timer = setTimeout(() => {
     agentPresence.delete(name);
-    const d = hocuspocus.documents.get(name) as AwarenessDoc | undefined;
-    try { d?.awareness?.setLocalState(null); } catch { /* doc unloaded meanwhile */ }
+    try { syncAgentAwareness(name); } catch { /* doc unloaded meanwhile */ }
     publishBranchAgent(projectId, branch);
   }, AGENT_PRESENCE_TTL_MS);
   timer.unref?.();
@@ -1037,7 +1095,10 @@ export function markAgentPresence(projectId: string, branch: string, filePath: s
   if (owner) owners.add(owner);
   const live: AgentPresence = { expiresAt: now + AGENT_PRESENCE_TTL_MS, timer, owners, session: key };
   agentPresence.set(name, live);
-  setAgentAwareness(hocuspocus.documents.get(name) as AwarenessDoc | undefined, live);
+  // An agent edit is landing in this file: whatever it waited on is over.
+  const wait = agentWaits.get(name);
+  if (wait) { clearTimeout(wait.timer); agentWaits.delete(name); }
+  syncAgentAwareness(name);
   publishBranchAgent(projectId, branch);
 }
 
@@ -1104,11 +1165,22 @@ function noteCursorMoves(documentName: string, changed: number[], removed: numbe
   const now = Date.now();
   const map = lastCursor.get(documentName) ?? new Map<number, { key: string; at: number }>();
   const states = awareness.getStates();
+  const wait = agentWaits.get(documentName);
   for (const id of changed) {
-    const key = JSON.stringify(states.get(id)?.cursor ?? null);
+    const state = states.get(id);
+    const key = JSON.stringify(state?.cursor ?? null);
     if (map.get(id)?.key !== key) map.set(id, { key, at: now });
+    // "Allow now" on the announced edit: that person lets the agent into its ranges for AGENT_WAIT_MS.
+    if (wait && wait.until > now && state?.agentAllow?.id === wait.id && wait.clients.includes(id)) {
+      const allows = agentAllows.get(documentName) ?? new Map();
+      allows.set(id, { ranges: wait.ranges, at: now });
+      agentAllows.set(documentName, allows);
+      wait.clients = wait.clients.filter((c) => c !== id);
+      if (!wait.clients.length) clearAgentWait(documentName);
+      else syncAgentAwareness(documentName);
+    }
   }
-  for (const id of removed) map.delete(id);
+  for (const id of removed) { map.delete(id); agentAllows.get(documentName)?.delete(id); }
   lastCursor.set(documentName, map);
 }
 
@@ -1120,7 +1192,7 @@ function nearWindow(text: string, r: { from: number; to: number }): { from: numb
   return { from: Math.max(lineStart, r.from - TYPING_NEAR_CHARS), to: Math.min(lineEnd, r.to + TYPING_NEAR_CHARS) };
 }
 
-export interface EditBlock { index: number; names: string[]; retryAfterMs: number }
+export interface EditBlock { index: number; names: string[]; clients: number[]; retryAfterMs: number }
 
 /**
  * The edits a person is working on right now, each with who and how long until
@@ -1149,7 +1221,18 @@ export function peopleEditingRanges(projectId: string, branch: string, filePath:
     } catch { return null; }
   };
   const windows = ranges.map((r) => nearWindow(content, r));
-  const blocks = new Map<number, { names: Set<string>; retryAfterMs: number }>();
+  const allows = agentAllows.get(name);
+  const allowedFor = (clientId: number, r: { from: number; to: number }) => {
+    const a = allows?.get(clientId);
+    if (!a || now - a.at >= AGENT_WAIT_MS) return false;
+    return a.ranges.some((x) => {
+      const from = at(x.from), to = at(x.to);
+      if (from === null || to === null) return false;
+      const w = nearWindow(content, { from, to });
+      return !(r.from > w.to || r.to < w.from);
+    });
+  };
+  const blocks = new Map<number, { names: Set<string>; clients: Set<number>; retryAfterMs: number }>();
   for (const [clientId, state] of doc.awareness.getStates()) {
     if (clientId === doc.awareness.clientID) continue;
     const user = state?.user;
@@ -1165,17 +1248,19 @@ export function peopleEditingRanges(projectId: string, branch: string, filePath:
     const lo = Math.min(anchor, head), hi = Math.max(anchor, head);
     const who = typeof user.name === 'string' && user.name.trim() ? user.name.trim() : 'Someone';
     ranges.forEach((r, i) => {
+      if (allowedFor(clientId, r)) return;
       let wait = 0;
       if (typing && !(lo > windows[i].to || hi < windows[i].from)) wait = TYPING_GRACE_MS - typedAgo;
       if (hi > lo && selectedAgo < TYPING_GRACE_MS && !(lo > r.to || hi < r.from)) wait = Math.max(wait, TYPING_GRACE_MS - selectedAgo);
       if (wait <= 0) return;
-      const b = blocks.get(i) ?? { names: new Set<string>(), retryAfterMs: 0 };
+      const b = blocks.get(i) ?? { names: new Set<string>(), clients: new Set<number>(), retryAfterMs: 0 };
       b.names.add(who);
+      b.clients.add(clientId);
       b.retryAfterMs = Math.max(b.retryAfterMs, Math.ceil(wait));
       blocks.set(i, b);
     });
   }
-  return [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([index, b]) => ({ index, names: [...b.names], retryAfterMs: b.retryAfterMs }));
+  return [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([index, b]) => ({ index, names: [...b.names], clients: [...b.clients], retryAfterMs: b.retryAfterMs }));
 }
 
 /** Synchronously flush every loaded doc of a project+branch to disk (before compile/commit/merge). */
