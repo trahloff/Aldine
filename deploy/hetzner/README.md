@@ -66,6 +66,22 @@ cd /opt/aldine && docker compose down
 docker compose up -d --wait
 ```
 
+## Restore drill
+
+A backup nobody has restored is a hope. On the box:
+
+```bash
+/opt/aldine/restore-drill.sh          # the newest off-box backup
+/opt/aldine/restore-drill.sh --local  # the newest one in /var/backups/aldine
+```
+
+It downloads the backup, restores it into a separate compose project's
+volumes (`aldine-drill_*`), starts the deployed app image on them with no
+network, and checks health, the account database's integrity and the project
+count. It prints one line with counts, never names, and removes everything it
+created. The live stack keeps running. It needs about twice the backup's size
+free on disk. Run it monthly and after any change to the backup scripts.
+
 ## Sizing
 
 The compiler is capped at 2 GB (`ALDINE_COMPILER_MEM`) and runs two compiles
