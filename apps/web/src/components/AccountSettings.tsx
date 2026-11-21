@@ -9,6 +9,29 @@ import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
 import { ClaudeConnectSteps, useConnectorUrl } from './ClaudeConnect';
 import LoadError from './LoadError';
+import { storageLine } from '../util/storage';
+
+/** What this account's projects occupy against the server's storage limit.
+ *  Shown only when the server sets one (ALDINE_STORAGE_QUOTA_MB). */
+function StorageRow() {
+  const [storage, setStorage] = useState<{ usedBytes: number; limitBytes: number } | null>(null);
+  useEffect(() => { api.usage().then((u) => setStorage(u.storage ?? null), () => {}); }, []);
+  if (!storage || !storage.limitBytes) return null;
+  const over = storage.usedBytes >= storage.limitBytes;
+  return (
+    <>
+      <div className="settings__row" data-testid="account-storage-row">
+        <span className="settings__label">Storage</span>
+        <span data-testid="account-storage" style={over ? { color: 'var(--error)' } : undefined}>{storageLine(storage.usedBytes, storage.limitBytes)}</span>
+      </div>
+      {over && (
+        <p className="login__hint" data-testid="account-storage-over">
+          Your projects use all of your storage. Uploads, imports, new projects and duplicates are refused until you delete files or projects, or empty the trash. Editing keeps working.
+        </p>
+      )}
+    </>
+  );
+}
 
 /** The git host accounts this user connected, each with Disconnect. A
  *  replacement token is entered where it is used: Clone from a host, or a
@@ -708,6 +731,7 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
           <span className="settings__label">Sign-in</span>
           <span data-testid="account-sign-in">{isSso ? (genericSso ? 'Single sign-on' : `Single sign-on (${providerName})`) : 'Email & password'}</span>
         </div>
+        <StorageRow />
 
         {/* The onboarding funnel comes before the password block: a 70vh
             panel opened at scrollTop 0 must show the connector and the

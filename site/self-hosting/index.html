@@ -236,10 +236,11 @@ sudo systemctl enable --now aldine-backup.timer</code></pre>
 <tr><th scope="row"><code>MAX_CONCURRENT_COMPILES</code></th><td>Compiles in flight in the compiler container</td><td>2</td></tr>
 <tr><th scope="row"><code>RL_COMPILE_CONCURRENCY</code></th><td>Typesets one client (the signed-in user, else the IP address) may have in flight</td><td>2</td></tr>
 <tr><th scope="row"><code>ALDINE_COMPILE_QUOTA_MIN</code></th><td>Compile minutes per user per month; over-quota compiles return HTTP 402</td><td>uncapped</td></tr>
+<tr><th scope="row"><code>ALDINE_STORAGE_QUOTA_MB</code></th><td>Storage per project owner, trash included; over it, uploads, imports and new projects return HTTP 402 and editing keeps working</td><td>unlimited</td></tr>
 </tbody>
 </table>
 </div>
-<p><code>docker-compose.full.yml</code> passes <code>COMPILE_TIMEOUT_MS</code> and <code>MAX_CONCURRENT_COMPILES</code> through from <code>.env</code>. <code>ALDINE_COMPILE_QUOTA_MIN</code> is passed through by the <code>deploy/docker-compose.prod.yml</code> overlay. <code>RL_COMPILE_CONCURRENCY</code> is in neither file: add it under <code>environment:</code> of the <code>app</code> service yourself. Every variable Aldine reads is listed in the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">configuration table</a>.</p>
+<p><code>docker-compose.full.yml</code> passes <code>COMPILE_TIMEOUT_MS</code> and <code>MAX_CONCURRENT_COMPILES</code> through from <code>.env</code>. <code>ALDINE_COMPILE_QUOTA_MIN</code> and <code>ALDINE_STORAGE_QUOTA_MB</code> are passed through by the <code>deploy/docker-compose.prod.yml</code> overlay. <code>RL_COMPILE_CONCURRENCY</code> is in neither file: add it under <code>environment:</code> of the <code>app</code> service yourself. Every variable Aldine reads is listed in the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md#all-configuration">configuration table</a>.</p>
 
 <h2 id="storage">Storage: one SQLite file, Postgres optional</h2>
 <p>Project files are real git repositories with worktrees on disk; that is what gives you branches and history. Users, sessions, project metadata, review comments and usage go through a datastore with three backends: one SQLite file, <code>aldine.db</code> in the secrets volume (the default since 1.7, which copies the JSON files of an earlier release on its first start), JSON files (<code>ALDINE_DATASTORE=json</code>) or Postgres. The switch is configuration:</p>

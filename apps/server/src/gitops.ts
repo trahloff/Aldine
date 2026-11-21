@@ -7,6 +7,7 @@ import { projectsDir } from './config.js';
 import { repoDir, branchDir, git, readMeta, removeTree } from './store.js';
 import { spawn } from 'node:child_process';
 import { BRANCH_RE, isHiddenPath } from './util.js';
+import { noteStorageChanged } from './storage.js';
 
 export interface BranchInfo { name: string; current?: boolean; head: string; message: string; date: string }
 
@@ -38,7 +39,8 @@ export async function newestBranchTip(id: string): Promise<{ branch: string; at:
 const repoLocks = new Map<string, Promise<void>>();
 export function withRepoLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const prev = repoLocks.get(id) ?? Promise.resolve();
-  const run = prev.then(fn);
+  // Whatever ran under the lock may have grown or shrunk the repository.
+  const run = prev.then(fn).finally(() => noteStorageChanged(id));
   const tail = run.then(() => undefined, () => undefined);
   repoLocks.set(id, tail);
   void tail.then(() => { if (repoLocks.get(id) === tail) repoLocks.delete(id); });
@@ -97,6 +99,7 @@ export async function ensureWorktree(id: string, name: string): Promise<string> 
   const g = git(repoDir(id));
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   await g.raw(['worktree', 'add', dir, name]);
+  noteStorageChanged(id);
   return dir;
 }
 

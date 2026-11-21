@@ -503,7 +503,8 @@ Every variable Aldine reads is listed in
 memory / PIDs; LaTeX compiles with **restricted shell-escape** (whitelist
 only) and `openin_any=p`. Per-client rate limits guard login, AI, and
 reference lookups; compiles are concurrency-capped, with optional per-user
-compile quotas (`ALDINE_COMPILE_QUOTA_MIN`) if you host for a group.
+compile quotas (`ALDINE_COMPILE_QUOTA_MIN`) and per-owner storage limits
+(`ALDINE_STORAGE_QUOTA_MB`) if you host for a group.
 
 See [deploy/README.md](deploy/README.md) for the full single-VPS runbook
 (nginx/Traefik/Caddy ingress, backups, SSO setup, Postgres/Redis, every

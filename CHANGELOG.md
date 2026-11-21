@@ -26,6 +26,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   creating an account accepts them and the privacy policy. Each is optional
   and must be an https link; anything else is left out with a boot warning.
   Nothing appears when they are unset. Refs #125.
+- A storage limit per project owner, `ALDINE_STORAGE_QUOTA_MB` (blank, the
+  default, is unlimited). It counts every project the account owns: the
+  files of all branches and the git history, and trashed projects until
+  the trash is emptied or purged; typeset output does not count. Over the
+  limit nothing is deleted and editing keeps working, but uploads, imports,
+  new projects, duplicates, new branches and pulls are refused with HTTP
+  402 and a sentence saying how much is used and what frees space.
+  Collaborators are told whose storage it is. Account settings show
+  "Storage: 120 MB of 500 MB", and /admin shows each account's usage.
+  Refs #125.
 
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email

@@ -8,6 +8,7 @@ import * as zotero from './zotero.js';
 import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
 import { compileProject, compileStatus, synctexLookup, formatText, type FormatRefusal, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
+import { EDIT_ALLOWANCE_BYTES, storageRefusal, storageUsageFor, type StorageAction } from './storage.js';
 import * as remotes from './remotes.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
@@ -292,6 +293,15 @@ async function requireOwner(req: any, reply: any, action: string): Promise<store
   return meta;
 }
 
+/** Answers 402 and returns true when `ownerId` has no room for `incoming`
+ *  more bytes (storage.ts); `user` is who asks. */
+async function storageFull(reply: any, ownerId: string | undefined, user: auth.PublicUser | null, incoming: number, action: StorageAction): Promise<boolean> {
+  const refusal = await storageRefusal(ownerId, user?.id, incoming, action);
+  if (refusal) reply.code(402).send(refusal);
+  return !!refusal;
+}
+const seedBytes = (files: Record<string, string | Buffer> | undefined) =>
+  files ? Object.values(files).reduce((n, c) => n + Buffer.byteLength(c), 0) : 0;
 
 /** A repository as typed or pasted into the import search: `owner/repo`, a
  *  name, or the repository's web or clone URL, reduced to its path (a
@@ -1047,6 +1057,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
         return reply.code(400).send({ error: err.message });
       }
     }
+    if (await storageFull(reply, reqUser(req)?.id, reqUser(req), seedBytes(seed), 'create')) return;
     // Every path shape the caller controls is screened by seedError and
     // kitSeedProblem, so a write that still fails here is this server's fault
     // (a full disk, a read-only data directory) and answers 5xx. The errno
@@ -1881,6 +1892,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       }
       const clash = pathConflict(Object.keys(files));
       if (clash) return fail(400, `The archive uses "${clash}" as both a file and a directory`);
+      if (await storageFull(reply, reqUser(req)?.id, reqUser(req), seedBytes(files), 'import')) return;
       // create with text files seeded; write binaries as buffers afterward
       const textFiles: Record<string, string> = {};
       const binFiles: string[] = [];
@@ -2078,6 +2090,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (name.length > 200) return reply.code(400).send({ error: 'Project name is too long (max 200 characters)' });
     const user = reqUser(req);
     if (!(await copyLimiter.take(clientKey(req, user?.id)))) return reply.code(429).send({ error: 'Duplicate rate limit reached — please slow down' });
+    if (await storageFull(reply, user?.id, user, 0, 'copy')) return;
     let meta: store.ProjectMeta;
     try {
       meta = await gitops.withRepoLock(source.id, () => {
@@ -2187,8 +2200,16 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (createOnly && store.fileExists(req.params.id, branch, rel)) {
         return reply.code(409).send({ error: 'A file with that name already exists' });
       }
+      const data = encoding === 'base64' ? Buffer.from(content, 'base64') : content;
+      // An upload is always checked; a text save only when it adds more
+      // than typing does, so editing never stops at the limit.
+      const growth = Buffer.byteLength(data) - store.fileSize(req.params.id, branch, rel);
+      if (encoding === 'base64' || growth > EDIT_ALLOWANCE_BYTES) {
+        const meta = await store.readMeta(req.params.id);
+        if (await storageFull(reply, meta.ownerId, reqUser(req), growth, encoding === 'base64' ? 'upload' : 'write')) return;
+      }
       try {
-        store.writeFile(req.params.id, branch, rel, encoding === 'base64' ? Buffer.from(content, 'base64') : content);
+        store.writeFile(req.params.id, branch, rel, data);
       } catch {
         return reply.code(400).send({ error: 'Could not write that file path' });
       }
@@ -2530,7 +2551,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
   app.get('/api/usage', async (req, reply) => {
     const user = reqUser(req);
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
-    return { metering: usage.meteringEnabled(), ...(await usage.usageFor(user.id)) };
+    return { metering: usage.meteringEnabled(), ...(await usage.usageFor(user.id)), storage: await storageUsageFor(user.id) };
   });
 
   app.post<{ Params: { id: string }; Body: Record<string, unknown> & { branch?: string } }>(
@@ -2590,6 +2611,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
       if (!BRANCH_RE.test(name) || /^(refs|heads|remotes)\//.test(name) || /^-/.test(name)) {
         return reply.code(400).send({ error: 'Invalid branch name' });
       }
+      if (await storageFull(reply, (await store.readMeta(req.params.id)).ownerId, reqUser(req), 0, 'branch')) return;
       // capture latest edits so the new branch starts from what the user sees
       flushBranchDocs(req.params.id, from);
       await gitops.autoCommit(req.params.id, from, cleanCommitMessage(String(checkpoint ?? ''), 'aldine: checkpoint before branching'), checkpoint ? commitAuthor(req, claimed) : undefined).catch(() => {});
@@ -3430,6 +3452,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     }
     try { remotes.checkCloneUrl(p, conn, info.cloneUrl); }
     catch (err: any) { return reply.code(502).send({ error: err.message }); }
+    if (await storageFull(reply, reqUser(req)?.id, reqUser(req), 0, 'import')) return;
     const id = newId();
     try {
       const { remoteBranch } = await gitops.cloneRepo(id, p.tokenUrl(info.cloneUrl, conn.token, conn.login));
@@ -3593,6 +3616,7 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
 
   projectRoute('post', 'pull', async (req, reply) => {
     const l = await linkedRemote(req, reply); if (!l) return;
+    if (await storageFull(reply, l.meta.ownerId, reqUser(req), 0, 'pull')) return;
     flushBranchDocs(req.params.id, 'main');
     await gitops.autoCommit(req.params.id, 'main', cleanCommitMessage(String(req.body?.checkpoint ?? ''), 'Local changes before pull'), reqAuthor(req)).catch(() => {});
     try {

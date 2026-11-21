@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import * as store from '../store.js';
 import * as gitops from '../gitops.js';
 import * as usage from '../usage.js';
+import { EDIT_ALLOWANCE_BYTES, storageRefusal } from '../storage.js';
 import { compileProject, outputOnDisk, isBranchClosed, type CompileError } from '../compile.js';
 import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
@@ -486,6 +487,14 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     return fail('The request failed on the Aldine server');
   };
 
+  /** The owner's storage limit (storage.ts) as the REST file write applies
+   *  it: whole-content writes that add more than typing does are checked. */
+  const largeWriteRefusal = async (meta: store.ProjectMeta, branch: string, writes: Array<{ path: string; content: string }>): Promise<string | null> => {
+    const growth = writes.reduce((n, w) => n + Buffer.byteLength(w.content) - store.fileSize(meta.id, branch, w.path), 0);
+    if (growth <= EDIT_ALLOWANCE_BYTES) return null;
+    return (await storageRefusal(meta.ownerId, identity.user?.id, growth, 'write'))?.error ?? null;
+  };
+
   /** Result keys the viewer hydrates from — shared by compile and get_pdf_url. */
   const pdfResult = async (meta: store.ProjectMeta, branch: string, pdfRel: string | null, opts: { pdfStale: boolean; pages: number | null; t?: number; writtenAt?: number; truncated?: boolean }) => {
     const disk = outputOnDisk(meta.id, branch, meta.rootFile);
@@ -710,6 +719,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       await gitops.ensureWorktree(meta.id, branch);
       const rel = diskSpelling(meta.id, branch, visiblePath(rawPath), { wholeFile: true });
       assertFileTarget(meta.id, branch, rel);
+      const full = await largeWriteRefusal(meta, branch, [{ path: rel, content }]);
+      if (full) return fail(full);
       // See edit_file: one lock span from the checkpoint to the commit,
       // and the attributed commit must carry only the agent's delta.
       return await gitops.withRepoLock(meta.id, async () => {
@@ -779,6 +790,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         seenPaths.set(f.path.toLowerCase(), f.path);
         files.push(f);
       }
+      const full = await largeWriteRefusal(meta, branch, files.flatMap((f) => (f.content !== undefined ? [{ path: f.path, content: f.content }] : [])));
+      if (full) return fail(full);
       // See edit_file: one lock span from the checkpoint through the batch's
       // own commit, so no autosave can stage the writes in between.
       return await gitops.withRepoLock(meta.id, async () => {
@@ -1153,6 +1166,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           return fail(`Template "${template}" could not be prepared: ${err?.message || err}`);
         }
       }
+      const seedBytes = seed ? Object.values(seed).reduce((n, c) => n + c.length, 0) : 0;
+      const full = await storageRefusal(identity.user?.id, identity.user?.id, seedBytes, 'create');
+      if (full) return fail(full.error);
       // The mark trash_project keys on: only what the agent made is within its reach.
       const meta = await store.createProject(name, seed, identity.user?.id, { createdVia: 'agent' });
       noteEdit(meta.id, 'main', AGENT_EDITOR);

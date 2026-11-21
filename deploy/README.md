@@ -122,6 +122,13 @@ ALDINE_COMPILE_QUOTA_MIN=
 #ALDINE_PRIVACY_URL=https://aldine.example.com/privacy
 #ALDINE_LEGAL_URL=https://aldine.example.com/imprint
 #ALDINE_TERMS_URL=https://aldine.example.com/terms
+# optional storage limit per project owner, in MB (blank = unlimited). Counts
+# the files of every project the account owns: working files of all branches
+# and the git history, trashed projects until the trash is emptied or purged;
+# typeset output does not count. Over it, uploads, imports, new projects,
+# duplicates, new branches and pulls return HTTP 402 with storageExceeded:
+# true; editing keeps working and nothing is deleted.
+ALDINE_STORAGE_QUOTA_MB=
 
 # error tracking (optional). SENTRY_ENVIRONMENT separates this instance from
 # your others in the issue list; without it every instance files as production.
@@ -534,7 +541,14 @@ to `RL_ADMIN_BURST` (default 30) in a row per administrator.
 - **Scale vertically first** — a bigger box absorbs a lot of users before you
   need HA. LaTeX compiles are the resource driver; if you host for a group,
   cap them per user with `ALDINE_COMPILE_QUOTA_MIN` and read `/api/usage` for a
-  usage UI. Users over quota get HTTP 402 with `quotaExceeded: true`.
+  usage UI. Users over quota get HTTP 402 with `quotaExceeded: true`. Cap
+  disk per project owner with `ALDINE_STORAGE_QUOTA_MB`: account settings
+  and /admin show each account's usage, and an owner over the limit gets
+  HTTP 402 with `storageExceeded: true` for anything that grows storage
+  substantially, while editing keeps working. Collaborators see the owner's
+  limit, with the owner named. A deleted file stays in the project's
+  history, so deleting files frees less than their size; deleting the
+  project and emptying the trash frees all of it.
 - **When one box isn't enough**, move the compiler off the app box: run the
   compiler container on a cheap burstable machine against the shared data volume
   (NFS or similar) and set `COMPILER_URL` to point at it. The app knows exactly
@@ -668,7 +682,8 @@ override file.
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
 | `ALDINE_AI_AUTOFIX` | `1` = a failed typeset someone asked for is diagnosed in the Fix tab without a click; auto-typeset runs are not (default off) |
 | `ALDINE_COMPILE_QUOTA_MIN` | Per-user compile minutes per month (blank = uncapped) |
-| `ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL`, `ALDINE_TERMS_URL` | Links to your privacy policy, legal notice (imprint, Impressum) and terms of use, shown as **Privacy**, **Legal notice** and **Terms** under the sign-in card, in the account menu and in About. With `ALDINE_TERMS_URL` set, the sign-up form says "By creating an account you agree to the terms and the privacy policy". Each must be `https` (`http` only for `localhost`); anything else is left out with a boot warning. Unset = no link. See [docs/BRANDING.md](../docs/BRANDING.md#privacy-policy-legal-notice-and-terms) |
+| `ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL`, `ALDINE_TERMS_URL` | Links to your privacy policy, legal notice (imprint, Impressum) and terms of use, shown as **Privacy policy**, **Legal notice** and **Terms** under the sign-in card, in the account menu and in About. With `ALDINE_TERMS_URL` set, the sign-up form says "By creating an account you agree to the terms and the privacy policy". Each must be `https` (`http` only for `localhost`); anything else is left out with a boot warning. Unset = no link. See [docs/BRANDING.md](../docs/BRANDING.md#privacy-policy-legal-notice-and-terms) |
+| `ALDINE_STORAGE_QUOTA_MB` | Storage per project owner in MB: working files of every branch, git history and trashed projects; not typeset output (blank = unlimited). Over it, uploads, imports, new projects, duplicates, new branches and pulls get HTTP 402; editing keeps working |
 | `ALDINE_DATASTORE` | `sqlite` (default): accounts, sessions, project settings and comments in `META_DIR/aldine.db`, filled from the JSON files of an earlier release on its first start. `json`: the JSON files instead. Leave it unset with `DATABASE_URL`: the server refuses to start with both |
 | `DATABASE_URL` | Postgres datastore (blank = `ALDINE_DATASTORE`) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |

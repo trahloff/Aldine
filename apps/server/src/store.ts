@@ -6,6 +6,7 @@ import { newId, safeJoin, BRANCH_RE, PROJECT_ID_RE, isTextFile, importPath, isHi
 import { db } from './db/index.js';
 import type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
 import { normalizeMeta } from './sharelinks.js';
+import { forgetProjectStorage, noteStorageChanged } from './storage.js';
 
 export type { ProjectMeta, ProjectVisit, ProjectOpen, RemoteLink, Invitation } from './db/types.js';
 
@@ -257,6 +258,7 @@ export async function deleteProject(id: string): Promise<void> {
   await clearProjectConnections(id);
   await removeTree(repoDir(id));
   await removeTree(path.join(worktreesDir, id));
+  forgetProjectStorage(id);
   await db().deleteMeta(id);
   await db().deleteProjectVisits(id);
   await db().deleteProjectOpens(id);
@@ -326,6 +328,11 @@ export function fileExists(id: string, branch: string, rel: string): boolean {
   try { return fs.existsSync(safeJoin(branchDir(id, branch), rel)); } catch { return false; }
 }
 
+/** Size in bytes of a project file, 0 when there is none. */
+export function fileSize(id: string, branch: string, rel: string): number {
+  try { const st = fs.statSync(safeJoin(branchDir(id, branch), rel)); return st.isFile() ? st.size : 0; } catch { return 0; }
+}
+
 export function isDirectory(id: string, branch: string, rel: string): boolean {
   try { return fs.statSync(safeJoin(branchDir(id, branch), rel)).isDirectory(); } catch { return false; }
 }
@@ -343,10 +350,12 @@ export function writeFile(id: string, branch: string, rel: string, content: stri
   const abs = entryPath(branchDir(id, branch), rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
+  noteStorageChanged(id);
 }
 
 export function deleteFile(id: string, branch: string, rel: string): void {
   fs.rmSync(entryPath(branchDir(id, branch), rel), { recursive: true, force: true });
+  noteStorageChanged(id);
 }
 
 export function renameFile(id: string, branch: string, from: string, to: string): void {
