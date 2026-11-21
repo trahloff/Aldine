@@ -12,6 +12,7 @@ import { startThemeSync } from './theme';
 // before the router: the editor's Back/Forward guard must hear a popstate first
 import './editor/leaveGuard';
 import { useDocumentTitle } from './util/documentTitle';
+import { projectOfPath } from './util/projectResume';
 import './theme.css';
 import './app.css';
 import './home.css';
@@ -31,8 +32,8 @@ function ProjectEditor() {
   const navigate = useNavigate();
   // A share link's token leaves the address bar before anything loads, so
   // it is neither bookmarked nor sent on as a referrer.
-  const [linkQuery] = useState(() => keepShareLink(id, window.location.search));
-  useEffect(() => { if (linkQuery !== null) navigate({ search: linkQuery, hash: window.location.hash }, { replace: true }); }, [linkQuery]);
+  const [linkRest] = useState(() => keepShareLink(id, window.location));
+  useEffect(() => { if (linkRest !== null) navigate(linkRest, { replace: true }); }, [linkRest]);
   const { guest } = useAuth();
   const join = useShareLinkJoin(id, guest?.projectId === id);
   if (!join.ready) return <div className="editor-shell" />;
@@ -51,6 +52,14 @@ function NotFound() {
 }
 
 startThemeSync();
+
+// A share link pasted over its own project's open page changes only the
+// fragment, and the browser loads nothing: the page loads again for it.
+window.addEventListener('hashchange', () => {
+  const path = window.location.pathname;
+  const id = path.startsWith(BASE_PATH) ? projectOfPath(path.slice(BASE_PATH.length) || '/') : null;
+  if (id && keepShareLink(id, window.location) !== null) window.location.reload();
+});
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

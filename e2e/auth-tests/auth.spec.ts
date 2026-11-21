@@ -388,7 +388,7 @@ test.describe('auth', () => {
     const carol = await browser.newContext();
     await carol.request.post('/api/auth/register', { data: { email: uniq(), password: 'password123' } });
     const carolPage = await carol.newPage();
-    await carolPage.goto(`/p/${proj.id}?link=${after.share.links[0].token}`);
+    await carolPage.goto(`/p/${proj.id}#link=${after.share.links[0].token}`);
     await expect(carolPage.getByTestId('editor-shell')).toBeVisible();
     await carolPage.getByTestId('share-project').click();
     await expect(carolPage.getByTestId('share-downloads')).toBeVisible();
@@ -422,9 +422,9 @@ test.describe('auth', () => {
       await page.getByTestId('share-link-create').click();
       await expect(page.locator('.toast', { hasText: 'Link created and copied' }).last()).toBeVisible();
       // the toast of the link before may still be up: wait for this link in the clipboard
-      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}?link=`) && !Object.values(urls).includes(got); }).toBe(true);
+      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}#link=`) && !Object.values(urls).includes(got); }).toBe(true);
       urls[role] = await page.evaluate(() => navigator.clipboard.readText());
-      expect(urls[role]).toMatch(new RegExp(`/p/${proj.id}\\?link=[A-Za-z0-9_-]{43}$`));
+      expect(urls[role]).toMatch(new RegExp(`/p/${proj.id}#link=[A-Za-z0-9_-]{43}$`));
     }
     const rows = page.getByTestId('share-link-row');
     await expect(rows).toHaveCount(3);
@@ -532,7 +532,7 @@ test.describe('auth', () => {
       await page.getByTestId('share-link-create').click();
       await expect(page.locator('.toast', { hasText: 'with or without an account' }).last()).toBeVisible();
       // the toast of the link before may still be up: wait for this link in the clipboard
-      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}?link=`) && !Object.values(urls).includes(got); }).toBe(true);
+      await expect.poll(async () => { const got = await page.evaluate(() => navigator.clipboard.readText()); return got.includes(`/p/${proj.id}#link=`) && !Object.values(urls).includes(got); }).toBe(true);
       urls[role] = await page.evaluate(() => navigator.clipboard.readText());
     }
     const rows = page.getByTestId('share-link-row');

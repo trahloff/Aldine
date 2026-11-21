@@ -385,7 +385,7 @@ function LinkField({ link, to }: { link: string; to: string }) {
 
 /** The address a link opens: the project's own, with the link's token. */
 export const shareLinkUrl = (projectId: string, link: Pick<ShareLinkInfo, 'token'>) =>
-  `${location.origin}${withBase(`/p/${projectId}`)}${link.token ? `?link=${link.token}` : ''}`;
+  `${location.origin}${withBase(`/p/${projectId}`)}${link.token ? `#link=${link.token}` : ''}`;
 
 /** The end of the chosen day in the owner's time zone, as an ISO time. */
 const endOfDay = (day: string) => new Date(`${day}T23:59:59`).toISOString();
