@@ -8,16 +8,21 @@ import { safeSession, type SafeStore } from './safeStorage';
 const key = (projectId: string) => `aldine.shareLink.${projectId}`;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
-/** Keep the `link` token of the page's query, if it has one. Returns the
- *  query without it, or null when there was none. */
-export function keepShareLink(projectId: string, search: string, store: SafeStore = safeSession): string | null {
-  const params = new URLSearchParams(search);
-  const token = params.get('link');
+/** Keep the `link` token a page's address came with: in the fragment
+ *  (`#link=…`), which the browser never sends to the server, or in the
+ *  query of a link copied before. Returns the address's query and fragment
+ *  without it, or null when there was none. */
+export function keepShareLink(projectId: string, address: { search: string; hash: string }, store: SafeStore = safeSession): { search: string; hash: string } | null {
+  const query = new URLSearchParams(address.search);
+  const parts = address.hash.replace(/^#/, '').split('&').filter(Boolean);
+  const inHash = parts.find((p) => p.startsWith('link='));
+  const token = inHash !== undefined ? inHash.slice('link='.length) : query.get('link');
   if (token === null) return null;
   if (TOKEN_RE.test(token)) store.set(key(projectId), token);
-  params.delete('link');
-  const rest = params.toString();
-  return rest ? `?${rest}` : '';
+  query.delete('link');
+  const search = query.toString();
+  const hash = parts.filter((p) => p !== inHash).join('&');
+  return { search: search ? `?${search}` : '', hash: hash ? `#${hash}` : '' };
 }
 
 export function pendingShareLink(projectId: string, store: SafeStore = safeSession): string | null {

@@ -11,6 +11,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Share links: a project can have several, each with its own token and
   role ("Can edit", "Can review" or "Can view"), an optional name, and an
   optional expiry date. Create, copy and revoke them in the Share dialog.
+  The token is in the link's fragment (`/p/<id>#link=…`), which browsers
+  never send to the server, so it stays out of server and proxy logs.
   Revoking a link, or its expiry, shuts out everyone who came in through it
   at once, their open editor and their project list included; people you
   invited by email or ORCID iD keep their access. Visitors still sign in.

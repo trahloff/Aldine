@@ -161,8 +161,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Shown in place of a project's page: an SSO sign-in comes back to it.
           const path = window.location.pathname;
           const id = path.startsWith(BASE_PATH) ? projectOfPath(path.slice(BASE_PATH.length)) : null;
-          // A share link's token goes along: the provider's callback drops the query.
-          if (id) { keepShareLink(id, window.location.search); projectSignInStarts(id); } else appSignInStarts();
+          // A share link's token goes along: the provider's callback drops the query and the fragment.
+          if (id) { keepShareLink(id, window.location); projectSignInStarts(id); } else appSignInStarts();
         }}
         notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
         confirmToken={confirmToken && !user ? confirmToken : undefined}
@@ -186,8 +186,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
  *  the session and dropped from the address bar (a reload keeps it; a
  *  referrer or a bookmark does not get it). */
 function linkTokenOnArrival(projectId: string): string | null {
-  const rest = keepShareLink(projectId, window.location.search);
-  if (rest !== null) window.history.replaceState(window.history.state, '', window.location.pathname + rest + window.location.hash);
+  const rest = keepShareLink(projectId, window.location);
+  if (rest !== null) window.history.replaceState(window.history.state, '', window.location.pathname + rest.search + rest.hash);
   return pendingShareLink(projectId);
 }
 
