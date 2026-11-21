@@ -7,7 +7,9 @@ import { chordConflict, chordFor, chordFromEvent, chordProblem, formatChord, isD
 import { SPELL_LANGS } from '../editor/spellcheck';
 
 interface Props {
-  project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>;
+  project: Pick<ProjectSummary, 'id' | 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits' | 'agentSync' | 'isOwner' | 'remote'>;
+  /** The instance offers the agent push and pull (ALDINE_MCP_SYNC): the owner's switch shows. */
+  agentSyncOffered?: boolean;
   files: TreeEntry[];
   /** The auto-typeset switch lives in localStorage, not in the project. */
   autoTypeset: boolean;
@@ -30,6 +32,7 @@ interface Props {
   onSetEngine(engine: string): Promise<void>;
   onSetStopOnFirstError(on: boolean): Promise<void>;
   onSetManualCommits(on: boolean): Promise<void>;
+  onSetAgentSync?(on: boolean): Promise<void>;
   onToggleAutoTypeset(): void;
   onToggleVim(): void;
   /** Opened from the palette's shortcut command: scroll to that section. */
@@ -142,7 +145,7 @@ function ShortcutRow({ id, label }: { id: ShortcutId; label: string }) {
  * remembers on its own is kept apart. Every change saves on its own; there is
  * no Save button.
  */
-export default function ProjectSettings({ project, files, mainDocs, autoTypeset, vim, spellcheck, spellLang, onToggleSpellcheck, onSetSpellLang, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
+export default function ProjectSettings({ project, files, mainDocs, autoTypeset, vim, spellcheck, spellLang, onToggleSpellcheck, onSetSpellLang, importNote, canConfigure = true, onClose, onRename, onSetRoot, onSetEngine, onSetStopOnFirstError, onSetManualCommits, onSetAgentSync, agentSyncOffered, onToggleAutoTypeset, onToggleVim, focus, readOnly = false, yourName, onSetYourName, viewOnly = false }: Props) {
   const [name, setName] = useState(project.name);
   const appearance = useAppearance();
   const [compiler, setCompiler] = useState<CompilerInfo | null>(null);
@@ -253,6 +256,27 @@ export default function ProjectSettings({ project, files, mainDocs, autoTypeset,
               <option value="manual">When I commit</option>
             </select>
           </Row>
+          {agentSyncOffered && onSetAgentSync && (
+            <Row
+              label="Let Claude push and pull"
+              htmlFor="settings-agent-sync"
+              hint={!project.remote
+                ? 'Link a git repository first; then Claude can sync with it when you ask'
+                : project.agentSync
+                  ? `Claude can push to and pull from ${project.remote.fullName} when asked`
+                  : `Claude can read and edit, but not push to or pull from ${project.remote.fullName}`}
+            >
+              <input
+                id="settings-agent-sync"
+                type="checkbox"
+                checked={!!project.agentSync}
+                onChange={(e) => onSetAgentSync(e.target.checked)}
+                disabled={readOnly || !project.isOwner}
+                title={project.isOwner ? undefined : 'Only the owner can change this'}
+                data-testid="settings-agent-sync"
+              />
+            </Row>
+          )}
         </section>
 
         <section className="settings__section" data-testid="settings-this-browser">

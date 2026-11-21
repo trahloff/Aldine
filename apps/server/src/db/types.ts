@@ -148,6 +148,8 @@ export interface ProjectMeta {
   autopushFailure?: { since: string; message: string };
   /** People commit by hand, with their own message: the edit debounce leaves their changes in the working tree (agent work still commits under its own name). */
   manualCommits?: boolean;
+  /** The owner lets the agent push to and pull from the linked repository (MCP sync tools, ALDINE_MCP_SYNC=1). Off unless set. */
+  agentSync?: boolean;
   /** Provisioning into a GitLab group was requested but has not happened yet (host down, or the project was deleted and may be restored). */
   remotePending?: { provider: 'gitlab'; namespace: string };
   /**

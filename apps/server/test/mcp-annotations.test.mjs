@@ -22,6 +22,7 @@ process.env.DATA_DIR = path.join(tmp, 'data');
 process.env.META_DIR = path.join(tmp, 'meta');
 process.env.CACHE_DIR = path.join(tmp, 'cache');
 
+process.env.ALDINE_MCP_SYNC = '1'; // the sync tools are pinned below too
 const { initDb } = await import('../src/db/index.ts');
 await initDb();
 const { createMcpServer } = await import('../src/mcp/server.ts');
@@ -62,6 +63,11 @@ const WRITES = {
   references_add: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   create_project: { destructiveHint: false, idempotentHint: false, openWorldHint: true },
   trash_project: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  add_comment: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  reply_comment: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  resolve_comment: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  push: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  pull: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
 };
 for (const t of tools) {
   const want = WRITES[t.name];

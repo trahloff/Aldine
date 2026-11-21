@@ -156,8 +156,8 @@ one app node with them is not a supported topology
 
 ## Agent API (MCP tools)
 
-The MCP endpoint (`ALDINE_MCP=1`, [AGENT_API.md](AGENT_API.md)) serves 16
-tools. The schema a client reads from `tools/list` is the contract:
+The MCP endpoint (`ALDINE_MCP=1`, [AGENT_API.md](AGENT_API.md)) serves 20
+tools, 23 with `ALDINE_MCP_SYNC=1`. The schema a client reads from `tools/list` is the contract:
 
 | Tools | Parameters |
 |---|---|
@@ -171,6 +171,11 @@ tools. The schema a client reads from `tools/list` is the contract:
 | `references_add` | `project?`, `branch?`, `query`, `bibFile?` |
 | `create_project` | `name`, `template?` |
 | `trash_project` | `project` |
+| `list_comments` | `project?`, `branch?`, `path?`, `include_resolved?` |
+| `add_comment` | `project?`, `branch?`, `path`, `quote`, `occurrence?`, `body`, `suggestion?` |
+| `reply_comment` | `project?`, `comment_id`, `body` |
+| `resolve_comment` | `project?`, `comment_id`, `resolved?` |
+| `sync_status`, `push`, `pull` (with `ALDINE_MCP_SYNC=1`) | `project?` |
 
 From 1.0, within 1.x: no tool is removed or renamed; no parameter is removed,
 renamed or made required; no result field is removed; the error names

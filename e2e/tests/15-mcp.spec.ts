@@ -737,6 +737,63 @@ test.describe('MCP connector (static-token mode)', () => {
     }
   });
 
+  test('review comments: the agent comments with a suggestion, it shows live in the review panel, and a person accepts it', async ({ page, request }) => {
+    const id = await createProject(request, 'MCP Comments');
+    const client = await connect();
+    try {
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: MAIN } });
+      await openProject(page, id);
+      await page.getByTestId('tab-review').click();
+      await expect(page.getByTestId('review-panel')).toBeVisible();
+
+      const added = await call(client, 'add_comment', { project: id, path: 'main.tex', quote: 'improve steadily', body: 'Too vague: by how much?', suggestion: 'improve by 12%' });
+      expect(added.isError).toBeFalsy();
+      const cid = added.body.comment.id as string;
+      const thread = page.getByTestId(`comment-${cid}`);
+      await expect(thread, 'the comment arrives without a reload').toContainText('Too vague: by how much?');
+      await expect(thread).toContainText('Claude');
+
+      const replied = await call(client, 'reply_comment', { project: id, comment_id: cid, body: 'Suggested the measured figure.' });
+      expect(replied.body.comment.replies).toHaveLength(1);
+      await expect(thread).toContainText('Suggested the measured figure.');
+
+      await page.getByTestId(`accept-${cid}`).click();
+      await expect(page.locator('.cm-content')).toContainText('Results improve by 12% across trials.');
+      const listed = await call(client, 'list_comments', { project: id, include_resolved: true });
+      expect(listed.body.comments.find((c: { id: string }) => c.id === cid).resolved).toBe(true);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
+  test('agent sync: off per project until the owner allows it in Project settings', async ({ page, request }) => {
+    const id = await createProject(request, 'MCP Sync Switch');
+    const client = await connect();
+    try {
+      const tools = (await client.listTools()).tools.map((t) => t.name);
+      expect(tools).toEqual(expect.arrayContaining(['sync_status', 'push', 'pull']));
+      await openProject(page, id);
+      await page.getByTestId('project-settings-open').click();
+      const box = page.getByTestId('settings-agent-sync');
+      await expect(box).not.toBeChecked();
+      await expect(page.getByText('Link a git repository first')).toBeVisible();
+      await box.check();
+      await expect(page.getByText('Claude can now push and pull this project when asked')).toBeVisible();
+      const meta = await (await request.get(`/api/projects/${id}`)).json();
+      expect(meta.agentSync).toBe(true);
+      // still unlinked: the tool says so, and where linking happens
+      const pushed = await call(client, 'push', { project: id });
+      expect(pushed.isError).toBe(true);
+      expect(pushed.text).toContain('not linked to a git repository');
+      await box.uncheck();
+      await expect.poll(async () => (await (await request.get(`/api/projects/${id}`)).json()).agentSync).toBe(false);
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
   test('trash_project: only an agent-made project, soft-deleted into the workspace trash, restorable over REST', async ({ request }) => {
     const human = await request.post('/api/projects', { data: { name: 'MCP Human paper' } });
     expect(human.ok()).toBeTruthy();

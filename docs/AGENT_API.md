@@ -17,6 +17,7 @@ who runs the instance. A shorter overview is at
 |---|---|
 | `ALDINE_MCP=1` | Serves `POST /mcp`. Unset: the route does not exist and the MCP SDK is never loaded. |
 | `ALDINE_PUBLIC_URL` | The public URL of the instance — origin plus the path prefix when Aldine is served under one (`https://aldine.example.com` or `https://server/internal/aldine`). The Connect flow names it as the OAuth issuer, the PDF links Claude hands out are absolute against it, and the in-chat PDF viewer is allowed to fetch from exactly that origin. Set it for anything beyond a local experiment; behind a proxy it is the only trustworthy value. |
+| `ALDINE_MCP_SYNC=1` | Optional, off by default. Adds `sync_status`, `push` and `pull`: Claude can then move work between a project and the git repository it is linked to — in the projects whose owner allows it (Project settings → **Let Claude push and pull**, off for every project until then). Linking stays browser-only, so a push only ever reaches the repository the owner chose; but a token — leaked, or steered by an instruction hidden in a document — can then publish work in progress to it. Leave it off on an instance whose token is public (the demo). |
 | `ALDINE_MCP_TYPING_GRACE_MS` | Optional, default `8000`. How long after a person's last keystroke an agent edit at or next to where they typed is held off (`user_editing`). `0` turns the guard off. |
 | `ALDINE_SIGNING_SECRET` | Optional. Signs the 15-minute PDF links. Unset, a random secret is generated once into `META_DIR/output-signing-secret` (mode 0600) and reused across restarts. Set it (at least 32 characters, `openssl rand -base64 32`; shorter values refuse to boot) when several app nodes do not share `META_DIR`, or to invalidate every outstanding link at once by rotating it. |
 
@@ -415,6 +416,13 @@ removed by deleting its record from `oauth_clients` in the datastore.
 | `list_citations` | Citation keys in the project's `.bib` files, with title, author, year. | read-only |
 | `list_labels` | `\label` targets across the project's `.tex` files. | read-only |
 | `wordcount` | Words in the root file and its `\input`/`\include` graph; an error, not 0, while the project has no main document. | read-only |
+| `list_comments` | The review threads of a branch (open ones unless `include_resolved`; `path` narrows to a file): id, path, line, the quoted text, author, body, an optional `suggestion`, resolved, replies. | read-only |
+| `add_comment` | A review comment anchored by `quote`/`occurrence` (the `edit_file` rules and errors), with an optional `suggestion` people accept with one click; signed "Claude (for <person>)". Needs edit or review access. | additive |
+| `reply_comment` | A reply on a thread (`comment_id`), under the same name. | additive |
+| `resolve_comment` | Resolves a thread, or reopens it with `resolved: false`. | additive |
+| `sync_status` | Only with `ALDINE_MCP_SYNC=1`. The linked repository, how main stands against it (`ahead`, `behind`), and `agentSyncAllowed` (the owner's switch); fetches. | read-only |
+| `push` | Only with `ALDINE_MCP_SYNC=1`, in a project whose owner turned on **Let Claude push and pull**. Pushes main to the linked repository through the same token choice as the Sync menu (the project's, the person's, the linker's, the service token), members only. People's unsaved typing is committed first as their own autosave, never as Claude. A refused push is relayed, not retried. | additive |
+| `pull` | Only with `ALDINE_MCP_SYNC=1` and the owner's switch, like `push`. Merges the repository's new commits into main and every open editor; a conflict changes nothing and answers `merge_conflict` with the files, for the person to resolve in Aldine. | destructive |
 | `trash_project` | Moves a project to the workspace trash, where its owner restores it for `ALDINE_TRASH_DAYS` (30 by default); the tool never purges. A GitLab repository Aldine provisioned for the project is deleted with it (`remoteError` in the result when that failed), and a restore provisions a new one. Accepts only projects made with `create_project` (`agentCreated:true` in `list_projects`) and only for their owner — a person's project is refused and Claude is told to ask them to delete it in Aldine. Its description tells Claude to use it only when asked. | destructive |
 | `create_project` | A new project, blank or from a template — a folder template (`article`, `beamer`, `report`, `iac-paper`) or a venue (`venue:<id>`: a publisher class installed in the compiler image, or a kit downloaded from the publisher when the project is created; an unknown id is refused with the full list). Returns the id, the seeded `files` and `contentVersion` for the first write. Refused for a project-scoped credential. | additive |
 
@@ -422,8 +430,8 @@ removed by deleting its record from `oauth_clients` in the datastore.
 title: `readOnlyHint` for the read-only tools; `destructiveHint` true for
 the ones that overwrite or remove what is there, false for the additive
 ones. `openWorldHint` is true only for `references_add` (doi.org, arXiv,
-OpenAlex), `create_project` (a venue kit's download) and `trash_project`
-(a provisioned GitLab repository). Clients use these to decide which calls
+OpenAlex), `create_project` (a venue kit's download), `trash_project`
+(a provisioned GitLab repository) and the sync tools (the linked repository). Clients use these to decide which calls
 to confirm with the user first.
 
 Every tool that works inside a project takes `project` (optional for a
@@ -445,8 +453,9 @@ pass the read's `contentVersion` as `base_version`) → `compile` →
 because each write already committed itself. Every tool goes
 through the same access, protected-project, trash and hidden-path checks as
 the REST API; a project-scoped token is refused outside its scope and
-`list_projects` shows only the scope. No tool purges, shares, pushes to a
-git remote or manages tokens; the one trash tool reaches only what the
+`list_projects` shows only the scope. No tool purges, shares, links a git
+remote or manages tokens, and none pushes to or pulls from one unless the
+instance sets `ALDINE_MCP_SYNC=1`; the one trash tool reaches only what the
 agent created, and only as far as the workspace trash.
 
 ### Versions and conflicts
@@ -681,8 +690,9 @@ If you do not want to expose the instance:
   and count against the account's monthly quota.
 - **What it cannot do.** Trash or purge a project (the one trash tool
   reaches only projects the agent created, and only as far as the workspace
-  trash), change sharing or ownership, link, push, pull or reset a git remote
-  (GitHub, GitLab or Gitea), link a Zotero library, merge or delete a branch,
+  trash), change sharing or ownership, link or reset a git remote (GitHub, GitLab
+  or Gitea) — or push to or pull from one, unless the instance sets
+  `ALDINE_MCP_SYNC=1` — link a Zotero library, merge or delete a branch,
   or create, list or revoke tokens; those routes accept browser sessions
   only, so a leaked token cannot escalate to a session, mint another token
   or hand the project to another account.

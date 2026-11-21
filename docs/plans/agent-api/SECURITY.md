@@ -15,6 +15,12 @@ Mitigations (all server-side):
   so an injected instruction can at most trash a scratch project the agent
   made, restorable from the workspace),
   push, no token management in any tool surface (00-overview non-goals).
+  (2026-11-21: `push`/`pull`/`sync_status` exist behind the instance flag
+  `ALDINE_MCP_SYNC=1`, off by default and never on the public-token demo.
+  Linking stays session-only, so the target is always the repository the
+  owner chose; members only, the Sync menu's token rules; and per project
+  only after the owner turns on "Let Claude push and pull" (agentSync). Review comments
+  are additive and need comment rights.)
 - MCP handlers call the SAME guard functions as REST (canAccess, protected
   projects, trash, hidden paths) — shared functions, never copies.
 - Every mutation is a named or auto commit → any injected edit is one `git revert`

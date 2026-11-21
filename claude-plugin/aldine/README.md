@@ -52,12 +52,15 @@ rules are the same as for the REST API.
 
 Can: read, edit and create files in the projects the credential reaches;
 typeset (one of the account's two concurrent slots at most, counted against
-the monthly quota); commit; look up and append references; create projects
-when the token is not scoped to specific ones.
+the monthly quota); commit; look up and append references; read, add, answer and resolve
+review comments; create projects when the token is not scoped to specific
+ones; and, where the instance sets `ALDINE_MCP_SYNC=1` and the project's owner
+allows it, push to and pull from the git repository it is linked to.
 
 Cannot: purge anything (`trash_project` moves only projects the agent itself
 created to the workspace trash, restorable for 30 days by default, and is
-refused for a person's project); change sharing; push to GitHub or GitLab;
+refused for a person's project); change sharing; link a git repository (and push or pull only where the
+instance allows it);
 create, list or revoke tokens; touch protected (showcase) projects; read
 hidden folders such as `.git`.
 

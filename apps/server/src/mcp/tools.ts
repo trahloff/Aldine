@@ -14,11 +14,13 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges, type EditBlock, announceAgentWait,
+  inFileLineEndings, protectedProjects, bumpCommentsSignal, agentDisplayName, refreshBranchDocsFromDisk as refreshDocs, holdAgentSession, peopleEditingRanges, type EditBlock, announceAgentWait,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
-import { canEdit, isListed, isOwner } from '../authz.js';
+import { canEdit, canComment, isListed, isMember, isOwner } from '../authz.js';
+import * as comments from '../comments.js';
+import * as remotesync from '../remotesync.js';
 import { addReference } from '../references.js';
 import { bibLoadedBySource } from '../bibload.js';
 import { bibIndex, labelIndex, wordCount } from '../indexes.js';
@@ -1091,6 +1093,214 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       });
     } catch (err) { return toolError(err, { project, branch }); }
   });
+
+  // ---- review comments ----
+  /** A thread as the tools show it: the anchor as a line and its quote, never offsets the model would echo back. */
+  const commentView = (c: comments.Comment, text: string | null) => ({
+    id: c.id,
+    path: c.file,
+    line: text !== null ? lineOfOffset(text, Math.min(c.anchor.from, text.length)) : null,
+    quote: c.anchor.quote,
+    author: c.author,
+    body: c.body,
+    ...(c.suggestion !== undefined ? { suggestion: c.suggestion } : {}),
+    resolved: c.resolved,
+    createdAt: c.createdAt,
+    replies: c.replies.map((r) => ({ author: r.author, body: r.body, createdAt: r.createdAt })),
+  });
+  /** The text comments anchor in: the open document, else the file with LF line endings (the editor's offsets). */
+  const commentText = (projectId: string, branch: string, rel: string): string | null => {
+    const live = openDocContent(projectId, branch, rel);
+    if (live !== null) return live;
+    try { return store.readFile(projectId, branch, rel).toString('utf8').replace(/\r\n?/g, '\n'); } catch { return null; }
+  };
+  const assertCanComment = (meta: store.ProjectMeta) => {
+    if (protectedProjects.has(meta.id)) throw new McpDenied('That project is read-only');
+    if (!canComment(meta, identity.user)) throw new McpDenied('You can view this project, not comment on it: ask its owner for review or edit access');
+  };
+  const commentAuthor = () => agentDisplayName(owner ? [owner] : []);
+
+  server.registerTool('list_comments', {
+    ...annotate('List review comments', { readOnlyHint: true, openWorldHint: false }),
+    description: 'The review comments on a branch: each thread with id, path, line, the quoted text it is anchored to, author, body, an optional suggested replacement, resolved, and its replies. Open threads only unless include_resolved; path narrows it to one file. Read them before working through a review, and answer with reply_comment or resolve_comment rather than restating them.',
+    inputSchema: {
+      project: projectParam,
+      branch: branchParam,
+      path: z.string().optional().describe('Only the comments on this file.'),
+      include_resolved: z.boolean().optional().describe('Also resolved threads (default false).'),
+    },
+  }, async ({ project, branch = 'main', path: rawPath, include_resolved }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      const only = rawPath ? visiblePath(rawPath) : null;
+      const all = (await comments.listComments(meta.id, branch))
+        .filter((c) => (include_resolved || !c.resolved) && (!only || c.file === only));
+      const texts = new Map<string, string | null>();
+      const textOf = (f: string) => { if (!texts.has(f)) texts.set(f, commentText(meta.id, branch, f)); return texts.get(f)!; };
+      return ok({ comments: all.map((c) => commentView(c, textOf(c.file))), total: all.length, ...(await echo(meta.id, branch)) });
+    } catch (err) { return toolError(err, { project, branch }); }
+  });
+
+  server.registerTool('add_comment', {
+    ...annotate('Add a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }),
+    description: 'Leave a review comment on a passage, the way a co-author would: anchored to quote (≥8 characters, copied verbatim from a read, matching one place or set occurrence — the edit_file rules, and the same stale_anchor/ambiguous_anchor errors). body is the comment; suggestion, optional, is replacement text for the quoted passage that the people can accept with one click. Changes no file. Use it when the user asks for review notes or for a change they should decide on, not for edits they asked you to make (use edit_file). The comment shows under the name "Claude".',
+    inputSchema: {
+      project: projectParam,
+      branch: branchParam,
+      path: z.string().describe(PATH_HELP),
+      quote: z.string().describe('Exact text the comment is about, copied verbatim. At least 8 characters; must match exactly one place, or use occurrence.'),
+      occurrence: z.number().int().min(1).optional().describe('1-based occurrence to target when the quote appears more than once.'),
+      body: z.string().min(1).max(comments.MAX_COMMENT_TEXT).describe('The comment.'),
+      suggestion: z.string().max(comments.MAX_COMMENT_TEXT).optional().describe('Replacement text for the quoted passage, offered for the people to accept.'),
+    },
+  }, async ({ project, branch = 'main', path: rawPath, quote, occurrence, body, suggestion }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      await gitops.ensureWorktree(meta.id, branch);
+      const rel = diskSpelling(meta.id, branch, visiblePath(rawPath));
+      if (isDirectoryPath(meta.id, branch, rel)) return fail(`"${rel}" is a folder on ${branch} — a comment is on a file; name one inside it`);
+      const text = commentText(meta.id, branch, rel);
+      if (text === null) return fail(`No file named "${rel}" on ${branch}`);
+      const lf = (t: string) => t.replace(/\r\n?/g, '\n');
+      const res = resolveEdits(text, [{ quote: lf(quote), replacement: '', ...(occurrence ? { occurrence } : {}) }]);
+      if (!res.ok) {
+        if (res.error === 'invalid_quote') return fail(res.reason);
+        return ok({ error: res.error, reason: res.reason, candidates: res.candidates, path: rel, ...(await echo(meta.id, branch)) });
+      }
+      const { from, to } = res.ranges[0];
+      const added = await comments.addComment(meta.id, {
+        branch, file: rel, anchor: { from, to, quote: text.slice(from, to) },
+        author: commentAuthor(), body, ...(suggestion !== undefined ? { suggestion: lf(suggestion) } : {}),
+      });
+      bumpCommentsSignal(meta.id, branch);
+      return ok({ comment: commentView(added, text), ...(await echo(meta.id, branch)) });
+    } catch (err) { return toolError(err, { project, branch }); }
+  });
+
+  server.registerTool('reply_comment', {
+    ...annotate('Reply to a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }),
+    description: 'Answer a review thread (comment_id from list_comments) under the name "Claude": say what you changed for it, or ask what the reviewer meant. Changes no file. A thread you have settled can then be closed with resolve_comment.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      body: z.string().min(1).max(comments.MAX_COMMENT_TEXT).describe('The reply.'),
+    },
+  }, async ({ project, comment_id, body }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      const c = await comments.replyComment(meta.id, comment_id, commentAuthor(), body);
+      if (!c) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
+      bumpCommentsSignal(meta.id, c.branch);
+      return ok({ comment: commentView(c, commentText(meta.id, c.branch, c.file)), ...(await echo(meta.id, c.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('resolve_comment', {
+    ...annotate('Resolve a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
+    description: 'Mark a review thread resolved (resolved:false reopens it). Resolve a thread once the change it asked for is made — reply first with what you did, so the reviewer sees why it closed. Never resolve someone else\'s question you have not answered. Changes no file.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      resolved: z.boolean().optional().describe('false reopens the thread (default true).'),
+    },
+  }, async ({ project, comment_id, resolved }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      const c = await comments.resolveComment(meta.id, comment_id, resolved !== false);
+      if (!c) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
+      bumpCommentsSignal(meta.id, c.branch);
+      return ok({ id: c.id, resolved: c.resolved, ...(await echo(meta.id, c.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  // ---- git sync with the linked repository ----
+  // Off unless the instance opts in: without it a token, leaked or steered by
+  // an injected instruction, can never move work to or from the linked
+  // repository (docs/AGENT_API.md). Linking itself stays browser-only either way.
+  if (process.env.ALDINE_MCP_SYNC === '1') {
+    /** The project's link and the token a sync by this identity uses; members only, like the Sync menu. */
+    const linkedFor = async (project: string | undefined): Promise<remotesync.Linked | ToolResult> => {
+      const meta = await resolveProject(identity, project);
+      if (!isMember(meta, identity.user)) throw new McpDenied('Only the owner and collaborators can sync this project with its repository');
+      const l = await remotesync.linkedRemote(meta, identity.user?.id || 'local');
+      if (remotesync.isLinked(l)) return l;
+      return fail(l.code === 'not-linked'
+        ? 'This project is not linked to a git repository. Linking is done in Aldine (Sync → Link a repository); tell the user.'
+        : `${l.error}. That is done in Aldine (Sync menu); tell the user.`);
+    };
+    const SYNC_MAIN = 'Sync works on the main branch, the one linked to the repository. Push and pull need the owner\'s per-project permission (sync_status says agentSyncAllowed).';
+    const NOT_ALLOWED = 'The project owner has not let Claude push and pull this project. The owner can allow it in Aldine: Project settings → Let Claude push and pull. Tell the user; do not retry.';
+
+    server.registerTool('sync_status', {
+      ...annotate('Compare with the linked repository', { readOnlyHint: true, openWorldHint: true }),
+      description: `Whether the project is linked to a git repository (GitHub, GitLab, Gitea/Forgejo) and how it stands against it: ahead (commits here not yet pushed) and behind (commits there not yet pulled). Read-only; it fetches from the repository. ${SYNC_MAIN}`,
+      inputSchema: { project: projectParam },
+    }, async ({ project }) => {
+      try {
+        const l = await linkedFor(project);
+        if (!('link' in l)) return l;
+        try {
+          const st = await gitops.remoteStatus(l.meta.id, l.remoteBranch, l.url);
+          return ok({ linked: true, provider: l.provider.label, repository: l.link.fullName, remoteBranch: l.remoteBranch, ahead: st.ahead, behind: st.behind, agentSyncAllowed: l.meta.agentSync === true });
+        } catch (err) {
+          const why = await remotesync.explainSyncFailure(l, err, 'fetch');
+          return fail(why ? `${why.error} Tell the user.` : `Could not reach the repository: ${(err as Error).message}`);
+        }
+      } catch (err) { return toolError(err, { project }); }
+    });
+
+    server.registerTool('push', {
+      ...annotate('Push to the linked repository', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }),
+      description: `Push the project's main branch to its linked git repository, publishing every commit there — yours and your collaborators'. Only when the user asks you to push or sync; never on your own after edits (people may not want work in progress public, and the project may push on its own already). Collaborators' unsaved typing is committed first as their own autosave, never as Claude. A refused push (protected branch, a host hook, a rejected token) is for the user to act on: relay it, do not retry. ${SYNC_MAIN}`,
+      inputSchema: { project: projectParam },
+    }, async ({ project }) => {
+      try {
+        const l = await linkedFor(project);
+        if (!('link' in l)) return l;
+        if (l.meta.agentSync !== true) return fail(NOT_ALLOWED);
+        flushBranchDocs(l.meta.id, 'main');
+        await gitops.autoCommit(l.meta.id, 'main').catch(() => {});
+        try {
+          await gitops.pushToRemote(l.meta.id, l.remoteBranch, l.url);
+        } catch (err) {
+          const why = await remotesync.explainSyncFailure(l, err, 'push');
+          return fail(`Push failed: ${why ? why.error : (err as Error).message} Tell the user; do not retry.`);
+        }
+        return ok({ pushed: true, repository: l.link.fullName, remoteBranch: l.remoteBranch, ...(await echo(l.meta.id, 'main')) });
+      } catch (err) { return toolError(err, { project }); }
+    });
+
+    server.registerTool('pull', {
+      ...annotate('Pull from the linked repository', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }),
+      description: `Bring the linked repository's new commits into the project's main branch and every open editor. Local work is committed first (anonymous autosave), then merged. {error:"merge_conflict"} means nothing changed: the conflicting files are listed — resolving them is the user's step in Aldine (Sync → Pull), so tell them; do not try to merge by hand with write_file. Re-read any file you were working on after a pull. ${SYNC_MAIN}`,
+      inputSchema: { project: projectParam },
+    }, async ({ project }) => {
+      try {
+        const l = await linkedFor(project);
+        if (!('link' in l)) return l;
+        if (l.meta.agentSync !== true) return fail(NOT_ALLOWED);
+        const refusal = await storageRefusal(l.meta.ownerId, identity.user?.id, 0, 'pull');
+        if (refusal) return fail(`${refusal.error} Tell the user.`);
+        flushBranchDocs(l.meta.id, 'main');
+        await gitops.autoCommit(l.meta.id, 'main', 'Local changes before pull').catch(() => {});
+        try {
+          const before = await gitops.branchHead(l.meta.id, 'main');
+          const result = await gitops.pullFromRemote(l.meta.id, l.remoteBranch, l.url);
+          if (!result.ok) return ok({ error: 'merge_conflict', conflicts: result.conflicts, reason: 'The repository and this project changed the same lines; nothing was pulled. The user resolves it in Aldine (Sync → Pull).', ...(await echo(l.meta.id, 'main')) });
+          refreshDocs(l.meta.id, 'main');
+          const after = await gitops.branchHead(l.meta.id, 'main');
+          if (after !== before) noteEdit(l.meta.id, 'main', AGENT_EDITOR);
+          return ok({ pulled: true, changed: after !== before, contentVersion: contentVersion(l.meta.id, 'main'), ...(await echo(l.meta.id, 'main')) });
+        } catch (err) {
+          const why = await remotesync.explainSyncFailure(l, err, 'fetch');
+          return fail(`Pull failed: ${why ? why.error : (err as Error).message} Tell the user.`);
+        }
+      } catch (err) { return toolError(err, { project }); }
+    });
+  }
 
   server.registerTool('references_add', {
     ...annotate('Add a reference by DOI or arXiv id', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }),
