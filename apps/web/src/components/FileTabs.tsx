@@ -15,8 +15,12 @@ export default function FileTabs({ tabs, active, onSelect, onClose }: {
 }) {
   const stripRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = active ? stripRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(active)}"]`) : null;
-    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // The strip's own scroll only: scrollIntoView would scroll the panes around it as well.
+    const strip = stripRef.current;
+    const el = active ? strip?.querySelector<HTMLElement>(`[data-path="${CSS.escape(active)}"]`) : null;
+    if (!strip || !el) return;
+    if (el.offsetLeft < strip.scrollLeft) strip.scrollLeft = el.offsetLeft;
+    else if (el.offsetLeft + el.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = el.offsetLeft + el.offsetWidth - strip.clientWidth;
   }, [active, tabs]);
   if (tabs.length < 2) return null;
   const labels = tabLabels(tabs);

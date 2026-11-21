@@ -63,7 +63,7 @@ export default function Presence({ rows, onJump }: { rows: PresenceRow[]; onJump
     id: `p${i}`, label: `${nameOf(r)}, ${whereOf(r)}`, onSelect: () => onJump(r), disabled: !r.here && !r.file, testId: 'presence-row',
   }));
   return (
-    <div className="presence" role="group" aria-label={`People here: ${summary}`} data-testid="presence">
+    <div className="presence" role="group" aria-label={`People here: ${summary}`} title={summary} data-testid="presence">
       {rows.slice(0, SHOWN).map((r, i) => <Avatar key={i} r={r} onJump={onJump} />)}
       {rows.length > SHOWN && (
         <MenuButton items={items} label="People in this project" ariaLabel={`Everyone here: ${summary}`} title={summary}
