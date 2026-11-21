@@ -644,7 +644,11 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
         caretAt(at + text.length);
         await settle();
       };
-      return { show, caretAt, type, leave: () => show(null) };
+      const allow = (id) => {
+        pane.setLocalStateField('agentAllow', { id });
+        applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
+      };
+      return { show, caretAt, type, allow, clientID: pane.clientID, leave: () => show(null) };
     };
     const ben = person('Ben', '#e8554d');
     const idx = (needle) => ytext.toString().indexOf(needle);
@@ -729,10 +733,35 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
     ] }));
     check(body.ok === true && JSON.stringify(body.overrode) === '["Ben"]' && ytext.toString().includes('agent BENX words'), `a forced batch applies and names who it overrode (got ${JSON.stringify(body)})`);
 
+    // A refusal is announced to the typist (agentWait on the server's awareness);
+    // their "Allow now" lets that edit in at once, there and only there.
+    await ben.type(idx('agent BENX words') + 'agent BENX'.length, 'Y');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENXY words', replacement: 'agent BENXY prose' }] }));
+    check(body.error === 'user_editing' && /Allow now/.test(body.reason), `refused, and the reason mentions the notice (got ${JSON.stringify(body)})`);
+    const serverState = () => conn.document.awareness.getStates().get(conn.document.awareness.clientID);
+    const wait = serverState()?.agentWait;
+    check(wait && typeof wait.id === 'string' && JSON.stringify(wait.clients) === JSON.stringify([ben.clientID]) && wait.until > Date.now() && serverState().user?.isAgent === true, `the wait is announced to Ben alone, as the agent (got ${JSON.stringify(serverState())})`);
+    ben.allow('not-this-one');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENXY words', replacement: 'agent BENXY prose' }] }));
+    check(body.error === 'user_editing', `an allow for another announcement lets nothing in (got ${JSON.stringify(body)})`);
+    const wait2 = serverState()?.agentWait;
+    ben.allow(wait2.id);
+    await settle();
+    check(!serverState()?.agentWait, 'once everyone it waited on allowed it, the announcement is gone');
+    // elsewhere, Ben's typing still holds edits off: the allow covers that paragraph only
+    conn.document.transact(() => ytext.insert(ytext.length, 'ELSEWHERE a separate line for Ben to type on.\n'));
+    await ben.type(idx('ELSEWHERE') + 'ELSEWHERE'.length, ' now');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'ELSEWHERE now a separate', replacement: 'ELSEWHERE now one separate' }] }));
+    check(body.error === 'user_editing', `the allow does not reach another paragraph (got ${JSON.stringify(body)})`);
+    await ben.type(idx('agent BENXY') + 'agent BENXY'.length, 'Z');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENXYZ words', replacement: 'agent BENXYZ prose' }] }));
+    check(body.applied === 1, `in the allowed paragraph the edit lands at once, typing or not (got ${JSON.stringify(body)})`);
+    check(!serverState()?.agentWait, 'and a landed edit ends any announcement on the file');
+
     // a pane with no cursor (another file open, never focused) blocks nothing
     await ben.type(0, '%');
     ben.leave();
-    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENX words', replacement: 'agent BENX prose' }] }));
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENXYZ prose', replacement: 'agent BENXYZ words' }] }));
     check(body.applied === 1, 'a pane with no cursor blocks nothing');
     cleo.leave();
   }

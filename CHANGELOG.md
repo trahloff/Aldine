@@ -8,6 +8,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 ## [Unreleased]
 
 ### Added
+- When an agent edit waits for you to stop typing, your editor says so:
+  "Claude wants to edit this paragraph", with **Allow now** to let it in
+  at once (that paragraph only, for a minute) or **Not now**.
 - Tabs for open files above the editor: every file you open gets a tab,
   so you can jump back and forth between chapters. Close a tab with its ×
   or a middle click; closing the open one shows its neighbour. The tabs

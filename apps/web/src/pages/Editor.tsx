@@ -11,7 +11,7 @@ import { forgetProjectResume } from '../util/projectResume';
 import About from '../components/About';
 import FileTree, { stemEnd } from '../components/FileTree';
 import { KEEP_FILE, within } from '../util/fileTree';
-import CodePane, { CodePaneHandle, EditorMode } from '../components/CodePane';
+import CodePane, { CodePaneHandle, EditorMode, type AgentWaitNotice } from '../components/CodePane';
 import { setVisualEngine, setVisualFiles } from '../editor/visual/context';
 import { closeParkedDocs } from '../editor/docCache';
 import PdfPane, { PdfPaneHandle } from '../components/PdfPane';
@@ -1436,6 +1436,10 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
   }, [openFile]);
 
+  // ---- an agent edit waiting on this person's typing ----
+  const [agentWait, setAgentWait] = useState<{ key: string; notice: AgentWaitNotice } | null>(null);
+  const [agentWaitDismissed, setAgentWaitDismissed] = useState<string | null>(null);
+
   // ---- a collaborator's cursor ----
   const peerJump = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (peerJump.current) clearTimeout(peerJump.current); }, []);
@@ -2489,6 +2493,13 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 </button>
                 {phone && shown !== 'pdf' && phoneSwitch}
               </div>
+              {agentWait?.key === paneKey && agentWait.notice.id !== agentWaitDismissed && (
+                <div className="remote-pending" role="status" data-testid="agent-wait-banner">
+                  <span className="remote-pending__text">{agentWait.notice.agent} wants to edit this paragraph and is waiting until you pause typing.</span>
+                  <button className="btn btn--small btn--primary" data-testid="agent-wait-allow" onClick={() => { codeRef.current?.allowAgentWait(agentWait.notice.id); setAgentWaitDismissed(agentWait.notice.id); codeRef.current?.focus(); }}>Allow now</button>
+                  <button className="btn btn--small" data-testid="agent-wait-dismiss" onClick={() => { setAgentWaitDismissed(agentWait.notice.id); codeRef.current?.focus(); }}>Not now</button>
+                </div>
+              )}
               {zoteroBib && (
                 <div className="remote-pending" role="status" data-testid="zotero-bib-banner">
                   <span className="remote-pending__text">Synced from Zotero, so it opens read-only: each sync replaces this file. Change entries in Zotero, then sync.</span>
@@ -2523,6 +2534,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 baselineVersion={historyVersion}
                 manualCommits={!!project?.manualCommits}
                 onFormat={formatDocument}
+                onAgentWait={(notice) => setAgentWait(notice ? { key: paneKey, notice } : null)}
               />
             </>
           ) : filesLoaded && !hasFiles ? (

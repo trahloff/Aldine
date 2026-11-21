@@ -14,7 +14,7 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges, type EditBlock,
+  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges, type EditBlock, announceAgentWait,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
@@ -275,7 +275,7 @@ function userEditing(blocked: Blocked[]): { error: 'user_editing'; edit_index: n
     editors: first.editors,
     retry_after_ms: Math.max(...blocked.map((b) => b.retry_after_ms)),
     blocked,
-    reason: `${who} ${first.editors.length === 1 ? 'is' : 'are'} typing at ${where} right now${more} — nothing was applied. Resend without the blocked edits, or wait retry_after_ms and retry, at most twice; then ask the user whether you should hold off. Pass force:true only if the user explicitly asked for this very edit in their current request.`,
+    reason: `${who} ${first.editors.length === 1 ? 'is' : 'are'} typing at ${where} right now${more} — nothing was applied. They now see a notice in their editor and can let the edit in at once ("Allow now"), so a retry after a few seconds may land before retry_after_ms. Resend without the blocked edits, or wait retry_after_ms and retry, at most twice; then ask the user whether you should hold off. Pass force:true only if the user explicitly asked for this very edit in their current request.`,
   };
 }
 
@@ -681,8 +681,12 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
             return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          const busy = peopleEditingRanges(meta.id, branch, rel, changedRanges(res.ranges, liveEdits));
-          if (busy.length && !force) return failed(userEditing(toBlocked(busy)));
+          const changed = changedRanges(res.ranges, liveEdits);
+          const busy = peopleEditingRanges(meta.id, branch, rel, changed);
+          if (busy.length && !force) {
+            announceAgentWait(meta.id, branch, rel, busy.map((b) => changed[b.index]), busy.flatMap((b) => b.clients), owner);
+            return failed(userEditing(toBlocked(busy)));
+          }
           overrode = [...new Set(busy.flatMap((b) => b.names))];
           // Presence first, so the chip is up when the change arrives.
           markAgentPresence(meta.id, branch, rel, owner);
@@ -841,6 +845,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         // Error bodies name the entry as `path` and carry the {branch, head} echo like successes.
         const failed = async (entry: string, body: object) => ok({ ...body, path: entry, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
         const blocked: Blocked[] = [];
+        const waits: Array<{ path: string; ranges: Array<{ from: number; to: number }>; clients: number[] }> = [];
         for (const f of files) {
           if (f.base_version !== undefined) {
             const conflict = versionConflict(meta.id, branch, f.path, f.base_version);
@@ -861,11 +866,19 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`"${f.path}", edit ${res.editIndex + 1}: ${res.reason}`);
             return failed(f.path, { error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          if (open !== null) blocked.push(...toBlocked(peopleEditingRanges(meta.id, branch, f.path, changedRanges(res.ranges, edits)), f.path));
+          if (open !== null) {
+            const changed = changedRanges(res.ranges, edits);
+            const busy = peopleEditingRanges(meta.id, branch, f.path, changed);
+            if (busy.length) waits.push({ path: f.path, ranges: busy.map((b) => changed[b.index]), clients: busy.flatMap((b) => b.clients) });
+            blocked.push(...toBlocked(busy, f.path));
+          }
           const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: edits[i] })).sort((a, b) => b.from - a.from) : null;
           writes.push({ path: f.path, before: raw ?? inFileLineEndings(meta.id, branch, f.path, current), next: spliceEdits(current, edits, res.ranges), live });
         }
-        if (blocked.length && !force) return failed(blocked[0].path!, userEditing(blocked));
+        if (blocked.length && !force) {
+          for (const w of waits) announceAgentWait(meta.id, branch, w.path, w.ranges, w.clients, owner);
+          return failed(blocked[0].path!, userEditing(blocked));
+        }
         const overrode = [...new Set(blocked.flatMap((b) => b.editors))];
         for (const w of writes) markAgentPresence(meta.id, branch, w.path, owner);
         const reseed = new Map<string, string | Buffer | null>();

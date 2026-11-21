@@ -198,6 +198,37 @@ test.describe('Claude editing an open project', () => {
     }
   });
 
+  test('a held-off edit shows the typist a notice, and "Allow now" lets it in at once', async ({ page, request }) => {
+    const id = await seed(request, 'Agent Allow Now');
+    const client = await connect();
+    try {
+      await page.addInitScript(() => { localStorage.setItem('aldine.name', 'Ada'); });
+      await openProject(page, id);
+      await page.locator('.cm-line', { hasText: 'Results improve steadily' }).click();
+      await page.keyboard.press('End');
+      await page.keyboard.type(' Typing');
+      await page.waitForTimeout(400);
+      const edit = { project: id, path: 'main.tex', edits: [{ quote: 'Results improve steadily across trials.', replacement: 'Results improve markedly across trials.' }] };
+      const refused = await call(client, 'edit_file', edit);
+      expect(refused.body).toMatchObject({ error: 'user_editing', editors: ['Ada'] });
+
+      const banner = page.getByTestId('agent-wait-banner');
+      await expect(banner).toBeVisible();
+      await expect(banner).toContainText('wants to edit this paragraph');
+      await page.getByTestId('agent-wait-allow').click();
+      await expect(banner).toBeHidden();
+      // the caret is back in the text, and the edit lands though Ada typed a moment ago
+      await page.keyboard.type(' more');
+      await page.waitForTimeout(300);
+      const applied = await call(client, 'edit_file', edit);
+      expect(applied.body.applied).toBe(1);
+      await expect(page.locator('.cm-content')).toContainText('Results improve markedly across trials. Typing more');
+    } finally {
+      await client.close().catch(() => {});
+      await cleanup(request, id);
+    }
+  });
+
   test('an edit where someone is typing is refused with user_editing, and lands once they pause, the cursor still there', async ({ page, request }) => {
     const id = await seed(request, 'Agent User Editing');
     const client = await connect();

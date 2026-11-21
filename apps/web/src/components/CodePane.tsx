@@ -91,6 +91,9 @@ export interface GotoOptions {
   onTitleBlock?: () => void;
 }
 
+/** An agent edit waiting on this person: where it would change the text, and until when it waits. */
+export interface AgentWaitNotice { id: string; agent: string; from: number; to: number; until: number }
+
 export interface CodePaneHandle {
   /** Deferred until the collab doc has synced: a fresh pane holds an empty
    *  document until then, and line N of nothing is line 1. */
@@ -110,6 +113,8 @@ export interface CodePaneHandle {
   /** Scrolls to the caret of the collaborator with this name and colour, leaving this
    *  person's own caret where it is; false when their caret is not in this document. */
   revealPeer(who: { name: string; color: string }): boolean;
+  /** Lets the announced agent edit `id` in where this person is typing, for a minute and only there. */
+  allowAgentWait(id: string): void;
   format(action: 'bold' | 'italic' | 'list' | { section: 1 | 2 | 3 | 4 }): void;
   getOutline(): OutlineEntry[];
   /** Keyboard focus back to the text, the caret where it was. */
@@ -223,6 +228,8 @@ interface Props {
   baselineVersion?: number;
   /** Format document's keys (Shift+Alt+F) in the text. */
   onFormat?(): void;
+  /** An agent edit held off by this person's typing, announced so they can let it in; null once it lapses or lands. */
+  onAgentWait?(wait: AgentWaitNotice | null): void;
   /** The project commits by hand: the baseline is the last commit. */
   manualCommits?: boolean;
 }
@@ -279,11 +286,11 @@ function headingAt(entries: OutlineEntry[], line: number): number {
 const sameOutline = (a: OutlineEntry[], b: OutlineEntry[]) =>
   a.length === b.length && a.every((h, i) => h.line === b[i].line && h.level === b[i].level && h.title === b[i].title && h.pos === b[i].pos);
 
-const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null, changeMarks = false, baselineVersion = 0, manualCommits = false, onFormat }, ref) {
+const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId, branch, filePath, rootFile, onUsers, onDocChanged, onStats, spellcheck = false, spellLang = '', onOutline, vim = false, onWrite, onAccessDenied, mode = 'source', identity, readOnly = false, onSync, onScope, onOpenComment, onCommentCaret, agentSeenAt = null, changeMarks = false, baselineVersion = 0, manualCommits = false, onFormat, onAgentWait }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat });
-  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat };
+  const cbRef = useRef({ onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat, onAgentWait });
+  cbRef.current = { onDocChanged, onStats, onWrite, onAccessDenied, onSync, onOutline, onScope, onOpenComment, onCommentCaret, onFormat, onAgentWait };
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -388,6 +395,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const p = Math.min(Math.max(0, pos), view.state.doc.length);
       view.dispatch({ selection: { anchor: p }, effects: jumpEffects(p) });
       view.focus();
+    },
+    allowAgentWait(id) {
+      const awareness = providerRef.current?.awareness;
+      if (awareness?.getLocalState()) awareness.setLocalStateField('agentAllow', { id });
     },
     revealPeer(who) {
       const view = viewRef.current;
@@ -532,6 +543,29 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       onUsers(Array.from(byClient.values()));
     };
     awareness.on('change', reportUsers);
+    // The server's agent state names, in agentWait, the clients a held-off edit waits on.
+    let waitKey = '';
+    const reportWait = () => {
+      let notice: AgentWaitNotice | null = null;
+      const view = viewRef.current;
+      const conf = view?.state.facet(ySyncFacet);
+      awareness.getStates().forEach((s) => {
+        const st = s as { user?: { isAgent?: boolean; name?: string }; agentWait?: { id?: unknown; ranges?: Array<{ from?: unknown; to?: unknown }>; clients?: unknown; until?: unknown } };
+        const w = st.agentWait;
+        if (notice || !st.user?.isAgent || !w || typeof w.id !== 'string' || !Array.isArray(w.clients) || !w.clients.includes(awareness.clientID)) return;
+        if (typeof w.until !== 'number' || !conf || !Array.isArray(w.ranges) || !w.ranges.length) return;
+        try {
+          const from = Math.min(...w.ranges.map((r) => conf.fromYPos(r.from as Y.RelativePosition).pos));
+          const to = Math.max(...w.ranges.map((r) => conf.fromYPos(r.to as Y.RelativePosition).pos));
+          notice = { id: w.id, agent: st.user.name || 'Claude', from, to, until: w.until };
+        } catch { /* positions from another doc epoch */ }
+      });
+      const key = notice ? (notice as AgentWaitNotice).id : '';
+      if (key === waitKey) return;
+      waitKey = key;
+      cbRef.current.onAgentWait?.(notice);
+    };
+    awareness.on('change', reportWait);
     reportUsers();
 
     // A kept doc opens where its pane left it; a loading one once it syncs.
@@ -754,6 +788,8 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       sync.dispose();
       providerRef.current = null;
       awareness.off('change', reportUsers);
+      awareness.off('change', reportWait);
+      if (waitKey) cbRef.current.onAgentWait?.(null);
       // The roster is this file's: a preview, or no open file, has nobody in it.
       onUsers([]);
       if (provider.isSynced) {
