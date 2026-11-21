@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-11-21
+
 ### Added
 - When an agent edit waits for you to stop typing, your editor says so:
   "Claude wants to edit this paragraph", with **Allow now** to let it in
@@ -74,13 +76,6 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   or, on a single sign-on account, for a sign-in again. An account on
   `ALDINE_ADMIN_EMAILS` is refused with what to do instead. Refs #125.
 
-### Fixed
-- Deleting an account on `/admin` left its address in the roles of the
-  projects shared with it, and its id in the share links it came in
-  through. Neither granted anything, and both go now. Moving a deleted
-  account's projects to the trash also withdraws their open invitations.
-  Refs #125.
-
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email
   addresses, URL credentials and URL queries are cut from error messages.
@@ -98,6 +93,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the commit message name who was typing.
 
 ### Fixed
+- Deleting an account on `/admin` left its address in the roles of the
+  projects shared with it, and its id in the share links it came in
+  through. Neither granted anything, and both go now. Moving a deleted
+  account's projects to the trash also withdraws their open invitations.
+  Refs #125.
 - A collaborator's name label no longer slides out of its coloured
   background on indented lines, and on the first line it hangs below the
   cursor instead of being cut off at the top.
