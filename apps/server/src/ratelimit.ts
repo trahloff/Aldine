@@ -221,6 +221,10 @@ export const shareLimiter = new RateLimiter('share', shareBurst, Math.max(1, sha
 /** Account changes on the admin page: 30 burst, 1 / 2 s per administrator.
  *  Bounds the reset mails and project rewrites one session can set off. */
 export const adminLimiter = new RateLimiter('admin', n(process.env.RL_ADMIN_BURST, 30), 0.5);
+/** "Export your data": 3 burst, then 1 / 10 min per account, and one at a
+ *  time per node. Each archives every branch of every project the account owns. */
+export const exportLimiter = new RateLimiter('export', n(process.env.RL_EXPORT_BURST, 3), 1 / 600);
+export const exportGate = new ConcurrencyGate(1);
 /** Every search and replace scans in a worker of its own: one in flight per
  *  client, and at most four per process (key 'all'), so slow scans cannot
  *  take every core. */

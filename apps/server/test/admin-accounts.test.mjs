@@ -351,11 +351,13 @@ try {
   const gus = await signUp('gus@example.org', 'Gus');
   const gusProject = await project(gus.cookie, 'Gus paper');
   await shareWith(gusProject, ['dan@example.org']);
+  const gusInvite = await invite(gus.cookie, gusProject, 'yan@example.org');
   const binnedAll = await act(root.cookie, gus.id, 'delete', { projects: 'trash', confirm: 'gus@example.org' });
   eq([binnedAll.statusCode, binnedAll.json().trashed, binnedAll.json().transferred], [200, 1, 0], 'deleting Gus trashes his project');
   check(audited(`deleted gus@example.org [${gus.id}] (1 project to the trash, taken off 0 share lists)`), 'the log says so');
   check(typeof (await db().readMeta(gusProject)).deletedAt === 'string', 'the project is in the trash');
   check(!(await listed(dan.cookie)).includes(gusProject), 'and gone for its collaborators');
+  eq(await invitationState(gusInvite), 'withdrawn', 'and its open invitations are withdrawn: nobody is left to answer for them');
   const forThird = await project(root.cookie, 'For the real third');
   await shareWith(forThird, ['third@example.org']);
   const toThird = await invite(root.cookie, await project(root.cookie, 'Invite for the real third'), 'third@example.org');

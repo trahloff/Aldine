@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, AccessToken, ApiError, AuthUser, PersonalTemplateRepo, ProjectSummary, RemoteConnectionRow, SignInMethods as Methods } from '../api';
+import { api, AccessToken, AccountDeletion, ApiError, AuthUser, PersonalTemplateRepo, ProjectSummary, RemoteConnectionRow, SignInMethods as Methods } from '../api';
 import { remoteDescriptor } from '../remotes';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
 import { confirmDisconnect } from './RemoteAccess';
-import { useAuth } from './Auth';
+import { ACCOUNT_DELETED_KEY, useAuth } from './Auth';
+import { withBase } from '../basePath';
+import { safeSession } from '../util/safeStorage';
 import Modal from './Modal';
 import { friendlyDate } from '../util/dates';
 import { ClaudeConnectSteps, useConnectorUrl } from './ClaudeConnect';
@@ -547,6 +549,156 @@ function AgentAccess({ onSecret }: { onSecret?: (shown: boolean) => void }) {
 
 const PROVIDER_NAME: Record<string, string> = { github: 'GitHub', google: 'Google', orcid: 'ORCID' };
 
+const projectCount = (n: number) => `${n} ${n === 1 ? 'project' : 'projects'}`;
+const peopleCount = (n: number) => `${n} ${n === 1 ? 'other person' : 'other people'}`;
+
+/** Delete your account: names what goes, asks for the address typed out,
+ *  and for the password (or a fresh sign-in) when the session is older than
+ *  ten minutes. The server applies every rule again. */
+function DeleteAccountDialog({ onClose }: { onClose(): void }) {
+  const [info, setInfo] = useState<AccountDeletion | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => api.accountDeletion().then((r) => { setInfo(r); setFailed(false); }, () => setFailed(true));
+  useEffect(() => { load(); }, []);
+
+  const matches = !!info && typed.trim().toLowerCase() === info.confirm.trim().toLowerCase();
+  const canDelete = !!info && !info.refused && matches && info.reauth !== 'sign-in' && (info.reauth !== 'password' || password.length > 0) && !busy;
+  const live = info?.projects.filter((p) => !p.trashed) ?? [];
+  const trashed = info?.projects.filter((p) => p.trashed) ?? [];
+  const shared = info?.projects.filter((p) => p.others > 0) ?? [];
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canDelete || !info) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.deleteAccount(typed, info.reauth === 'password' ? password : undefined);
+      safeSession.set(ACCOUNT_DELETED_KEY, '1');
+      window.location.assign(withBase('/'));
+      return;
+    } catch (err: any) {
+      // The ten minutes can run out while the dialog is open.
+      if (err instanceof ApiError && err.code === 'reauth-required' && info.reauth === 'none') {
+        setInfo({ ...info, reauth: /password/.test(err.message) ? 'password' : 'sign-in' });
+      }
+      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+    }
+    setBusy(false);
+  };
+
+  const signOut = async () => {
+    try { await api.logout(); } catch { /* the sign-in page follows either way */ }
+    window.location.assign(withBase('/'));
+  };
+
+  let body: React.ReactNode;
+  if (failed) body = <LoadError text="Couldn’t load what deleting your account involves." onRetry={load} testId="account-delete-load-error" />;
+  else if (!info) body = <p className="modal__sub">Loading…</p>;
+  else if (info.refused) {
+    body = (
+      <>
+        <p className="modal__sub" data-testid="account-delete-refused">{info.refused}</p>
+        <div className="modal__row">
+          <button type="button" className="btn" onClick={onClose} data-testid="account-delete-cancel">Close</button>
+        </div>
+      </>
+    );
+  } else {
+    body = (
+      <form onSubmit={submit} noValidate data-testid="account-delete-form">
+        <p className="modal__sub">
+          This cannot be undone. Your account, its sessions, access tokens and agent connections are removed, and you come off every project shared with you.
+        </p>
+        {info.projects.length === 0 ? (
+          <p className="modal__sub" data-testid="account-delete-no-projects">You own no projects.</p>
+        ) : (
+          <p className="modal__sub" data-testid="account-delete-projects">
+            Your {projectCount(live.length)}{trashed.length ? ` and the ${projectCount(trashed.length)} in your trash` : ''} {info.projects.length === 1 ? 'is' : 'are'} deleted for good, with {info.projects.length === 1 ? 'its' : 'their'} history.
+          </p>
+        )}
+        {shared.length > 0 && (
+          <div data-testid="account-delete-shared">
+            <p className="modal__sub" style={{ marginBottom: 4 }}>People lose access to these:</p>
+            <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 'var(--text-m)' }}>
+              {shared.map((p) => (
+                <li key={p.id} data-testid={`account-delete-shared-${p.id}`}>
+                  <strong>{p.name}</strong> <span style={{ color: 'var(--text-2)' }}>· {peopleCount(p.others)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="login__hint">Export your data first, or ask them to make a copy of the project from their project list.</p>
+          </div>
+        )}
+        {info.projects.length > 0 && (
+          <p style={{ margin: '6px 0 12px' }}>
+            <a className="btn btn--small" href={api.accountExportUrl()} download data-testid="account-delete-export">Export your data</a>
+          </p>
+        )}
+        <label htmlFor="account-delete-confirm" className="field__label">Type <strong>{info.confirm}</strong> to confirm</label>
+        <input
+          id="account-delete-confirm"
+          className="input"
+          autoComplete="off"
+          spellCheck={false}
+          value={typed}
+          onChange={(e) => { setTyped(e.target.value); setError(''); }}
+          data-testid="account-delete-confirm-input"
+        />
+        {info.reauth === 'password' && (
+          <div className="login__field" style={{ marginTop: 10 }}>
+            <label className="field__label" htmlFor="account-delete-password">Your password</label>
+            <input id="account-delete-password" className="input login__input" type="password" autoComplete="current-password" value={password}
+              data-testid="account-delete-password" onChange={(e) => { setPassword(e.target.value); setError(''); }} />
+            <p className="login__hint">You signed in more than 10 minutes ago, so confirm it is you.</p>
+          </div>
+        )}
+        {info.reauth === 'sign-in' && (
+          <p className="login__hint" style={{ marginTop: 10 }} data-testid="account-delete-sign-in">
+            You signed in more than 10 minutes ago. Sign out, sign in again, and delete the account within 10 minutes.{' '}
+            <button type="button" className="link-button" onClick={signOut} data-testid="account-delete-sign-out">Sign out</button>
+          </p>
+        )}
+        {error && <p className="login__error" role="alert" data-testid="account-delete-error">{error}</p>}
+        <div className="modal__row">
+          <button type="button" className="btn" onClick={onClose} data-testid="account-delete-cancel">Cancel</button>
+          <button type="submit" className="btn btn--danger" disabled={!canDelete} aria-busy={busy || undefined} data-testid="account-delete-submit">{busy ? 'Deleting…' : 'Delete account'}</button>
+        </div>
+      </form>
+    );
+  }
+  return (
+    <Modal onClose={onClose} label="Delete your account" testId="account-delete-dialog" width={520} dismissable={!busy}>
+      <div>
+        <h2>Delete your account?</h2>
+        {body}
+      </div>
+    </Modal>
+  );
+}
+
+/** Export your data, and Delete account. */
+function YourData() {
+  const [deleting, setDeleting] = useState(false);
+  return (
+    <div data-testid="account-data">
+      <div className="menu__label" style={{ margin: '18px 0 6px' }}>Your data</div>
+      <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: '0 0 8px' }}>
+        One ZIP with your profile, sign-in methods, token names and comments, and every project you own with all its branches, each as the ZIP the Share dialog downloads. Projects shared with you are listed, without their files.
+      </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <a className="btn btn--small" href={api.accountExportUrl()} download data-testid="account-export">Export your data</a>
+        <button type="button" className="btn btn--small btn--danger" onClick={() => setDeleting(true)} data-testid="account-delete">Delete account</button>
+      </div>
+      {deleting && <DeleteAccountDialog onClose={() => setDeleting(false)} />}
+    </div>
+  );
+}
+
 /** The name co-authors see on avatars, comments and commits; changed in place. */
 function NameRow({ user }: { user: AuthUser }) {
   const { setUser } = useAuth();
@@ -774,6 +926,8 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
             <p style={{ color: 'var(--text-3)', fontSize: 'var(--text-s)', margin: '4px 0 0' }}>Changing your password signs out your other sessions and revokes agent access.</p>
           </>
         )}
+
+        <YourData />
 
         <div className="modal__row" style={{ marginTop: 18 }}>
           <button className="btn" onClick={onClose}>Close</button>

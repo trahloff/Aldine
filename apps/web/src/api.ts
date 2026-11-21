@@ -361,6 +361,18 @@ export interface ReplaceResult {
 /** `code` names a refusal a client handles apart from the rest
  *  (`awaiting-approval`: the account waits for an administrator). */
 /** `body`: the rest of the JSON answer, for refusals that carry more than a sentence (a link, a number). */
+/** What deleting the signed-in account involves (GET /api/account/deletion).
+ *  `confirm`: typed to confirm; `refused`: why it cannot, or null; `reauth`:
+ *  nothing more (a recent sign-in), the password, or signing in again;
+ *  `projects`: the ones it owns, trashed ones included, with how many other
+ *  people are in each. */
+export interface AccountDeletion {
+  confirm: string;
+  refused: string | null;
+  reauth: 'none' | 'password' | 'sign-in';
+  projects: Array<{ id: string; name: string; trashed: boolean; others: number }>;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly retryAfter?: number, public readonly code?: string, public readonly body?: Record<string, unknown>) { super(message); }
 }
@@ -855,6 +867,12 @@ export const api = {
     req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}), ...(note ? { note } : {}) }) }),
   /** `redirect`: the identity provider's sign-out page, after a single sign-on session when OIDC_LOGOUT=idp. */
   logout: () => req<{ ok: boolean; redirect?: string }>('/api/auth/logout', { method: 'POST' }),
+  /** The account's export as a download: account.json and every owned project's branches. */
+  accountExportUrl: () => withBase('/api/account/export'),
+  accountDeletion: () => req<AccountDeletion>('/api/account/deletion'),
+  /** A 403 with code `reauth-required` asks for the password or a sign-in again. */
+  deleteAccount: (confirm: string, password?: string) =>
+    req<{ ok: boolean; deleted: number; sharesRemoved: number }>('/api/account/delete', { method: 'POST', body: JSON.stringify(password ? { confirm, password } : { confirm }) }),
   signInMethods: () => req<SignInMethods>('/api/auth/sign-in-methods'),
   /** The provider's sign-in page to go to; a 403 with code `reauth-required` asks for the password. */
   connectSignIn: (provider: string, password?: string) =>
