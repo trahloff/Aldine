@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-11-21
+
 ### Added
 - Agent API: review comments. `list_comments`, `add_comment` (anchored by
   a quote like `edit_file`, optionally with a suggestion to accept),
