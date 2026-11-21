@@ -27,7 +27,7 @@ host these pages; link the ones on your website:
 
 | Variable | Example | What it does |
 |---|---|---|
-| `ALDINE_PRIVACY_URL` | `https://www.uni-kiel.de/en/privacy` | Shown as **Privacy**. |
+| `ALDINE_PRIVACY_URL` | `https://www.uni-kiel.de/en/privacy` | Shown as **Privacy policy**. |
 | `ALDINE_LEGAL_URL` | `https://www.uni-kiel.de/en/imprint` | Shown as **Legal notice**. |
 | `ALDINE_TERMS_URL` | `https://www.uni-kiel.de/en/latex-terms` | Shown as **Terms**. The sign-up form then says "By creating an account you agree to the terms and the privacy policy" (without passwords, `ALDINE_SSO_ONLY=1`: "By continuing …"), with both linked. There is no checkbox. |
 
