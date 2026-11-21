@@ -820,6 +820,10 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 /* A primary action with its options beside it: one shape split by a hairline. */
 .toolbar__group.split-btn { gap: 1px; }
 .split-btn__main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* The spinner sits over the hidden label: the button, and the toolbar after it, keep their width while it runs. */
+.split-btn__main { position: relative; }
+.split-btn__main[aria-busy] .typeset-label { visibility: hidden; }
+.typeset-spinner { position: absolute; left: 50%; top: 50%; margin: -6.5px 0 0 -6.5px; }
 .split-btn__more { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 7px; }
 /* Short of room, the project name gives way first, then the search field;
    no button is squeezed or pushed out, Typeset least of all. */
@@ -858,8 +862,11 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
   .branch-menu { top: calc(100% + 4px); left: 8px; right: 8px; width: auto; max-height: 70dvh; overflow-y: auto; }
 }
 
-.presence { display: flex; align-items: center; border: 0; background: none; padding: 2px; border-radius: 999px; cursor: pointer; }
-.presence:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.presence { display: flex; align-items: center; padding: 2px; }
+button.presence__avatar { padding: 0; cursor: pointer; font-family: inherit; position: relative; }
+button.presence__avatar:disabled { cursor: default; }
+button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visible { z-index: 1; box-shadow: 0 0 0 2px var(--bg-toolbar), 0 0 0 4px var(--accent); outline: none; }
+.presence__more { background: var(--text-3); }
 .presence__avatar--elsewhere { opacity: 0.55; }
 .presence__avatar {
   width: 24px;
@@ -2133,3 +2140,16 @@ a.btn { text-decoration: none; }
   .diff__del .diff__word { text-decoration: line-through; }
   .diff__add .diff__word { text-decoration: underline; }
 }
+
+/* open-file tabs above the editor */
+.file-tabs { display: flex; align-items: stretch; min-height: 30px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; border-bottom: 1px solid var(--hairline); background: var(--bg-inset); flex-shrink: 0; }
+.file-tab { display: flex; align-items: center; flex-shrink: 0; max-width: 220px; border-right: 1px solid var(--hairline); color: var(--text-2); font-size: var(--text-s); }
+.file-tab:hover { background: var(--bg-hover); color: var(--text); }
+.file-tab--active { background: var(--bg-panel); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
+.file-tab__name { border: 0; background: none; color: inherit; font: inherit; padding: 0 4px 0 12px; height: 100%; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.file-tab__close { border: 0; background: none; color: var(--text-3); width: 20px; height: 20px; margin-right: 6px; border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; }
+.file-tab__close svg { width: 12px; height: 12px; }
+.file-tab:hover .file-tab__close, .file-tab--active .file-tab__close, .file-tab__close:focus-visible { opacity: 1; }
+.file-tab__close:hover { background: var(--bg-hover); color: var(--text); }
+.file-tab__name:focus-visible, .file-tab__close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (hover: none) { .file-tab__close { opacity: 1; } }
