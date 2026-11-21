@@ -10,6 +10,7 @@ import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
 import { projectOfPath } from '../util/projectResume';
 import { keepShareLink, pendingShareLink } from '../util/shareLink';
 import GuestJoin from './GuestJoin';
+import { safeSession } from '../util/safeStorage';
 
 /** The outcome of following a confirmation link, for the banner to show. */
 export interface EmailNotice { tone: 'ok' | 'error'; text: string }
@@ -57,6 +58,10 @@ function stripConfirmParam() {
  *  credentials and renders the sign-in form itself, so the provider's gate
  *  must let it mount while signed out. So does an invitation page, which
  *  says who the invitation is for before asking anyone to sign in. */
+/** Set by Account settings right before it leaves for the sign-in page of an
+ *  account it just deleted; read once there. */
+export const ACCOUNT_DELETED_KEY = 'aldine.accountDeleted';
+const ACCOUNT_DELETED = 'Your account is deleted, together with the projects you owned.';
 const SELF_GATED_PATHS = ['/oauth/authorize'];
 const SELF_GATED_PREFIXES = ['/invite/'];
 /** Opens the form on "create an account": a "Request access" button elsewhere links here. */
@@ -95,6 +100,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [signupApproval, setSignupApproval] = useState(false);
   const [emailNotice, setEmailNotice] = useState<EmailNotice | null>(null);
   const [guest, setGuest] = useState<GuestInfo | null>(null);
+  const [deletedNotice] = useState<string | null>(() => {
+    if (!safeSession.get(ACCOUNT_DELETED_KEY)) return null;
+    safeSession.remove(ACCOUNT_DELETED_KEY);
+    return ACCOUNT_DELETED;
+  });
   // Arriving from a confirmation link (…/?confirm_email=…). The token stays in
   // the address bar until it is used, so a reload on the sign-in form keeps it.
   const [confirmToken, setConfirmToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get(CONFIRM_PARAM));
@@ -169,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // A share link's token goes along: the provider's callback drops the query and the fragment.
           if (id) { keepShareLink(id, window.location); projectSignInStarts(id); } else appSignInStarts();
         }}
-        notice={confirmToken && !user ? 'Sign in to confirm your email address.' : undefined}
+        notice={confirmToken && !user ? 'Sign in to confirm your email address.' : deletedNotice ?? undefined}
         confirmToken={confirmToken && !user ? confirmToken : undefined}
         onConfirmLinkUsed={(signedIn) => {
           setConfirmToken(null);

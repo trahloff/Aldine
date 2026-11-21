@@ -50,6 +50,33 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - `/signup` opens the form on "Create an account" instead of "Sign in", so
   a "Request access" button on another site can link straight to it.
   Signed in, it leads home. Refs #125.
+- Export your data, in Account settings: one ZIP with `account.json` (your
+  profile, sign-in methods, the names and dates of your access tokens and
+  connections, your git host and Zotero logins, personal templates, the
+  projects shared with you with your role, invitations to you, and the
+  comments you wrote) and every project you own, the ones in your trash
+  too, with every branch as the ZIP the Share dialog downloads. No
+  password hash, token or link secret is in it. Projects shared with you are
+  listed, without their files. The ZIP is written as it goes, one branch in
+  memory at a time, and three exports in a row are allowed, then one every
+  10 minutes (`RL_EXPORT_BURST`). Refs #125.
+- Delete account, in Account settings: type your address (an account without
+  one: its name) to confirm. The dialog names the projects other people lose
+  and offers the export first. Your projects are deleted for good, with their
+  history and the GitLab repositories Aldine created for them; your
+  sessions, access tokens, Claude connections, sign-in methods, git host and
+  Zotero connections, personal templates and picture go, and you come off
+  every project shared with you. Comments and commits keep the name they
+  were written under. A session older than 10 minutes asks for the password,
+  or, on a single sign-on account, for a sign-in again. An account on
+  `ALDINE_ADMIN_EMAILS` is refused with what to do instead. Refs #125.
+
+### Fixed
+- Deleting an account on `/admin` left its address in the roles of the
+  projects shared with it, and its id in the share links it came in
+  through. Neither granted anything, and both go now. Moving a deleted
+  account's projects to the trash also withdraws their open invitations.
+  Refs #125.
 
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email

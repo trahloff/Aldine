@@ -549,6 +549,38 @@ and a signed-in browser session (access tokens are refused), accept only a
 JSON body, so a form on another site cannot trigger them, and are limited
 to `RL_ADMIN_BURST` (default 30) in a row per administrator.
 
+### What people do themselves
+
+Everyone with an account has **Your data** at the bottom of Account settings,
+so a request to export or delete an account never has to go through you:
+
+- **Export your data** downloads one ZIP: `account.json` (profile, sign-in
+  methods, access token names and dates, git host and Zotero logins,
+  personal templates, the projects shared with them and their role there,
+  open invitations to them, and the comments they wrote) and, under
+  `projects/<name> (<id>)/`, every branch of every project they own (trashed
+  ones too) as the ZIP the Share dialog downloads. Projects shared with them
+  are listed, not included. No password hash, token value or share-link
+  secret is in it. The ZIP streams out one branch at a time; one export runs
+  per account at a time, `RL_EXPORT_BURST` (default 3) in a row, then one
+  every 10 minutes. A branch that cannot be archived is named under
+  `incomplete` in `account.json` instead of failing the download.
+- **Delete account** asks them to type their address (an account without
+  one: its name) and lists the projects other people lose access to, with
+  the export one click away. Their projects are deleted at once, history
+  and an Aldine-created GitLab repository included (not moved to the trash:
+  with the owner gone, nobody could restore them). Everything else goes as
+  when you delete the account here. A session older than 10 minutes must
+  confirm it is them: the password, or for a single sign-on account (and
+  everyone under `ALDINE_SSO_ONLY`) a sign-in again at the provider. An
+  account on `ALDINE_ADMIN_EMAILS` cannot delete itself: remove the address
+  from the list and restart first. A disabled account cannot sign in, so it
+  can do neither: enable it for them, or delete it here. The server log gets
+  `[aldine] account <them> [<id>] deleted itself (…)`.
+
+Both take a browser session (access tokens are refused) and the delete
+accepts only a JSON body.
+
 ## Scaling notes
 
 - **Scale vertically first** — a bigger box absorbs a lot of users before you
@@ -708,6 +740,7 @@ override file.
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST`, `RL_TEMPLATE_REPO_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
+| `RL_EXPORT_BURST` | "Export your data" downloads one account may start in a row (default 3, then one every 10 minutes) |
 | `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
 | `RL_SHARE_BURST` | Invitations a project owner may make per hour (default 200): each address or ORCID iD invited from the share dialog, and each Invite again, counts once. Over it, the request is refused and nothing of it is saved |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |

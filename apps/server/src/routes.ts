@@ -28,6 +28,7 @@ import { PersonalRepoError, addPersonalRepo, loadPersonalRepos, personalLimit, p
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
+import { archiveFolderName, branchArchive } from './archive.js';
 import { guessRoot, detectRoot, adoptRootIfUnset } from './root.js';
 import { config } from './config.js';
 import { detectEngine, decodeText } from './detect.js';
@@ -43,6 +44,7 @@ import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, roleOf, type ListAccess } from './authz.js';
 import { ADDRESS_LINK_ID, LINK_ID_RE, isGuestId, LINK_TOKEN_RE, MAX_ACTIVE_LINKS, MAX_LINK_LABEL, MAX_LINK_MEMBERS, anyActiveLink, isShareRole, linkActive, linkByToken, linkExpired, linksOf, newLinkId, newLinkToken, ownerLinkView, pruneLinks, rolesOf, type ShareLink, type ShareRole } from './sharelinks.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
+import { registerAccountRoutes } from './account.js';
 import { cleanGuestName, clearGuestCookie, guestCookie, guestCookieWithout, guestDisplayName, guestEntry, guestFromRequest, guestRenewal, newGuestId } from './guest.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, guestJoinLimiter, guestLinkLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
@@ -54,14 +56,6 @@ import { projectThumb, readThumbImage, etagMatches } from './thumbnail.js';
 import { readTemplatePreview, withPreviews } from './templatepreviews.js';
 
 type Q = { branch?: string; path?: string; name?: string; force?: string };
-
-/** ASCII file name for a project archive, the fallback beside the UTF-8 one
- *  in the header: anything outside letters, digits, dot, dash and underscore
- *  becomes a dash. */
-function archiveFolderName(name: string): string {
-  const ascii = name.normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80);
-  return ascii || 'project';
-}
 
 /** Whether a file route's path names a file or folder inside the project.
  *  '.', './' and an absolute path name none: the first two resolve to the
@@ -886,6 +880,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     if (user && !user.guest) noteActivity(user.id);
   });
   await registerAdminRoutes(app, reqUser);
+  await registerAccountRoutes(app, reqUser);
 
   // Global guard: enforce project access when auth is on. Runs after routing,
   // so it uses the DECODED :id param and the matched route pattern — never a
@@ -2188,22 +2183,15 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
   });
 
   // The project's source as a ZIP a person can keep, send to a journal or
-  // import again: the branch's tracked tree from git archive, after the live
-  // documents are flushed and committed so it matches the editor.
+  // import again (archive.ts).
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/archive', async (req, reply) => {
     const branch = req.query.branch || 'main';
     if (!BRANCH_RE.test(branch)) return reply.code(400).send({ error: 'invalid branch name' });
     let meta: store.ProjectMeta;
     try { meta = await store.readMeta(req.params.id); await gitops.ensureWorktree(req.params.id, branch); }
     catch { return reply.code(404).send({ error: 'Project or branch not found' }); }
-    flushBranchDocs(req.params.id, branch);
-    // A download is not a commit: with manual commits the ZIP is the working
-    // tree, and the uncommitted edits stay uncommitted.
-    let tree = branch;
-    if (meta.manualCommits) tree = await gitops.workingTreeId(req.params.id, branch);
-    else await gitops.autoCommit(req.params.id, branch, 'aldine: autosave', reqAuthor(req)).catch(() => {});
     const folder = archiveFolderName(meta.name);
-    const zip = await gitops.archiveZip(req.params.id, branch, tree);
+    const zip = await branchArchive(meta, branch, reqAuthor(req));
     return reply
       .header('content-type', 'application/zip')
       .header('content-disposition', `attachment; filename="${folder}.zip"; filename*=UTF-8''${encodeURIComponent(`${meta.name.trim() || 'project'}.zip`)}`)

@@ -564,9 +564,23 @@ export async function confirmForLink(userId: string, sid: string | undefined, pa
   const user = await db().getUser(userId);
   if (!user) throw new Error('User not found');
   refuseSsoLink(user);
+  await confirmIdentity(user, sid, password);
+}
+
+/**
+ * The person at the keyboard is the account's owner: the session began with
+ * a sign-in in the last ten minutes, or the password was typed again. An
+ * account without a password here (single sign-on, or ALDINE_SSO_ONLY) can
+ * only sign in again, at its provider.
+ */
+export async function confirmIdentity(user: User, sid: string | undefined, password: unknown): Promise<void> {
   if (await sessionIsRecent(sid)) return;
+  if (!hasPassword(user) || SSO_ONLY) {
+    const how = user.provider ? ` with ${providerLabel(user.provider)}` : '';
+    throw new ReauthRequiredError(`For your security, confirm it is you: sign out and sign in again${how}, then try again within 10 minutes.`);
+  }
   const again = 'For your security, confirm it is you: enter your password, or sign out and sign in again.';
-  if (typeof password !== 'string' || !password || password.length > 1024 || SSO_ONLY) throw new ReauthRequiredError(again);
+  if (typeof password !== 'string' || !password || password.length > 1024) throw new ReauthRequiredError(again);
   if (!(await verifyPassword(password, user))) throw new ReauthRequiredError('That password is incorrect.');
 }
 

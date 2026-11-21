@@ -1,18 +1,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { setSupport, supportSetting } from './instance.js';
 import { db } from './db/index.js';
-import type { Invitation, ProjectMeta, User } from './db/types.js';
+import type { User } from './db/types.js';
 import * as auth from './auth.js';
 import * as email from './email.js';
-import * as store from './store.js';
 import { config } from './config.js';
 import { isAdmin } from './authz.js';
 import { providers } from './oauth.js';
 import { meteringEnabled, usageFor } from './usage.js';
 import { storageByOwner, storageLimitFor, storageQuotaBytes } from './storage.js';
-import { hocuspocus, onlineUserIds, closeUserConnections } from './collab.js';
-import { publishProjectEvent } from './events.js';
-import { trashProject } from './trash.js';
+import { hocuspocus, onlineUserIds } from './collab.js';
+import { deleteConfirmation, endSockets, removeAccount } from './account.js';
 import { adminLimiter, clientKey } from './ratelimit.js';
 
 /**
@@ -187,58 +185,6 @@ function protectedReason(actor: auth.PublicUser, user: User, verb: 'disable' | '
 /** The address is on ALDINE_ADMIN_EMAILS, confirmed or not. */
 const onAdminList = (u: User) => !!u.email && auth.ADMIN_EMAILS.has(u.email.toLowerCase());
 
-/** What the person deleting an account types to confirm it. */
-const deleteConfirmation = (u: User) => u.email ?? u.name;
-
-/** Collab sockets of the account, here and on every other node. */
-function endSockets(userId: string): void {
-  closeUserConnections(userId);
-  publishProjectEvent({ type: 'account-ended', userId });
-}
-
-/** Does this share-list entry name the account: its confirmed address or
- *  its ORCID iD? An invite to an address nobody confirmed is for whoever
- *  owns the address, and stays. */
-function namesAccount(u: User, orcid: string | undefined, entry: string): boolean {
-  const address = u.emailPending ? undefined : u.email?.toLowerCase();
-  return (!!address && entry.toLowerCase() === address) || (!!orcid && entry === orcid);
-}
-
-/** Withdraw the open ones: an invitation nobody may accept any more. */
-async function withdrawOpen(invitations: Invitation[]): Promise<void> {
-  const at = new Date().toISOString();
-  for (const inv of invitations) if (inv.status === 'pending') await store.settleInvitation(inv.id, 'withdrawn', at);
-}
-
-async function transferProject(meta: ProjectMeta, to: User): Promise<void> {
-  meta.ownerId = to.id;
-  const share = meta.share ?? { mode: 'private' as const, collaborators: [] };
-  const orcid = await auth.orcidFor(to);
-  meta.share = { ...share, collaborators: share.collaborators.filter((c) => !namesAccount(to, orcid, c)) };
-  // The link carries the previous owner's Zotero key, and searching it reads
-  // their whole personal library.
-  delete meta.zotero;
-  await store.writeMeta(meta);
-  // The new owner invited nobody.
-  await withdrawOpen(await store.listProjectInvitations(meta.id));
-}
-
-async function removeFromShares(u: User): Promise<number> {
-  let removed = 0;
-  const orcid = await auth.orcidFor(u);
-  for (const meta of await db().listMeta()) {
-    const list = meta.share?.collaborators;
-    if (!meta.share || !list?.some((c) => namesAccount(u, orcid, c))) continue;
-    meta.share = { ...meta.share, collaborators: list.filter((c) => !namesAccount(u, orcid, c)) };
-    await store.writeMeta(meta);
-    removed++;
-  }
-  // Open invitations to the account go the same way as its share entries.
-  const keys = [...(u.email && !u.emailPending ? [u.email.toLowerCase()] : []), ...(orcid ? [orcid] : [])];
-  if (keys.length) await withdrawOpen(await store.listInvitationsTo(keys));
-  return removed;
-}
-
 const sendsEmail = () => email.emailConfigured() && !!config.publicUrl;
 
 export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: FastifyRequest) => auth.PublicUser | null): Promise<void> {
@@ -386,21 +332,7 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
         if (!heir || heir.id === t.user.id) return reply.code(400).send({ error: 'Choose another account to give the projects to.' });
         if (heir.disabledAt) return reply.code(400).send({ error: `${heir.email ?? heir.name} is disabled. Enable it first, or choose another account.` });
       }
-      // Nothing the account holds may work while the rest runs.
-      await auth.disableAccount(t.user.id, true);
-      endSockets(t.user.id);
-      let transferred = 0, trashed = 0;
-      for (const meta of (await db().listMeta()).filter((m) => m.ownerId === t.user.id)) {
-        if (heir) {
-          await transferProject(meta, heir);
-          transferred++;
-        } else if (!meta.deletedAt) {
-          await trashProject(meta);
-          trashed++;
-        }
-      }
-      const sharesRemoved = await removeFromShares(t.user);
-      await auth.deleteAccount(t.user.id);
+      const { transferred, trashed, sharesRemoved } = await removeAccount(t.user, heir ? { transferTo: heir } : 'trash');
       const where = heir ? `${count(transferred, 'project')} to ${who(heir)}` : `${count(trashed, 'project')} to the trash`;
       audit(t.actor, 'deleted', t.user, `${where}, taken off ${count(sharesRemoved, 'share list')}`);
       return { ok: true, transferred, trashed, sharesRemoved };
