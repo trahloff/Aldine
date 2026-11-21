@@ -14,7 +14,7 @@ SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$HOST")
 grep -q '^ALDINE_VERSION=' "$ENV_FILE" || { echo "error: ALDINE_VERSION missing in $ENV_FILE" >&2; exit 1; }
 
 "${SSH[@]}" 'cloud-init status --wait >/dev/null; mkdir -p /opt/aldine'
-scp -q -o BatchMode=yes "$HERE/compose.yml" "$HERE/offbox-backup.sh" "$HERE/../backup.sh" "$HERE/../restore.sh" "$HERE/../Caddyfile" "root@$HOST:/opt/aldine/"
+scp -q -o BatchMode=yes "$HERE/compose.yml" "$HERE/offbox-backup.sh" "$HERE/restore-drill.sh" "$HERE/../backup.sh" "$HERE/../restore.sh" "$HERE/../Caddyfile" "root@$HOST:/opt/aldine/"
 scp -q -o BatchMode=yes "$ENV_FILE" "root@$HOST:/opt/aldine/.env"
 [ -n "$OFFBOX_FILE" ] && scp -q -o BatchMode=yes "$OFFBOX_FILE" "root@$HOST:/opt/aldine/offbox.env"
 

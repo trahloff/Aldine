@@ -15,6 +15,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   drop files that were deleted.
 - Click a collaborator's avatar at the top right to scroll to their
   cursor, opening their file first when they are in another one.
+- `deploy/hetzner/restore-drill.sh`: restores the newest off-box (or local)
+  backup into separate volumes on the box, starts the deployed image on them
+  without network, and checks health, database integrity and the project
+  count. The live stack keeps running. `deploy.sh` copies it to the box.
 
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email
