@@ -42,7 +42,7 @@ import * as email from './email.js';
 import { canAccess, canEdit, isAdmin, isMember, isOwner, listingAccess, ownerName, roleOf, type ListAccess } from './authz.js';
 import { ADDRESS_LINK_ID, LINK_ID_RE, isGuestId, LINK_TOKEN_RE, MAX_ACTIVE_LINKS, MAX_LINK_LABEL, MAX_LINK_MEMBERS, anyActiveLink, isShareRole, linkActive, linkByToken, linkExpired, linksOf, newLinkId, newLinkToken, ownerLinkView, pruneLinks, rolesOf, type ShareLink, type ShareRole } from './sharelinks.js';
 import { noteActivity, registerAdminRoutes } from './admin.js';
-import { cleanGuestName, guestCookie, guestDisplayName, guestEntry, guestFromRequest, newGuestId } from './guest.js';
+import { cleanGuestName, clearGuestCookie, guestCookie, guestCookieWithout, guestDisplayName, guestEntry, guestFromRequest, guestRenewal, newGuestId } from './guest.js';
 import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, guestJoinLimiter, guestLinkLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
@@ -347,11 +347,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   // The guest this browser is in project `?project=` without an account
   // (guest.ts), or null.
-  app.get<{ Querystring: { project?: string } }>('/api/auth/guest', async (req) => {
+  app.get<{ Querystring: { project?: string } }>('/api/auth/guest', async (req, reply) => {
     const project = req.query.project;
     if (reqUser(req) || !auth.AUTH_ENABLED || typeof project !== 'string' || !PROJECT_ID_RE.test(project)) return { guest: null };
     const g = await guestFromRequest(req.headers.cookie, project);
-    return { guest: g && g !== 'ended' ? { projectId: project, id: g.id, name: g.name } : null };
+    if (!g || g === 'ended') return { guest: null };
+    const renew = guestRenewal(req.headers.cookie);
+    if (renew) reply.header('set-cookie', renew);
+    return { guest: { projectId: project, id: g.id, name: g.name } };
   });
 
   // A signed-in person's profile picture, the server's own copy (avatars.ts).
@@ -532,7 +535,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/auth/logout', async (req, reply) => {
     const idToken = await auth.destroySession(auth.sidFromRequest(req.headers.cookie)); // revoke this session server-side
-    reply.header('set-cookie', auth.clearCookie());
+    // A shared computer's next person is no guest of this one's projects either.
+    reply.header('set-cookie', [auth.clearCookie(), clearGuestCookie()]);
     // Only a session that began with an OpenID Connect sign-in holds an ID token.
     const redirect = idToken ? await oidcLogoutRedirect(idToken, `${publicBase(req)}/`) : null;
     return redirect ? { ok: true, redirect } : { ok: true };
@@ -823,7 +827,11 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (!user && auth.AUTH_ENABLED && projectId !== undefined && req.routeOptions.url?.startsWith('/api/projects/:id')) {
       const guest = await guestFromRequest(req.headers.cookie, projectId);
       if (guest === 'ended') (req as any)._guestEnded = true;
-      else if (guest) user = guest;
+      else if (guest) {
+        user = guest;
+        const renew = guestRenewal(req.headers.cookie);
+        if (renew) reply.header('set-cookie', renew);
+      }
     }
     (req as any)._user = user;
     // A route that sets the session cookie itself (sign-in, sign-out, a
@@ -1382,6 +1390,26 @@ h1{font-size:1.1rem;margin:0 0 .5rem}p{margin:0 0 1.25rem;color:var(--muted);ove
     if (refused) return reply.code(410).send({ error: 'The owner turned this share link off. Ask them for a new one.', code: 'revoked' });
     reply.header('set-cookie', guestCookie(req.headers.cookie, meta.id, link.id, guestId));
     return { ok: true, projectId: meta.id, role: link.role, guest: { projectId: meta.id, id: guestId, name: guestDisplayName(name) } };
+  });
+
+  // A guest leaves project `project`: off the link they came in through
+  // (a place on it again) and out of this browser's guest cookie, which
+  // goes when it was the last project in it.
+  app.post<{ Body: { project?: unknown } }>('/api/auth/guest/leave', async (req, reply) => {
+    if (!auth.AUTH_ENABLED) return reply.code(404).send({ error: 'Guests need accounts on the server' });
+    const project = bodyString(req.body?.project);
+    if (!PROJECT_ID_RE.test(project)) return reply.code(400).send({ error: 'project must be a project id' });
+    const entry = guestEntry(req.headers.cookie, project);
+    if (!entry) return { ok: true, left: false };
+    await store.updateMeta(project, (m) => {
+      const link = linksOf(m).find((l) => l.id === entry.linkId);
+      if (!link?.members?.some((x) => x.id === entry.guestId)) return null;
+      const { members: all, ...rest } = link;
+      const members = all.filter((x) => x.id !== entry.guestId);
+      return { ...m, share: shareOf(m.share?.collaborators ?? [], rolesOf(m), linksOf(m).map((l) => (l.id === link.id ? { ...rest, ...(members.length ? { members } : {}) } : l))) };
+    }).catch(() => { /* a project gone leaves nothing to leave */ });
+    reply.header('set-cookie', guestCookieWithout(req.headers.cookie, project));
+    return { ok: true, left: true };
   });
 
   /** The address an invitation link is copied with: the configured public

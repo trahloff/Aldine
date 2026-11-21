@@ -377,8 +377,9 @@ confirmed**:
   entry on the link and a signed `aldine_guest` cookie (HttpOnly,
   SameSite=Lax, Secure like the session), never a session: it counts only
   on its own project's routes and collab documents, and only while the link
-  is active and still admits guests. Guests never typeset and reach nothing
-  an account has. Joins are limited per client address
+  is active and still admits guests. It lasts 30 days from the guest's
+  last visit, and signing out in that browser clears it. Guests never
+  typeset and reach nothing an account has. Joins are limited per client address
   (`RL_GUEST_JOIN_BURST`, default 20, one more every 30 s) and per link
   (`RL_GUEST_LINK_BURST`, default 50, one more every 20 s); behind a proxy,
   set `TRUST_PROXY` so the limit sees the visitor's address. A link's token

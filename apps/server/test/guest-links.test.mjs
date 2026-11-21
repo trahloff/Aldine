@@ -226,6 +226,46 @@ eq((await guestJoin(cap.token, 'Last')).res.statusCode, 200, 'the 500th person o
 eq((await guestJoin(cap.token, 'One more')).res.json().code, 'full', 'and then the link is full for guests');
 eq((await call('POST', '/api/share-links/join', sam, { project: P, token: cap.token })).json().code, 'full', 'and for accounts');
 
+// ---- the cookie slides: renewed when used, at most once a day ----
+const slideLink = (await json('POST', links, owner, { role: 'edit', guests: true })).link;
+const { who: sly } = await guestJoin(slideLink.token, 'Sly');
+check(/^aldine_guest=d\d+~/.test(sly.cookie), 'the cookie carries the day it was set');
+eq(guestCookieOf(await call('GET', `/api/projects/${P}`, sly)), null, 'a guest\'s request the day it was set renews nothing');
+const yesterday = { cookie: sly.cookie.replace(/=d\d+~/, '=d1~') };
+const renewed = await call('GET', `/api/projects/${P}`, yesterday);
+const renewedSet = [renewed.headers['set-cookie']].flat().find((c) => c?.startsWith(`${GUEST_COOKIE}=`));
+check(/Max-Age=2592000/.test(renewedSet ?? ''), 'a day later the next request renews it for 30 days');
+eq(guestCookieOf(renewed).replace(/=d\d+~/, '='), sly.cookie.replace(/=d\d+~/, '='), 'with the same entries');
+check(!!guestCookieOf(await call('GET', `/api/auth/guest?project=${P}`, yesterday)), 'the guest page renews it too');
+const unstamped = { cookie: sly.cookie.replace(/=d\d+~/, '=') };
+eq((await call('GET', `/api/projects/${P}`, unstamped)).statusCode, 200, 'a cookie from before the stamp still lets the guest in');
+check(!!guestCookieOf(await call('GET', `/api/projects/${P}`, unstamped)), 'and is renewed');
+eq(guestCookieOf(await call('GET', `/api/projects/${P}`, { cookie: rae.cookie.replace(/=d\d+~/, '=d1~') })), null, 'an ended guest renews nothing');
+
+// ---- a guest leaves ----
+const leaveLink = (await json('POST', `/api/projects/${Q}/links`, owner, { role: 'view', guests: true })).link;
+const lea = { name: 'Lea', cookie: (await guestJoin(slideLink.token, 'Lea')).who.cookie };
+lea.cookie = (await guestJoin(leaveLink.token, 'Lea', { project: Q, cookie: lea.cookie })).who.cookie;
+const placesOn = async (project, linkId) => (await json('GET', `/api/projects/${project}`, owner)).share.links.find((l) => l.id === linkId).joinedGuests;
+eq(await placesOn(Q, leaveLink.id), 1, 'the owner counts the guest before they leave');
+eq((await call('POST', '/api/auth/guest/leave', lea, { project: '../x' })).statusCode, 400, 'leaving names a project');
+const left = await call('POST', '/api/auth/guest/leave', lea, { project: Q });
+eq([left.statusCode, left.json().left], [200, true], 'a guest leaves a project');
+lea.cookie = guestCookieOf(left);
+eq(await placesOn(Q, leaveLink.id), 0, 'and is off its link, the place free again');
+eq((await call('GET', `/api/projects/${Q}`, lea)).statusCode, 401, 'the browser is no guest there any more');
+eq((await call('GET', `/api/projects/${P}`, lea)).json().role, 'edit', 'and still a guest in the other project');
+eq((await json('POST', '/api/auth/guest/leave', lea, { project: Q })).left, false, 'leaving again changes nothing');
+const lastOut = await call('POST', '/api/auth/guest/leave', lea, { project: P });
+const cleared = [lastOut.headers['set-cookie']].flat().find((c) => c?.startsWith(`${GUEST_COOKIE}=`));
+check(/^aldine_guest=;/.test(cleared ?? '') && /Max-Age=0/.test(cleared), 'leaving the last project clears the cookie');
+check(!(await store.readMeta(P)).share.links.find((l) => l.id === slideLink.id).members.some((m) => m.name === 'Lea'), 'off that link too');
+
+// ---- signing out clears the guest cookie as well (a shared computer) ----
+const out = await call('POST', '/api/auth/logout', { cookie: `${sam.cookie}; ${sly.cookie}` });
+const outSet = [out.headers['set-cookie']].flat();
+check(outSet.some((c) => c.startsWith(`${auth.COOKIE}=;`)) && outSet.some((c) => /^aldine_guest=;.*Max-Age=0/.test(c)), 'sign-out clears the session and the guest cookie');
+
 await doc.disconnect();
 await app.close();
 fs.rmSync(tmp, { recursive: true, force: true });

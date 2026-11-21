@@ -37,7 +37,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   (`RL_GUEST_JOIN_BURST`, default 20) and per link (`RL_GUEST_LINK_BURST`,
   default 50), and guests count toward a link's 500 places. App pages now
   send `Referrer-Policy: same-origin`, so a link's token never reaches
-  another site. Refs #328.
+  another site. A guest can Leave project (off the link, its place free
+  again), signing out clears guest access in that browser too, and the
+  30 days a guest stays in count from their last visit. Refs #328.
 - Signing out of a single sign-on session can sign out at the identity
   provider too (OpenID Connect RP-Initiated Logout): with `OIDC_LOGOUT=idp`
   Aldine ends its session, then sends the browser to the IdP's
