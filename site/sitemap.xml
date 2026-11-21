@@ -2,7 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
         <loc>https://aldine.dev/</loc>
-        <lastmod>2026-10-26</lastmod>
+        <lastmod>2026-11-21</lastmod>
     </url>
     <url>
         <loc>https://aldine.dev/latex-mcp/</loc>
@@ -42,6 +42,22 @@
     </url>
     <url>
         <loc>https://aldine.dev/sso/</loc>
+        <lastmod>2026-11-21</lastmod>
+    </url>
+    <url>
+        <loc>https://aldine.dev/beta/</loc>
+        <lastmod>2026-11-21</lastmod>
+    </url>
+    <url>
+        <loc>https://aldine.dev/privacy/</loc>
+        <lastmod>2026-11-21</lastmod>
+    </url>
+    <url>
+        <loc>https://aldine.dev/terms/</loc>
+        <lastmod>2026-11-21</lastmod>
+    </url>
+    <url>
+        <loc>https://aldine.dev/legal/</loc>
         <lastmod>2026-11-21</lastmod>
     </url>
 </urlset>

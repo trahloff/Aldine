@@ -7,8 +7,9 @@
 > compiles, a built-in MCP server for Claude, and a byte-stable visual editing
 > mode. AGPL-3.0.
 
-Status: 1.17.0 (November 2026), AGPL-3.0. There is no paid plan and no
-hosted service today; you run it yourself.
+Status: 1.17.0 (November 2026), AGPL-3.0. There is no paid plan. You run it
+yourself, or a research group joins the closed, free hosted beta at
+app.aldine.dev (https://aldine.dev/beta/).
 
 Key facts:
 
@@ -101,7 +102,8 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
   repository and keep using VS Code.
 - Is it free, and how many collaborators can a project have? It is free to
   self-host under AGPL-3.0 and the number of collaborators is not limited.
-  There is no paid plan and no hosted service today.
+  There is no paid plan. A hosted instance is in a closed, free beta for
+  research groups: https://aldine.dev/beta/
 - Can I import my Overleaf projects? Yes, from the ZIP that Overleaf lets you
   download.
 - Does it have track changes? Not at keystroke level. It has review comments
@@ -132,6 +134,7 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
 - [Overleaf compile timeout: plan limits and how to fix it](https://aldine.dev/overleaf-compile-timeout/): the limit on each Overleaf plan, the fixes from Overleaf's documentation, and how a self-hosted editor sets the limit
 - [Is Overleaf free? Free plan limits and pricing](https://aldine.dev/overleaf-free-plan/): what Overleaf's free plan includes and what is paid, as of 12 October 2026, and when a self-hosted editor fits
 - [Single sign-on for a self-hosted LaTeX editor](https://aldine.dev/sso/): sign-in methods, OpenID Connect settings, provider notes
+- [Hosted Aldine for research groups: the closed beta](https://aldine.dev/beta/): app.aldine.dev, invitation-only, free for six months; servers in Germany, data export and account deletion, what happens after the beta
 - [Documentation](https://aldine.dev/docs/): every guide on aldine.dev and the reference documents on GitHub
 
 ## Documentation
@@ -148,4 +151,5 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
 ## Optional
 
 - [Landing page](https://aldine.dev/): screenshots, demo video, feature overview
+- [Privacy policy](https://aldine.dev/privacy/), [terms of use](https://aldine.dev/terms/) and [legal notice](https://aldine.dev/legal/) for the hosted beta at app.aldine.dev
 - [Demo deployment](https://raw.githubusercontent.com/trahloff/Aldine/main/deploy/demo/README.md): how the public demo box is run
