@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Agent API: review comments. `list_comments`, `add_comment` (anchored by
+  a quote like `edit_file`, optionally with a suggestion to accept),
+  `reply_comment` and `resolve_comment`; Claude's comments show as
+  "Claude (for <you>)". Needs edit or review access.
+- Agent API: git sync, off unless the instance sets `ALDINE_MCP_SYNC=1`.
+  `sync_status`, `push` and `pull` work with the repository a project is
+  already linked to (linking stays in the browser), members only, with the
+  Sync menu's token rules, and only in projects whose owner turns on
+  **Let Claude push and pull** in Project settings (off by default). A conflicting pull changes nothing and names the
+  files for you to resolve in Aldine.
+
 ## [1.18.0] — 2026-11-21
 
 ### Added

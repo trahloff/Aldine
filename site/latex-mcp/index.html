@@ -231,11 +231,15 @@ claude mcp login aldine        # or type /mcp in a session and pick Aldine</code
 <tr><th scope="row"><code>list_labels</code></th><td><code>\label</code> targets across the project's <code>.tex</code> files.</td><td>yes</td></tr>
 <tr><th scope="row"><code>wordcount</code></th><td>Words in the root file and the files it includes.</td><td>yes</td></tr>
 <tr><th scope="row"><code>create_project</code></th><td>A new project, blank or from a template.</td><td>no</td></tr>
+<tr><th scope="row"><code>list_comments</code></th><td>The review threads on a branch, with replies.</td><td>yes</td></tr>
+<tr><th scope="row"><code>add_comment</code></th><td>A review comment on a quoted passage, optionally with a suggested replacement.</td><td>no</td></tr>
+<tr><th scope="row"><code>reply_comment</code></th><td>A reply on a review thread.</td><td>no</td></tr>
+<tr><th scope="row"><code>resolve_comment</code></th><td>Resolves or reopens a review thread.</td><td>no</td></tr>
 <tr><th scope="row"><code>trash_project</code></th><td>Moves a project that the agent created to the workspace trash. It never purges.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
-<p>No tool purges a project, changes sharing, pushes to a git remote or manages tokens. The full descriptions, including how conflicting writes are refused, are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md#what-the-tools-do">the tool reference</a>.</p>
+<p>No tool purges a project, changes sharing, links a git remote or manages tokens. Pushing to and pulling from a project's linked repository (<code>sync_status</code>, <code>push</code>, <code>pull</code>) exists only where the instance turns it on. The full descriptions, including how conflicting writes are refused, are in <a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md#what-the-tools-do">the tool reference</a>.</p>
 
 <h2 id="demo">Try it on the demo</h2>
 <p>The public demo at <a href="https://demo.aldine.dev">demo.aldine.dev</a> runs the MCP server with a token that is public on purpose, so you can try the loop before you install anything.</p>

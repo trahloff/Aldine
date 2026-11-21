@@ -83,6 +83,8 @@ export interface ProjectSummary {
   autopush?: boolean;
   /** Edits wait in the working tree for a commit with the person's own message. */
   manualCommits?: boolean;
+  /** The owner lets Claude push and pull this project (instances with agent sync on). */
+  agentSync?: boolean;
   /** Set when GitLab provisioning was configured but failed at create time:
    *  the project exists locally only until a retry succeeds. */
   remotePending?: { provider: 'gitlab'; namespace: string } | null;
@@ -587,7 +589,7 @@ export const api = {
     withBase(`/api/projects/${id}/output?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(outputPath)}`),
   compilerInfo: () => req<CompilerInfo>('/api/compiler'),
   getProject: (id: string) => req<ProjectDetail>(`/api/projects/${id}`),
-  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>>) =>
+  patchProject: (id: string, patch: Partial<Pick<ProjectSummary, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits' | 'agentSync'>>) =>
     req<ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   /** `purgeAt`: when a project moved to the trash stops being restorable (not sent for a permanent delete).
    *  `remoteError`: the GitLab repository Aldine created could not be deleted; `remoteScheduledFor`: GitLab
@@ -821,7 +823,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; mcpSync?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
   /** The guest this browser is in `project` without an account, if any. */
   guestMe: (project: string) => req<{ guest: GuestInfo | null }>(`/api/auth/guest?project=${encodeURIComponent(project)}`),
   /** Stop being a guest in `project`: off its link, and out of this browser. */

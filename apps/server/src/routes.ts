@@ -10,6 +10,7 @@ import { compileProject, compileStatus, synctexLookup, formatText, type FormatRe
 import * as usage from './usage.js';
 import { EDIT_ALLOWANCE_BYTES, storageRefusal, storageUsageFor, type StorageAction } from './storage.js';
 import * as remotes from './remotes.js';
+import * as remotesync from './remotesync.js';
 import * as gitlab from './gitlab.js';
 import { provisioningEnabled, provisionProject, deprovisionProject, rootGroup, withinRoot, type DeprovisionResult } from './provision.js';
 import { scheduleAutopush, cancelAutopush, lastPushedHead } from './autopush.js';
@@ -345,7 +346,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const user = reqUser(req);
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
-      mcpEnabled: process.env.ALDINE_MCP === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
+      mcpEnabled: process.env.ALDINE_MCP === '1', mcpSync: process.env.ALDINE_MCP === '1' && process.env.ALDINE_MCP_SYNC === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
     };
   });
 
@@ -1973,11 +1974,13 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     }
   });
 
-  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits'>> }>(
+  app.patch<{ Params: { id: string }; Body: Partial<Pick<store.ProjectMeta, 'name' | 'rootFile' | 'engine' | 'stopOnFirstError' | 'manualCommits' | 'agentSync'>> }>(
     '/api/projects/:id', async (req, reply) => {
       const meta = await requireMember(req, reply, 'rename or reconfigure this project');
       if (!meta) return;
-      const { name, rootFile, engine, stopOnFirstError, manualCommits } = req.body || {};
+      const { name, rootFile, engine, stopOnFirstError, manualCommits, agentSync } = req.body || {};
+      // What reaches the owner's linked repository is the owner's call.
+      if (agentSync !== undefined && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can let Claude push and pull this project' });
       if (name !== undefined) {
         const trimmed = String(name).trim();
         if (!trimmed) return reply.code(400).send({ error: 'Project name cannot be empty' });
@@ -2002,6 +2005,10 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       if (manualCommits !== undefined) {
         if (typeof manualCommits !== 'boolean') return reply.code(400).send({ error: 'manualCommits must be true or false' });
         meta.manualCommits = manualCommits;
+      }
+      if (agentSync !== undefined) {
+        if (typeof agentSync !== 'boolean') return reply.code(400).send({ error: 'agentSync must be true or false' });
+        meta.agentSync = agentSync;
       }
       await store.writeMeta(meta);
       return publicMeta(meta, reqUser(req));
@@ -3503,31 +3510,16 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
   // Syncing pushes the project into the OWNER's repo and can pull remote state
   // over everyone's work, so every remote operation is members-only: link mode
   // grants editing, not control of where the project is mirrored.
-  type Linked = { meta: store.ProjectMeta; link: store.RemoteLink; provider: Provider; conn: remotes.RemoteConnection; source: remotes.ConnectionSource; url: string; remoteBranch: string };
+  type Linked = remotesync.Linked;
   const linkedRemote = async (req: any, reply: any, action = 'sync this project'): Promise<Linked | null> => {
     const meta = await requireMember(req, reply, action);
     if (!meta) return null;
-    const link = store.remoteLink(meta);
-    if (!link) { reply.code(400).send({ error: 'This project is not linked to a remote repository' }); return null; }
-    const provider = remotes.getProvider(link.provider);
-    if (!provider) { reply.code(400).send({ error: `This project is linked to ${link.provider}, which is disabled on this server` }); return null; }
-    const resolved = await remotes.resolveConnectionSource(link, remoteUserId(req), { allowService: true, projectId: meta.id });
-    if (!resolved) {
-      // A connection to another instance of the same host does not count, so the instance is named.
-      const at = provider.selfHosted ? remotes.linkInstance(link) : null;
-      reply.code(400).send({ error: `Connect ${provider.label}${at ? ` on ${at}` : ''} to sync`, code: 'no-connection' });
-      return null;
-    }
-    const { conn, source } = resolved;
-    return { meta, link, provider, conn, source, url: provider.tokenUrl(link.cloneUrl, conn.token, conn.login), remoteBranch: link.remoteBranch };
+    const l = await remotesync.linkedRemote(meta, remoteUserId(req));
+    if (remotesync.isLinked(l)) return l;
+    reply.code(400).send({ error: l.error, ...(l.code && l.code !== 'not-linked' ? { code: l.code } : {}) });
+    return null;
   };
-  /** Whose token a sync uses, in words the access dialog and its errors share. */
-  const tokenOwnerPhrase = (l: Pick<Linked, 'source' | 'conn'>) => ({
-    project: "this project's token",
-    own: `your token${l.conn.login ? ` (${l.conn.login})` : ''}`,
-    linker: `the token of ${l.conn.login || 'the account that linked this project'}`,
-    service: "the server's service token",
-  })[l.source];
+  const tokenOwnerPhrase = remotesync.tokenOwnerPhrase;
   const syncFailed = async (reply: any, l: Linked, err: any, fallback: () => unknown) => {
     if (!(await remotes.tokenRefused(l.provider, l.conn, err))) return fallback();
     const fix = l.source === 'service' ? 'Ask your administrator to replace it.'

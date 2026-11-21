@@ -281,7 +281,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled, user, setUser, guest, setGuest } = useAuth();
+  const { authEnabled, user, setUser, guest, setGuest, mcpSync } = useAuth();
   // A guest (no account, here on a share link) never typesets: they see
   // the PDF the others typeset. A ref, for the typeset callbacks.
   const asGuest = authEnabled && !user && guest?.projectId === id;
@@ -1138,6 +1138,17 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     }
   }, [id, project, toast]);
 
+  const setAgentSync = useCallback(async (on: boolean) => {
+    if (!project || on === !!project.agentSync) return;
+    setProject((prev) => (prev ? { ...prev, agentSync: on } : prev));
+    try {
+      await api.patchProject(id, { agentSync: on });
+      toast(on ? 'Claude can now push and pull this project when asked' : 'Claude can no longer push or pull this project', 'ok');
+    } catch (err: any) {
+      setProject((prev) => (prev ? { ...prev, agentSync: !on } : prev));
+      toast(`Could not change it: ${err.message}`, 'error');
+    }
+  }, [id, project, toast]);
   const setManualCommits = useCallback(async (on: boolean) => {
     if (!project || on === !!project.manualCommits) return;
     setProject((prev) => (prev ? { ...prev, manualCommits: on } : prev));
@@ -2885,6 +2896,8 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
           onSetEngine={setEngine}
           onSetStopOnFirstError={setStopOnFirstError}
           onSetManualCommits={setManualCommits}
+          onSetAgentSync={setAgentSync}
+          agentSyncOffered={mcpSync}
           onToggleAutoTypeset={toggleAuto}
           onToggleVim={toggleVim}
           focus={settingsOpen === 'shortcuts' ? 'shortcuts' : undefined}
