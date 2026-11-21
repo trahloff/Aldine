@@ -1,6 +1,7 @@
 /**
- * The instance operator (#288): ALDINE_INSTANCE_* and ALDINE_SUPPORT are read
- * once at boot, refused values are left out with a boot warning, index.html
+ * The instance operator (#288): ALDINE_INSTANCE_* and ALDINE_SUPPORT, and the
+ * privacy, legal notice and terms links (#125, ALDINE_PRIVACY_URL,
+ * ALDINE_LEGAL_URL, ALDINE_TERMS_URL), are read once at boot, refused values are left out with a boot warning, index.html
  * carries the operator in its title and an escaped meta tag, and the logo
  * route serves the file (the dark one when asked and set) without a sign-in.
  *
@@ -31,7 +32,10 @@ Object.assign(process.env, {
   ALDINE_INSTANCE_LOGO: svg,
   ALDINE_INSTANCE_LOGO_DARK: png,
   ALDINE_SUPPORT: 'mailto:help@example.org',
+  ALDINE_PRIVACY_URL: 'https://example.org/privacy',
+  ALDINE_LEGAL_URL: 'https://example.org/impressum',
 });
+delete process.env.ALDINE_TERMS_URL;
 fs.mkdirSync(path.join(tmp, 'dist'), { recursive: true });
 fs.writeFileSync(path.join(tmp, 'dist', 'index.html'), '<!doctype html><html><head><title>Aldine</title></head><body></body></html>\n');
 
@@ -40,7 +44,7 @@ const { loadInstance, logoType, stampInstance, MAX_LOGO_BYTES } = await import('
 // ---- reading the settings ----
 {
   const none = loadInstance({});
-  eq(none.info, { name: null, logo: null, logoDark: null, url: null, support: null }, 'nothing set, nothing shown');
+  eq(none.info, { name: null, logo: null, logoDark: null, url: null, support: null, privacy: null, legal: null, terms: null }, 'nothing set, nothing shown');
   eq(none.warnings, [], 'and nothing to warn about');
   eq(stampInstance('<head><title>Aldine</title>', none.info), '<head><title>Aldine</title>', 'index.html untouched without an operator');
 
@@ -51,6 +55,15 @@ const { loadInstance, logoType, stampInstance, MAX_LOGO_BYTES } = await import('
   eq(bad.info.url, null, 'a plain http website is refused');
   eq(bad.warnings.length, 2, `both are warned about (${bad.warnings})`);
   eq(loadInstance({ ALDINE_INSTANCE_NAME: 'x'.repeat(200) }).info.name.length, 80, 'the name is cut at 80');
+
+  const links = loadInstance({ ALDINE_PRIVACY_URL: ' https://example.org/privacy ', ALDINE_LEGAL_URL: 'https://example.org/impressum#kontakt', ALDINE_TERMS_URL: 'http://localhost:8080/terms' });
+  eq([links.info.privacy, links.info.legal, links.info.terms], ['https://example.org/privacy', 'https://example.org/impressum#kontakt', 'http://localhost:8080/terms'], 'the three links, http only for localhost');
+  eq(links.warnings, [], 'links alone need no operator name');
+  eq(stampInstance('<head><title>Aldine</title>', links.info).includes('aldine-instance'), true, 'links alone stamp the meta tag');
+  eq(stampInstance('<head><title>Aldine</title>', links.info).includes('<title>Aldine</title>'), true, 'and leave the title alone');
+  const badLinks = loadInstance({ ALDINE_PRIVACY_URL: 'javascript:alert(1)', ALDINE_LEGAL_URL: 'http://example.org/impressum', ALDINE_TERMS_URL: 'terms.html' });
+  eq([badLinks.info.privacy, badLinks.info.legal, badLinks.info.terms], [null, null, null], 'javascript:, plain http and relative links are refused');
+  eq(badLinks.warnings, ['ALDINE_PRIVACY_URL', 'ALDINE_LEGAL_URL', 'ALDINE_TERMS_URL'].map((k) => `[aldine] ${k} is not an https URL; it is not shown`), 'each one is warned about by name');
 
   const missing = loadInstance({ ALDINE_INSTANCE_NAME: 'X', ALDINE_INSTANCE_LOGO: path.join(tmp, 'nope.png') });
   eq(missing.info.logo, null, 'a missing logo file is left out');
@@ -84,6 +97,7 @@ const app = await buildApp();
   const info = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
   eq(info.name, 'Uni "<Kiel>" & Co', 'the name round-trips');
   eq(info.support, { kind: 'email', value: 'help@example.org' }, 'mailto: is dropped from the address');
+  eq([info.privacy, info.legal, info.terms], ['https://example.org/privacy', 'https://example.org/impressum', null], 'the links set, and no terms');
   check(/^[0-9a-f]{12}$/.test(info.logo) && /^[0-9a-f]{12}$/.test(info.logoDark) && info.logo !== info.logoDark, 'both logos versioned');
 
   const light = await app.inject({ method: 'GET', url: '/api/instance/logo' });

@@ -1,4 +1,4 @@
-import { INSTANCE, instanceDarkLogoSrc, instanceLogoSrc, supportHref, type InstanceInfo } from '../instance';
+import { INSTANCE, instanceDarkLogoSrc, instanceLogoSrc, legalLinks, supportHref, type InstanceInfo } from '../instance';
 
 /**
  * The instance operator's mark (ALDINE_INSTANCE_*), always next to Aldine's
@@ -58,6 +58,35 @@ export function OperatorCredit({ info = INSTANCE }: { info?: InstanceInfo | null
         </p>
       )}
       {info.support && <p className="operator-credit__help">Need help? <SupportLink info={info}>{info.support.kind === 'email' ? `Email ${info.support.value}` : 'Contact support'}</SupportLink></p>}
+      <LegalLinks info={info} />
     </div>
+  );
+}
+
+/** "Privacy · Legal notice · Terms": the operator's pages (ALDINE_PRIVACY_URL, ALDINE_LEGAL_URL, ALDINE_TERMS_URL), or nothing. */
+export function LegalLinks({ info = INSTANCE }: { info?: InstanceInfo | null }) {
+  const links = legalLinks(info);
+  if (!links.length) return null;
+  return (
+    <nav className="legal-links" aria-label="Legal" data-testid="legal-links">
+      {links.map((l, i) => (
+        <span key={l.id}>
+          {i > 0 && <span className="legal-links__sep" aria-hidden="true"> · </span>}
+          <a href={l.href} target="_blank" rel="noreferrer" data-testid={`legal-${l.id}`}>{l.label}</a>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+/** The line above "Create account" when the operator set terms of use; nothing otherwise. */
+export function SignupAgreement({ info = INSTANCE, action = 'creating an account' }: { info?: InstanceInfo | null; action?: string }) {
+  if (!info?.terms) return null;
+  const link = (href: string, text: string, id: string) => <a href={href} target="_blank" rel="noreferrer" data-testid={id}>{text}</a>;
+  return (
+    <p className="login__hint login__agreement" data-testid="signup-agreement">
+      By {action} you agree to the {link(info.terms, 'terms', 'signup-terms')}
+      {info.privacy && <> and the {link(info.privacy, 'privacy policy', 'signup-privacy')}</>}.
+    </p>
   );
 }

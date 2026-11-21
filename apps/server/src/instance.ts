@@ -16,6 +16,10 @@ import { metaDir } from './config.js';
  *   ALDINE_INSTANCE_URL   https link for the name and logo
  *   ALDINE_SUPPORT        an email address or an https URL; an administrator
  *                         can set another on /admin, which wins until cleared
+ *   ALDINE_PRIVACY_URL    https link to the privacy policy
+ *   ALDINE_LEGAL_URL      https link to the legal notice (imprint, "Impressum")
+ *   ALDINE_TERMS_URL      https link to the terms of use; sign-up then says
+ *                         that creating an account accepts them
  */
 
 export interface InstanceInfo {
@@ -26,6 +30,9 @@ export interface InstanceInfo {
   logoDark: string | null;
   url: string | null;
   support: { kind: 'email' | 'url'; value: string } | null;
+  privacy: string | null;
+  legal: string | null;
+  terms: string | null;
 }
 
 export const MAX_LOGO_BYTES = 256 * 1024;
@@ -77,6 +84,17 @@ export function loadInstance(env: NodeJS.ProcessEnv = process.env): LoadedInstan
   const support = parsed.support;
   if (parsed.error) warnings.push('[aldine] ALDINE_SUPPORT is neither an email address nor an https URL; it is not shown');
 
+  const link = (key: string, value: string | undefined): string | null => {
+    const raw = clean(value, 2000);
+    if (!raw) return null;
+    const u = httpsUrl(raw);
+    if (!u) warnings.push(`[aldine] ${key} is not an https URL; it is not shown`);
+    return u;
+  };
+  const privacy = link('ALDINE_PRIVACY_URL', env.ALDINE_PRIVACY_URL);
+  const legal = link('ALDINE_LEGAL_URL', env.ALDINE_LEGAL_URL);
+  const terms = link('ALDINE_TERMS_URL', env.ALDINE_TERMS_URL);
+
   const readLogo = (key: 'ALDINE_INSTANCE_LOGO' | 'ALDINE_INSTANCE_LOGO_DARK'): Logo | null => {
     const file = (env[key] || '').trim();
     if (!file) return null;
@@ -102,7 +120,7 @@ export function loadInstance(env: NodeJS.ProcessEnv = process.env): LoadedInstan
   if ((url || logo) && !name) warnings.push('[aldine] ALDINE_INSTANCE_LOGO or ALDINE_INSTANCE_URL is set without ALDINE_INSTANCE_NAME; set the name too, so people can tell whose logo it is');
 
   const v = (l: Logo | null) => (l ? crypto.createHash('sha256').update(l.bytes).digest('hex').slice(0, 12) : null);
-  return { info: { name, logo: v(logo), logoDark: v(logoDark), url, support }, logo, logoDark, warnings };
+  return { info: { name, logo: v(logo), logoDark: v(logoDark), url, support, privacy, legal, terms }, logo, logoDark, warnings };
 }
 
 export const instance = loadInstance();
@@ -150,7 +168,7 @@ export function setSupport(raw: unknown, by: string, now = new Date()): void {
 export const currentInstance = (): InstanceInfo => ({ ...instance.info, support: supportSetting().support });
 
 /** Something to show: the web app hides every operator element otherwise. */
-export const instanceConfigured = (i: InstanceInfo = currentInstance()) => !!(i.name || i.logo || i.support);
+export const instanceConfigured = (i: InstanceInfo = currentInstance()) => !!(i.name || i.logo || i.support || i.privacy || i.legal || i.terms);
 
 const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 

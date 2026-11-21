@@ -71,6 +71,11 @@ services:
       AUTOPUSH_DEBOUNCE_MS: ${AUTOPUSH_DEBOUNCE_MS:-}
       ALDINE_PUBLIC_URL: ${ALDINE_PUBLIC_URL:-}
       ALDINE_BASE_PATH: ${ALDINE_BASE_PATH:-}
+      # Your privacy policy, legal notice and terms of use (https), linked on
+      # the sign-in page, in the account menu and in About (docs/BRANDING.md).
+      ALDINE_PRIVACY_URL: ${ALDINE_PRIVACY_URL:-}
+      ALDINE_LEGAL_URL: ${ALDINE_LEGAL_URL:-}
+      ALDINE_TERMS_URL: ${ALDINE_TERMS_URL:-}
       # MCP endpoint for Claude (docs/AGENT_API.md). ALDINE_MCP=1 serves /mcp;
       # with AUTH_ENABLED off, ALDINE_MCP_TOKEN is the credential. The signing
       # secret (>= 32 chars) is generated into META_DIR when blank.

@@ -151,7 +151,9 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   a support contact (`ALDINE_SUPPORT`) show who runs the instance and whom to
   ask for help, beside Aldine's own name, on the sign-in page, the project
   list, About and the browser tab; administrators can change the support
-  contact on `/admin`. [docs/BRANDING.md](docs/BRANDING.md).
+  contact on `/admin`. `ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL` and
+  `ALDINE_TERMS_URL` link your privacy policy, legal notice and terms from the
+  sign-in page, the account menu and About. [docs/BRANDING.md](docs/BRANDING.md).
 - **Scales when you need it**: one SQLite file by default; set
   `DATABASE_URL` for Postgres and `REDIS_URL` for shared rate limits and
   cross-node collab events. One app node is still the supported topology;
@@ -436,6 +438,11 @@ ALDINE_INSTANCE_LOGO=
 ALDINE_INSTANCE_LOGO_DARK=
 ALDINE_INSTANCE_URL=
 ALDINE_SUPPORT=
+# Your privacy policy, legal notice (imprint) and terms of use, linked on the
+# sign-in page, in the account menu and in About (https; docs/BRANDING.md)
+ALDINE_PRIVACY_URL=
+ALDINE_LEGAL_URL=
+ALDINE_TERMS_URL=
 # GitHub repo sync: a separate OAuth app with repo scope; GITHUB_URL points
 # it at a GitHub Enterprise Server (PAT connect works without these)
 # GITHUB_URL=https://github.com
