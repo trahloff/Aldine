@@ -118,7 +118,7 @@ test.describe('real-time collaboration', () => {
     }
   });
 
-  test('co-authors in other files are on the chip with their file, and choosing one opens it', async ({ browser, request }) => {
+  test('co-authors in other files are on the chip with their file, and clicking one opens it', async ({ browser, request }) => {
     const id = await createProject(request, 'Presence Elsewhere');
     const ctxA = await browser.newContext();
     const ctxB = await browser.newContext();
@@ -139,9 +139,7 @@ test.describe('real-time collaboration', () => {
       await expect(bob).toHaveAttribute('title', 'Bob, in methods.tex');
       await expect(b.getByTestId('presence').locator('[data-name="Ada"]')).toHaveAttribute('data-file', 'main.tex');
 
-      await a.getByTestId('presence').click();
-      const row = a.getByTestId('presence-menu').getByTestId('presence-row').filter({ hasText: 'Bob, in methods.tex' });
-      await row.click();
+      await bob.click();
       await expect(a.getByTestId('active-file')).toHaveText('methods.tex');
       await expect(bob, 'together in one file').toHaveAttribute('data-here', 'true');
       await expect(b.getByTestId('presence').locator('[data-name="Ada"]')).toHaveAttribute('data-here', 'true');

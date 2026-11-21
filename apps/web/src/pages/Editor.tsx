@@ -24,6 +24,7 @@ import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
 import Presence, { PresenceUser } from '../components/Presence';
+import FileTabs from '../components/FileTabs';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
@@ -32,7 +33,8 @@ import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPa
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
 import { useCommentSignal } from '../editor/commentSignal';
-import { presenceRows } from '../util/presence';
+import { presenceRows, type PresenceRow } from '../util/presence';
+import { loadTabs, saveTabs, withTab, closeTab as closeTabIn, renameTabs } from '../util/openTabs';
 import { useBranchSignal, type BranchPeer, type BranchSignalHandle, type BranchAgent } from '../editor/branchSignal';
 import { autoTypesetDelay, shouldAdoptRun, AGENT_RUN_WATCHDOG_MS, FULL_AFTER_DRAFT_MS, cancelsArmedTypeset, type TypesetSource } from '../editor/autoTypeset';
 import RemoteSync from '../components/RemoteSync';
@@ -1434,6 +1436,61 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
   }, [openFile]);
 
+  // ---- a collaborator's cursor ----
+  const peerJump = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (peerJump.current) clearTimeout(peerJump.current); }, []);
+  /** Scrolls to a collaborator's caret, opening their file first: its pane
+   *  mounts and syncs, then their awareness reports the caret, so poll. */
+  const jumpToPeer = useCallback((r: PresenceRow) => {
+    if (peerJump.current) clearTimeout(peerJump.current);
+    if (!r.here && r.file) openFile(r.file);
+    else revealRef.current('editor');
+    const who = { name: r.name, color: r.color };
+    const attempt = (tries: number) => {
+      peerJump.current = null;
+      if (codeRef.current?.revealPeer(who)) return;
+      if (tries < 40) peerJump.current = setTimeout(() => attempt(tries + 1), 100);
+      else toast(`${r.name} has no cursor in ${r.file ?? 'this file'} right now`);
+    };
+    attempt(0);
+  }, [openFile, toast]);
+
+  // ---- open-file tabs ----
+  const [tabState, setTabState] = useState<{ key: string; tabs: string[] }>({ key: '', tabs: [] });
+  const tabsKey = `${id}::${branch}`;
+  const tabs = tabState.key === tabsKey ? tabState.tabs : [];
+  const prevActive = useRef<{ key: string; path: string | null }>({ key: '', path: null });
+  useEffect(() => {
+    // Until the loader has chosen the branch's file, the one on screen is the branch before's.
+    if (openFor !== tabsKey) return;
+    const after = prevActive.current.key === tabsKey ? prevActive.current.path : null;
+    setTabState((st) => {
+      const base = st.key === tabsKey ? st.tabs : loadTabs(id, branch);
+      return { key: tabsKey, tabs: activeFile ? withTab(base, activeFile, after) : base };
+    });
+    prevActive.current = { key: tabsKey, path: activeFile };
+  }, [id, branch, tabsKey, openFor, activeFile]);
+  useEffect(() => {
+    if (tabState.key === tabsKey) saveTabs(id, branch, tabState.tabs);
+  }, [tabState]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A file deleted or renamed, here or elsewhere, leaves the strip.
+  useEffect(() => {
+    if (!filesLoaded || openFor !== tabsKey) return;
+    setTabState((st) => {
+      if (st.key !== tabsKey) return st;
+      const kept = st.tabs.filter((p) => files.some((f) => f.type === 'file' && f.path === p));
+      return kept.length === st.tabs.length ? st : { ...st, tabs: kept };
+    });
+  }, [files, filesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeTab = useCallback((path: string) => {
+    const next = closeTabIn(tabs, path, activeFile);
+    setTabState({ key: tabsKey, tabs: next.tabs });
+    if (next.active !== activeFile) {
+      prevActive.current = { key: tabsKey, path: null };
+      setActiveFile(next.active);
+    }
+  }, [tabs, tabsKey, activeFile]);
+
   // ---- project search ----
   /** The Search tab, with its query (or replace) field focused and selected;
    *  a one-line selection in the editor becomes the query. */
@@ -2065,7 +2122,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             Comment <kbd className="kbd toolbar__kbd">{keys.comment}</kbd>
           </button>
         )}
-        <Presence rows={presenceRows(users, peers, activeFile, identity)} onOpenFile={openFile} />
+        <Presence rows={presenceRows(users, peers, activeFile, identity)} onJump={jumpToPeer} />
         <div className="seg layout-toggle toolbar__wide" role="group" aria-label="Layout" data-testid="pane-layout">
           {LAYOUTS.map((l) => {
             const Icon = LAYOUT_ICONS[l.id];
@@ -2082,11 +2139,12 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             onClick={() => doCompile()}
             disabled={compile.status === 'compiling'}
             aria-busy={compile.status === 'compiling' || undefined}
+            aria-label="Typeset"
             data-testid="typeset-button"
             title={`Typeset (${keys.typeset === formatChord(TYPESET_ENTER) ? keys.typeset : `${keys.typeset} or ${formatChord(TYPESET_ENTER)}`})`}
           >
-            {compile.status === 'compiling' ? <span className="spinner" /> : null}
-            Typeset
+            <span className="typeset-label">Typeset</span>
+            {compile.status === 'compiling' ? <span className="spinner typeset-spinner" /> : null}
           </button>
           <MenuButton
             className="btn btn--primary split-btn__more"
@@ -2308,7 +2366,8 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                     const res = await api.deleteFile(id, branch, path, identity.name);
                     await loadFiles();
                     loadProject(); // deleting the root re-derives (or unsets) it
-                    if (activeFile && within(activeFile, path)) setActiveFile(null);
+                    // the open file's neighbour in the strip takes its place, when one survives
+                    if (activeFile && within(activeFile, path)) setActiveFile(closeTabIn(tabs.filter((p) => p === activeFile || !within(p, path)), activeFile, activeFile).active);
                     onDeleted(path, res, rootBefore);
                   } catch (err: any) {
                     toast(`Could not delete ${path}: ${err.message}`, 'error');
@@ -2320,6 +2379,8 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                   localRemoval.current = from;
                   try {
                     await api.renameFile(id, branch, from, to);
+                    // before the listing changes, which would drop the old paths from the strip
+                    setTabState((st) => (st.key === tabsKey ? { ...st, tabs: renameTabs(st.tabs, from, to) } : st));
                     await loadFiles();
                     loadProject(); // the root designation may have moved with the rename
                     // a file inside a renamed folder stays open under its new path
@@ -2406,6 +2467,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
         )}
 
         <main className={`pane pane--editor${shown === 'pdf' ? ' pane--away' : ''}`} aria-label="Editor" style={{ flex: 1 }}>
+          <FileTabs tabs={tabs} active={activeFile} onSelect={openFile} onClose={closeTab} />
           {activeFile && previewing ? (
             <FilePreview key={`${id}::${branch}::${activeFile}`} projectId={id} branch={branch} path={activeFile} entry={activeEntry} />
           ) : activeFile ? (
