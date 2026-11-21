@@ -20,7 +20,7 @@ test('privacy, legal notice and terms on the sign-in page, at sign-up, in the ac
   await page.goto(`${ORIGIN}${BASE}/`);
   const credit = page.getByTestId('operator-credit');
   const links = credit.getByTestId('legal-links');
-  await expect(links).toHaveText('Privacy · Legal notice · Terms');
+  await expect(links).toHaveText('Privacy policy · Legal notice · Terms');
   await expect(links.getByTestId('legal-privacy')).toHaveAttribute('href', PRIVACY);
   await expect(links.getByTestId('legal-legal')).toHaveAttribute('href', LEGAL);
   await expect(links.getByTestId('legal-terms')).toHaveAttribute('href', TERMS);
@@ -43,7 +43,7 @@ test('privacy, legal notice and terms on the sign-in page, at sign-up, in the ac
   await expect(page.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
 
   await page.getByTestId('account-menu').click();
-  await expect(page.getByTestId('menu-legal-privacy')).toHaveText('Privacy');
+  await expect(page.getByTestId('menu-legal-privacy')).toHaveText('Privacy policy');
   await expect(page.getByTestId('menu-legal-legal')).toHaveText('Legal notice');
   await expect(page.getByTestId('menu-legal-terms')).toHaveText('Terms');
   const [legal] = await Promise.all([page.waitForEvent('popup'), page.getByTestId('menu-legal-legal').click()]);
@@ -53,7 +53,7 @@ test('privacy, legal notice and terms on the sign-in page, at sign-up, in the ac
   await page.getByTestId('account-menu').click();
   await page.getByTestId('open-about').click();
   const about = page.getByTestId('about-modal');
-  await expect(about.getByTestId('legal-links')).toHaveText('Privacy · Legal notice · Terms');
+  await expect(about.getByTestId('legal-links')).toHaveText('Privacy policy · Legal notice · Terms');
   await expect(about.getByTestId('legal-terms')).toHaveAttribute('href', TERMS);
 });
 

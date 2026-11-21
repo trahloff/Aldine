@@ -59,6 +59,6 @@ export interface LegalLink { id: 'privacy' | 'legal' | 'terms'; label: string; h
 /** The operator's privacy policy, legal notice and terms, in that order; only the ones set. */
 export function legalLinks(i: InstanceInfo | null | undefined): LegalLink[] {
   if (!i) return [];
-  const all: Array<[LegalLink['id'], string, string | null]> = [['privacy', 'Privacy', i.privacy], ['legal', 'Legal notice', i.legal], ['terms', 'Terms', i.terms]];
+  const all: Array<[LegalLink['id'], string, string | null]> = [['privacy', 'Privacy policy', i.privacy], ['legal', 'Legal notice', i.legal], ['terms', 'Terms', i.terms]];
   return all.flatMap(([id, label, href]) => (href ? [{ id, label, href }] : []));
 }

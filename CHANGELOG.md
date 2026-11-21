@@ -21,7 +21,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   count. The live stack keeps running. `deploy.sh` copies it to the box.
 - Link your privacy policy, legal notice (Impressum) and terms of use.
   `ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL` and `ALDINE_TERMS_URL` show as
-  **Privacy**, **Legal notice** and **Terms** under the sign-in card, in the
+  **Privacy policy**, **Legal notice** and **Terms** under the sign-in card, in the
   account menu and in About. With terms set, the sign-up form says that
   creating an account accepts them and the privacy policy. Each is optional
   and must be an https link; anything else is left out with a boot warning.

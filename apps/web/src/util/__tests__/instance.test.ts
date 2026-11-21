@@ -18,7 +18,7 @@ describe('instance operator', () => {
     const i = parseInstance(JSON.stringify({ privacy: 'https://example.org/privacy', legal: 'https://example.org/impressum', terms: 'javascript:alert(1)' }));
     expect(i).toMatchObject({ name: null, privacy: 'https://example.org/privacy', legal: 'https://example.org/impressum', terms: null });
     expect(legalLinks(i)).toEqual([
-      { id: 'privacy', label: 'Privacy', href: 'https://example.org/privacy' },
+      { id: 'privacy', label: 'Privacy policy', href: 'https://example.org/privacy' },
       { id: 'legal', label: 'Legal notice', href: 'https://example.org/impressum' },
     ]);
     expect(legalLinks(null)).toEqual([]);
