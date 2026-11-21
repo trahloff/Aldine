@@ -7,11 +7,27 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Tabs for open files above the editor: every file you open gets a tab,
+  so you can jump back and forth between chapters. Close a tab with its ×
+  or a middle click; closing the open one shows its neighbour. The tabs
+  are kept per project and branch in this browser, follow renames, and
+  drop files that were deleted.
+- Click a collaborator's avatar at the top right to scroll to their
+  cursor, opening their file first when they are in another one.
+
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email
   addresses, URL credentials and URL queries are cut from error messages.
   Before, a git error could quote a token from its remote URL and a console
   line could name a person.
+
+### Fixed
+- A collaborator's name label no longer slides out of its coloured
+  background on indented lines, and on the first line it hangs below the
+  cursor instead of being cut off at the top.
+- The toolbar no longer shifts while typesetting: the spinner takes the
+  place of the Typeset label instead of widening the button.
 
 ## [1.17.0] — 2026-11-21
 

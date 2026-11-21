@@ -186,7 +186,7 @@ test.describe('agent presence and audit UI', () => {
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
       await expect(page.getByTestId('agent-review-commit').first()).toContainText('Rewrite the opening line');
       await expect(page.getByTestId('agent-review-modal')).toContainText('AWAY-EDITED-OPENING-LINE');
-      await page.getByRole('button', { name: 'Close' }).click();
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
 
       // The visit was recorded: the next open asks the server the same
       // question and gets nothing back, so no toast is raised.
@@ -452,7 +452,7 @@ test.describe('agent presence and audit UI', () => {
       await openProject(page, id);
       await page.getByTestId('agent-away-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
-      await page.getByRole('button', { name: 'Close' }).click();
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
       await expect.poll(() => page.evaluate((k) => JSON.parse(window.localStorage.getItem(k) || '{}').head ?? '', `aldine.agentSeen.${id}.main`)).not.toBe('');
 
       const onNew = page.waitForResponse((r) => r.url().includes('/agent-activity?branch=camera-ready') && r.request().method() === 'GET');

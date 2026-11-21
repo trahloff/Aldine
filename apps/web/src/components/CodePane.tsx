@@ -107,6 +107,9 @@ export interface CodePaneHandle {
   getSelection(): { from: number; to: number; quote: string } | null;
   setCommentRanges(ranges: CommentRange[]): void;
   revealPos(pos: number): void;
+  /** Scrolls to the caret of the collaborator with this name and colour, leaving this
+   *  person's own caret where it is; false when their caret is not in this document. */
+  revealPeer(who: { name: string; color: string }): boolean;
   format(action: 'bold' | 'italic' | 'list' | { section: 1 | 2 | 3 | 4 }): void;
   getOutline(): OutlineEntry[];
   /** Keyboard focus back to the text, the caret where it was. */
@@ -243,10 +246,16 @@ const aldineTheme = EditorView.theme({
   // remote collaborator caret + always-visible name label (y-codemirror.next)
   '.cm-ySelectionCaret': { position: 'relative', borderLeftWidth: '1.5px', borderRightWidth: '1.5px', marginLeft: '-1px', marginRight: '-1px', boxSizing: 'border-box' },
   '.cm-ySelectionInfo': {
-    position: 'absolute', top: '-1.35em', left: '-1px', fontSize: '10px', fontWeight: '600', lineHeight: 'normal',
+    // max-content: a caret at a line's end or wrap point gives the label a containing block too narrow
+    // to size it, which squeezes the background to the last word while the text overflows it.
+    // An indented line's hanging indent (wrapIndent.ts) is a negative text-indent, which the label would
+    // inherit: its name would start left of its own background.
+    position: 'absolute', top: '-1.35em', left: '-1px', textIndent: '0', fontSize: '10px', fontWeight: '600', lineHeight: 'normal',
     color: '#fff', padding: '1px 5px', borderRadius: '4px 4px 4px 0', whiteSpace: 'nowrap', opacity: '1',
     userSelect: 'none', pointerEvents: 'none', zIndex: '20', fontFamily: 'var(--font-sans)',
   },
+  // Above the first line the label would be cut off by the editor's top edge: it hangs below the caret there.
+  '.cm-line:first-child .cm-ySelectionInfo': { top: '100%', borderRadius: '0 4px 4px 4px' },
   '.cm-tooltip': {
     backgroundColor: 'var(--bg-panel)',
     border: '1px solid var(--hairline)',
@@ -379,6 +388,25 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const p = Math.min(Math.max(0, pos), view.state.doc.length);
       view.dispatch({ selection: { anchor: p }, effects: jumpEffects(p) });
       view.focus();
+    },
+    revealPeer(who) {
+      const view = viewRef.current;
+      const awareness = providerRef.current?.awareness;
+      const conf = view?.state.facet(ySyncFacet);
+      if (!view || !awareness || !conf) return false;
+      let pos: number | null = null;
+      awareness.getStates().forEach((state, clientId) => {
+        const s = state as { user?: { name?: unknown; color?: unknown }; cursor?: { head?: unknown } };
+        if (pos !== null || clientId === awareness.clientID || s.user?.name !== who.name || s.user?.color !== who.color || !s.cursor?.head) return;
+        try {
+          pos = conf.fromYPos(s.cursor.head as Y.RelativePosition).pos;
+        } catch {
+          /* a position from another doc epoch */
+        }
+      });
+      if (pos === null) return false;
+      view.dispatch({ effects: EditorView.scrollIntoView(Math.min(pos, view.state.doc.length), { y: 'center' }) });
+      return true;
     },
     format(action) {
       const view = viewRef.current;

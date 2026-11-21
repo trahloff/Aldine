@@ -162,7 +162,7 @@ test.describe('Claude editing an open project', () => {
       await expect(a.getByTestId('file-intro.tex').getByTestId('tree-agent-changed')).toBeVisible();
       await prompt.click();
       await expect(a.getByTestId('agent-review-modal')).toBeVisible();
-      await a.getByRole('button', { name: 'Close' }).click();
+      await a.getByRole('button', { name: 'Close', exact: true }).click();
       await expect(a.getByTestId('agent-gutter-mark')).toHaveCount(0);
       await expect(a.getByTestId('file-intro.tex').getByTestId(/tree-agent-/)).toHaveCount(0);
       await expect(a.getByTestId('file-main.tex').getByTestId(/tree-agent-/)).toHaveCount(0);
