@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-11-21
+
 ### Added
 - Share links: a project can have several, each with its own token and
   role ("Can edit", "Can review" or "Can view"), an optional name, and an
