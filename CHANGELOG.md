@@ -42,6 +42,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   addresses, URL credentials and URL queries are cut from error messages.
   Before, a git error could quote a token from its remote URL and a console
   line could name a person.
+- Agent API: an agent edit is held off (`user_editing`) only while someone
+  is actually typing at it: per person, a keystroke within the last
+  8 seconds (`ALDINE_MCP_TYPING_GRACE_MS`) with their cursor at, or within
+  40 characters on the same line of, the text the edit changes, or a
+  selection they just made over it. A cursor resting in the paragraph, or
+  anywhere inside a long quote, no longer blocks. The error carries
+  `retry_after_ms` and, in `batch_write`, `blocked` with every held-up
+  entry. `force: true` on `edit_file` and `batch_write` applies an edit the
+  user asked for anyway, merged with the typing as always; the result and
+  the commit message name who was typing.
 
 ### Fixed
 - A collaborator's name label no longer slides out of its coloured

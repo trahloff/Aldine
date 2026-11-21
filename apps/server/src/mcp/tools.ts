@@ -14,7 +14,7 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges,
+  inFileLineEndings, protectedProjects, holdAgentSession, peopleEditingRanges, type EditBlock,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
@@ -249,16 +249,41 @@ function commitFields(commit: { hash: string | null; unchanged: boolean }, head:
   return { commit: commit.hash ? head : null, ...(commit.unchanged ? { unchanged: true as const } : {}) };
 }
 
-/** The user_editing body: nothing was applied because people's cursors are in edit `index`'s text. */
-function userEditing(busy: { index: number; names: string[] }): { error: 'user_editing'; edit_index: number; editors: string[]; reason: string } {
-  const who = busy.names.join(' and ');
+/** What each resolved edit actually changes: its quote's range less the prefix and suffix the replacement keeps. A pure insertion is an empty range at its point. */
+export function changedRanges(ranges: Array<{ from: number; to: number }>, edits: EditSpec[]): Array<{ from: number; to: number }> {
+  return ranges.map((r, i) => {
+    const q = edits[i].quote, t = edits[i].replacement;
+    let pre = 0;
+    while (pre < q.length && pre < t.length && q[pre] === t[pre]) pre++;
+    let suf = 0;
+    while (suf < q.length - pre && suf < t.length - pre && q[q.length - 1 - suf] === t[t.length - 1 - suf]) suf++;
+    return { from: r.from + pre, to: r.to - suf };
+  });
+}
+
+type Blocked = { path?: string; edit_index: number; editors: string[]; retry_after_ms: number };
+
+/** The user_editing body: nothing was applied because people are typing at the edits in `blocked` (every one, first first). */
+function userEditing(blocked: Blocked[]): { error: 'user_editing'; edit_index: number; editors: string[]; retry_after_ms: number; blocked: Blocked[]; reason: string } {
+  const first = blocked[0];
+  const who = first.editors.join(' and ');
+  const where = first.path ? `"${first.path}", edit ${first.edit_index + 1}` : `edit ${first.edit_index + 1}`;
+  const more = blocked.length > 1 ? ` (${blocked.length} edits are held up; blocked lists them all)` : '';
   return {
     error: 'user_editing',
-    edit_index: busy.index,
-    editors: busy.names,
-    reason: `${who} ${busy.names.length === 1 ? 'is' : 'are'} editing that text right now (their cursor is inside edit ${busy.index + 1}'s quote) — nothing was applied. Edit other parts first or wait a moment and retry, at most twice; then ask the user whether you should hold off on that passage.`,
+    edit_index: first.edit_index,
+    editors: first.editors,
+    retry_after_ms: Math.max(...blocked.map((b) => b.retry_after_ms)),
+    blocked,
+    reason: `${who} ${first.editors.length === 1 ? 'is' : 'are'} typing at ${where} right now${more} — nothing was applied. Resend without the blocked edits, or wait retry_after_ms and retry, at most twice; then ask the user whether you should hold off. Pass force:true only if the user explicitly asked for this very edit in their current request.`,
   };
 }
+
+const toBlocked = (b: EditBlock[], path?: string): Blocked[] => b.map((x) => ({ ...(path ? { path } : {}), edit_index: x.index, editors: x.names, retry_after_ms: x.retryAfterMs }));
+
+/** The commit-message line that records a forced edit over people's typing. */
+const overrodeLine = (names: string[]) => `Overrode active typing by ${names.join(', ')}.`;
+const withOverride = (message: string, names: string[]) => (names.length ? `${message}\n\n${overrodeLine(names)}` : message);
 
 function snippetAround(content: string, offset: number): string {
   const lines = content.split('\n');
@@ -418,6 +443,8 @@ const messageParam = (what: string) => z.string()
   .min(1, `Message cannot be empty — state ${what} in one line`)
   .max(COMMIT_MESSAGE_MAX, `Message is at most ${COMMIT_MESSAGE_MAX} characters — state ${what} in one line`);
 const BASE_VERSION_HELP = `contentVersion (or fileVersion) from your read of this file, or contentVersion from project_structure for a file you are creating. Refused with {error:"version_conflict", reason, currentVersion, fileVersion} when this file changed after that read (changes to other files on the branch do not count), or when base_version is newer than the branch's contentVersion (a server restart or another node issued it) — either way re-read the file and use the contentVersion that read returns.`;
+const FORCE_HELP = 'Apply even where a person is typing right now (user_editing). Only when the user explicitly asked for this very edit in their current request — never as a retry for user_editing on your own. The edit still merges with their typing (nothing of theirs is lost); the result names them in overrode, and the commit says so.';
+
 const editShape = {
   quote: z.string().describe('Exact text to replace, copied verbatim from the file. At least 8 characters; must match exactly one place, or use occurrence.'),
   replacement: z.string().describe('Replacement text (empty string deletes the quote).'),
@@ -603,7 +630,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('edit_file', {
     ...annotate('Edit a file', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
-    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"user_editing"}: a person\'s cursor is inside that edit\'s quote (editors names them) — they are typing there; edit other parts first or wait a moment and retry, at most twice, then ask the user whether you should hold off. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
+    description: 'Replace exact quoted text inside an existing file — the default way to change a document, and the only safe way to change one a person has open (edits merge with their live typing; write_file would discard it). Each quote: ≥8 characters, copied verbatim from a read, matching exactly one place (or set occurrence). Nothing is applied on any error result. {error:"stale_anchor"}: the quote is not in the file — re-read it, re-anchor from the candidates, retry; at most 2 retries, then tell the user what you tried and ask. {error:"ambiguous_anchor"}: the quote matches several places — the candidates carry the occurrence that picks each; resend with it, no re-read needed. {error:"user_editing"}: a person typed within the last few seconds at the text an edit changes (only the part that differs from the quote counts, plus a few characters around it on its line), or just selected it; a cursor merely resting there never blocks. editors names them, blocked lists every held-up edit, retry_after_ms says when their pause will have lasted long enough — edit other parts first or wait that long and retry, at most twice, then ask the user whether you should hold off. force:true applies it anyway, only when the user explicitly asked for that edit in their current request; it still merges with their typing. {error:"version_conflict"}: this file changed after the read that base_version came from (writes to other files never conflict, so parallel tools on different files are safe) — re-read this file, then re-apply once. Committed as author Claude before the tool answers, under message (the intent, imperative — "Tighten the abstract"); without one the commit is titled "Edit <path>". The result\'s commit and head are that commit; an edit that leaves the file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -611,8 +638,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       edits: z.array(z.object(editShape)).min(1).max(50),
       base_version: z.number().int().optional().describe(BASE_VERSION_HELP),
       message: messageParam('the intent of the change').optional().describe(INTENT_HELP),
+      force: z.boolean().optional().describe(FORCE_HELP),
     },
-  }, async ({ project, branch = 'main', path: rawPath, edits, base_version, message }) => {
+  }, async ({ project, branch = 'main', path: rawPath, edits, base_version, message, force }) => {
     try {
       const meta = await resolveProject(identity, project);
       assertWritableProject(meta, identity);
@@ -641,6 +669,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           if (conflict) return failed(conflict);
         }
         const live = openDocContent(meta.id, branch, rel);
+        let overrode: string[] = [];
         let applied = 0;
         let before: string | Buffer;
         let newContent: string;
@@ -652,8 +681,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`Edit ${res.editIndex + 1}: ${res.reason}`);
             return failed({ error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          const busy = peopleEditingRanges(meta.id, branch, rel, res.ranges);
-          if (busy) return failed(userEditing(busy));
+          const busy = peopleEditingRanges(meta.id, branch, rel, changedRanges(res.ranges, liveEdits));
+          if (busy.length && !force) return failed(userEditing(toBlocked(busy)));
+          overrode = [...new Set(busy.flatMap((b) => b.names))];
           // Presence first, so the chip is up when the change arrives.
           markAgentPresence(meta.id, branch, rel, owner);
           // Back-to-front, same tick: earlier offsets stay valid, and no human
@@ -694,9 +724,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           firstFrom = Math.min(...res.ranges.map((r) => r.from));
         }
         const after = live !== null ? inFileLineEndings(meta.id, branch, rel, newContent) : newContent;
-        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], intent(cleanCommitMessage(message, `Edit ${rel}`)));
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], intent(withOverride(cleanCommitMessage(message, `Edit ${rel}`), overrode)));
         const e = await echo(meta.id, branch);
-        return ok({ applied, path: rel, contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...commitFields(commit, e.head), ...e });
+        return ok({ applied, path: rel, ...(overrode.length ? { overrode } : {}), contentVersion: contentVersion(meta.id, branch), fileVersion: fileVersion(meta.id, branch, rel), snippet: snippetAround(newContent, firstFrom), ...commitFields(commit, e.head), ...e });
       });
     } catch (err) { return toolError(err, { project, branch }); }
   });
@@ -750,7 +780,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('batch_write', {
     ...annotate('Change several files in one commit', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
-    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor, ambiguous_anchor or user_editing (a person\'s cursor is inside that edit\'s quote; see edit_file) writes nothing (the error names the entry as path); fix that entry and resend the whole batch. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
+    description: 'Apply one multi-file change as ONE named commit (author Claude). Each entry carries full content (new files) or quote-anchored edits (existing files, same rules as edit_file). All edits resolve before anything is written — a stale_anchor or ambiguous_anchor writes nothing (the error names the entry as path); fix that entry and resend the whole batch. user_editing (someone is typing at an edit right now; see edit_file) also writes nothing, and its blocked lists every held-up entry as {path, edit_index, editors, retry_after_ms}: resend the batch without those edits, or wait and retry; force:true follows the edit_file rule. A version_conflict on any entry also writes nothing: re-read that file and resend. Use it for a coherent change across files; use edit_file for a single file. message = the intent, imperative ("Add related-work section"). The result\'s commit and head are that commit; a batch that leaves every file as it was makes no commit and answers commit:null with unchanged:true (nothing is pending).',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -761,8 +791,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         base_version: z.number().int().optional().describe(`${BASE_VERSION_HELP} A conflict on any entry refuses the whole batch and writes nothing.`),
       })).min(1).max(50),
       message: messageParam('the intent of the change').describe(`Commit message stating the intent of the change, at most ${COMMIT_MESSAGE_MAX} characters.`),
+      force: z.boolean().optional().describe(FORCE_HELP),
     },
-  }, async ({ project, branch = 'main', files: rawFiles, message }) => {
+  }, async ({ project, branch = 'main', files: rawFiles, message, force }) => {
     try {
       const meta = await resolveProject(identity, project);
       assertWritableProject(meta, identity);
@@ -809,6 +840,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         const writes: Array<{ path: string; before: string | Buffer | null; next: string; live: Array<{ from: number; to: number; edit: EditSpec }> | null }> = [];
         // Error bodies name the entry as `path` and carry the {branch, head} echo like successes.
         const failed = async (entry: string, body: object) => ok({ ...body, path: entry, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
+        const blocked: Blocked[] = [];
         for (const f of files) {
           if (f.base_version !== undefined) {
             const conflict = versionConflict(meta.id, branch, f.path, f.base_version);
@@ -829,11 +861,12 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
             if (res.error === 'invalid_quote') return fail(`"${f.path}", edit ${res.editIndex + 1}: ${res.reason}`);
             return failed(f.path, { error: res.error, edit_index: res.editIndex, reason: res.reason, candidates: res.candidates });
           }
-          const busy = open !== null ? peopleEditingRanges(meta.id, branch, f.path, res.ranges) : null;
-          if (busy) return failed(f.path, userEditing(busy));
+          if (open !== null) blocked.push(...toBlocked(peopleEditingRanges(meta.id, branch, f.path, changedRanges(res.ranges, edits)), f.path));
           const live = open !== null ? res.ranges.map((r, i) => ({ ...r, edit: edits[i] })).sort((a, b) => b.from - a.from) : null;
           writes.push({ path: f.path, before: raw ?? inFileLineEndings(meta.id, branch, f.path, current), next: spliceEdits(current, edits, res.ranges), live });
         }
+        if (blocked.length && !force) return failed(blocked[0].path!, userEditing(blocked));
+        const overrode = [...new Set(blocked.flatMap((b) => b.editors))];
         for (const w of writes) markAgentPresence(meta.id, branch, w.path, owner);
         const reseed = new Map<string, string | Buffer | null>();
         for (const w of writes) {
@@ -851,12 +884,12 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         // whole-tree commit would sign them as Claude (and expose them to the
         // session toast's revert). They reach history through the normal
         // autosave debounce instead.
-        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.live ? inFileLineEndings(meta.id, branch, w.path, w.next) : w.next })), intent(cleanCommitMessage(message, 'Update files')));
+        const commit = await commitAgentWrite(meta.id, branch, writes.map((w) => ({ path: w.path, before: w.before, after: w.live ? inFileLineEndings(meta.id, branch, w.path, w.next) : w.next })), intent(withOverride(cleanCommitMessage(message, 'Update files'), overrode)));
         // See write_file: the first .tex of a rootless project becomes the root.
         const firstTex = writes.find((w) => /\.tex$/i.test(w.path))?.path;
         const newRoot = firstTex ? await adoptRootIfUnset(meta.id, branch, firstTex) : undefined;
         const e = await echo(meta.id, branch);
-        return ok({ ok: true, paths: writes.map((w) => w.path), ...(newRoot ? { newRoot } : {}), contentVersion: contentVersion(meta.id, branch), ...commitFields(commit, e.head), ...e });
+        return ok({ ok: true, paths: writes.map((w) => w.path), ...(overrode.length ? { overrode } : {}), ...(newRoot ? { newRoot } : {}), contentVersion: contentVersion(meta.id, branch), ...commitFields(commit, e.head), ...e });
       });
     } catch (err) { return toolError(err, { project, branch }); }
   });

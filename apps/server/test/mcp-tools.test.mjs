@@ -36,6 +36,8 @@ process.env.DOI_API_BASE = upstreamBase;
 process.env.ARXIV_API_BASE = upstreamBase;
 process.env.OPENALEX_API_BASE = upstreamBase;
 process.env.RL_REF_BURST = '3';
+// a short typing grace, so the tests can wait it out
+process.env.ALDINE_MCP_TYPING_GRACE_MS = '3000';
 
 // Mock compiler: answers with the next queued body and, when that body names
 // a PDF, writes it (plus a .log) into the project dir the server asked for —
@@ -617,40 +619,122 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
   dlog = await gitops.log(pd.id, 'main');
   check(dlog[0].onBehalfOf === 'Ada' && dlog[0].message === 'Reword', `a message cannot name somebody else (got ${JSON.stringify(dlog[0])})`);
 
-  // a person's cursor inside the quote: the edit is refused, nothing applied
+  // The user_editing guard: only a person typing right now at what an edit
+  // changes holds it off; a resting cursor never does.
   {
     const Y = await import('yjs');
     const { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } = await import('y-protocols/awareness');
-    const pane = new Awareness(new Y.Doc());
+    const GRACE = collab.TYPING_GRACE_MS;
+    check(GRACE === 3000, `the grace comes from ALDINE_MCP_TYPING_GRACE_MS (got ${GRACE})`);
+    const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
     const rel = (i) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(ytext, i));
-    const caret = ytext.toString().indexOf('human paragraph two') + 6;
-    const showPane = (cursor) => {
-      pane.setLocalState({ user: { name: 'Ben', color: '#e8554d' }, cursor });
-      applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
+    /** A person's pane: its own Yjs client, so its keystrokes and cursor are its own. */
+    const person = (name, color) => {
+      const doc = new Y.Doc();
+      const pane = new Awareness(doc);
+      const show = (cursor) => {
+        pane.setLocalState(cursor ? { user: { name, color }, cursor } : { user: { name, color } });
+        applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
+      };
+      const caretAt = (i) => show({ anchor: rel(i), head: rel(i) });
+      const type = async (at, text) => {
+        Y.applyUpdate(doc, Y.encodeStateAsUpdate(conn.document));
+        doc.getText('content').insert(at, text);
+        Y.applyUpdate(conn.document, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(conn.document)), { from: name });
+        caretAt(at + text.length);
+        await settle();
+      };
+      return { show, caretAt, type, leave: () => show(null) };
     };
-    showPane({ anchor: rel(caret), head: rel(caret) });
-    const held = ytext.toString();
-    const headBefore = (await gitops.log(pd.id, 'main'))[0].hash;
-    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'X sentence' }, { quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }));
-    check(body.error === 'user_editing' && body.edit_index === 1 && JSON.stringify(body.editors) === '["Ben"]', `an edit under a person's cursor is refused as user_editing, naming them and the edit (got ${JSON.stringify(body)})`);
-    check(/Ben is editing that text/.test(body.reason) && /hold off/.test(body.reason), `the reason says who and what to do (got ${JSON.stringify(body.reason)})`);
-    check(body.path === 'main.tex' && body.branch === 'main' && typeof body.head === 'string' && typeof body.contentVersion === 'number', 'the refusal echoes like every error body');
-    check(ytext.toString() === held && (await gitops.log(pd.id, 'main'))[0].hash === headBefore, 'nothing was applied and nothing committed');
-    ({ body } = await call('batch_write', { project: pd.id, files: [{ path: 'main.tex', edits: [{ quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }], message: 'Under the cursor' }));
-    check(body.error === 'user_editing' && body.path === 'main.tex' && ytext.toString() === held, `batch_write refuses the same edit the same way (got ${JSON.stringify(body)})`);
-    // a selection that only touches the quote's end counts too
-    const end = ytext.toString().indexOf('agent sentence, revised once more') + 'agent sentence, revised once more'.length;
-    showPane({ anchor: rel(end), head: rel(end + 1) });
-    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'agent sentence' }] }));
-    check(body.error === 'user_editing', 'a selection starting at the end of the quote counts as inside it');
-    // elsewhere in the file, or once the person moved on, the edit lands
-    showPane({ anchor: rel(0), head: rel(0) });
+    const ben = person('Ben', '#e8554d');
+    const idx = (needle) => ytext.toString().indexOf(needle);
+    const headNow = async () => (await gitops.log(pd.id, 'main'))[0].hash;
+
+    // 1. an idle cursor inside the quote: the edit applies
+    ben.caretAt(idx('human paragraph two') + 6);
+    await settle(GRACE + 50);
     ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'human paragraph two', replacement: 'Claude paragraph two' }] }));
-    check(body.applied === 1 && ytext.toString().includes('Claude paragraph two'), `with the cursor elsewhere the edit applies (got ${JSON.stringify(body)})`);
-    pane.setLocalState({ user: { name: 'Ben', color: '#e8554d' } });
-    applyAwarenessUpdate(conn.document.awareness, encodeAwarenessUpdate(pane, [pane.clientID]), 'test');
-    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'human paragraph one, batched', replacement: 'human paragraph one' }] }));
-    check(body.applied === 1, 'a pane with no cursor (another file open, or never focused) blocks nothing');
+    check(body.applied === 1 && ytext.toString().includes('Claude paragraph two'), `a cursor resting inside the quote blocks nothing (got ${JSON.stringify(body)})`);
+
+    // 2. typing inside the changed range: refused, with who, every blocked edit, and a retry hint
+    await ben.type(idx('Claude paragraph two') + 'Claude'.length, ' Ben');
+    const held = ytext.toString();
+    const headBefore = await headNow();
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'X sentence' }, { quote: 'Claude Ben paragraph two', replacement: 'Claude Ben paragraph 2' }] }));
+    check(body.error === 'user_editing' && body.edit_index === 1 && JSON.stringify(body.editors) === '["Ben"]', `typing at the change is refused as user_editing, naming them and the edit (got ${JSON.stringify(body)})`);
+    check(body.retry_after_ms > 0 && body.retry_after_ms <= GRACE, `with a retry hint inside the grace (got ${body.retry_after_ms})`);
+    check(Array.isArray(body.blocked) && body.blocked.length === 1 && body.blocked[0].edit_index === 1, `blocked lists the held-up edit (got ${JSON.stringify(body.blocked)})`);
+    check(/Ben is typing/.test(body.reason) && /hold off/.test(body.reason) && /force/.test(body.reason), `the reason says who and what to do (got ${JSON.stringify(body.reason)})`);
+    check(body.path === 'main.tex' && body.branch === 'main' && typeof body.head === 'string' && typeof body.contentVersion === 'number', 'the refusal echoes like every error body');
+    const top = (await gitops.log(pd.id, 'main'))[0];
+    check(ytext.toString() === held && (top.hash === headBefore || top.author !== 'Claude'), `nothing was applied and Claude committed nothing (the checkpoint may commit Ben's typing) (got ${JSON.stringify(top)})`);
+    // ... and once their pause outlasts the hint, the same edit lands
+    await settle(body.retry_after_ms + 30);
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'Claude Ben paragraph two', replacement: 'Claude Ben paragraph 2' }] }));
+    check(body.applied === 1, `after retry_after_ms the edit applies (got ${JSON.stringify(body)})`);
+
+    // 3. typing inside the quote but away from what changes: applies, and the typing stays
+    conn.document.transact(() => ytext.insert(ytext.length, '\nLONG alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon.\n'));
+    await settle(GRACE + 50);
+    await ben.type(idx('LONG alpha') + 'LONG '.length, 'NEW ');
+    const line = 'LONG NEW alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon.';
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: line, replacement: line.replace('beta', 'BETA') }] }));
+    check(body.error === 'user_editing', `a change within ${collab.TYPING_NEAR_CHARS} characters of the typist waits (got ${JSON.stringify(body)})`);
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: line, replacement: line.replace('upsilon', 'UPSILON') }] }));
+    check(body.applied === 1, `a change far along the quoted line applies while they type (got ${JSON.stringify(body)})`);
+    await ben.type(idx('NEW ') + 'NEW '.length, 'more ');
+    check(ytext.toString().includes('LONG NEW more alpha beta') && ytext.toString().includes('UPSILON'), `their typing and the edit both stand (got ${JSON.stringify(ytext.toString().split('\n').find((l) => l.startsWith('LONG')))})`);
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised once more', replacement: 'agent sentence, revised for the last time' }] }));
+    check(body.applied === 1, `a change on another line while someone types applies (got ${JSON.stringify(body)})`);
+
+    // a fresh selection over the change holds it; once it rests, it does not
+    await settle(GRACE + 50);
+    const sel = idx('agent sentence, revised for the last time');
+    ben.show({ anchor: rel(sel), head: rel(sel + 'agent sentence'.length) });
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised for the last time', replacement: 'agent words, revised for the last time' }] }));
+    check(body.error === 'user_editing', `a selection just made over the change holds it off (got ${JSON.stringify(body)})`);
+    await settle(GRACE + 50);
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent sentence, revised for the last time', replacement: 'agent words, revised for the last time' }] }));
+    check(body.applied === 1, `a selection left resting blocks nothing (got ${JSON.stringify(body)})`);
+
+    // per person: one typist elsewhere does not turn another's idle cursor into a block
+    const cleo = person('Cleo', '#2e933c');
+    cleo.caretAt(idx('agent words, revised') + 3);
+    await ben.type(0, '%');
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent words, revised for the last time', replacement: 'agent prose, revised for the last time' }] }));
+    check(body.applied === 1, `Cleo's resting cursor blocks nothing while Ben types elsewhere (got ${JSON.stringify(body)})`);
+
+    // 4. force: applies over active typing, merges (their keystrokes stay), and says so
+    await ben.type(idx('agent prose') + 'agent'.length, ' BEN');
+    const typed = ytext.toString();
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', force: true, message: 'Reword at the user\'s request', edits: [{ quote: 'agent BEN prose, revised', replacement: 'agent BEN prose, reworded' }] }));
+    check(body.applied === 1 && JSON.stringify(body.overrode) === '["Ben"]', `force applies and names who it overrode (got ${JSON.stringify(body)})`);
+    check(ytext.toString().includes('agent BEN prose, reworded') && typed.includes(' BEN'), 'the typist\'s keystrokes are kept');
+    let forced = execFileSync('git', ['log', '-1', '--format=%B'], { cwd: store.branchDir(pd.id, 'main') }).toString();
+    check(/Overrode active typing by Ben\./.test(forced) && /\n\nOn-behalf-of: Ada\n*$/.test(forced), `the commit records the override, the requester trailer still last (got ${JSON.stringify(forced)})`);
+
+    // batch_write: all-or-nothing, every blocked entry named; force follows edit_file
+    fs.writeFileSync(path.join(store.branchDir(pd.id, 'main'), 'journal.bib'), '@misc{a, title={A}}\n');
+    await ben.type(idx('agent BEN prose') + 'agent BEN'.length, 'X');
+    const before = ytext.toString();
+    ({ body } = await call('batch_write', { project: pd.id, message: 'Under the cursor', files: [
+      { path: 'journal.bib', edits: [{ quote: '@misc{a, title={A}}', replacement: '@misc{a, title={A}}\n@misc{b, title={B}}' }] },
+      { path: 'main.tex', edits: [{ quote: 'agent BENX prose', replacement: 'agent BENX words' }] },
+    ] }));
+    check(body.error === 'user_editing' && body.path === 'main.tex' && body.blocked.length === 1 && body.blocked[0].path === 'main.tex' && body.blocked[0].edit_index === 0 && body.blocked[0].retry_after_ms > 0, `batch_write names every blocked entry (got ${JSON.stringify(body)})`);
+    check(ytext.toString() === before && !fs.readFileSync(path.join(store.branchDir(pd.id, 'main'), 'journal.bib'), 'utf8').includes('{b,'), 'and writes nothing, the unrelated entry included');
+    ({ body } = await call('batch_write', { project: pd.id, message: 'At the user\'s request', force: true, files: [
+      { path: 'journal.bib', edits: [{ quote: '@misc{a, title={A}}', replacement: '@misc{a, title={A}}\n@misc{b, title={B}}' }] },
+      { path: 'main.tex', edits: [{ quote: 'agent BENX prose', replacement: 'agent BENX words' }] },
+    ] }));
+    check(body.ok === true && JSON.stringify(body.overrode) === '["Ben"]' && ytext.toString().includes('agent BENX words'), `a forced batch applies and names who it overrode (got ${JSON.stringify(body)})`);
+
+    // a pane with no cursor (another file open, never focused) blocks nothing
+    await ben.type(0, '%');
+    ben.leave();
+    ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'agent BENX words', replacement: 'agent BENX prose' }] }));
+    check(body.applied === 1, 'a pane with no cursor blocks nothing');
+    cleo.leave();
   }
   await conn.disconnect();
 }
