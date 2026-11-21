@@ -57,4 +57,21 @@ eq(scrubbed.exception.values[0].value, 'ENOENT', 'the diagnosis itself is untouc
 const bare = scrubEvent({ exception: { values: [{ type: 'Error', value: 'boom' }] } });
 eq(bare.exception.values[0].value, 'boom', 'an event with no request survives');
 
+// People and credentials inside the diagnosis text, and the trail around it.
+const loud = scrubEvent({
+  message: 'invite for ana.lopez@example.org failed',
+  exception: { values: [{ type: 'Error', value: "git push https://oauth2:glpat-SECRET@gitlab.com/g/p.git failed; see https://api.zotero.org/users/1/items?key=ZKEY for jo@uni.es" }] },
+  breadcrumbs: [{ category: 'console', message: '[aldine] approved ana.lopez@example.org' }],
+  user: { email: 'ana.lopez@example.org', ip_address: '203.0.113.7' },
+});
+const loudJson = JSON.stringify(loud);
+for (const leak of ['ana.lopez', 'jo@uni.es', 'glpat-SECRET', 'ZKEY', '203.0.113.7']) {
+  check(loudJson.indexOf(leak) === -1, `${leak} never leaves the instance`);
+}
+eq(loud.message, 'invite for [email] failed', 'an address in the message is replaced');
+eq(loud.exception.values[0].value, 'git push https://[redacted]@gitlab.com/g/p.git failed; see https://api.zotero.org/users/1/items for [email]',
+  'URL credentials and queries are cut, the rest of the diagnosis stays');
+eq(loud.breadcrumbs, undefined, 'no breadcrumbs');
+eq(loud.user, undefined, 'no user');
+
 console.log('observability: ALL PASSED');

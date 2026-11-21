@@ -118,6 +118,8 @@ ALDINE_COMPILE_QUOTA_MIN=
 
 # error tracking (optional). SENTRY_ENVIRONMENT separates this instance from
 # your others in the issue list; without it every instance files as production.
+# Events carry the stack and the error text only: no request body, headers,
+# cookies, URL queries, breadcrumbs, email addresses or URL credentials.
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
 

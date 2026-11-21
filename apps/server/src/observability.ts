@@ -12,6 +12,21 @@ const pkg = createRequire(import.meta.url)('../package.json') as { version: stri
 
 interface ScrubbableEvent {
   request?: { url?: string; query_string?: unknown; data?: unknown; cookies?: unknown; headers?: unknown };
+  message?: string;
+  exception?: { values?: Array<{ value?: string }> };
+  breadcrumbs?: unknown;
+  user?: unknown;
+}
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+// The userinfo of a URL (`https://oauth2:<token>@github.com/...`): git
+// tokens travel inline per operation, so a git error can quote one.
+const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi;
+const URL_QUERY_RE = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#]*)\?[^\s#]*/gi;
+
+/** A message or exception text with addresses, URL credentials and URL queries cut. */
+export function scrubText(s: string): string {
+  return s.replace(URL_USERINFO_RE, '$1[redacted]@').replace(URL_QUERY_RE, '$1').replace(EMAIL_RE, '[email]');
 }
 
 /**
@@ -19,7 +34,8 @@ interface ScrubbableEvent {
  * document platform must not hand to a third party: the path of the file being
  * read, the branch, and the signature on a PDF link (a valid credential for
  * that artifact until it expires). Headers can carry the session cookie or an
- * access token. The stack frames and the message are the diagnosis; none of
+ * access token. Messages can name a person by email or quote a git URL with
+ * its token. The stack frames and the message are the diagnosis; none of
  * this is.
  */
 export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
@@ -31,6 +47,12 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
     delete req.cookies;
     delete req.headers;
   }
+  // Breadcrumbs repeat console lines and outgoing request URLs, which name
+  // people and carry API keys in queries; the stack is the diagnosis.
+  delete event.breadcrumbs;
+  delete event.user;
+  if (typeof event.message === 'string') event.message = scrubText(event.message);
+  for (const v of event.exception?.values ?? []) if (typeof v.value === 'string') v.value = scrubText(v.value);
   return event;
 }
 

@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- Error reports to Sentry no longer carry breadcrumbs or a user, and email
+  addresses, URL credentials and URL queries are cut from error messages.
+  Before, a git error could quote a token from its remote URL and a console
+  line could name a person.
+
 ## [1.17.0] — 2026-11-21
 
 ### Added
