@@ -22,6 +22,7 @@ and infrastructure, not a rewrite.
 | Review comments | DataStore | `db/` |
 | Rate-limit counters | in-memory per process, or Redis when `REDIS_URL` is set | `ratelimit.ts` |
 | Compile-quota counters | DataStore (monthly seconds per user) | `usage.ts` |
+| Storage per owner | counted from disk, cached per process | `storage.ts` |
 | Live collaboration state (Yjs CRDT) | in-process (Hocuspocus) | `collab.ts` |
 
 Switch the datastore with an env var:
@@ -62,7 +63,10 @@ unaffected.
    typeset per branch, held per node and stored at most once per autosave
    window: until then another node's list shows an older last edit or
    typeset, and collab updates relayed from a peer node are not recorded on
-   the node that receives them). The datastore is multi-node-ready; these
+   the node that receives them), and the per-project storage counts behind
+   `ALDINE_STORAGE_QUOTA_MB` (a write on another node is seen here at the
+   next hourly recount, so a node can let an owner past the limit by what
+   the other node wrote since). The datastore is multi-node-ready; these
    caches are not yet.
 2. **Single-process Hocuspocus** — each Yjs document's CRDT state lives in one
    process's memory. → **Partially built, not yet a supported topology.** What
@@ -101,5 +105,6 @@ Compiles (CPU/RAM bursts) dominate resource usage, so if you host Aldine for a
 lab, class, or team, cheap dedicated compute (a Hetzner CCX-class box, EU for
 data residency) goes a lot further than hyperscaler instances. If you need to
 keep a shared box fair, cap compile-minutes per user
-(`ALDINE_COMPILE_QUOTA_MIN`; `/api/usage` reports consumption). See
+(`ALDINE_COMPILE_QUOTA_MIN`) and storage per project owner
+(`ALDINE_STORAGE_QUOTA_MB`); `/api/usage` reports both. See
 [../deploy/README.md](../deploy/README.md) for the single-VPS runbook.

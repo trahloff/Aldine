@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { isAdmin } from './authz.js';
 import { providers } from './oauth.js';
 import { meteringEnabled, usageFor } from './usage.js';
+import { storageByOwner, storageLimitFor, storageQuotaBytes } from './storage.js';
 import { hocuspocus, onlineUserIds, closeUserConnections } from './collab.js';
 import { publishProjectEvent } from './events.js';
 import { trashProject } from './trash.js';
@@ -51,6 +52,8 @@ export interface AdminStats {
   projects: { total: number; trashed: number };
   collab: { documents: number; connections: number };
   compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
+  /** What the projects of all owners occupy, and ALDINE_STORAGE_QUOTA_MB in bytes (0: none). */
+  storage: { bytes: number; quotaBytes: number };
   /** The configured allow-list, so the page can show who else can see it. */
   admins: string[];
 }
@@ -81,6 +84,10 @@ export interface AdminUserRow {
   projects: number;
   trashedProjects: number;
   compileSecondsThisMonth: number;
+  /** What the account's projects occupy, trashed ones included (storage.ts). */
+  storageBytes: number;
+  /** The account's storage limit in bytes, 0 for none. */
+  storageLimitBytes: number;
 }
 
 function activeSince(users: { lastSeenAt?: string }[], days: number, now: number): number {
@@ -93,6 +100,7 @@ export async function adminStats(now = Date.now()): Promise<AdminStats> {
   const month = `${new Date(now).getUTCFullYear()}-${String(new Date(now).getUTCMonth() + 1).padStart(2, '0')}`;
   const seconds = await db().totalUsageSeconds(month);
   const quotaSeconds = users[0] ? (await usageFor(users[0].id, new Date(now))).quotaSeconds : 0;
+  const storage = [...(await storageByOwner()).values()].reduce((a, b) => a + b, 0);
   return {
     users: {
       total: users.length,
@@ -104,6 +112,7 @@ export async function adminStats(now = Date.now()): Promise<AdminStats> {
     projects: { total: metas.filter((m) => !m.deletedAt).length, trashed: metas.filter((m) => !!m.deletedAt).length },
     collab: { documents: hocuspocus.getDocumentsCount(), connections: hocuspocus.getConnectionsCount() },
     compile: { month, seconds: Math.round(seconds), quotaSeconds, metering: meteringEnabled() },
+    storage: { bytes: storage, quotaBytes: storageQuotaBytes() },
     admins: [...auth.ADMIN_EMAILS],
   };
 }
@@ -120,6 +129,7 @@ async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
     if (m.deletedAt) n.trashed++; else n.live++;
     owned.set(m.ownerId, n);
   }
+  const stored = await storageByOwner();
   return Promise.all(users.map(async (u) => ({
     id: u.id,
     email: u.email,
@@ -137,6 +147,8 @@ async function rows(users: User[], now: number): Promise<AdminUserRow[]> {
     projects: owned.get(u.id)?.live || 0,
     trashedProjects: owned.get(u.id)?.trashed || 0,
     compileSecondsThisMonth: Math.round((await usageFor(u.id, new Date(now))).seconds),
+    storageBytes: stored.get(u.id) || 0,
+    storageLimitBytes: await storageLimitFor(u.id),
   })));
 }
 

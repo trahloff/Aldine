@@ -5,6 +5,7 @@ import { useAuth } from '../components/Auth';
 import Wordmark from '../components/Wordmark';
 import AdminAccountDialog from '../components/AdminAccountDialog';
 import { useDocumentTitle } from '../util/documentTitle';
+import { formatMb, storageLine } from '../util/storage';
 
 /**
  * Instance administration: who is on this server and how busy it is, and
@@ -173,6 +174,14 @@ export default function Admin() {
                 hint={stats.compile.metering ? `${minutes(stats.compile.quotaSeconds)} quota per user` : 'no quota set'}
                 testId="stat-compile"
               />
+              {stats.storage && (
+                <Stat
+                  label="Storage"
+                  value={formatMb(stats.storage.bytes)}
+                  hint={stats.storage.quotaBytes ? `${formatMb(stats.storage.quotaBytes)} limit per owner` : 'no limit set'}
+                  testId="stat-storage"
+                />
+              )}
             </div>
 
             <SupportCard />
@@ -183,7 +192,7 @@ export default function Admin() {
                 <thead>
                   <tr>
                     <th>Name</th><th>Email</th><th>Address</th><th>Account</th><th>Sign-in</th><th>Joined</th><th>Last seen</th>
-                    <th className="admin__num">Projects</th><th className="admin__num">Compile, this month</th><th><span className="visually-hidden">Actions</span></th>
+                    <th className="admin__num">Projects</th><th className="admin__num">Compile, this month</th><th className="admin__num">Storage</th><th><span className="visually-hidden">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -208,6 +217,13 @@ export default function Admin() {
                       <td title={u.lastSeenAt}>{ago(u.lastSeenAt, now)}</td>
                       <td className="admin__num">{u.projects}</td>
                       <td className="admin__num">{minutes(u.compileSecondsThisMonth)}</td>
+                      <td className="admin__num" data-testid="admin-storage">
+                        {u.storageBytes === undefined ? '—' : (
+                          <span style={u.storageLimitBytes && u.storageBytes >= u.storageLimitBytes ? { color: 'var(--error)' } : undefined}>
+                            {storageLine(u.storageBytes, u.storageLimitBytes ?? 0)}
+                          </span>
+                        )}
+                      </td>
                       <td>
                         {authEnabled && (
                           <button className="btn btn--small" onClick={() => { setNotice(null); setManaging(u.id); }} aria-label={`Manage ${u.email ?? u.name}`} data-testid="admin-manage">Manage</button>

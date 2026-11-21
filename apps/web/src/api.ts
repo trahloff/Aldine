@@ -153,6 +153,8 @@ export interface AdminStats {
   projects: { total: number; trashed: number };
   collab: { documents: number; connections: number };
   compile: { month: string; seconds: number; quotaSeconds: number; metering: boolean };
+  /** What every owner's projects occupy; `quotaBytes` is the per-owner limit, 0 for none. Absent from older servers. */
+  storage?: { bytes: number; quotaBytes: number };
   admins: string[];
 }
 export interface AdminUserRow {
@@ -179,6 +181,17 @@ export interface AdminUserRow {
   projects: number;
   trashedProjects: number;
   compileSecondsThisMonth: number;
+  /** What the account's projects occupy, trashed ones included, and its limit (0: none). Absent from older servers. */
+  storageBytes?: number;
+  storageLimitBytes?: number;
+}
+/** The signed-in person's metered resources. `storage.limitBytes` 0: no storage limit. */
+export interface Usage {
+  metering: boolean;
+  month: string;
+  seconds: number;
+  quotaSeconds: number;
+  storage?: { usedBytes: number; limitBytes: number };
 }
 /** `link` is the reset link to pass on (relative when the server has no public URL); `to` the address mailed instead. */
 export interface AdminResetResult { sent: boolean; to?: string; link?: string }
@@ -803,6 +816,7 @@ export const api = {
   zoteroKey: () => req<{ saved: boolean; userID?: number; username?: string | null }>('/api/zotero/key'),
   forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),
   /** The account's display name: what co-authors see on avatars, comments and commits. */
+  usage: () => req<Usage>('/api/usage'),
   updateMe: (patch: { name?: string; commitEmail?: string }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
   confirmEmail: (token: string) =>
     req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
