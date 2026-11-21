@@ -4,7 +4,7 @@ import type { AuthUser, RemoteInfo, RemoteProviderId } from '../../api';
 import { MenuButton, type MenuEntry } from '../Menu';
 import { AvatarFace } from '../AvatarFace';
 import { OperatorBadge } from '../Operator';
-import { INSTANCE, supportHref } from '../../instance';
+import { INSTANCE, legalLinks, supportHref } from '../../instance';
 import { IconChevronDown, IconEllipsis, IconFile, IconPlus, IconSearch, IconX } from '../Icons';
 import Wordmark from '../Wordmark';
 import { REMOTES } from '../../remotes';
@@ -51,6 +51,13 @@ export function startItems(a: StartActions): MenuEntry[] {
 }
 
 const helpItem = (): MenuEntry[] => (INSTANCE?.support ? [{ id: 'help', label: 'Get help…', onSelect: openSupport, testId: 'get-help' }] : []);
+/** The operator's privacy policy, legal notice and terms, each in a new tab. */
+const legalItems = (): MenuEntry[] => legalLinks(INSTANCE).map((l) => ({
+  id: `legal-${l.id}`,
+  label: l.label,
+  onSelect: () => { window.open(l.href, '_blank', 'noopener,noreferrer'); },
+  testId: `menu-legal-${l.id}`,
+}));
 
 function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppearance>): MenuEntry[] {
   const appearanceSub: MenuEntry = { kind: 'submenu', id: 'appearance', label: 'Appearance', items: appearanceMenuItems(appearance), testId: 'appearance' };
@@ -61,6 +68,7 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
       { kind: 'separator' },
       ...helpItem(),
       { id: 'about', label: 'About & source', onSelect: a.onAbout, testId: 'open-about' },
+      ...legalItems(),
     ];
   }
   return [
@@ -73,6 +81,7 @@ function accountItems(a: AccountActions, appearance: ReturnType<typeof useAppear
     { kind: 'separator' },
     ...helpItem(),
     { id: 'about', label: 'About & source', onSelect: a.onAbout, testId: 'open-about' },
+    ...legalItems(),
     { id: 'sign-out', label: 'Sign out', onSelect: a.onSignOut, testId: 'logout' },
   ];
 }

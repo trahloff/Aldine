@@ -116,6 +116,13 @@ SMTP_FROM="Aldine <no-reply@aldine.example.com>"
 # Useful when hosting for a group; over-quota compiles return HTTP 402.
 ALDINE_COMPILE_QUOTA_MIN=
 
+# your privacy policy, legal notice (imprint) and terms of use, linked on the
+# sign-in page, in the account menu and in About. https only; unset = no link.
+# With TERMS set, sign-up says creating an account accepts them.
+#ALDINE_PRIVACY_URL=https://aldine.example.com/privacy
+#ALDINE_LEGAL_URL=https://aldine.example.com/imprint
+#ALDINE_TERMS_URL=https://aldine.example.com/terms
+
 # error tracking (optional). SENTRY_ENVIRONMENT separates this instance from
 # your others in the issue list; without it every instance files as production.
 # Events carry the stack and the error text only: no request body, headers,
@@ -661,6 +668,7 @@ override file.
 | `ALDINE_AI_MODEL`, `ALDINE_AI_BASE_URL` | Override AI model / OpenAI-compatible endpoint |
 | `ALDINE_AI_AUTOFIX` | `1` = a failed typeset someone asked for is diagnosed in the Fix tab without a click; auto-typeset runs are not (default off) |
 | `ALDINE_COMPILE_QUOTA_MIN` | Per-user compile minutes per month (blank = uncapped) |
+| `ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL`, `ALDINE_TERMS_URL` | Links to your privacy policy, legal notice (imprint, Impressum) and terms of use, shown as **Privacy**, **Legal notice** and **Terms** under the sign-in card, in the account menu and in About. With `ALDINE_TERMS_URL` set, the sign-up form says "By creating an account you agree to the terms and the privacy policy". Each must be `https` (`http` only for `localhost`); anything else is left out with a boot warning. Unset = no link. See [docs/BRANDING.md](../docs/BRANDING.md#privacy-policy-legal-notice-and-terms) |
 | `ALDINE_DATASTORE` | `sqlite` (default): accounts, sessions, project settings and comments in `META_DIR/aldine.db`, filled from the JSON files of an earlier release on its first start. `json`: the JSON files instead. Leave it unset with `DATABASE_URL`: the server refuses to start with both |
 | `DATABASE_URL` | Postgres datastore (blank = `ALDINE_DATASTORE`) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |

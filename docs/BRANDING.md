@@ -6,7 +6,7 @@ can then tell who runs the service and whom to ask for help. Aldine's own name
 and logo stay where they are: the operator's mark is added beside them and
 never replaces them.
 
-All four settings are optional environment variables of the `app` service.
+All these settings are optional environment variables of the `app` service.
 They are read once at start; restart Aldine after changing one.
 
 | Variable | Example | What it does |
@@ -18,6 +18,26 @@ They are read once at start; restart Aldine after changing one.
 | `ALDINE_SUPPORT` | `latex-help@uni-kiel.de` or `https://servicedesk.uni-kiel.de/` | An email address or an `https` page. Shown as "Need help?" on the sign-in page, as **Get help…** in the account menu, and in About. An administrator can also set it on `/admin` (below). |
 
 The browser-tab icon stays Aldine's.
+
+## Privacy policy, legal notice and terms
+
+A service open to people outside your organisation usually needs a privacy
+policy, and in Germany and Austria a legal notice (Impressum). Aldine does not
+host these pages; link the ones on your website:
+
+| Variable | Example | What it does |
+|---|---|---|
+| `ALDINE_PRIVACY_URL` | `https://www.uni-kiel.de/en/privacy` | Shown as **Privacy**. |
+| `ALDINE_LEGAL_URL` | `https://www.uni-kiel.de/en/imprint` | Shown as **Legal notice**. |
+| `ALDINE_TERMS_URL` | `https://www.uni-kiel.de/en/latex-terms` | Shown as **Terms**. The sign-up form then says "By creating an account you agree to the terms and the privacy policy" (without passwords, `ALDINE_SSO_ONLY=1`: "By continuing …"), with both linked. There is no checkbox. |
+
+Each one is optional and independent of the others and of the operator's
+name. Set, they appear as small links under the sign-in card, at the end of the
+account menu (the **…** menu when accounts are off), and in About, in the
+editor too. Unset, nothing appears. Each must be an `https` link (`http` only
+for `localhost`); anything else is left out and the boot log names it
+(`[aldine] ALDINE_PRIVACY_URL is not an https URL; it is not shown`). They open
+in a new tab.
 
 ## The support contact on /admin
 
@@ -48,6 +68,8 @@ services:
       ALDINE_INSTANCE_LOGO_DARK: /branding/logo-dark.svg
       ALDINE_INSTANCE_URL: https://www.rz.uni-kiel.de/
       ALDINE_SUPPORT: latex-help@uni-kiel.de
+      ALDINE_PRIVACY_URL: https://www.uni-kiel.de/en/privacy
+      ALDINE_LEGAL_URL: https://www.uni-kiel.de/en/imprint
 ```
 
 ## What is checked
@@ -55,8 +77,9 @@ services:
 - A logo that is missing, unreadable, larger than 256 KB or not one of the
   four image types is left out, and the boot log says why
   (`[aldine] ALDINE_INSTANCE_LOGO=… is not used: the file does not exist`).
-- A website or support link that is not `https` (or a support value that is
-  neither an address nor a link) is left out and logged.
+- A website, support, privacy, legal notice or terms link that is not
+  `https` (or a support value that is neither an address nor a link) is left
+  out and logged.
 - The logo is served by Aldine at `/api/instance/logo` (and
   `/api/instance/logo/dark`), so the sign-in page can show it to people who
   are not signed in yet. SVG is served sandboxed and shown only as an image.

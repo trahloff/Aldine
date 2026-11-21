@@ -1,9 +1,10 @@
 import { withBase } from './basePath';
 
 /**
- * Who runs this instance (server: instance.ts, ALDINE_INSTANCE_* and
- * ALDINE_SUPPORT), stamped into index.html. Shown beside Aldine's own name,
- * never instead of it. null when the operator set none of it.
+ * Who runs this instance (server: instance.ts, ALDINE_INSTANCE_*,
+ * ALDINE_SUPPORT and the privacy, legal notice and terms links), stamped into
+ * index.html. Shown beside Aldine's own name, never instead of it. null when
+ * the operator set none of it.
  */
 export interface InstanceInfo {
   name: string | null;
@@ -11,6 +12,9 @@ export interface InstanceInfo {
   logoDark: string | null;
   url: string | null;
   support: { kind: 'email' | 'url'; value: string } | null;
+  privacy: string | null;
+  legal: string | null;
+  terms: string | null;
 }
 
 export function parseInstance(raw: string | null | undefined): InstanceInfo | null {
@@ -26,8 +30,11 @@ export function parseInstance(raw: string | null | undefined): InstanceInfo | nu
       logoDark: str(v.logo) && str(v.logoDark) && /^[0-9a-f]{1,32}$/.test(v.logoDark!) ? v.logoDark! : null,
       url: https(v.url),
       support: sup && (sup.kind === 'email' || https(sup.value)) ? { kind: sup.kind, value: sup.value } : null,
+      privacy: https(v.privacy),
+      legal: https(v.legal),
+      terms: https(v.terms),
     };
-    return info.name || info.logo || info.support ? info : null;
+    return info.name || info.logo || info.support || info.privacy || info.legal || info.terms ? info : null;
   } catch { return null; }
 }
 
@@ -45,4 +52,13 @@ export const instanceDarkLogoSrc = (i: InstanceInfo) => (i.logo && i.logoDark ? 
 /** Where the support contact leads: a mailto: link or the operator's help page. */
 export function supportHref(s: NonNullable<InstanceInfo['support']>): string {
   return s.kind === 'email' ? `mailto:${s.value}` : s.value;
+}
+
+export interface LegalLink { id: 'privacy' | 'legal' | 'terms'; label: string; href: string }
+
+/** The operator's privacy policy, legal notice and terms, in that order; only the ones set. */
+export function legalLinks(i: InstanceInfo | null | undefined): LegalLink[] {
+  if (!i) return [];
+  const all: Array<[LegalLink['id'], string, string | null]> = [['privacy', 'Privacy policy', i.privacy], ['legal', 'Legal notice', i.legal], ['terms', 'Terms', i.terms]];
+  return all.flatMap(([id, label, href]) => (href ? [{ id, label, href }] : []));
 }

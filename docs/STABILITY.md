@@ -140,7 +140,8 @@ Within 1.x a stable variable keeps its name and its meaning. A minor release
 may add new ones, and a changed default is listed under "Changed" in the
 CHANGELOG. Added since 1.0, stable from the release that adds it:
 `ALDINE_SIGNUP` (`open` or `approval`), `ALDINE_DATASTORE` (`sqlite` or
-`json`), `ALDINE_OAUTH_REGISTRATION` (`open` or `closed`).
+`json`), `ALDINE_OAUTH_REGISTRATION` (`open` or `closed`),
+`ALDINE_PRIVACY_URL`, `ALDINE_LEGAL_URL` and `ALDINE_TERMS_URL`.
 
 **Not covered:** the variables under "Tests and internals" in the same file.
 They exist for the test suites and for tuning, and may change in any release.

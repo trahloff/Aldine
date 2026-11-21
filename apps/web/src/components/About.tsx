@@ -1,6 +1,6 @@
 import Modal from './Modal';
 import { INSTANCE } from '../instance';
-import { SupportLink } from './Operator';
+import { LegalLinks, SupportLink } from './Operator';
 
 declare const __ALDINE_VERSION__: string;
 declare const __ALDINE_REV__: string;
@@ -36,6 +36,7 @@ export default function About({ onClose }: { onClose: () => void }) {
           {INSTANCE.support && <>For help, contact <SupportLink />.</>}
         </p>
       )}
+      <LegalLinks />
       <div className="modal__row">
         <button className="btn" onClick={onClose}>Close</button>
         <a

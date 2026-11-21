@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { BASE_PATH, withBase } from '../basePath';
 import { api, ApiError, AuthUser, OAuthProviderInfo, type GuestInfo } from '../api';
 import Wordmark from './Wordmark';
-import { OperatorCredit, SupportLink } from './Operator';
+import { OperatorCredit, SignupAgreement, SupportLink } from './Operator';
 import { INSTANCE } from '../instance';
 import { useDocumentTitle } from '../util/documentTitle';
 import { appSignInStarts, projectSignInStarts } from '../util/signInStart';
@@ -365,6 +365,8 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
           <p className="login__error" role="alert">No sign-in method is configured. {INSTANCE?.support ? <>Contact <SupportLink /></> : 'Contact the administrator.'}</p>
         )}
         {!passwordAuth && providers.length > 0 && approvalNote}
+        {/* Without passwords, a first "Continue with" is how an account is created. */}
+        {!passwordAuth && providers.length > 0 && <SignupAgreement action="continuing" />}
 
         {passwordAuth && (
           <>
@@ -406,6 +408,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
               )}
 
               {mode === 'register' && approvalNote}
+              {mode === 'register' && <SignupAgreement />}
 
               {error && <p className="login__error" role="alert" data-testid="auth-error">{error}</p>}
               {info && <p className={`login__info${info === notice && noticeTone === 'warn' ? ' login__info--warn' : ''}`} role="status" data-testid="auth-info">{info}</p>}
