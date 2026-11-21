@@ -232,6 +232,12 @@ export default function AdminAccountDialog({ user, accounts, meId, admins, sends
           <dd>{!user.email ? '—' : user.emailPending ? 'Not confirmed' : 'Confirmed'}</dd>
           <dt>Account</dt>
           <dd data-testid="admin-account-status">{user.awaitingApproval ? `Waiting for approval since ${since(user.createdAt)}` : user.disabledAt ? `Disabled since ${since(user.disabledAt)}` : 'Active'}</dd>
+          {user.signupNote && (
+            <>
+              <dt>Sign-up note</dt>
+              <dd data-testid="admin-account-note">{user.signupNote}</dd>
+            </>
+          )}
           <dt>Sign-in</dt>
           <dd>{user.signIn}</dd>
           <dt>Last seen</dt>

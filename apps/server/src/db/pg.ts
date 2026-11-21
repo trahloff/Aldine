@@ -142,6 +142,8 @@ export class PgStore implements DataStore {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at text;
       -- 1.11: NULL = the derived …@aldine.local commit address.
       ALTER TABLE users ADD COLUMN IF NOT EXISTS commit_email text;
+      -- 1.18: what a sign-up that waits for approval wrote for the administrators.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_note text;
       -- 1.3: invitations, staged before they become share entries.
       CREATE TABLE IF NOT EXISTS invitations (
         id text PRIMARY KEY, project_id text NOT NULL, recipient text NOT NULL,
@@ -166,13 +168,13 @@ export class PgStore implements DataStore {
 
   // ---- users ----
   private rowToUser(r: any): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: r.email_pending } : {}), ...(r.disabled_at ? { disabledAt: r.disabled_at } : {}), ...(r.commit_email ? { commitEmail: r.commit_email } : {}) };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: r.email_pending } : {}), ...(r.disabled_at ? { disabledAt: r.disabled_at } : {}), ...(r.commit_email ? { commitEmail: r.commit_email } : {}), ...(r.signup_note ? { signupNote: r.signup_note } : {}) };
   }
   async createUser(u: User) {
     try {
       await this.pool.query(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending,disabled_at,commit_email) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null, u.disabledAt ?? null, u.commitEmail ?? null],
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending,disabled_at,commit_email,signup_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null, u.disabledAt ?? null, u.commitEmail ?? null, u.signupNote ?? null],
       );
     } catch (err: any) {
       // Same messages as the JSON backend, so register() surfaces one
@@ -186,8 +188,8 @@ export class PgStore implements DataStore {
   }
   async updateUser(u: User) {
     await this.pool.query(
-      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8,last_seen_at=$9,email_pending=$10,commit_email=$11 WHERE id=$1`,
-      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null, u.commitEmail ?? null],
+      `UPDATE users SET email=$2,name=$3,salt=$4,hash=$5,created_at=$6,provider=$7,subject=$8,last_seen_at=$9,email_pending=$10,commit_email=$11,signup_note=$12 WHERE id=$1`,
+      [u.id, u.email, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? jsonb(u.emailPending) : null, u.commitEmail ?? null, u.signupNote ?? null],
     );
   }
   async listUsers() {

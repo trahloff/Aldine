@@ -36,6 +36,20 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   Collaborators are told whose storage it is. Account settings show
   "Storage: 120 MB of 500 MB", and /admin shows each account's usage.
   Refs #125.
+- Under `ALDINE_SIGNUP=approval` the sign-up form asks "What will you use
+  Aldine for?" (optional, up to 500 characters, for example the research
+  group and institution). The note is kept with the waiting account, quoted
+  in the administrators' email and shown on `/admin` beside the account. A
+  single sign-on account adds its note once on the "Waiting for approval"
+  page; the administrators get it by email too. Refs #125.
+- Approving an account emails the person a welcome: the account is ready,
+  a sign-in link, and three first steps (create or import a project, share
+  it with co-authors or a guest link, and where to send questions and
+  feedback: the instance's support contact when it has one). Without an
+  email transport the mail is logged, like the other mails. Refs #125.
+- `/signup` opens the form on "Create an account" instead of "Sign in", so
+  a "Request access" button on another site can link straight to it.
+  Signed in, it leads home. Refs #125.
 
 ### Changed
 - Error reports to Sentry no longer carry breadcrumbs or a user, and email

@@ -146,7 +146,10 @@ Live collaboration, a recompile, and a SyncTeX jump, in one real recording (comp
   of the `app` service. `ALDINE_SIGNUP=approval` keeps every new account,
   password or single sign-on, waiting until an administrator approves it on
   `/admin`, unless a project invitation is for its proven address; with email
-  set up, the administrators get a mail when one starts waiting.
+  set up, the administrators get a mail when one starts waiting, with the
+  person's note on what they will use Aldine for, and the person gets a
+  welcome mail with three first steps once approved. `/signup` opens the
+  sign-up form directly, for a "Request access" link.
 - **Your name next to ours**: `ALDINE_INSTANCE_NAME`, a logo, your website and
   a support contact (`ALDINE_SUPPORT`) show who runs the instance and whom to
   ask for help, beside Aldine's own name, on the sign-in page, the project

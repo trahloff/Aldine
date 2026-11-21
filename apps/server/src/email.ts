@@ -27,10 +27,19 @@ function fromAddress(): string {
 let sesClient: any = null;
 let smtpTransport: any = null;
 
+/** Mails logged for want of a transport, per recipient; kept under
+ *  ALDINE_TEST_HOOKS only, for the e2e suite to read. */
+const logged = new Map<string, Mail[]>();
+export const loggedMailsTo = (to: string): Mail[] => logged.get(to.trim().toLowerCase()) ?? [];
+
 export async function sendMail(mail: Mail): Promise<void> {
   if (process.env.SES_FROM) return sendViaSes(mail);
   if (process.env.SMTP_HOST) return sendViaSmtp(mail);
   console.log(`[aldine] email (no transport configured) → ${mail.to}: ${mail.subject}\n${mail.text}`);
+  if (process.env.ALDINE_TEST_HOOKS === '1') {
+    const key = mail.to.toLowerCase();
+    logged.set(key, [...(logged.get(key) ?? []), mail].slice(-20));
+  }
 }
 
 async function sendViaSes(mail: Mail): Promise<void> {
@@ -76,25 +85,53 @@ async function sendViaSmtp(mail: Mail): Promise<void> {
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** To an administrator: an account waits for approval (ALDINE_SIGNUP=approval).
- *  `account` is its address or ORCID iD, never its display name: that is the
- *  signer's own text. Links are built from ALDINE_PUBLIC_URL only. */
-export function approvalRequestMail(to: string, account: string, signIn: string, instance: string, adminLink: string): Mail {
-  const line = `${account} (signs in with ${signIn})`;
+ *  `account` is its address or ORCID iD, never its display name. `note` is
+ *  the signer's own text ("what will you use Aldine for?"): quoted as theirs,
+ *  never as a link. Links are built from ALDINE_PUBLIC_URL only.
+ *  `noteAdded`: the account waited already and has just added its note. */
+export function approvalRequestMail(to: string, m: { account: string; signIn: string; instance: string; adminLink: string; note?: string; noteAdded?: boolean }): Mail {
+  const line = `${m.account} (signs in with ${m.signIn})`;
+  const lead = m.noteAdded
+    ? `An account waiting for approval on the Aldine server at ${m.instance} added a note:`
+    : `A new account on the Aldine server at ${m.instance} is waiting for approval:`;
+  const noteText = m.note ? `\n\nThey wrote what they will use Aldine for (their words, not checked):\n"${m.note}"` : '';
+  const noteHtml = m.note ? `<p>They wrote what they will use Aldine for (their words, not checked):</p><blockquote style="margin:0 0 1em;padding-left:1em;border-left:3px solid #ccc">${escapeHtml(m.note)}</blockquote>` : '';
   return {
     to,
-    subject: 'A new Aldine account is waiting for approval',
-    text: `A new account on the Aldine server at ${instance} is waiting for approval:\n\n${line}\n\nApprove or delete it on the admin page:\n${adminLink}\n\nYou get this email because your address is on ALDINE_ADMIN_EMAILS.`,
-    html: `<p>A new account on the Aldine server at ${escapeHtml(instance)} is waiting for approval:</p><p><strong>${escapeHtml(line)}</strong></p><p><a href="${escapeHtml(adminLink)}">Approve or delete it on the admin page</a>.</p><p>You get this email because your address is on ALDINE_ADMIN_EMAILS.</p>`,
+    subject: m.noteAdded ? 'A waiting Aldine account added a note' : 'A new Aldine account is waiting for approval',
+    text: `${lead}\n\n${line}${noteText}\n\nApprove or delete it on the admin page:\n${m.adminLink}\n\nYou get this email because your address is on ALDINE_ADMIN_EMAILS.`,
+    html: `<p>${escapeHtml(lead)}</p><p><strong>${escapeHtml(line)}</strong></p>${noteHtml}<p><a href="${escapeHtml(m.adminLink)}">Approve or delete it on the admin page</a>.</p><p>You get this email because your address is on ALDINE_ADMIN_EMAILS.</p>`,
   };
 }
 
-/** To the person whose waiting account an administrator approved. */
-export function approvedMail(to: string, instance: string, link: string): Mail {
+/** Where an approved person asks for help: the instance's support contact,
+ *  or its administrators and Aldine's issue tracker when it has none. */
+type Support = { kind: 'email' | 'url'; value: string } | null;
+const ISSUES_URL = 'https://github.com/trahloff/Aldine/issues';
+
+/**
+ * To the person whose waiting account an administrator approved: the account
+ * is ready, where to sign in, and three first steps. `link` is built from
+ * ALDINE_PUBLIC_URL only; `support` is the instance's contact (ALDINE_SUPPORT
+ * or the one set on /admin).
+ */
+export function approvedMail(to: string, instance: string, link: string, support: Support = null): Mail {
+  const feedbackText = support
+    ? `Questions, or something slow, broken or missing? Write to ${support.value}.`
+    : `Questions, or something slow, broken or missing? Ask the administrator of this server, or open an issue at ${ISSUES_URL}.`;
+  const supportHref = support?.kind === 'email' ? `mailto:${support.value}` : support?.value;
+  const feedbackHtml = support
+    ? `Questions, or something slow, broken or missing? Write to <a href="${escapeHtml(supportHref!)}">${escapeHtml(support.value)}</a>.`
+    : `Questions, or something slow, broken or missing? Ask the administrator of this server, or <a href="${ISSUES_URL}">open an issue for Aldine</a>.`;
+  const steps = [
+    'Create a project: New project starts one blank or from a template, and Import a ZIP brings one in from Overleaf or another Aldine.',
+    'Share it: Share in the project invites co-authors by email address or ORCID iD, or creates a link for guests who have no account.',
+  ];
   return {
     to,
-    subject: 'Your Aldine account is approved',
-    text: `Hi there,\n\nAn administrator approved your account on the Aldine server at ${instance}. You can sign in now:\n${link}`,
-    html: `<p>Hi there,</p><p>An administrator approved your account on the Aldine server at ${escapeHtml(instance)}. <a href="${escapeHtml(link)}">Sign in now</a>.</p>`,
+    subject: 'Your Aldine account is ready',
+    text: `Hi there,\n\nAn administrator approved your account on the Aldine server at ${instance}, so it is ready to use. Sign in here:\n${link}\n\nThree first steps:\n\n1. ${steps[0]}\n2. ${steps[1]}\n3. ${feedbackText}`,
+    html: `<p>Hi there,</p><p>An administrator approved your account on the Aldine server at ${escapeHtml(instance)}, so it is ready to use. <a href="${escapeHtml(link)}">Sign in here</a>.</p><p>Three first steps:</p><ol><li>${escapeHtml(steps[0])}</li><li>${escapeHtml(steps[1])}</li><li>${feedbackHtml}</li></ol>`,
   };
 }
 

@@ -176,6 +176,8 @@ export interface AdminUserRow {
   /** Created under ALDINE_SIGNUP=approval and not approved yet; disabledAt is
    *  set too, and Enable approves it. */
   awaitingApproval?: boolean;
+  /** What the person wrote at sign-up under ALDINE_SIGNUP=approval: their own text. */
+  signupNote?: string;
   /** On ALDINE_ADMIN_EMAILS with a confirmed address: the page cannot disable or delete it. */
   admin: boolean;
   projects: number;
@@ -847,9 +849,10 @@ export const api = {
   login: (email: string, password: string, confirmToken?: string) =>
     req<{ user: AuthUser; emailConfirmed?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(confirmToken ? { confirmToken } : {}) }) }),
   /** `awaitingApproval`: no session; `message` says what happens next. */
-  /** `invite`: signing up from that invitation's page; the confirmation link leads back to it. */
-  register: (email: string, password: string, name?: string, invite?: string) =>
-    req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}) }) }),
+  /** `invite`: signing up from that invitation's page; the confirmation link leads back to it.
+   *  `note`: what the person will use Aldine for, kept while the account waits for approval. */
+  register: (email: string, password: string, name?: string, invite?: string, note?: string) =>
+    req<{ user: AuthUser; awaitingApproval?: boolean; message?: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name, ...(invite ? { invite } : {}), ...(note ? { note } : {}) }) }),
   /** `redirect`: the identity provider's sign-out page, after a single sign-on session when OIDC_LOGOUT=idp. */
   logout: () => req<{ ok: boolean; redirect?: string }>('/api/auth/logout', { method: 'POST' }),
   signInMethods: () => req<SignInMethods>('/api/auth/sign-in-methods'),

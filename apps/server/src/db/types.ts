@@ -37,6 +37,10 @@ export interface User {
   /** Author email on the commits this account's requests make; absent means
    *  the derived `…@aldine.local` address. Never shown to anyone else. */
   commitEmail?: string;
+  /** What the person wrote at sign-up under ALDINE_SIGNUP=approval ("what
+   *  will you use Aldine for?"), for the administrators who approve it.
+   *  Their own text, at most 500 characters on one line. */
+  signupNote?: string;
 }
 
 /** The one-time confirmation link of a pending address: `hash` is the

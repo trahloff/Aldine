@@ -4,8 +4,8 @@ import type { Browser, Page } from '@playwright/test';
 /**
  * ALDINE_SIGNUP=approval, against the second server of
  * playwright.auth.config.ts (ALDINE_ADMIN_EMAILS=admin@test.com, no email
- * transport, ALDINE_TEST_HOOKS for the logged confirmation links, and the
- * suite's mock OpenID Connect provider). Every test uses fresh addresses, so a
+ * transport, ALDINE_TEST_HOOKS for the logged confirmation links and mails,
+ * and the suite's mock OpenID Connect provider). Every test uses fresh addresses, so a
  * re-run against the kept .data-auth-approval starts from the same situation.
  */
 const ORIGIN = process.env.ALDINE_AUTH_APPROVAL_URL || `http://localhost:${Number(process.env.E2E_AUTH_APPROVAL_PORT || 3210)}`;
@@ -21,6 +21,13 @@ test.skip(!!process.env.ALDINE_AUTH_URL && !process.env.ALDINE_AUTH_APPROVAL_URL
 async function ownBrowser(browser: Browser): Promise<Page> {
   const addr = `198.19.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
   return (await browser.newContext({ baseURL: ORIGIN, extraHTTPHeaders: { 'x-forwarded-for': addr } })).newPage();
+}
+
+/** The mails the server logged for `to` for want of a transport (ALDINE_TEST_HOOKS). */
+async function mailsTo(page: Page, to: string): Promise<Array<{ subject: string; text: string; html?: string }>> {
+  const r = await page.request.get(`/api/test/mails?to=${encodeURIComponent(to)}`);
+  expect(r.ok()).toBeTruthy();
+  return (await r.json()).mails;
 }
 
 async function confirmationToken(page: Page, email: string): Promise<string> {
@@ -133,6 +140,79 @@ test.describe('sign-up with approval', () => {
 
     await signIn(person);
     await expect(person.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await person.context().close();
+    await admin.context().close();
+  });
+
+  test('a "Request access" link opens the sign-up, whose note the administrator reads before approving, and the welcome mail follows', async ({ browser }) => {
+    const email = `beta${uid()}@test.com`;
+    const note = `Thesis group ${uid()}, Example University`;
+    const person = await ownBrowser(browser);
+    await person.goto('/signup');
+    await expect(person.getByTestId('auth-submit')).toHaveText('Create account');
+    await expect(person.getByTestId('auth-approval-note')).toBeVisible();
+    await person.getByTestId('auth-name').fill('Beta Person');
+    await person.getByTestId('auth-email').fill(email);
+    await person.getByTestId('auth-password').fill('password123');
+    await expect(person.getByTestId('auth-note')).toHaveAttribute('maxlength', '500');
+    await person.getByTestId('auth-note').fill(note);
+    await person.getByTestId('auth-submit').click();
+    await expect(person.getByTestId('auth-waiting')).toHaveText(`Your account is created. ${WAITING}`);
+
+    await person.goto(`/?confirm_email=${encodeURIComponent(await confirmationToken(person, email))}`);
+    await person.getByTestId('auth-email').fill(email);
+    await person.getByTestId('auth-password').fill('password123');
+    await person.getByTestId('auth-submit').click();
+    await expect(person.getByTestId('auth-waiting')).toHaveText(`Your email address is confirmed. ${WAITING}`);
+
+    const admin = await ownBrowser(browser);
+    await signInAdmin(admin);
+    const row = admin.getByTestId('admin-user-row').filter({ hasText: email });
+    await expect(row.getByTestId('admin-signup-note')).toHaveText(`“${note}”`);
+    await row.getByTestId('admin-manage').click();
+    await expect(admin.getByTestId('admin-account-note')).toHaveText(note);
+    await admin.getByTestId('admin-account-close').click();
+    await approve(admin, email);
+    await expect(row.getByTestId('admin-signup-note'), 'an approved account no longer shows it in the list').toHaveCount(0);
+
+    await expect.poll(async () => (await mailsTo(person, email)).map((m) => m.subject)).toContain('Your Aldine account is ready');
+    const welcome = (await mailsTo(person, email)).find((m) => m.subject === 'Your Aldine account is ready')!;
+    expect(welcome.text).toContain(`Sign in here:\n${ORIGIN}/`);
+    expect(welcome.text).toContain('Three first steps:');
+    expect(welcome.text).toContain('Import a ZIP');
+    expect(welcome.text).toContain('or creates a link for guests who have no account');
+
+    await person.getByTestId('auth-submit').click();
+    await expect(person.getByTestId('new-project')).toBeVisible({ timeout: 15_000 });
+    await person.context().close();
+    await admin.context().close();
+  });
+
+  test('a single sign-on account adds its note on the waiting page, once', async ({ browser }) => {
+    const id = uid();
+    const persona = { code: `n${id}`, sub: `note-${id}`, claims: { name: `Sso Note ${id}`, email: `ssonote${id}@example.org`, email_verified: true } };
+    expect((await fetch(`${OIDC}/__personas`, { method: 'POST', body: JSON.stringify(persona) })).ok).toBeTruthy();
+    const signIn = async (page: Page) => {
+      await page.goto('/signup');
+      await page.getByTestId('oauth-oidc').click();
+      await page.getByTestId(`oidc-persona-${persona.code}`).click();
+    };
+    const note = `Physics lab ${id}`;
+    const person = await ownBrowser(browser);
+    await signIn(person);
+    await expect(person.locator('h1')).toHaveText('Waiting for approval');
+    await person.getByTestId('signup-note').fill(note);
+    await person.getByTestId('signup-note-submit').click();
+    await expect(person.locator('h1')).toHaveText('Note sent');
+    await expect(person.getByTestId('sign-in-error')).toContainText('The administrators of this server read your note');
+
+    await signIn(person);
+    await expect(person.locator('h1')).toHaveText('Waiting for approval');
+    await expect(person.getByTestId('signup-note-form'), 'the note is taken once').toHaveCount(0);
+
+    const admin = await ownBrowser(browser);
+    await signInAdmin(admin);
+    await expect(admin.getByTestId('admin-user-row').filter({ hasText: persona.claims.email }).getByTestId('admin-signup-note')).toHaveText(`“${note}”`);
     await person.context().close();
     await admin.context().close();
   });

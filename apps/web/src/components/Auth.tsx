@@ -59,6 +59,10 @@ function stripConfirmParam() {
  *  says who the invitation is for before asking anyone to sign in. */
 const SELF_GATED_PATHS = ['/oauth/authorize'];
 const SELF_GATED_PREFIXES = ['/invite/'];
+/** Opens the form on "create an account": a "Request access" button elsewhere links here. */
+export const SIGNUP_PATH = '/signup';
+/** Longest sign-up note the server keeps (auth.NOTE_MAX). */
+const NOTE_MAX = 500;
 
 export function useAuth() { return useContext(Ctx); }
 
@@ -154,6 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       <LoginScreen
         providers={providers}
         passwordAuth={passwordAuth}
+        startWithSignUp={typeof window !== 'undefined' && window.location.pathname === withBase(SIGNUP_PATH)}
         signupApproval={signupApproval}
         sendsEmail={sendsEmail}
         onAuthed={(u) => setUser(u)}
@@ -220,10 +225,12 @@ const PROVIDER_ICON: Record<string, JSX.Element> = {
  *  used it (`signedIn` false when the account still waits). `sendsEmail`:
  *  reset links go out by mail; otherwise only the administrator has them.
  *  `invite`: the invitation this form answers; the confirmation link of an
- *  account created here leads back to it. */
-export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmail, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes, invite }: {
+ *  account created here leads back to it. `startWithSignUp`: open on
+ *  "create an account" instead of "sign in" (SIGNUP_PATH). */
+export function LoginScreen({ providers, passwordAuth, startWithSignUp, signupApproval, sendsEmail, onAuthed, onStart, heading, registerHeading, notice, noticeTone, initialEmail, confirmToken, onConfirmLinkUsed, bothModes, invite }: {
   providers: OAuthProviderInfo[];
   passwordAuth: boolean;
+  startWithSignUp?: boolean;
   signupApproval?: boolean;
   sendsEmail?: boolean;
   onAuthed(u: AuthUser): void;
@@ -241,9 +248,11 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
   bothModes?: boolean;
   invite?: string;
 }) {
-  const [mode, setMode] = useState<Mode>('login');
+  const [mode, setMode] = useState<Mode>(startWithSignUp ? 'register' : 'login');
   const [email, setEmail] = useState(initialEmail ?? '');
   const [name, setName] = useState('');
+  /** What the person will use Aldine for: asked only when an administrator approves sign-ups. */
+  const [note, setNote] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
@@ -295,7 +304,7 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
         if (r.emailConfirmed) onConfirmLinkUsed?.(true);
         onAuthed(r.user);
       } else if (mode === 'register') {
-        const r = await api.register(email.trim(), password, name.trim() || undefined, invite);
+        const r = await api.register(email.trim(), password, name.trim() || undefined, invite, signupApproval ? note.trim() || undefined : undefined);
         if (!r.awaitingApproval) { onAuthed(r.user); return; }
         setMode('login'); setPassword(''); setBusy(false);
         setWaiting(r.message ?? '');
@@ -404,6 +413,14 @@ export function LoginScreen({ providers, passwordAuth, signupApproval, sendsEmai
                     onChange={(e) => setPassword(e.target.value)}
                   />
                   {mode !== 'login' && <p className="login__hint" id="auth-password-hint">At least 8 characters.</p>}
+                </div>
+              )}
+
+              {mode === 'register' && signupApproval && (
+                <div className="login__field">
+                  <label className="field__label" htmlFor="auth-note">What will you use Aldine for? <span className="login__optional">(optional)</span></label>
+                  <textarea id="auth-note" className="input login__note" name="note" rows={3} value={note} maxLength={NOTE_MAX} aria-describedby="auth-note-hint" data-testid="auth-note" onChange={(e) => setNote(e.target.value)} />
+                  <p className="login__hint" id="auth-note-hint">For example your research group and institution. The administrators read it before they approve your account.</p>
                 </div>
               )}
 

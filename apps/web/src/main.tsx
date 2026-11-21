@@ -1,12 +1,12 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Link, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { keepShareLink, useShareLinkJoin } from './util/shareLink';
 import Home from './pages/Home';
 import { BASE_PATH } from './basePath';
 import { ToastProvider } from './components/Toast';
 import { DialogProvider } from './components/Dialogs';
-import { AuthProvider, GuestScope, useAuth } from './components/Auth';
+import { AuthProvider, GuestScope, SIGNUP_PATH, useAuth } from './components/Auth';
 import ErrorBoundary from './components/ErrorBoundary';
 import { startThemeSync } from './theme';
 // before the router: the editor's Back/Forward guard must hear a popstate first
@@ -76,6 +76,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/oauth/authorize" element={<OAuthConsent />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/invite/:id" element={<Invite />} />
+                {/* Signed out, the sign-up form shows here instead (AuthProvider). */}
+                <Route path={SIGNUP_PATH} element={<Navigate to="/" replace />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
              </GuestScope>

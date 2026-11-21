@@ -6,7 +6,8 @@ import { defineConfig } from '@playwright/test';
  *  OIDC ones, restricted to the `aldine-users` group; Google and GitHub stay
  *  unconfigured on purpose. A second server on :3210 runs with
  *  ALDINE_SIGNUP=approval for approval.spec.ts and
- *  ALDINE_OAUTH_REGISTRATION=closed for oauth-closed.spec.ts, and a third on
+ *  ALDINE_OAUTH_REGISTRATION=closed for oauth-closed.spec.ts (its
+ *  ALDINE_PUBLIC_URL lets it build the welcome mail), and a third on
  *  :3211 with OIDC_LOGOUT=idp for the sign-out tests in oidc.spec.ts and
  *  ALDINE_STORAGE_QUOTA_MB=1 for storage.spec.ts; both
  *  serve the web build the first one made, so they must stay after that one
@@ -50,7 +51,7 @@ export default defineConfig({
       timeout: 600_000,
     },
     {
-      command: `PORT=${APPROVAL} AUTH_ENABLED=1 ALDINE_SIGNUP=approval ALDINE_OAUTH_REGISTRATION=closed ALDINE_ADMIN_EMAILS=admin@test.com ALDINE_TEST_HOOKS=1 TRUST_PROXY=1 RL_REGISTER_BURST=200 DATA_DIR=$(pwd)/.data-auth-approval META_DIR=$(pwd)/.secrets-auth-approval CACHE_DIR=$(pwd)/.data-auth-approval/cache OIDC_ISSUER=http://localhost:${OIDC}/application/o/aldine/ OIDC_CLIENT_ID=aldine-e2e OIDC_CLIENT_SECRET=aldine-e2e-secret npx tsx apps/server/src/index.ts`,
+      command: `PORT=${APPROVAL} ALDINE_PUBLIC_URL=http://localhost:${APPROVAL} AUTH_ENABLED=1 ALDINE_SIGNUP=approval ALDINE_OAUTH_REGISTRATION=closed ALDINE_ADMIN_EMAILS=admin@test.com ALDINE_TEST_HOOKS=1 TRUST_PROXY=1 RL_REGISTER_BURST=200 DATA_DIR=$(pwd)/.data-auth-approval META_DIR=$(pwd)/.secrets-auth-approval CACHE_DIR=$(pwd)/.data-auth-approval/cache OIDC_ISSUER=http://localhost:${OIDC}/application/o/aldine/ OIDC_CLIENT_ID=aldine-e2e OIDC_CLIENT_SECRET=aldine-e2e-secret npx tsx apps/server/src/index.ts`,
       cwd: '..',
       port: APPROVAL,
       reuseExistingServer: true,
