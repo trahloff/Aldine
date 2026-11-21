@@ -1024,9 +1024,10 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 .tree__change--added { color: var(--ok); }
 .tree__change--folder { min-width: 0; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.8; }
 .tree__item--active:active { background: var(--accent-soft); }
-.tree__item--active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-/* the grey tag fails contrast on the accent tint; it takes the row's accent */
-.tree__item--active .tree__root-tag { color: inherit; border-color: currentColor; }
+.tree__item--active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+/* Accent text on the accent tint stays under 4.5:1 in both themes: the name and tag take the text colour, the icon the accent. */
+.tree__item--active svg { color: var(--accent); }
+.tree__item--active .tree__root-tag { color: inherit; }
 .tree__item--dir { color: var(--text-2); font-weight: 600; cursor: default; }
 /* the folder a dragged row or file would land in */
 .tree__item.tree__item--drop { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
