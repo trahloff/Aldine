@@ -590,6 +590,14 @@ test.describe('auth', () => {
     expect((await gwenCtx.request.get(`/api/projects/${proj.id}`)).status()).toBe(403);
     // Vera's link still works
     expect((await veraCtx.request.get(`/api/projects/${proj.id}`)).status()).toBe(200);
+    // Vera leaves: the sign-in form, her place on the link free, no guest cookie left in her browser
+    await vera.getByTestId('guest-leave').click();
+    await vera.getByTestId('dialog-confirm').click();
+    await expect(vera.getByTestId('auth-email')).toBeVisible();
+    expect((await veraCtx.request.get(`/api/projects/${proj.id}`)).status()).toBe(401);
+    expect((await veraCtx.cookies()).some((c) => c.name === 'aldine_guest')).toBe(false);
+    const after = await (await page.request.get(`/api/projects/${proj.id}`)).json();
+    expect(after.share.links.reduce((n: number, l: { joinedGuests?: number }) => n + (l.joinedGuests ?? 0), 0)).toBe(0);
 
     for (const c of [gwenCtx, veraCtx]) await c.close();
     await owner.close();

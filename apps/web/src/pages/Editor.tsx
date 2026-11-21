@@ -279,7 +279,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled, user, setUser, guest } = useAuth();
+  const { authEnabled, user, setUser, guest, setGuest } = useAuth();
   // A guest (no account, here on a share link) never typesets: they see
   // the PDF the others typeset. A ref, for the typeset callbacks.
   const asGuest = authEnabled && !user && guest?.projectId === id;
@@ -994,6 +994,23 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     }
     await loadFiles();
   }, [compile.result, doCompile, loadFiles, bumpHistory]);
+
+  const leaveAsGuest = useCallback(async () => {
+    const ok = await dialogs.confirm({
+      title: `Leave “${project?.name ?? 'this project'}”?`,
+      body: 'You stop being a guest here. To come back, open the share link again.',
+      confirmLabel: 'Leave project',
+    });
+    if (!ok) return;
+    try {
+      await api.leaveAsGuest(id);
+    } catch (err) {
+      toast(`Could not leave the project: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      return;
+    }
+    navigate('/');
+    setGuest(null);
+  }, [id, project?.name]);
 
   const revertAgent = useCallback(async () => {
     if (!agentReview) return;
@@ -2087,6 +2104,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             <IconChevronDown />
           </MenuButton>
         </div>}
+        {asGuest && <button className="btn toolbar__wide" onClick={leaveAsGuest} data-testid="guest-leave" title="Stop being a guest in this project">Leave project</button>}
         <button
           className="btn btn--ghost toolbar__more"
           onClick={(e) => setMoreOpen({ keyboard: e.detail === 0 })}
@@ -2117,6 +2135,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             ...(!noComments ? [{ id: 'comment', label: 'Comment on the selection', onSelect: startComment, testId: 'more-comment' } as MenuEntry] : []),
             { id: 'share', label: 'Share…', onSelect: () => setShareOpen(true), testId: 'more-share' },
             { id: 'settings', label: 'Settings…', onSelect: () => setSettingsOpen(true), testId: 'more-settings' },
+            ...(asGuest ? [{ id: 'leave', label: 'Leave project…', onSelect: leaveAsGuest, testId: 'more-guest-leave' } as MenuEntry] : []),
             ...(users.length > 1 ? [{ kind: 'hint', label: `Here now: ${users.map((u) => u.name).join(', ')}`, testId: 'more-presence' } as MenuEntry] : []),
           ]}
         />
