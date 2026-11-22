@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-11-22
+
 ### Added
 - Review comments: @mentions and assignment. Type @ in a comment or a
   reply to pick someone who can open the project (names only; guests are
