@@ -416,7 +416,7 @@ removed by deleting its record from `oauth_clients` in the datastore.
 | `list_citations` | Citation keys in the project's `.bib` files, with title, author, year. | read-only |
 | `list_labels` | `\label` targets across the project's `.tex` files. | read-only |
 | `wordcount` | Words in the root file and its `\input`/`\include` graph; an error, not 0, while the project has no main document. | read-only |
-| `list_comments` | The review threads of a branch (open ones unless `include_resolved`; `path` narrows to a file): id, path, line, the quoted text, author, body, an optional `suggestion`, resolved, replies. | read-only |
+| `list_comments` | The review threads of a branch (open ones unless `include_resolved`; `path` narrows to a file): id, path, line, the quoted text, author, body, an optional `suggestion`, resolved, an `assignee` name when the thread has one, replies. | read-only |
 | `add_comment` | A review comment anchored by `quote`/`occurrence` (the `edit_file` rules and errors), with an optional `suggestion` people accept with one click; signed "Claude (for <person>)". Needs edit or review access. | additive |
 | `reply_comment` | A reply on a thread (`comment_id`), under the same name. | additive |
 | `resolve_comment` | Resolves a thread, or reopens it with `resolved: false`. | additive |

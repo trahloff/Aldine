@@ -1105,6 +1105,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     body: c.body,
     ...(c.suggestion !== undefined ? { suggestion: c.suggestion } : {}),
     resolved: c.resolved,
+    ...(c.assignee ? { assignee: c.assignee.name } : {}),
     createdAt: c.createdAt,
     replies: c.replies.map((r) => ({ author: r.author, body: r.body, createdAt: r.createdAt })),
   });

@@ -39,14 +39,26 @@ export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'cre
   return comment;
 }
 
-export async function replyComment(projectId: string, id: string, author: string, body: string, authorId?: string): Promise<Comment | null> {
+export async function replyComment(projectId: string, id: string, author: string, body: string, authorId?: string, mentions?: string[]): Promise<Comment | null> {
   const list = await db().loadComments(projectId);
   const c = list.find((x) => x.id === id);
   if (!c) return null;
   if (c.replies.length >= 500) throw new Error('reply limit reached');
-  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString() });
+  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString(), ...(mentions?.length ? { mentions } : {}) });
   await db().saveComments(projectId, list);
   return c;
+}
+
+/** Give thread `id` to one account, or to nobody (null); `previous` is who had it. */
+export async function assignComment(projectId: string, id: string, to: { id: string; name: string } | null, by?: string): Promise<{ comment: Comment; previous?: string } | null> {
+  const list = await db().loadComments(projectId);
+  const c = list.find((x) => x.id === id);
+  if (!c) return null;
+  const previous = c.assignee?.id;
+  if (to) c.assignee = { id: to.id, name: to.name, at: new Date().toISOString(), ...(by ? { by } : {}) };
+  else delete c.assignee;
+  await db().saveComments(projectId, list);
+  return { comment: c, previous };
 }
 
 export async function resolveComment(projectId: string, id: string, resolved: boolean): Promise<Comment | null> {

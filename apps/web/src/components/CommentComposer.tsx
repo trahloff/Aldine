@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import Modal from './Modal';
 import { isMac } from '../platform';
+import type { Person } from '../api';
+import MentionTextarea, { mentionsIn } from './MentionTextarea';
 
 /** Characters the server keeps in a comment, a reply or a suggestion. */
 export const COMMENT_MAX = 20000;
@@ -19,10 +21,12 @@ export function LengthNote({ length, testId }: { length: number; testId: string 
 /** Inline composer for a new review comment (replaces the old window.prompt flow).
  *  `onSubmit` settles once the comment is saved; when it rejects, the
  *  composer stays open with the text, for another try. */
-export default function CommentComposer({ quote, onSubmit, onClose }: {
+export default function CommentComposer({ quote, onSubmit, onClose, people = [] }: {
   quote: string;
-  onSubmit(body: string, suggestion?: string): Promise<void>;
+  onSubmit(body: string, suggestion?: string, mentions?: string[]): Promise<void>;
   onClose(): void;
+  /** Who @ offers: the project's people (none without accounts). */
+  people?: Person[];
 }) {
   const [body, setBody] = useState('');
   const [suggesting, setSuggesting] = useState(false);
@@ -37,7 +41,7 @@ export default function CommentComposer({ quote, onSubmit, onClose }: {
   const submit = () => {
     if (!ready) return;
     setBusy(true);
-    onSubmit(body.trim(), suggested).catch(() => setBusy(false));
+    onSubmit(body.trim(), suggested, mentionsIn(body, people)).catch(() => setBusy(false));
   };
 
   return (
@@ -45,13 +49,15 @@ export default function CommentComposer({ quote, onSubmit, onClose }: {
       <div>
         <h2 style={{ marginBottom: 8 }}>Add a comment</h2>
         <blockquote className="composer__quote" title={quote}>{quote}</blockquote>
-        <textarea
+        <MentionTextarea
           className="input composer__body"
-          placeholder="Your comment…"
+          placeholder={people.length ? 'Your comment… Type @ to mention someone' : 'Your comment…'}
+          aria-label="Your comment"
           value={body}
+          people={people}
           data-testid="comment-body"
           autoFocus
-          onChange={(e) => setBody(e.target.value)}
+          onValue={setBody}
           onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit(); if (e.key === 'Escape') onClose(); }}
         />
         <LengthNote length={body.trim().length} testId="comment-count" />

@@ -7,6 +7,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Review comments: @mentions and assignment. Type @ in a comment or a
+  reply to pick someone who can open the project (names only; guests are
+  not offered). A thread can be assigned to one of them from its card. The
+  Review panel's **For me** shows the threads assigned to you or mentioning
+  you, and Home lists them under **For you**, each opening the project at
+  the thread (`/p/<id>?comment=<thread>`).
+- Email when someone mentions you or assigns you a thread, on servers that
+  send email and have `ALDINE_PUBLIC_URL` set. Never to the person who acted;
+  at most 30 an hour per person. **Email me about comments** in Account
+  settings turns them off.
+- Agent API: `list_comments` names a thread's assignee.
+
 ## [1.19.0] — 2026-11-21
 
 ### Added
