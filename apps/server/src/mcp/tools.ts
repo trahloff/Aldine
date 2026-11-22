@@ -1124,9 +1124,11 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   };
   const commentAuthor = () => agentDisplayName(owner ? [owner] : []);
   const commentActor = () => ({ id: identity.user?.id, name: commentAuthor() });
-  /** Written by the user, or by an agent for them; without accounts everything is the one user's. */
-  const writtenForMe = (x: { authorId?: string; agentFor?: string }) =>
-    !identity.user || x.authorId === identity.user.id || x.agentFor === identity.user.id;
+  /** Written by the user, or by an agent for them; without accounts everything is the one user's.
+   *  Agent comments from before 1.21 carry no agentFor, only the signature. */
+  const writtenForMe = (x: { author: string; authorId?: string; agentFor?: string }) =>
+    !identity.user || x.authorId === identity.user.id || x.agentFor === identity.user.id
+    || (!x.authorId && !x.agentFor && x.author === commentAuthor());
   const noComment = (id: string) => `No comment ${id} in this project — list_comments names the threads`;
   /** People by the name Aldine shows ("me": the user), or the reason none can be. */
   const findPeople = async (meta: store.ProjectMeta, names: string[]): Promise<{ people: Person[] } | { error: string }> => {

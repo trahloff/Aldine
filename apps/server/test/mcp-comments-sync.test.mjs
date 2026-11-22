@@ -219,6 +219,13 @@ check(r.isError && /has 1 replies/.test(r.body), 'a reply index past the end is 
 const human = await comments.addComment(id, { branch: 'main', file: 'review.tex', anchor: { from: REVIEW.indexOf('first claim'), to: REVIEW.indexOf('first claim') + 11, quote: 'first claim' }, author: 'Vic', authorId: vic.id, body: 'Vic wrote this' });
 r = await asAda('edit_comment', { project: id, comment_id: human.id, body: 'changed' });
 check(r.isError && /Vic wrote that/.test(r.body), 'someone else\'s comment is not Claude\'s to edit');
+const legacy = await comments.addComment(id, { branch: 'main', file: 'review.tex', anchor: { from: REVIEW.indexOf('first claim'), to: REVIEW.indexOf('first claim') + 11, quote: 'first claim' }, author: 'Claude (for Ada)', body: 'written before agentFor existed' });
+r = await asAda('edit_comment', { project: id, comment_id: legacy.id, body: 'rewritten' });
+eq([r.isError, r.body.comment?.body], [false, 'rewritten'], `an agent comment from before agentFor is Claude's for the person its signature names (got ${JSON.stringify(r.body)})`);
+const forVic = await comments.addComment(id, { branch: 'main', file: 'review.tex', anchor: legacy.anchor, author: 'Claude (for Vic)', body: 'Vic\'s agent' });
+r = await asAda('edit_comment', { project: id, comment_id: forVic.id, body: 'changed' });
+check(r.isError && /Claude \(for Vic\) wrote that/.test(r.body), 'but not one signed for someone else');
+await comments.deleteComment(id, legacy.id); await comments.deleteComment(id, forVic.id);
 r = await asVic('delete_comment', { project: id, comment_id: sug.id });
 check(r.isError, 'a "Can view" person cannot delete through the agent');
 
