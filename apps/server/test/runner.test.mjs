@@ -144,7 +144,16 @@ eq(raced.result.skipped, [{ path: 'data/values.csv', reason: 'changed in Aldine 
 eq(fs.readFileSync(path.join(store.branchDir(P, 'main'), 'data/values.csv'), 'utf8'), 'typed meanwhile\n', 'what was typed stays');
 
 const timed = await run(P, owner, 'sleep 60');
-check(timed.result.timedOut === true, 'a job over the time limit is stopped');
+check(timed.result?.timedOut === true, `a job over the time limit is stopped: ${timed.error ?? ''}`);
+
+// The runner answers before it wipes; a job sent meanwhile waits instead of failing.
+const P2 = (await json('POST', '/api/projects', owner, { name: 'Second' })).id;
+await json('PUT', `/api/projects/${P2}/file`, owner, { path: 'main.tex', content: 'x\n' });
+const [first, second] = await Promise.all([start(P, owner, 'echo one > one.txt'), start(P2, owner, 'echo two > two.txt')]);
+for (const [proj, res] of [[P, first], [P2, second]]) {
+  const j = await waitFor(proj, owner, res.json().job.id);
+  eq(j.status, 'done', `back-to-back jobs both run: ${j.error ?? ''}`);
+}
 
 // ---- the path rules (D8) ----
 for (const [p, why] of [

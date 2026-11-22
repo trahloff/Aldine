@@ -13,6 +13,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   first click in a freshly opened file. Before, it kept the place of the
   formula as first drawn (its source, before KaTeX arrived) and sat off
   it until the text scrolled.
+- Runner preview: a run that started right after another one could fail
+  with "The runner is busy with another job" while the runner was still
+  emptying its folders. It now waits for that instead.
 
 ## [1.21.1] — 2026-11-22
 

@@ -350,14 +350,32 @@ function answer(sock, head, files = [], skipped = []) {
   sock.end(frames.end());
 }
 
+// The answer goes out before the wipe; the app's next job may arrive during
+// it and waits here instead of failing. The app sends one job at a time, so
+// more than a few waiting connections means something else is knocking.
+const waiting = [];
+function nextWaiting() {
+  busy = false;
+  while (waiting.length) {
+    const sock = waiting.shift();
+    if (!sock.destroyed) { handle(sock); return; }
+  }
+}
+
 function handle(sock) {
-  if (busy) { answer(sock, { ok: false, error: 'The runner is busy with another job' }); return; }
+  if (busy) {
+    if (waiting.length >= 4) { answer(sock, { ok: false, error: 'The runner is busy with another job' }); return; }
+    sock.on('error', () => {});
+    waiting.push(sock);
+    return;
+  }
   busy = true;
   const reader = new frames.Reader({ maxFrame: LIMITS.inputBytes + 70_000, maxTotal: LIMITS.inputBytes + SLACK });
   const got = [];
   let done = false;
   let inputBytes = 0;
-  const release = () => { busy = false; };
+  let released = false;
+  const release = () => { if (released) return; released = true; nextWaiting(); };
   const fail = (error) => { if (done) return; done = true; clearTimeout(deadline); answer(sock, { ok: false, error }); release(); };
   const deadline = setTimeout(() => fail('The job was not sent in time'), UPLOAD_DEADLINE_MS);
   sock.on('error', () => {});
