@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.21.1] — 2026-11-22
+
 ## [1.21.0] — 2026-11-22
 
 ### Added
