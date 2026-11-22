@@ -16,7 +16,7 @@ const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
 /** Runs one command on a throwaway copy of the project and shows what came
  *  back. `onChanged`: files changed, as after an undo. */
-export default function RunnerPanel({ projectId, branch, readOnly, onChanged, onOpenHistory }: { projectId: string; branch: string; readOnly: boolean; onChanged: () => void; onOpenHistory: () => void }) {
+export default function RunnerPanel({ projectId, branch, readOnly, onChanged }: { projectId: string; branch: string; readOnly: boolean; onChanged: () => void }) {
   const [command, setCommand] = useState(() => safeStorage.get(lastCommandKey(projectId)) ?? '');
   const [job, setJob] = useState<RunnerJob | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged, on
   const r = job?.result;
   return (
     <div className="runner" data-testid="runner-panel">
-      <p className="runner__note">Experimental. Runs one command on a copy of this branch, without network access, and brings back the files it creates or changes as one commit.</p>
+      <p className="runner__note">Experimental. Runs one command on a copy of this branch, without network access, and brings back the files it creates or changes.</p>
       <form className="runner__form" onSubmit={(e) => { e.preventDefault(); void run(); }}>
         <input
           className="input runner__command"
@@ -100,11 +100,6 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged, on
                 <ul className="runner__files" data-testid="runner-written">
                   {r.written.map((p) => <li key={p}>{plain(p)}</li>)}
                 </ul>
-              )}
-              {r.commit && (
-                <p className="runner__note">
-                  Saved as one commit. <button className="search__link" onClick={onOpenHistory} data-testid="runner-history">Undo it in History</button>
-                </p>
               )}
               {r.deleted > 0 && <p className="runner__note">{r.deleted} file{r.deleted === 1 ? ' was' : 's were'} deleted in the run; deletions are not brought back.</p>}
               {r.skipped.length > 0 && (

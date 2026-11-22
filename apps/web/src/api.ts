@@ -447,7 +447,6 @@ export interface RunnerJob {
     written: string[];
     skipped: Array<{ path: string; reason: string }>;
     deleted: number;
-    commit: string | null;
   };
 }
 

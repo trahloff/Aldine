@@ -1,18 +1,15 @@
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
 import { test, expect } from '../fixtures';
 
 /**
  * The runner, an experimental preview (docs/RUNNER.md): a listed person turns
  * the panel on from the command palette, runs a command, and its new file
- * lands in the project as one commit in their name. playwright.auth.config.ts
+ * lands in the project. playwright.auth.config.ts
  * starts apps/runner/server.js in its insecure dev mode next to the app (no
  * container); the container's own settings are covered by the release smoke.
  */
 const RUNNER_USER = 'runner-e2e@test.com';
-const projectsDir = path.resolve(__dirname, '..', '..', '.data-auth', 'projects');
 
-test('a listed person runs a command from the Runner panel and gets its file back as one commit', async ({ browser }) => {
+test('a listed person runs a command from the Runner panel and gets its file back', async ({ browser }) => {
   test.skip(!!process.env.ALDINE_AUTH_URL, 'needs the dev runner the local config starts');
   const ctx = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': '203.0.113.71' } });
   const page = await ctx.newPage();
@@ -45,8 +42,6 @@ test('a listed person runs a command from the Runner panel and gets its file bac
   await expect(panel.getByTestId('runner-written')).toHaveText('fig/out.txt');
   await expect(panel.getByTestId('runner-log')).toContainText('figure-done');
 
-  const head = execFileSync('git', ['log', '-1', '--format=%an|%s', 'main'], { cwd: path.join(projectsDir, proj.id), encoding: 'utf8' }).trim();
-  expect(head).toBe('Rosalind Runner|Run: mkdir -p fig && printf "made by a run\\n" > fig/out.txt && echo figure-done');
   const file = await (await page.request.get(`/api/projects/${proj.id}/file?branch=main&path=${encodeURIComponent('fig/out.txt')}`)).text();
   expect(file).toContain('made by a run');
 

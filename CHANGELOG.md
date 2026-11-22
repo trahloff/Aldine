@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- The runner preview no longer makes a commit per run. The files it
+  brings back are written like a save and reach history with the next
+  autosave.
+
 ### Added
 - The one-box Hetzner stack (`deploy/hetzner`) has the runner preview as an
   opt-in compose profile: `COMPOSE_PROFILES=runner` plus the two runner

@@ -123,15 +123,11 @@ eq(job.result.written.sort(), ['data/copy.csv', 'fig/a.pgf'], 'the new files com
 check(job.result.log.includes('done') && job.result.log.includes('oops'), 'the log has stdout and stderr');
 eq(job.result.skipped.map((s) => s.path), ['link.txt'], 'a symbolic link is listed as left out; a hidden file is silently not copied');
 eq(fs.readFileSync(path.join(store.branchDir(P, 'main'), 'data/copy.csv'), 'utf8'), '1,2\n3,4\n', 'the file is in the project');
-check(/^[0-9a-f]{40}$/.test(job.result.commit), 'the run is one commit');
-const [authorLine, ...body] = execFileSync('git', ['-C', store.repoDir(P), 'log', '-1', '--format=%an <%ae>%n%B', job.result.commit], { encoding: 'utf8' }).trim().split('\n');
-check(authorLine.startsWith('Olive'), `the commit is in the person's name: ${authorLine}`);
-eq(body[0], 'Run: cat data/values.csv > data/copy.csv; mkdir -p fig; echo plot > fig/a.pgf; ln -s /etc/passwd link.txt; echo h > .hidden; echo done; echo oops >&2; exit 0', 'the subject is the command');
-check(/^Input: [0-9a-f]{12}$/.test(body[2]) && /^Runner: aldine-runner dev, Python packages sha256:unknown$/.test(body[3]) && /^Exit: 0 after \d+\.\d s$/.test(body[4]), `the body records where the files came from: ${body.join(' | ')}`);
-eq(execFileSync('git', ['-C', store.repoDir(P), 'show', '--name-only', '--format=', job.result.commit], { encoding: 'utf8' }).trim().split('\n').sort(), ['data/copy.csv', 'fig/a.pgf'], 'the commit holds the run\'s files only');
+check(!('commit' in job.result), 'a run makes no commit of its own');
+check(!execFileSync('git', ['-C', store.repoDir(P), 'log', '--format=%s', 'main'], { encoding: 'utf8' }).includes('Run: '), 'no Run: commit in the history');
 
 const same = await run(P, owner, 'cat data/values.csv > data/copy.csv; rm main.tex');
-eq([same.result.written, same.result.commit, same.result.deleted], [[], null, 1], 'a run that changes nothing makes no commit, and a deletion is not brought back');
+eq([same.result.written, same.result.deleted], [[], 1], 'a run that changes nothing writes nothing, and a deletion is not brought back');
 check(fs.existsSync(path.join(store.branchDir(P, 'main'), 'main.tex')), 'main.tex is still there');
 
 // A file changed in Aldine while the job ran is not overwritten.
@@ -159,7 +155,6 @@ for (const [p, why] of [
   ['é.txt', 'name is not in Unicode normal form C'], ['a\u0007b', 'name contains a control character'], ['a\\b', 'name contains \\ or :'],
   ['-rf', 'names starting with "-" are not copied'], ['x/__pycache__/m.pyc', 'Python caches are not copied'], [`${'n'.repeat(256)}`, 'name too long'],
 ]) eq(runner.runnerPathProblem(p), why, `path ${JSON.stringify(p)}`);
-eq(runner.commandLine('python  plot.py\u202e\u0007 --x\u2066y\u2069'), 'python plot.py --xy', 'the command on one line, without controls or any direction character');
 eq((await start(P, owner, 'python x.py \u202e\u2066gnp.tob\u2069')).statusCode, 400, 'a command with direction characters is refused');
 
 // ---- a hostile runner (D3, D7) ----

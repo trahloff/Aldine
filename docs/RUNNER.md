@@ -1,8 +1,8 @@
 # The runner (experimental preview)
 
 The runner runs one command, such as `python analysis/plot.py`, on a
-throwaway copy of a project and brings the files it made or changed back as
-one commit. It exists for the loop of changing a plot script, regenerating
+throwaway copy of a project and brings the files it made or changed back into
+the project. It exists for the loop of changing a plot script, regenerating
 the figure, typesetting and looking again, without a round trip through
 git and CI (issue #349).
 
@@ -16,8 +16,8 @@ requirement for the code, and the security review checks the code against it.
 
 1. A signed-in person who is allowed to use the runner types a command
    in the Runner panel and presses Run.
-2. The server writes pending typing to disk and commits it as the usual
-   autosave, so the run starts from a commit: the **input commit**.
+2. The server writes pending typing to disk, so the run starts from the
+   files as they are.
 3. The server reads the branch's files from disk (not `.git`, not
    `.aldine-out`) and sends them, with the command, to the runner.
 4. The runner writes them into an empty folder, runs the command there under
@@ -26,11 +26,11 @@ requirement for the code, and the security review checks the code against it.
    answer with the log, the exit status and those files. It empties its
    folders before it takes the next job.
 6. The server checks every returned file again (rules below). It writes the
-   files that pass and commits them as one commit in the person's name.
+   files that pass into the project; the next autosave commits them.
    Files that do not pass are listed in the panel with the reason.
 
 Deleting a file in the job does not delete it in the project. A run that
-changes nothing makes no commit.
+changes nothing writes nothing.
 
 ## Decisions
 
@@ -174,25 +174,12 @@ document is refreshed and never duplicated.
 Before writing, the app checks again that the person may still run in
 the project and that the branch still exists: jobs can wait in the queue.
 
-**D9. One commit in the person's name.** Everything that passes lands as one
-commit, authored by the person who pressed Run, so one revert in History
-undoes the run. The message records where the files came from:
-
-```
-Run: python analysis/plot.py
-
-Input: 3f2a9c1
-Runner: aldine-runner 1.20.0, Python packages sha256:4be1…
-Exit: 0 after 4.2 s
-```
-
-The server alone writes the message. The command goes on one line, with
-line breaks, control characters and bidirectional characters removed, so
-it cannot add lines of its own (no forged `Input:` or `Co-authored-by:`).
-The runner version and package hash come from the runner and are accepted
-only in a strict format. The package hash is the SHA-256 of the image's
-installed Python package list, written at build time. It covers the Python
-packages only, not the TeX Live parts from Debian.
+**D9. No commit of its own (changed 2026-11-22).** Files that pass are
+written like a save from the editor and reach history with the next
+autosave, together with whatever else was typed. A run used to land as one
+commit with the command in its message; in use that filled the history with
+one commit per run, so it was removed. The run no longer has a recorded
+origin in git; the panel shows what it wrote.
 
 **D10. Who may run.** All of these are required:
 
@@ -237,7 +224,7 @@ contains whatever runs.
 | Network abuse: exfiltration, spam, attacks on other hosts, the app or the compiler | No network in the container (D1) | None known |
 | Using the CPU (mining) or memory | Timeout, CPU time, memory and process limits; one job at a time; rate limit per person; listed people only | A listed person can keep one CPU busy within the limits |
 | Denial of service on the instance | Limits (D7); the queue (D4); the runner is a separate container, so its failure does not stop editing or typesetting | A listed person can keep the runner busy for others; jobs wait in the queue |
-| Harmful files coming back: path escape, symbolic links, git hooks or config, rc files, huge files, many files | D8, checked twice; quota; one revertable commit (D9) | A job can still change any ordinary file of that project, as the person could. The commit shows it and one revert undoes it |
+| Harmful files coming back: path escape, symbolic links, git hooks or config, rc files, huge files, many files | D8, checked twice; quota | A job can still change any ordinary file of that project, as the person could. History's autosaves keep the earlier version |
 | A hostile runner lying to the server | D3: the server validates everything; the version and hash fields have a strict format | A hostile runner can return wrong figures for its own job, as the job itself could |
 | Assistants or prompt injection starting a run | No MCP tool; access tokens refused (D10) | An assistant can still change a script that a person later runs. The sandbox, not the review, contains it |
 | Other containers or users talking to the runner | Only the app and the runner mount the socket volume | None known |

@@ -13,10 +13,10 @@ import { AUTH_ENABLED, getUser, pub, type PublicUser } from './auth.js';
 import { isBranchClosed } from './compile.js';
 import { branchDir, readMeta, listFiles, writeFile, type ProjectMeta } from './store.js';
 import * as gitops from './gitops.js';
-import { flushBranchDocs, refreshBranchDocsFromDisk } from './collab.js';
+import { flushBranchDocs, refreshBranchDocsFromDisk, scheduleCommit } from './collab.js';
 import { noteEdit, editorOf } from './activity.js';
 import { storageRefusal } from './storage.js';
-import { safeJoin, isHiddenPath, optionLikePath, overlongPath, COMMIT_MESSAGE_MAX } from './util.js';
+import { safeJoin, isHiddenPath, optionLikePath, overlongPath } from './util.js';
 import { normalizeEntry } from './invites.js';
 import { rolesOf } from './sharelinks.js';
 
@@ -101,11 +101,6 @@ export function runnerPathProblem(rel: unknown): string | null {
 const foldKey = (rel: string) => rel.normalize('NFKC').toLowerCase();
 const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
 
-/** The command as it may stand on one line of a commit message (D9). */
-export function commandLine(command: string): string {
-  return command.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(new RegExp(INVISIBLE.source, 'gu'), '').replace(/\s+/g, ' ').trim();
-}
-
 /** Why the command cannot run, or null. One line: the panel's input is one. */
 export function commandProblem(command: unknown): string | null {
   if (typeof command !== 'string' || !command.trim()) return 'Type a command to run, for example python plot.py';
@@ -117,12 +112,6 @@ export function commandProblem(command: unknown): string | null {
 
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,40}$/;
 const PACKAGES_RE = /^(?:[0-9a-f]{64}|unknown)$/;
-
-export function runCommitMessage(command: string, input: string, runner: { version: string; packages: string }, exitCode: number | null, durationMs: number, timedOut: boolean): string {
-  const subject = `Run: ${commandLine(command)}`.slice(0, COMMIT_MESSAGE_MAX).trim();
-  const exit = timedOut ? 'stopped at the time limit' : exitCode === null ? 'ended by a signal' : String(exitCode);
-  return `${subject}\n\nInput: ${input.slice(0, 12) || 'none'}\nRunner: aldine-runner ${runner.version}, Python packages sha256:${runner.packages}\nExit: ${exit} after ${(durationMs / 1000).toFixed(1)} s`;
-}
 
 // --- frames (apps/runner/frames.js) ------------------------------------------
 
@@ -258,7 +247,6 @@ export interface RunResult {
   written: string[];
   skipped: Array<{ path: string; reason: string }>;
   deleted: number;
-  commit: string | null;
   input: string;
   runner: { version: string; packages: string };
 }
@@ -323,15 +311,13 @@ async function next(): Promise<void> {
 
 async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   const { projectId: id, branch } = job;
-  // 1. The run starts from a commit: pending typing is flushed and swept.
+  // 1. The run starts from the files as they are: pending typing is flushed.
   const { input, sent: listed, contents } = await gitops.withRepoLock(id, async () => {
     await gitops.ensureWorktree(id, branch);
     flushBranchDocs(id, branch);
-    await gitops.autoCommitHeld(id, branch);
     const head = await gitops.branchHead(id, branch);
     const entries = listFiles(id, branch).filter((e) => e.type === 'file');
-    // Read here, under the lock that made the input commit, so what is sent
-    // is that commit plus at most the typing of the last moments.
+    // Read under the repo lock, so no commit or checkout moves files meanwhile.
     const contents = new Map<string, Buffer>();
     let bytes = 0;
     for (const e of entries) {
@@ -421,7 +407,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     if (outer) { skip(accepted[i].path, `"${outer}" is also a returned file`); accepted.splice(i, 1); }
   }
 
-  const result = (written: string[], commit: string | null): RunResult => ({
+  const result = (written: string[]): RunResult => ({
     exitCode: Number.isSafeInteger(head.exitCode) ? head.exitCode : null,
     signal: typeof head.signal === 'string' && /^SIG[A-Z0-9]{1,10}$/.test(head.signal) ? head.signal : null,
     timedOut: head.timedOut === true,
@@ -430,11 +416,10 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     written,
     skipped,
     deleted: Number.isSafeInteger(head.deleted) ? Math.max(0, head.deleted) : 0,
-    commit,
     input,
     runner,
   });
-  if (!accepted.length) return result([], null);
+  if (!accepted.length) return result([]);
 
   // 4. Storage first (it awaits); then flush, check and write with no await
   //    in between, the way a save from the editor does (D8).
@@ -443,10 +428,8 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   const refusal = growth > 0 ? await storageRefusal(meta.ownerId, user.id, growth, 'upload') : null;
   if (refusal) {
     for (const a of accepted) skip(a.path, 'the project owner\'s storage is full');
-    return result([], null);
+    return result([]);
   }
-  // As routes.ts reqAuthor: the account's name, with its own commit address when it set one.
-  const author: gitops.CommitAuthor | undefined = user.name ? (user.commitEmail ? { name: user.name, email: user.commitEmail } : user.name) : undefined;
   return gitops.withRepoLock(id, async () => {
     // Up to the queue's length times the timeout may have passed since the
     // job was accepted: the person, the project and the branch are checked again.
@@ -455,7 +438,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     const stillAllowed = !!metaNow && !metaNow.deletedAt && !!userNow && !userNow.disabledAt && runnerAllowed(pub(userNow)) && mayRunIn(metaNow, pub(userNow));
     if (!stillAllowed || isBranchClosed(id, branch) || !(await gitops.branchHead(id, branch))) {
       for (const a of accepted) skip(a.path, 'not written: access to the project or the branch changed while the job ran');
-      return result([], null);
+      return result([]);
     }
     flushBranchDocs(id, branch);
     const written: string[] = [];
@@ -468,13 +451,12 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
       if (before === undefined && now !== null) { skip(a.path, 'created in Aldine while the job ran'); continue; }
       try { writeFile(id, branch, a.path, a.content); written.push(a.path); } catch { skip(a.path, 'could not be written'); }
     }
-    if (!written.length) return result([], null);
+    if (!written.length) return result([]);
     refreshBranchDocsFromDisk(id, branch, written);
     noteEdit(id, branch, editorOf(user));
-    const r = result([], null);
-    const message = runCommitMessage(job.command, input, runner, r.exitCode, r.durationMs, r.timedOut);
-    const c = await gitops.commitPathsHeld(id, branch, written, message, author);
-    return result(c.files.length ? c.files : written, c.committed ? c.hash ?? null : null);
+    // Like any other save: the files reach history with the next autosave.
+    scheduleCommit(id, branch);
+    return result(written);
   });
 }
 
