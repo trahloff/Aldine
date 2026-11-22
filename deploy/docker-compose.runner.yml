@@ -19,7 +19,7 @@ services:
       - aldine-runner-socket:/run/aldine-runner
 
   runner:
-    image: ghcr.io/trahloff/aldine-runner:${ALDINE_VERSION:-1.20.0}
+    image: ghcr.io/trahloff/aldine-runner:${ALDINE_VERSION:-1.21.0}
     # No network at all, not even to the app or the compiler: the app talks
     # to the runner over a Unix socket in the small volume below.
     network_mode: none
