@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.21.3] — 2026-11-23
+
 ### Added
 - Runner preview: Stop ends a waiting or running run; the panel finds your
   current or last run again after a reload or from another tab; it names
