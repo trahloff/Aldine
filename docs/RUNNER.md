@@ -342,6 +342,35 @@ crashed. Fixed after it:
 `ALDINE_RUNNER_USERS`, the socket and the timeout are read when the app
 starts: removing someone takes effect with a restart.
 
+A second tester used the runner as the #349 requester would, on the real
+container, and reviewed the panel. Changed after it:
+
+1. A file that reached the 32 MB file size limit was cut off by it and
+   still written back; it is now left out with that reason. A project
+   over the 64 MB input limit is told its largest files.
+2. A run can be stopped (Stop: a waiting run leaves the queue; a running
+   one is killed and brings nothing back). Any byte the app sends after
+   the request's END frame asks the runner to stop; the app keeps its
+   side of the connection open for that.
+3. The panel finds the person's current or last run again after a
+   reload, in another tab, or when Run says a run is already going.
+4. Jobs get `SOURCE_DATE_EPOCH` and `FORCE_SOURCE_DATE`, so an unchanged
+   figure PDF comes back byte for byte the same and nothing is written;
+   `PIP_NO_INDEX` makes pip fail at once without network.
+5. The panel names the environment, explains exit codes 127, 137 and
+   153, says when files were written although the command failed, puts
+   the error line of a failed run above the log and scrolls the log to
+   its end, opens the list of files not brought back when nothing was,
+   names the time limit while running, offers the project's only script
+   as a suggestion, links written files, and announces only state changes
+   to screen readers. Python, R and Julia files show in the source view
+   of the file tree.
+6. The app logs once at start whether the runner is ready, and why not.
+
+Docker Desktop can run containers without any seccomp filter; the runner
+then reports NOT READY ("no seccomp filter is active") and refuses jobs,
+as it should.
+
 ## Out of scope for the preview
 
 A terminal; packages installed at run time; other languages or images;

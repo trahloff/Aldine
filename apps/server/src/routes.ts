@@ -6,7 +6,7 @@ import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
-import { runnerConfigured, runnerAllowed, mayRunIn, commandProblem, enqueue, queueProblem, jobView } from './runner.js';
+import { runnerConfigured, runnerAllowed, mayRunIn, commandProblem, enqueue, queueProblem, jobView, lastJob, stopJob } from './runner.js';
 import { compileProject, compileStatus, synctexLookup, formatText, type FormatRefusal, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import { EDIT_ALLOWANCE_BYTES, storageRefusal, storageUsageFor, type StorageAction } from './storage.js';
@@ -4012,6 +4012,25 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     if (!(await runnerLimiter.take(user.id))) return reply.code(429).send({ error: 'Too many runs in a row; wait a minute and try again' });
     const job = enqueue(req.params.id, branch, user, req.body!.command as string);
     if (typeof job === 'string') return reply.code(409).send({ error: job });
+    return { job: jobView(job.id, user.id) };
+  });
+
+  // The panel opened after a reload, in another tab or later finds its run again.
+  app.get<{ Params: { id: string } }>('/api/projects/:id/runner/jobs', async (req, reply) => {
+    const refused = await runnerRefusal(req);
+    if (refused) return reply.code(refused.code).send({ error: refused.error });
+    reply.header('cache-control', 'no-store');
+    return { job: lastJob(req.params.id, reqUser(req)!.id) };
+  });
+
+  app.post<{ Params: { id: string; job: string } }>('/api/projects/:id/runner/jobs/:job/stop', async (req, reply) => {
+    if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return reply.code(415).send({ error: 'Send the stop as JSON' });
+    const refused = await runnerRefusal(req);
+    if (refused) return reply.code(refused.code).send({ error: refused.error });
+    const user = reqUser(req)!;
+    const job = jobView(req.params.job, user.id);
+    if (!job || job.projectId !== req.params.id) return reply.code(404).send({ error: 'This run is gone; the server may have restarted. Run it again.' });
+    if (!stopJob(job.id, user.id)) return reply.code(409).send({ error: 'This run has already ended' });
     return { job: jobView(job.id, user.id) };
   });
 

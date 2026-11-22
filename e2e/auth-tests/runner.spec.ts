@@ -122,7 +122,8 @@ test.describe('runner panel states', () => {
     const panel = page.getByTestId('runner-panel');
     await expect(panel.getByTestId('runner-summary')).toContainText('Exited with code 3', { timeout: 30_000 });
     // A file the failed command made still comes back: the exit code does not gate the write.
-    await expect(panel.getByTestId('runner-summary')).toContainText('1 file updated');
+    await expect(panel.getByTestId('runner-summary')).toContainText('1 file updated anyway');
+    await expect(panel.getByTestId('runner-errline')).toContainText('to-stderr');
     await expect(panel.getByTestId('runner-log')).toContainText('to-stdout');
     await expect(panel.getByTestId('runner-log')).toContainText('to-stderr');
     await expect(panel.getByTestId('runner-failed')).toHaveCount(0);
@@ -131,7 +132,7 @@ test.describe('runner panel states', () => {
 
     // A command that cannot start says so in the log, with the shell's own words.
     await run(page, 'no-such-program-here --version');
-    await expect(panel.getByTestId('runner-summary')).toContainText('Exited with code 127', { timeout: 30_000 });
+    await expect(panel.getByTestId('runner-summary')).toContainText('Exited with code 127: command not found', { timeout: 30_000 });
     await expect(panel.getByTestId('runner-summary')).toContainText('No files changed.');
     await expect(panel.getByTestId('runner-log')).toContainText('no-such-program-here');
     expect((await page.request.get(`/api/projects/${id}/file?branch=main&path=${encodeURIComponent('fig/half.txt')}`)).ok()).toBeTruthy();
@@ -163,10 +164,10 @@ test.describe('runner panel states', () => {
     // playwright.auth.config.ts sets ALDINE_RUNNER_TIMEOUT_S=8.
     await run(page, 'echo started && sleep 60 && echo never');
     const panel = page.getByTestId('runner-panel');
-    await expect(panel.getByTestId('runner-status')).toContainText('Running for');
-    await expect(panel.getByTestId('runner-run')).toHaveText('Running…');
-    await expect(panel.getByTestId('runner-run')).toBeDisabled();
-    await expect(panel.getByTestId('runner-summary')).toContainText('Stopped at the time limit', { timeout: 45_000 });
+    await expect(panel.getByTestId('runner-status')).toContainText(/Running for .* of at most 8 s/);
+    await expect(panel.getByTestId('runner-run')).toHaveCount(0);
+    await expect(panel.getByTestId('runner-stop')).toBeEnabled();
+    await expect(panel.getByTestId('runner-summary')).toContainText('Stopped at the time limit of 8 s', { timeout: 45_000 });
     await expect(panel.getByTestId('runner-log')).toContainText('started');
     await expect(panel.getByTestId('runner-log')).not.toContainText('never');
     await close();
@@ -219,16 +220,37 @@ test.describe('runner panel states', () => {
     await run(page, 'echo behind');
     const panel = page.getByTestId('runner-panel');
     await expect(panel.getByTestId('runner-status')).toHaveText('Waiting for the runner (number 1 in line)…');
-    await expect(panel.getByTestId('runner-run')).toBeDisabled();
+    await expect(panel.getByTestId('runner-stop')).toBeVisible();
     await expect(panel.getByTestId('runner-summary')).toContainText('Finished', { timeout: 60_000 });
     await expect(panel.getByTestId('runner-log')).toHaveText('behind\n');
 
-    // A second run of the same project while one waits or runs is refused, and the panel says why.
-    const again = (await (await page.request.post(`/api/projects/${id}/runner/run`, { data: { branch: 'main', command: 'sleep 3' } })).json()).job;
+    // A run of this project started elsewhere (another tab) is shown instead of an error.
+    const again = (await (await page.request.post(`/api/projects/${id}/runner/run`, { data: { branch: 'main', command: 'sleep 3; echo from-elsewhere' } })).json()).job;
     await run(page, 'echo too-soon');
-    await expect(panel.getByTestId('runner-error')).toHaveText('A run of this project is already waiting or running');
+    await expect(panel.getByTestId('runner-error')).toHaveCount(0);
+    await expect(panel.getByTestId('runner-log')).toHaveText('from-elsewhere\n', { timeout: 30_000 });
     await settled(page, id, again.id);
     await settled(page, other.id, ahead.id);
+    await close();
+  });
+
+  test('a run can be stopped, and a reload finds the run again', async ({ browser }) => {
+    const { page, close } = await runnerSession(browser, '203.0.113.79');
+    await projectWithPanel(page, 'Runner Stop', { 'plot.py': 'print("hi")\n' });
+    const panel = page.getByTestId('runner-panel');
+    // The project's only script is offered when the box is empty.
+    await panel.getByTestId('runner-command').fill('');
+    await panel.getByTestId('runner-suggest').click();
+    await expect(panel.getByTestId('runner-command')).toHaveValue('python plot.py');
+
+    await run(page, 'echo begun && sleep 30 && echo late > late.txt');
+    await expect(panel.getByTestId('runner-status')).toContainText('Running for', { timeout: 15_000 });
+    await page.reload();
+    await page.getByTestId('tab-runner').click();
+    await expect(page.getByTestId('runner-status')).toContainText('Running for', { timeout: 15_000 });
+    await page.getByTestId('runner-stop').click();
+    await expect(page.getByTestId('runner-stopped')).toHaveText('Stopped. No files were brought back.', { timeout: 15_000 });
+    await expect(page.getByTestId('runner-run')).toBeVisible();
     await close();
   });
 });

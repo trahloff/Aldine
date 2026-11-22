@@ -248,11 +248,20 @@ function jobEnv() {
     OMP_NUM_THREADS: '1',
     OPENBLAS_NUM_THREADS: '1',
     MKL_NUM_THREADS: '1',
+    // Fixed dates in PDFs (Matplotlib, pdfTeX, XeTeX): a figure that did not
+    // change comes back byte for byte the same, so nothing is written.
+    SOURCE_DATE_EPOCH: '1700000000',
+    FORCE_SOURCE_DATE: '1',
+    // No network: pip says so at once instead of retrying for seconds.
+    PIP_NO_INDEX: '1',
   };
 }
 
 /** Runs the command; resolves once the command ended or timed out and every
  *  job process is gone. */
+// Ends the running command early when the app hangs up (the person pressed Stop).
+let stopCurrent = null;
+
 function runCommand(command, timeoutS) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -268,6 +277,7 @@ function runCommand(command, timeoutS) {
         '/bin/sh', '-c', 'echo 1000 > /proc/self/oom_score_adj; cd "$1" && exec /bin/sh -c "$2"', 'sh', PROJECT, command]];
     const child = spawn(argv[0], argv[1], { ...asJob, ...(DEV ? { cwd: PROJECT } : {}), env: jobEnv(), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let timedOut = false;
+    let stopped = false;
     let exit = null;
     let open = 2;
     let finished = false;
@@ -278,15 +288,17 @@ function runCommand(command, timeoutS) {
     const finish = async () => {
       if (finished) return;
       finished = true;
+      stopCurrent = null;
       clearTimeout(timer);
       // Background processes the command left behind die here, before
       // anything is collected (D6).
       await killJob();
       // Their copies of the pipes close with them; wait briefly for the rest of the log.
       await new Promise((r) => { if (open === 0) r(); else { const t = setTimeout(r, 5000); const check = setInterval(() => { if (open === 0) { clearTimeout(t); clearInterval(check); r(); } }, 20); setTimeout(() => clearInterval(check), 5100); } });
-      resolve({ exitCode: exit?.code ?? null, signal: exit?.signal ?? null, timedOut, durationMs: Date.now() - started, log: log.text() });
+      resolve({ exitCode: exit?.code ?? null, signal: exit?.signal ?? null, timedOut, stopped, durationMs: Date.now() - started, log: log.text() });
     };
     const timer = setTimeout(() => { timedOut = true; finish(); }, timeoutS * 1000);
+    stopCurrent = () => { stopped = true; finish(); };
     for (const s of [child.stdout, child.stderr]) {
       s.on('data', (c) => log.push(c));
       s.on('close', () => { open -= 1; });
@@ -298,7 +310,7 @@ function runCommand(command, timeoutS) {
 
 // --- one job ----------------------------------------------------------------
 
-async function runJob(head, inputFiles) {
+async function runJob(head, inputFiles, hungUp = () => false) {
   const command = typeof head.command === 'string' ? head.command : '';
   if (!command.trim() || command.length > 2000) return { error: 'The command must be 1 to 2000 characters' };
   const timeoutS = Math.min(LIMITS.maxTimeoutS, Math.max(1, Math.floor(Number(head.timeoutS) || LIMITS.timeoutS)));
@@ -308,7 +320,9 @@ async function runJob(head, inputFiles) {
 
   await wipe();
   await step('unpack', [...inputFiles.map((f) => frames.file(f.path, f.content)), frames.end()]);
+  if (hungUp()) return { error: 'Stopped' };
   const result = await runCommand(command, timeoutS);
+  if (result.stopped) return { error: 'Stopped' };
   const collected = await step('collect', [frames.header({ manifest, limits: { maxFiles: LIMITS.outputFiles, maxFileBytes: LIMITS.outputFileBytes, maxTotalBytes: LIMITS.outputBytes } }), frames.end()], { maxOut: LIMITS.outputBytes + SLACK });
 
   // The collector ran as the job user: its output is checked like the job's own.
@@ -373,6 +387,8 @@ function handle(sock) {
   const reader = new frames.Reader({ maxFrame: LIMITS.inputBytes + 70_000, maxTotal: LIMITS.inputBytes + SLACK });
   const got = [];
   let done = false;
+  // Any byte after the request's END frame is the app asking to stop the job.
+  let stopAsked = false;
   let inputBytes = 0;
   let released = false;
   const release = () => { if (released) return; released = true; nextWaiting(); };
@@ -381,7 +397,7 @@ function handle(sock) {
   sock.on('error', () => {});
   sock.on('close', () => { if (!done) { done = true; clearTimeout(deadline); release(); } });
   sock.on('data', (chunk) => {
-    if (done) return;
+    if (done) { if (!stopAsked && chunk.length) { stopAsked = true; if (stopCurrent) stopCurrent(); } return; }
     let parsed;
     try { parsed = reader.push(chunk); } catch (e) { fail(`The job could not be read: ${e.message}`); return; }
     for (const f of parsed) {
@@ -397,13 +413,13 @@ function handle(sock) {
     if (!reader.ended) return;
     done = true;
     clearTimeout(deadline);
-    sock.pause();
     const head = got.find((f) => f.type === frames.HEADER)?.value || {};
     const runner = { version: VERSION, packages: PACKAGES };
     if (head.health) { answer(sock, { ok: true, ready: !problem, problem, insecure: DEV, runner }); release(); return; }
     if (head.v !== 1) { answer(sock, { ok: false, error: 'This runner does not understand the request; update the app and the runner together' }); release(); return; }
     if (problem) { answer(sock, { ok: false, error: `The runner container is not set up safely: ${problem}` }); release(); return; }
-    runJob(head, got.filter((f) => f.type === frames.FILE))
+    sock.on('close', () => { stopAsked = true; if (stopCurrent) stopCurrent(); });
+    runJob(head, got.filter((f) => f.type === frames.FILE), () => stopAsked)
       .then((r) => {
         if (r.error) return answer(sock, { ok: false, error: r.error });
         const { files, skipped, ...rest } = r;

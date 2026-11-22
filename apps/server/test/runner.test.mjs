@@ -178,6 +178,11 @@ const gone = await waitFor(P, owner, onFeat.json().job.id);
 check(!JSON.stringify(gone).includes(tmp), `no server path reaches the person: ${gone.error ?? ''}`);
 eq(gone.result?.written ?? [], [], 'nothing is written to a deleted branch');
 
+// A file at exactly the size limit was cut off by it and does not come back.
+const cut = await run(P, owner, 'head -c 33554432 /dev/zero > cut.bin; echo small > small.txt');
+eq(cut.result.written, ['small.txt'], 'only the whole file comes back');
+eq(cut.result.skipped.map((x) => [x.path, x.reason]), [['cut.bin', 'reached the 32 MB file size limit, so it is probably cut off']], 'the cut-off file is named with the reason');
+
 // Pressing Run again while a run waits costs no rate-limit token and says why.
 const holding = await start(P, owner, 'sleep 1');
 const again = await start(P, owner, 'true');

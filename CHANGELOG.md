@@ -7,12 +7,26 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- Runner preview: Stop ends a waiting or running run; the panel finds your
+  current or last run again after a reload or from another tab; it names
+  what the image has, explains common exit codes, puts a failed run's
+  error line first, offers the project's script, and links the files a
+  run wrote. The app logs at start whether the runner is ready.
+
+### Changed
+- Runner preview: a figure PDF that did not change is no longer rewritten
+  by every run (fixed PDF dates); pip fails at once instead of retrying;
+  Python, R and Julia scripts show in the file tree's source view.
+
 ### Fixed
 - Runner preview, after an adversarial test (docs/RUNNER.md): a queued
   run is checked again when its turn comes; a branch deleted mid-run no
   longer shows a server path; a huge project is refused before it is read;
   pressing Run while one waits no longer counts against the rate limit;
-  the panel rides out a dropped connection and says when a run is gone.
+  the panel rides out a dropped connection and says when a run is gone;
+  a file cut off at the 32 MB size limit is no longer written back, and a
+  project too large to run names its largest files.
 
 ## [1.21.2] — 2026-11-22
 
