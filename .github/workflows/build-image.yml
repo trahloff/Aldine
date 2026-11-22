@@ -12,7 +12,7 @@ on:
   workflow_call:
     inputs:
       name:
-        description: Image name suffix (app | compiler)
+        description: Image name suffix (app | compiler | runner)
         required: true
         type: string
       context:

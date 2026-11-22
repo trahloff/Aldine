@@ -431,6 +431,26 @@ export function onSignedOut(fn: () => void): () => void {
   return () => { signedOutListeners.delete(fn); };
 }
 
+/** A run of the experimental runner (docs/RUNNER.md), as its server keeps it. */
+export interface RunnerJob {
+  id: string;
+  command: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  position?: number;
+  error?: string;
+  result?: {
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    durationMs: number;
+    log: string;
+    written: string[];
+    skipped: Array<{ path: string; reason: string }>;
+    deleted: number;
+    commit: string | null;
+  };
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -715,6 +735,9 @@ export const api = {
   /** The files that differ from that same baseline, for the file tree. */
   baselineChanges: (id: string, branch: string) =>
     req<{ commit: string | null; files: { path: string; status: 'added' | 'modified' | 'deleted' }[] }>(`/api/projects/${id}/baseline-changes?branch=${encodeURIComponent(branch)}`),
+  runnerRun: (id: string, branch: string, command: string) =>
+    req<{ job: RunnerJob }>(`/api/projects/${id}/runner/run`, { method: 'POST', body: JSON.stringify({ branch, command }) }),
+  runnerJob: (id: string, job: string) => req<{ job: RunnerJob }>(`/api/projects/${id}/runner/jobs/${job}`),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ branch, q: query.q });
@@ -840,7 +863,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; mcpSync?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; mcpSync?: boolean; runner?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
   /** The guest this browser is in `project` without an account, if any. */
   guestMe: (project: string) => req<{ guest: GuestInfo | null }>(`/api/auth/guest?project=${encodeURIComponent(project)}`),
   /** Stop being a guest in `project`: off its link, and out of this browser. */

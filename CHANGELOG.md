@@ -19,6 +19,17 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   at most 30 an hour per person. **Email me about comments** in Account
   settings turns them off.
 - Agent API: `list_comments` names a thread's assignee.
+- The runner, an experimental preview (#349): run one command, such as
+  `python analysis/plot.py`, on a throwaway copy of a branch from the new
+  Runner panel, and get the files it creates or changes back as one commit
+  in your name. It runs in its own container with no network at all, as an
+  unprivileged user, with time, memory, process and size limits, and sees
+  nothing but the copy. Off unless the instance adds
+  `deploy/docker-compose.runner.yml` and lists the people who may run in
+  `ALDINE_RUNNER_USERS`; then each person turns the panel on from the
+  command palette. Assistants cannot start runs. The image has Python with
+  NumPy and Matplotlib and the LaTeX parts PGF output needs. Design and
+  threat model: docs/RUNNER.md. Not covered by the 1.x promise.
 
 ## [1.19.0] — 2026-11-21
 

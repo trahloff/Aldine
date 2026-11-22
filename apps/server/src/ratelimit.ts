@@ -202,6 +202,8 @@ export const oauthClientLimiter = new RateLimiter('oauth-client', n(process.env.
 /** Format document: 30 burst, 1/s — each runs latexindent on the compile service. */
 /** Adding or refreshing personal template repositories: 10 burst, 1/min per account — each is a git clone or fetch. */
 export const templateRepoLimiter = new RateLimiter('template-repo', n(process.env.RL_TEMPLATE_REPO_BURST, 10), 1 / 60);
+/** Runner jobs per person (docs/RUNNER.md, D4). */
+export const runnerLimiter = new RateLimiter('runner', n(process.env.RL_RUNNER_BURST, 30), n(process.env.RL_RUNNER_REFILL_PER_MIN, 3) / 60);
 export const formatLimiter = new RateLimiter('format', n(process.env.RL_FORMAT_BURST, 30), 1);
 export const searchLimiter = new RateLimiter('search', n(process.env.RL_SEARCH_BURST, 60), 2);
 /** Replace (one or all): 30 burst, 1/2s — every replace is a commit. */

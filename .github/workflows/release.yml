@@ -5,7 +5,7 @@ name: Release
 #   git push origin v0.4.0
 #     preflight  the tag is on main, and every version pin agrees with it
 #     verify     the full CI suite, on the tagged commit (tags skip ci.yml's own triggers)
-#     build      aldine-app and aldine-compiler as 0.4.0 + sha-<commit>, immutable
+#     build      aldine-app, aldine-compiler and aldine-runner as 0.4.0 + sha-<commit>, immutable
 #     smoke      boot those exact digests with the user-facing compose file and
 #                typeset a document with a bibliography inside the sandbox
 #     lifecycle  upgrade from the previous release onto those digests, and a
@@ -93,6 +93,39 @@ jobs:
       free-disk: true
     secrets: inherit
 
+  # The runner, an experimental preview (docs/RUNNER.md): published with every
+  # release so a self-hoster who adds deploy/docker-compose.runner.yml gets
+  # the version matching the app.
+  build-runner:
+    needs: [preflight, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: runner
+      context: apps/runner
+      dockerfile: apps/runner/Dockerfile
+      version: ${{ needs.preflight.outputs.version }}
+      build-args: VERSION=${{ needs.preflight.outputs.version }}
+    secrets: inherit
+
+  # Boots that exact digest with the overlay's security settings, checks the
+  # container passes its own checks, and makes a PGF figure through the socket.
+  smoke-runner:
+    needs: [build-runner]
+    runs-on: ubuntu-latest
+    env:
+      ALDINE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-runner@${{ needs.build-runner.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the runner with the overlay's settings
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml -f deploy/docker-compose.runner-smoke.yml up -d --quiet-pull runner
+      - name: Smoke test
+        run: |
+          docker run --rm --network none -v aldine_aldine-runner-socket:/run/aldine-runner -v "$PWD:/repo:ro" \
+            node:22-trixie-slim@sha256:68c76cfad89921b927eae28ba21407475e29d0ce450afcdbe70c1532db042b64 node /repo/scripts/smoke-runner.mjs
+      - name: Container logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml -f deploy/docker-compose.runner-smoke.yml logs --no-color runner | tail -100
+
   smoke:
     needs: [preflight, build-app, build-compiler, build-compiler-full]
     runs-on: ubuntu-latest
@@ -143,7 +176,7 @@ jobs:
       compiler-image: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler.outputs.digest }}
 
   promote:
-    needs: [preflight, smoke, lifecycle]
+    needs: [preflight, smoke, smoke-runner, lifecycle]
     uses: ./.github/workflows/promote.yml
     with:
       version: ${{ needs.preflight.outputs.version }}

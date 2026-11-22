@@ -1,0 +1,5 @@
+# Release smoke (release.yml, smoke-runner): the runner from the digest just
+# built, with every setting of docker-compose.runner.yml unchanged.
+services:
+  runner:
+    image: ${ALDINE_RUNNER_IMAGE:?set ALDINE_RUNNER_IMAGE to the digest under test}

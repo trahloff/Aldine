@@ -28,6 +28,8 @@ interface AuthState {
   mcpEnabled: boolean;
   /** The instance lets the agent push and pull, where a project's owner allows it. */
   mcpSync: boolean;
+  /** The instance runs the experimental runner and this account may use it (docs/RUNNER.md). */
+  runner: boolean;
   /** ALDINE_PUBLIC_URL as the server knows it (null when unset). */
   publicUrl: string | null;
   /** Confirmation links go out by mail (otherwise the operator relays them from the log). */
@@ -44,7 +46,7 @@ interface AuthState {
   setGuest(g: GuestInfo | null): void;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, mcpSync: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {}, guest: null, setGuest: () => {} });
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, mcpSync: false, runner: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {}, guest: null, setGuest: () => {} });
 
 const CONFIRM_PARAM = 'confirm_email';
 const CONFIRMED = 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.';
@@ -98,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [passwordAuth, setPasswordAuth] = useState(true);
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpSync, setMcpSync] = useState(false);
+  const [runner, setRunner] = useState(false);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [sendsEmail, setSendsEmail] = useState(false);
   const [signupApproval, setSignupApproval] = useState(false);
@@ -125,6 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setPasswordAuth(me.passwordAuth !== false);
       setMcpEnabled(me.mcpEnabled === true);
       setMcpSync(me.mcpSync === true);
+      setRunner(me.runner === true);
       setPublicUrl(me.publicUrl || null);
       setSendsEmail(me.sendsEmail === true);
       setSignupApproval(me.signup === 'approval');
@@ -198,7 +202,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return signIn;
   }
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, mcpSync, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh, guest: user ? null : guest, setGuest }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, mcpSync, runner, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh, guest: user ? null : guest, setGuest }}>{children}</Ctx.Provider>;
 }
 
 /** The share link token project `projectId`'s page came with, kept for
