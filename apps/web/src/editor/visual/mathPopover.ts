@@ -440,7 +440,10 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     return toSource(REWRITTEN);
   }
 
-  // where the formula is now: its rendering while that is drawn, else its source
+  // Where the formula is now: the drawing that was clicked while it is still
+  // there, else whatever stands at the formula's source. A redraw (KaTeX
+  // arriving while MathLive loaded) replaces the clicked drawing, so the
+  // click's rect is only a fallback.
   let rect = target.rect;
   const formulaRect = (): DOMRect => {
     if (target.el?.isConnected) return target.el.getBoundingClientRect();
@@ -456,6 +459,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
     if (follow) return;
     follow = requestAnimationFrame(() => { follow = 0; rect = formulaRect(); place(); });
   };
+  range.updated = onScroll;
 
   let overwrite = false;
   const say = (text: string) => { notice.textContent = text; notice.hidden = false; place(); };
@@ -568,6 +572,7 @@ export async function openMathEditor(view: EditorView, target: MathTarget): Prom
   view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
 
   openPopover = handle;
+  rect = formulaRect();
   place();
   pop.style.visibility = '';
   // after the click that opened it has finished: MathLive takes focus asynchronously
