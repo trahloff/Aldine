@@ -153,7 +153,9 @@ function sameRanges(a: RevealRange[], b: RevealRange[]): boolean {
 export interface RevealState { ranges: RevealRange[] }
 
 /**
- * Reveal ranges, recomputed on selection and doc changes. Only the local
+ * Reveal ranges, recomputed on selection and doc changes, and when the
+ * parser reaches further: a caret placed beyond a partial tree (a jump deep
+ * into a fresh document) sits in no construct until then. Only the local
  * selection reveals: a collaborator's caret in a construct outlines it
  * instead (remoteCarets.ts). Returns the previous object when nothing
  * changed, so consumers can gate expensive rebuilds on object identity.
@@ -163,7 +165,7 @@ export const revealField = StateField.define<RevealState>({
     return { ranges: computeRevealRanges(state) };
   },
   update(value, tr) {
-    if (!tr.docChanged && !tr.selection) return value;
+    if (!tr.docChanged && !tr.selection && syntaxTree(tr.state) === syntaxTree(tr.startState)) return value;
     const ranges = computeRevealRanges(tr.state);
     if (!tr.docChanged && sameRanges(ranges, value.ranges)) return value;
     return { ranges };

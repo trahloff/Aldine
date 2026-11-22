@@ -123,11 +123,15 @@ async function seed(request: APIRequestContext, name: string): Promise<string> {
   return id;
 }
 
-/** The caret is drawn well inside the editor's scroller, and stays there. */
-async function expectCaretOnScreen(page: Page, text?: string) {
+/**
+ * The caret is drawn well inside the editor's scroller, and stays there.
+ * `top`: only its top counts, for a caret at the edge of a drawn block, which
+ * is drawn as tall as the block.
+ */
+async function expectCaretOnScreen(page: Page, text?: string, { top = false } = {}) {
   if (text) await expect(page.locator('.cm-activeLine')).toContainText(text);
   await expect.poll(async () => {
-    const read = () => page.evaluate(() => {
+    const read = () => page.evaluate((top) => {
       const caret = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect();
       const scroller = document.querySelector('.cm-scroller');
       if (!caret || !scroller) return 'no caret';
@@ -135,9 +139,9 @@ async function expectCaretOnScreen(page: Page, text?: string) {
       const box = scroller.getBoundingClientRect();
       const edge = box.height * 0.15;
       const high = caret.top < box.top + edge && scroller.scrollTop > 1;
-      const low = caret.bottom > box.bottom - edge && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1;
+      const low = (top ? caret.top : caret.bottom) > box.bottom - edge && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1;
       return high || low ? `at ${Math.round(caret.top - box.top)}px of ${Math.round(box.height)}` : 'on screen';
-    });
+    }, top);
     // Settled, not passing through: the same answer twice, a moment apart.
     const a = await read();
     await page.waitForTimeout(150);
@@ -183,6 +187,19 @@ for (const mode of ['source', 'visual'] as const) {
         await page.goto(`/p/${id}?line=${target}`);
         await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
         await expectCaretOnScreen(page, 'Main target 15 is');
+      } finally {
+        await cleanup(request, id);
+      }
+    });
+
+    test('a deep link to the first line of a table taller than the pane puts its top on screen', async ({ page, request }) => {
+      const id = await seed(request, `Deep link table ${mode}`);
+      try {
+        // In Visual the caret sits at the edge of the drawn grid, so the grid stays drawn.
+        const table = MAIN.split('\n').flatMap((l, i) => (l.startsWith('\\begin{tabular}') ? [i + 1] : []))[14];
+        await page.goto(`/p/${id}?line=${table}`);
+        await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+        await expectCaretOnScreen(page, undefined, { top: true });
       } finally {
         await cleanup(request, id);
       }

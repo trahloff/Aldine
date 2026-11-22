@@ -184,6 +184,18 @@ describe('incremental visual decorations', () => {
     expect(widgetsPastTail(state).length).toBe(3); // the formula plus the bold's two hidden braces
   });
 
+  it('a caret placed past the parsed part keeps its table as source once the parser reaches it', () => {
+    const doc = `${'plain line of prose\n'.repeat(4000)}\\begin{tabular}{ll}\na & b \\\\\nc & d \\\\\n\\end{tabular}\n`;
+    const caret = doc.indexOf('c & d');
+    let state = EditorState.create({ doc, selection: { anchor: caret }, extensions: [latex(), revealField, atomicField] });
+    expect(syntaxTreeAvailable(state, caret)).toBe(false);
+    ensureSyntaxTree(state, doc.length, 5_000);
+    state = state.update({}).state; // the parse worker's transaction: no selection, no edit
+    const table = doc.indexOf('\\begin{tabular}');
+    expect(state.field(revealField).ranges).toContainEqual({ from: table, to: doc.indexOf('\\end{tabular}') + '\\end{tabular}'.length });
+    expect(describeSet(state.field(atomicField).deco, doc.length).filter((d) => d.includes('TableWidget'))).toEqual([]);
+  });
+
   it('stay in step while the parser works through a long file', () => {
     const filler = PAPER.repeat(30);
     let state = EditorState.create({ doc: filler, selection: { anchor: 0 }, extensions: [latex(), revealField, atomicField] });

@@ -6,7 +6,7 @@ import { ensureSyntaxTree } from '@codemirror/language';
  * computed from that tree. A new state holds whatever 20 ms of parsing
  * reached, which on a loaded machine stops short even on a few lines.
  * ensureSyntaxTree finishes the parse, but only a later transaction adopts
- * the tree, and only one that sets the selection makes revealField read it.
+ * the tree.
  */
 export function parsedState(config: EditorStateConfig): EditorState {
   const s = EditorState.create(config);
