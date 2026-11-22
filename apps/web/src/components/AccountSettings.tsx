@@ -764,6 +764,36 @@ function NameRow({ user }: { user: AuthUser }) {
   );
 }
 
+/** Whether a mention in a review comment, or a thread assigned to this
+ *  account, sends an email. Only where the server sends email at all. */
+function CommentMailRow({ user }: { user: AuthUser }) {
+  const { setUser, sendsEmail } = useAuth();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (!sendsEmail || !user.email) return null;
+  const on = user.commentMail !== 'off';
+  const set = async (next: boolean) => {
+    setBusy(true);
+    try {
+      const r = await api.updateMe({ commentMail: next });
+      setUser(r.user);
+      toast(next ? 'You get an email when someone mentions you or assigns you a comment' : 'No more emails about mentions and assigned comments', 'ok');
+    } catch (err: any) {
+      toast(`Could not change the setting: ${err.message}`, 'error');
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="settings__row" data-testid="account-comment-mail-row">
+      <label className="settings__label" htmlFor="account-comment-mail">Email me about comments</label>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <input id="account-comment-mail" type="checkbox" checked={on} disabled={busy} onChange={(e) => void set(e.target.checked)} aria-describedby="account-comment-mail-hint" data-testid="account-comment-mail" />
+        <span className="login__hint" id="account-comment-mail-hint" style={{ margin: 0 }}>When someone @mentions you or assigns you a thread</span>
+      </span>
+    </div>
+  );
+}
+
 /** The author email on commits Aldine makes for this account (push,
  *  checkpoints, branch switches); the author name stays the account name. */
 function CommitEmailRow({ user }: { user: AuthUser }) {
@@ -893,6 +923,7 @@ export default function AccountSettings({ user, onClose, focus }: { user: AuthUs
         <GitHosts />
         {/* Below the agent card, which must open above the sticky footer. */}
         <CommitEmailRow user={user} />
+        <CommentMailRow user={user} />
 
         <PersonalTemplates />
 

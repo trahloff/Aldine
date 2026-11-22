@@ -82,6 +82,8 @@ export default function Modal({ onClose, children, label, wide, width, testId, c
       if (openStack[openStack.length - 1] !== id) return;
       // A menu opened from inside the dialog answers Escape and Tab itself.
       if (e.target instanceof Element && e.target.closest('.menu--floating')) return;
+      // So does an open suggestion list of a field inside it (the @mention menu).
+      if (e.target instanceof Element && e.target.getAttribute('role') === 'combobox' && e.target.getAttribute('aria-expanded') === 'true') return;
       // A search field with text clears it on Escape (its own handler); the next Escape closes.
       if (e.key === 'Escape' && e.target instanceof HTMLInputElement && e.target.type === 'search' && e.target.value) return;
       if (e.key === 'Escape') { e.stopPropagation(); if (dismissRef.current) closeRef.current(); return; }

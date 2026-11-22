@@ -82,7 +82,7 @@ async function sendViaSmtp(mail: Mail): Promise<void> {
   await smtpTransport.sendMail({ from: fromAddress(), to: mail.to, subject: mail.subject, text: mail.text, html: mail.html });
 }
 
-const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** To an administrator: an account waits for approval (ALDINE_SIGNUP=approval).
  *  `account` is its address or ORCID iD, never its display name. `note` is

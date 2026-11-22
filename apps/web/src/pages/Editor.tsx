@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, setLocalName, type AuthUser } from '../api';
+import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, type Person, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, setLocalName, type AuthUser } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
 import { useToast, useToastDismiss } from '../components/Toast';
 import { useDialogs } from '../components/Dialogs';
@@ -1388,10 +1388,10 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
 
   // The composer closes only once the server has the comment: a refusal
   // leaves it open with the text, and Comment tries again.
-  const submitComment = useCallback(async (body: string, suggestion?: string) => {
+  const submitComment = useCallback(async (body: string, suggestion?: string, mentions?: string[]) => {
     if (!composing || !activeFile) return;
     try {
-      await api.addComment(id, { branch, file: activeFile, anchor: composing, body, suggestion, author: identity.name });
+      await api.addComment(id, { branch, file: activeFile, anchor: composing, body, suggestion, author: identity.name, ...(mentions?.length ? { mentions } : {}) });
     } catch (err: any) {
       toast(`Could not save the comment: ${err.message}. It is still in the box: press Comment to try again.`, 'error');
       throw err;
@@ -1402,9 +1402,9 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     bumpComments();
   }, [composing, id, branch, activeFile, identity, loadComments, bumpComments, toast]);
 
-  const replyToComment = useCallback(async (c: Comment, body: string) => {
+  const replyToComment = useCallback(async (c: Comment, body: string, mentions?: string[]) => {
     try {
-      await api.replyComment(id, c.id, body, identity.name);
+      await api.replyComment(id, c.id, body, identity.name, mentions);
     } catch (err: any) {
       toast(`Could not save the reply: ${err.message}. It is still in the box: press Reply to try again.`, 'error');
       throw err;
@@ -1412,6 +1412,24 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     await loadComments();
     bumpComments();
   }, [id, identity, loadComments, bumpComments, toast]);
+  // Who a comment can @mention or be assigned to: accounts only, never a guest's view.
+  const [people, setPeople] = useState<Person[]>([]);
+  useEffect(() => {
+    if (!authEnabled || !user) { setPeople([]); return; }
+    let live = true;
+    api.people(id).then((p) => { if (live) setPeople(p); }, () => { if (live) setPeople([]); });
+    return () => { live = false; };
+  }, [id, authEnabled, user?.id]);
+  const assignComment = useCallback(async (c: Comment, to: string | null) => {
+    try {
+      await api.assignComment(id, c.id, to);
+    } catch (err: any) {
+      toast(`Could not assign the comment: ${err.message}`, 'error');
+      return;
+    }
+    await loadComments();
+    bumpComments();
+  }, [id, loadComments, bumpComments, toast]);
   const resolveComment = useCallback(async (c: Comment, resolved: boolean) => {
     try {
       await api.resolveComment(id, c.id, resolved);
@@ -1446,6 +1464,23 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     // freshly opened file's doc to sync. The delay lets codeRef reach the new pane.
     requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
   }, [openFile]);
+
+  // Deep link (/p/:id?comment=<id>, the mention and assignment emails, Home's
+  // For you): the thread opens in Review once this branch's comments load,
+  // then the param goes so a reload does not replay it.
+  const commentLinkRef = useRef(params.get('comment'));
+  useEffect(() => {
+    const cid = commentLinkRef.current;
+    if (!cid || commentsLoad !== 'ok' || !files.length) return;
+    commentLinkRef.current = null;
+    const next = new URLSearchParams(params);
+    next.delete('comment');
+    setParams(next, { replace: true });
+    const c = comments.find((x) => x.id === cid);
+    if (!c) { toast('That comment is no longer on this branch: it was deleted, or its branch is gone.', 'info'); return; }
+    openCommentInReview(c.id);
+    revealComment(c);
+  }, [commentsLoad, comments, files.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- an agent edit waiting on this person's typing ----
   const [agentWait, setAgentWait] = useState<{ key: string; notice: AgentWaitNotice } | null>(null);
@@ -2441,6 +2476,9 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 canAccept={!locked}
                 fileOrder={Object.keys(docWords?.files ?? {})}
                 active={activeComment}
+                people={people}
+                meId={user?.id}
+                onAssign={assignComment}
                 readOnly={noComments}
                 {...(!project.readOnly ? { readOnlyNote: 'No comments yet. You can view this project, not comment on it.' } : {})}
               />
@@ -2832,7 +2870,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
       <CommandPalette open={paletteOpen} commands={commands} onClose={() => setPaletteOpen(false)} />
 
       {composing && (
-        <CommentComposer quote={composing.quote} onSubmit={submitComment} onClose={() => setComposing(null)} />
+        <CommentComposer quote={composing.quote} onSubmit={submitComment} onClose={() => setComposing(null)} people={people} />
       )}
 
       {publishOpen && project && (

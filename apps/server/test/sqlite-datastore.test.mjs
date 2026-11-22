@@ -277,8 +277,8 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  // Schema 1 is the current tables without sessions.created_at, sessions.id_token, sign_in_links, users.commit_email and users.signup_note.
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE users DROP COLUMN signup_note; PRAGMA user_version=1');
+  // Schema 1 is the current tables without sessions.created_at, sessions.id_token, sign_in_links, users.commit_email, users.signup_note and users.comment_mail.
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE users DROP COLUMN signup_note; ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=1');
   raw.prepare('INSERT INTO sessions(sid,user_id,exp) VALUES(?,?,?)').run('old', 'ada', later);
   raw.close();
   const s = new SqliteStore(file);
@@ -286,7 +286,7 @@ async function readAll(s) {
   eq(await s.getSession('old'), { userId: 'ada', exp: later, createdAt: later - 30 * 86_400_000 }, 'a session from schema 1 began 30 days before its expiry');
   await s.close();
   const after = new DatabaseSync(file);
-  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 6, 'and the file is at schema 6');
+  eq(Number(after.prepare('PRAGMA user_version').get().user_version), 7, 'and the file is at schema 7');
   after.close();
 }
 
@@ -299,7 +299,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE users DROP COLUMN signup_note; PRAGMA user_version=1');
+  raw.exec('ALTER TABLE sessions DROP COLUMN created_at; ALTER TABLE sessions DROP COLUMN id_token; DROP TABLE sign_in_links; ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE users DROP COLUMN signup_note; ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=1');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -308,7 +308,7 @@ async function readAll(s) {
   eq(await upgraded.listSignInLinks('ada'), [link], 'and read back');
   await upgraded.close();
   const check2 = new DatabaseSync(file);
-  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 6, 'the file is at schema 6');
+  eq(Number(check2.prepare('PRAGMA user_version').get().user_version), 7, 'the file is at schema 7');
   check2.close();
 }
 
@@ -321,7 +321,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE sessions DROP COLUMN id_token; ALTER TABLE users DROP COLUMN signup_note; PRAGMA user_version=3');
+  raw.exec('ALTER TABLE users DROP COLUMN commit_email; ALTER TABLE sessions DROP COLUMN id_token; ALTER TABLE users DROP COLUMN signup_note; ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=3');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -341,7 +341,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE sessions DROP COLUMN id_token; ALTER TABLE users DROP COLUMN signup_note; PRAGMA user_version=4');
+  raw.exec('ALTER TABLE sessions DROP COLUMN id_token; ALTER TABLE users DROP COLUMN signup_note; ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=4');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -360,7 +360,7 @@ async function readAll(s) {
   await first.close();
   const { DatabaseSync } = await loadSqlite();
   const raw = new DatabaseSync(file);
-  raw.exec('ALTER TABLE users DROP COLUMN signup_note; PRAGMA user_version=5');
+  raw.exec('ALTER TABLE users DROP COLUMN signup_note; ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=5');
   raw.close();
   const upgraded = new SqliteStore(file);
   await upgraded.init();
@@ -368,6 +368,26 @@ async function readAll(s) {
   eq([kept.email, kept.signupNote], [ada.email, undefined], 'the account stays, without a sign-up note');
   await upgraded.updateUser({ ...kept, signupNote: 'Thesis group, Example University' });
   eq((await upgraded.getUser('ada')).signupNote, 'Thesis group, Example University', 'and can store one after the upgrade');
+  await upgraded.close();
+}
+
+// ---- a file from 1.19 (schema 6) gets users.comment_mail, keeping its rows ----
+{
+  const file = at(freshDir(), SQLITE_FILE);
+  const first = new SqliteStore(file);
+  await first.init();
+  await first.createUser(ada);
+  await first.close();
+  const { DatabaseSync } = await loadSqlite();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE users DROP COLUMN comment_mail; PRAGMA user_version=6');
+  raw.close();
+  const upgraded = new SqliteStore(file);
+  await upgraded.init();
+  const kept = await upgraded.getUser('ada');
+  eq([kept.email, kept.commentMail], [ada.email, undefined], 'the account stays, with comment emails on');
+  await upgraded.updateUser({ ...kept, commentMail: 'off' });
+  eq((await upgraded.getUser('ada')).commentMail, 'off', 'and can turn them off after the upgrade');
   await upgraded.close();
 }
 

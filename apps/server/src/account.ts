@@ -314,6 +314,7 @@ export async function writeExport(u: auth.PublicUser, zip: ZipStream, author?: g
       createdAt: user.createdAt,
       lastSeenAt: user.lastSeenAt ?? null,
       signupNote: user.signupNote ?? null,
+      commentEmails: user.commentMail !== 'off',
       picture: avatarFile,
     },
     signIn: {

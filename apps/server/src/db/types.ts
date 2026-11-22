@@ -41,6 +41,9 @@ export interface User {
    *  will you use Aldine for?"), for the administrators who approve it.
    *  Their own text, at most 500 characters on one line. */
   signupNote?: string;
+  /** 'off': no email when someone mentions this person in a review comment
+   *  or assigns them one. Absent means the emails are on. */
+  commentMail?: 'off';
 }
 
 /** The one-time confirmation link of a pending address: `hash` is the
@@ -53,7 +56,9 @@ export interface EmailPending { hash: string; expiresAt: string; earlier?: Array
 /** `author` is the display name shown with the text; `authorId` is the
  *  account that wrote it (absent without accounts and on older rows). Names
  *  are free text and not unique, so ownership is decided on the id only. */
-export interface Reply { author: string; authorId?: string; body: string; createdAt: string }
+export interface Reply { author: string; authorId?: string; body: string; createdAt: string; mentions?: string[] }
+/** Who a thread is assigned to: one account, named as it was when assigned. */
+export interface Assignee { id: string; name: string; at: string; by?: string }
 export interface Comment {
   id: string;
   branch: string;
@@ -66,6 +71,9 @@ export interface Comment {
   resolved: boolean;
   createdAt: string;
   replies: Reply[];
+  /** Account ids the body @mentions (people.ts). */
+  mentions?: string[];
+  assignee?: Assignee;
 }
 
 export type ShareRole = 'edit' | 'review' | 'view';

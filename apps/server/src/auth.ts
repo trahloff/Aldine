@@ -96,14 +96,16 @@ export type { User } from './db/types.js';
  *  person themself (their /api/auth/me) and the commits their requests make. */
 /** `guest`: someone without an account, here on one project's share link
  *  (guest.ts); never set for an account. */
-export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string; guest?: true }
+/** `commentMail`: 'off' when the person turned off mention and assignment
+ *  emails. Like `commitEmail`, only for the person themself. */
+export interface PublicUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string; commentMail?: 'off'; guest?: true }
 
 /** Session and OAuth-state cookies get the Secure flag when the deployment is HTTPS. */
 export const SECURE_COOKIES = (process.env.ALDINE_PUBLIC_URL || '').startsWith('https') || process.env.COOKIE_SECURE === '1';
 
 export function pub(u: User): PublicUser {
   const avatar = avatarVersion(u.id);
-  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}), ...(avatar ? { avatar } : {}), ...(u.commitEmail ? { commitEmail: u.commitEmail } : {}) };
+  return { id: u.id, email: u.email, name: u.name, provider: u.provider, orcid: orcidOf(u), ...(u.emailPending ? { emailPending: true as const } : {}), ...(avatar ? { avatar } : {}), ...(u.commitEmail ? { commitEmail: u.commitEmail } : {}), ...(u.commentMail === 'off' ? { commentMail: 'off' as const } : {}) };
 }
 /** The ORCID iD behind an `orcid:…` subject, for display and author metadata. */
 export function orcidOf(u: { subject?: string }): string | undefined {
@@ -505,6 +507,16 @@ export async function setCommitEmail(userId: string, value: unknown): Promise<Pu
   if (!user) throw new Error('User not found');
   if (clean) user.commitEmail = clean;
   else delete user.commitEmail;
+  await db().updateUser(user);
+  return pubFull(user);
+}
+
+/** Whether someone mentioning or assigning this account a review comment emails it. */
+export async function setCommentMail(userId: string, on: boolean): Promise<PublicUser> {
+  const user = await db().getUser(userId);
+  if (!user) throw new Error('User not found');
+  if (on) delete user.commentMail;
+  else user.commentMail = 'off';
   await db().updateUser(user);
   return pubFull(user);
 }

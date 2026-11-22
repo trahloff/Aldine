@@ -61,6 +61,14 @@ async function runSuite(store, label) {
   await store.createUser(noted);
   eq(await store.getUser(noted.id), noted, `${label}: signupNote roundtrips through createUser/getUser`);
 
+  // ---- commentMail: mention and assignment emails turned off ----
+  check((await store.getUser(user.id)).commentMail === undefined, `${label}: commentMail absent by default`);
+  await store.updateUser({ ...(await store.getUser(user.id)), commentMail: 'off' });
+  eq((await store.getUser(user.id)).commentMail, 'off', `${label}: updateUser writes commentMail`);
+  const { commentMail: _noMail, ...withoutMail } = await store.getUser(user.id);
+  await store.updateUser(withoutMail);
+  check((await store.getUser(user.id)).commentMail === undefined, `${label}: updateUser without it clears commentMail`);
+
   // ---- commitEmail: the account's own author address for commits ----
   check((await store.getUser(user.id)).commitEmail === undefined, `${label}: commitEmail absent by default`);
   await store.updateUser({ ...(await store.getUser(user.id)), commitEmail: 'ada@users.noreply.github.com' });

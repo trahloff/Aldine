@@ -36,6 +36,8 @@ import { detectEngine, decodeText } from './detect.js';
 import { multipartBoundary, parseMultipart } from './multipart.js';
 import { aiAutoFix, aiConfigured, aiModel, diagnose } from './ai.js';
 import * as comments from './comments.js';
+import { projectPeople, mentionedIn } from './people.js';
+import { notifyComment } from './commentmail.js';
 import * as auth from './auth.js';
 import * as oauth from './oauth.js';
 import { issuerIsLoopback, oidcLogoutRedirect } from './oidc.js';
@@ -245,6 +247,7 @@ const VIEWER_WRITES = new Set([
 const REVIEWER_WRITES = new Set([
   ...VIEWER_WRITES,
   '/api/projects/:id/comments', '/api/projects/:id/comments/:cid/reply', '/api/projects/:id/comments/:cid/resolve', '/api/projects/:id/comments/:cid',
+  '/api/projects/:id/comments/:cid/assign',
 ]);
 /** Reads closed to viewers: they reach the owner's linked accounts only to
  *  change the document (a citation search inserts what it finds). */
@@ -394,7 +397,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
   // The account's display name and commit email. Session only: an access
   // token is the agent's, not the person.
-  app.patch<{ Body: { name?: unknown; commitEmail?: unknown } }>('/api/auth/me', async (req, reply) => {
+  app.patch<{ Body: { name?: unknown; commitEmail?: unknown; commentMail?: unknown } }>('/api/auth/me', async (req, reply) => {
     if (!auth.AUTH_ENABLED) return reply.code(400).send({ error: 'Auth is not enabled' });
     if ((req as any)._tokenScope) return reply.code(403).send({ error: 'Access tokens cannot change the account — sign in to do this' });
     const user = reqUser(req);
@@ -404,9 +407,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const body = req.body || {};
       // Validated before either write, so a bad address cannot leave a renamed account behind.
       if ('commitEmail' in body) auth.cleanCommitEmail(body.commitEmail);
+      if ('commentMail' in body && typeof body.commentMail !== 'boolean') return reply.code(400).send({ error: 'commentMail is true or false' });
       let out: auth.PublicUser | null = null;
-      if ('name' in body || !('commitEmail' in body)) out = await auth.setName(user.id, body.name);
+      if ('name' in body || !('commitEmail' in body || 'commentMail' in body)) out = await auth.setName(user.id, body.name);
       if ('commitEmail' in body) out = await auth.setCommitEmail(user.id, body.commitEmail);
+      if ('commentMail' in body) out = await auth.setCommentMail(user.id, body.commentMail as boolean);
       return { user: out };
     } catch (err: any) { return reply.code(400).send({ error: err.message }); }
   });
@@ -1648,6 +1653,33 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       return { id: inv.id, to: inv.to, state: 'pending' as const, createdAt: inv.createdAt, expiresAt: inv.expiresAt, project: { id: meta.id, name: meta.name }, ownerName: (await ownerName(meta)) ?? null };
     }));
     return rows.filter((r) => r !== null);
+  });
+
+  // Open review threads that wait on the signed-in account, across its
+  // projects: assigned to it, or @mentioning it in the comment or a reply.
+  app.get('/api/for-me', async (req, reply) => {
+    const user = reqUser(req);
+    if (!auth.AUTH_ENABLED) return [];
+    if (!user || user.guest) return reply.code(401).send({ error: 'Sign in required' });
+    const metas = await store.listProjects();
+    const rows: Array<{ project: { id: string; name: string }; reason: 'assigned' | 'mentioned'; at: string; comment: { id: string; branch: string; file: string; quote: string; body: string; author: string; createdAt: string; assignee?: comments.Comment['assignee'] } }> = [];
+    for (const m of metas) {
+      // A link member assigned a thread sees it before opening the project once.
+      if (m.deletedAt || !canAccess(m, user)) continue;
+      for (const c of await db().loadComments(m.id)) {
+        if (c.resolved) continue;
+        const assigned = c.assignee?.id === user.id;
+        const mention = [...(c.mentions?.includes(user.id) ? [c.createdAt] : []), ...c.replies.filter((r) => r.mentions?.includes(user.id)).map((r) => r.createdAt)].sort().pop();
+        if (!assigned && !mention) continue;
+        rows.push({
+          project: { id: m.id, name: m.name },
+          reason: assigned ? 'assigned' : 'mentioned',
+          at: assigned ? c.assignee!.at : mention!,
+          comment: { id: c.id, branch: c.branch, file: c.file, quote: c.anchor.quote.slice(0, 200), body: c.body.slice(0, 300), author: c.author, createdAt: c.createdAt, ...(c.assignee ? { assignee: c.assignee } : {}) },
+        });
+      }
+    }
+    return rows.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100);
   });
 
   // What the invitation page shows. The project's name only to the person
@@ -3162,7 +3194,16 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
   app.get<{ Params: { id: string }; Querystring: Q }>('/api/projects/:id/comments', async (req) =>
     comments.listComments(req.params.id, req.query.branch || 'main'));  // returns a Promise; Fastify awaits it
 
-  app.post<{ Params: { id: string }; Body: { branch?: string; file: string; anchor: { from: number; to: number; quote: string }; body: string; suggestion?: string; author?: string } }>(
+  // Who a comment can @mention or be assigned to (people.ts): names, never addresses.
+  app.get<{ Params: { id: string } }>('/api/projects/:id/people', async (req) =>
+    projectPeople(await store.readMeta(req.params.id)));
+
+  /** The accounts `text` @mentions out of the ids the client sent. */
+  const mentionsOf = async (projectId: string, text: string, requested: unknown) =>
+    Array.isArray(requested) && requested.length ? mentionedIn(text, requested, await projectPeople(await store.readMeta(projectId))) : [];
+  const actorOf = (req: any) => ({ id: reqUser(req)?.id, name: reqUser(req)?.name || 'Someone' });
+
+  app.post<{ Params: { id: string }; Body: { branch?: string; file: string; anchor: { from: number; to: number; quote: string }; body: string; suggestion?: string; author?: string; mentions?: unknown } }>(
     '/api/projects/:id/comments', async (req, reply) => {
       const b = req.body || ({} as any);
       if (!b.file || !b.anchor) return reply.code(400).send({ error: 'file and anchor required' });
@@ -3178,6 +3219,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       }
       if (typeof b.body === 'string' && b.body.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Comment is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
       if (typeof b.suggestion === 'string' && b.suggestion.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Suggestion is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
+      const mentions = reqUser(req) && !reqUser(req)!.guest ? await mentionsOf(req.params.id, b.body || '', b.mentions) : [];
       const added = await comments.addComment(req.params.id, {
         branch,
         file: b.file,
@@ -3186,17 +3228,37 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
         ...(reqUser(req) ? { authorId: reqUser(req)!.id } : {}),
         body: b.body || '',
         suggestion: b.suggestion,
+        ...(mentions.length ? { mentions } : {}),
       });
       await signalViewerComment(req, branch);
+      if (mentions.length) notifyComment(await store.readMeta(req.params.id), added, 'mention', mentions, actorOf(req), added.body);
       return added;
     });
 
-  app.post<{ Params: { id: string; cid: string }; Body: { body: string; author?: string } }>(
+  app.post<{ Params: { id: string; cid: string }; Body: { body: string; author?: string; mentions?: unknown } }>(
     '/api/projects/:id/comments/:cid/reply', async (req, reply) => {
       if (typeof req.body?.body === 'string' && req.body.body.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Reply is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
-      const c = await comments.replyComment(req.params.id, req.params.cid, reqUser(req)?.name || req.body?.author || 'Anonymous', req.body?.body || '', reqUser(req)?.id);
+      const body = req.body?.body || '';
+      const mentions = reqUser(req) && !reqUser(req)!.guest ? await mentionsOf(req.params.id, body, req.body?.mentions) : [];
+      const c = await comments.replyComment(req.params.id, req.params.cid, reqUser(req)?.name || req.body?.author || 'Anonymous', body, reqUser(req)?.id, mentions);
       if (c) await signalViewerComment(req, c.branch);
+      if (c && mentions.length) notifyComment(await store.readMeta(req.params.id), c, 'mention', mentions, actorOf(req), body);
       return c || reply.code(404).send({ error: 'comment not found' });
+    });
+
+  // One assignee per thread; null takes it off whoever has it.
+  app.post<{ Params: { id: string; cid: string }; Body: { to?: unknown } }>(
+    '/api/projects/:id/comments/:cid/assign', async (req, reply) => {
+      const to = req.body?.to;
+      if (to !== null && typeof to !== 'string') return reply.code(400).send({ error: 'to is an account id or null' });
+      const meta = await store.readMeta(req.params.id);
+      const person = to === null ? null : (await projectPeople(meta)).find((p) => p.id === to);
+      if (to !== null && !person) return reply.code(400).send({ error: 'Only someone who can open this project can be assigned' });
+      const r = await comments.assignComment(req.params.id, req.params.cid, person ?? null, reqUser(req)?.id);
+      if (!r) return reply.code(404).send({ error: 'comment not found' });
+      await signalViewerComment(req, r.comment.branch);
+      if (person && person.id !== r.previous) notifyComment(meta, r.comment, 'assign', [person.id], actorOf(req), r.comment.body);
+      return r.comment;
     });
 
   app.post<{ Params: { id: string; cid: string }; Body: { resolved?: boolean } }>(

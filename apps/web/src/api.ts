@@ -7,7 +7,7 @@ import type { InviteReport, InvitationView, MyInvitation, OwnerInvitation } from
  *  projects shared with that address stay hidden until it is. */
 /** `avatar`: version of the profile picture the server keeps for the account, absent without one. */
 /** `commitEmail`: author address on the commits Aldine makes for this account; only ever the person's own. */
-export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string }
+export interface AuthUser { id: string; email: string | null; name: string; provider?: string; orcid?: string; emailPending?: true; avatar?: string; commitEmail?: string; commentMail?: 'off' }
 export interface OAuthProviderInfo { id: string; label: string }
 /** The support contact on /admin: `source` says whether it was set there or comes from ALDINE_SUPPORT (`env`). */
 export interface SupportSetting {
@@ -294,7 +294,18 @@ export interface OAuthClientInfo {
   loopbackOnly: boolean;
   kind: 'cimd' | 'dcr';
 }
-export interface CommentReply { author: string; body: string; createdAt: string }
+/** `mentions`: the accounts the text @mentions (Person ids). */
+export interface CommentReply { author: string; authorId?: string; body: string; createdAt: string; mentions?: string[] }
+/** Someone a comment can @mention or be assigned to: an account that can open the project. */
+export interface Person { id: string; name: string }
+export interface Assignee { id: string; name: string; at: string; by?: string }
+/** An open thread that waits on the signed-in account (Home's For you). */
+export interface ForMeRow {
+  project: { id: string; name: string };
+  reason: 'assigned' | 'mentioned';
+  at: string;
+  comment: { id: string; branch: string; file: string; quote: string; body: string; author: string; createdAt: string; assignee?: Assignee };
+}
 export interface Comment {
   id: string;
   branch: string;
@@ -308,6 +319,8 @@ export interface Comment {
   resolved: boolean;
   createdAt: string;
   replies: CommentReply[];
+  mentions?: string[];
+  assignee?: Assignee;
 }
 
 /** What the Search panel asks for; the toggles go along with every replace too. */
@@ -812,10 +825,14 @@ export const api = {
   plugins: () => req<PluginManifest[]>('/api/plugins'),
 
   comments: (id: string, branch: string) => req<Comment[]>(`/api/projects/${id}/comments?branch=${encodeURIComponent(branch)}`),
-  addComment: (id: string, body: { branch: string; file: string; anchor: { from: number; to: number; quote: string }; body: string; suggestion?: string; author?: string }) =>
+  addComment: (id: string, body: { branch: string; file: string; anchor: { from: number; to: number; quote: string }; body: string; suggestion?: string; author?: string; mentions?: string[] }) =>
     req<Comment>(`/api/projects/${id}/comments`, { method: 'POST', body: JSON.stringify(body) }),
-  replyComment: (id: string, cid: string, body: string, author?: string) =>
-    req<Comment>(`/api/projects/${id}/comments/${cid}/reply`, { method: 'POST', body: JSON.stringify({ body, author }) }),
+  replyComment: (id: string, cid: string, body: string, author?: string, mentions?: string[]) =>
+    req<Comment>(`/api/projects/${id}/comments/${cid}/reply`, { method: 'POST', body: JSON.stringify({ body, author, ...(mentions?.length ? { mentions } : {}) }) }),
+  assignComment: (id: string, cid: string, to: string | null) =>
+    req<Comment>(`/api/projects/${id}/comments/${cid}/assign`, { method: 'POST', body: JSON.stringify({ to }) }),
+  people: (id: string) => req<Person[]>(`/api/projects/${id}/people`),
+  forMe: () => req<ForMeRow[]>('/api/for-me'),
   resolveComment: (id: string, cid: string, resolved: boolean) =>
     req<Comment>(`/api/projects/${id}/comments/${cid}/resolve`, { method: 'POST', body: JSON.stringify({ resolved }) }),
   acceptSuggestion: (id: string, cid: string, branch: string) =>
@@ -833,7 +850,7 @@ export const api = {
   forgetZoteroKey: () => req<{ ok: boolean }>('/api/zotero/key', { method: 'DELETE' }),
   /** The account's display name: what co-authors see on avatars, comments and commits. */
   usage: () => req<Usage>('/api/usage'),
-  updateMe: (patch: { name?: string; commitEmail?: string }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
+  updateMe: (patch: { name?: string; commitEmail?: string; commentMail?: boolean }) => req<{ user: AuthUser }>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) }),
   confirmEmail: (token: string) =>
     req<{ user: AuthUser }>('/api/auth/confirm-email', { method: 'POST', body: JSON.stringify({ token }) }),
   /** `invite`: asked from that invitation's page, whose link the mail then leads back to. */

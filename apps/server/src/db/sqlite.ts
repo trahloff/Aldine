@@ -89,6 +89,8 @@ const MIGRATIONS = [
   `ALTER TABLE sessions ADD COLUMN id_token text;`,
   // 1.18: what a sign-up that waits for approval wrote for the administrators.
   `ALTER TABLE users ADD COLUMN signup_note text;`,
+  // 1.20: 'off' when the account wants no mention and assignment emails.
+  `ALTER TABLE users ADD COLUMN comment_mail text;`,
 ];
 
 /** What `PRAGMA user_version` holds once every migration ran. A file with
@@ -311,13 +313,13 @@ export class SqliteStore implements DataStore {
 
   // ---- users ----
   private rowToUser(r: Row): User {
-    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: parse<EmailPending>(r.email_pending) } : {}), ...(r.disabled_at ? { disabledAt: r.disabled_at } : {}), ...(r.commit_email ? { commitEmail: r.commit_email } : {}), ...(r.signup_note ? { signupNote: r.signup_note } : {}) };
+    return { id: r.id, email: r.email, name: r.name, salt: r.salt, hash: r.hash, createdAt: r.created_at, provider: r.provider ?? undefined, subject: r.subject ?? undefined, lastSeenAt: r.last_seen_at ?? undefined, ...(r.email_pending ? { emailPending: parse<EmailPending>(r.email_pending) } : {}), ...(r.disabled_at ? { disabledAt: r.disabled_at } : {}), ...(r.commit_email ? { commitEmail: r.commit_email } : {}), ...(r.signup_note ? { signupNote: r.signup_note } : {}), ...(r.comment_mail === 'off' ? { commentMail: 'off' as const } : {}) };
   }
   async createUser(u: User) {
     try {
       this.run(
-        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending,disabled_at,commit_email,signup_note) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`,
-        u.id, u.email ?? null, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? json(u.emailPending) : null, u.disabledAt ?? null, u.commitEmail ?? null, u.signupNote ?? null,
+        `INSERT INTO users(id,email,name,salt,hash,created_at,provider,subject,last_seen_at,email_pending,disabled_at,commit_email,signup_note,comment_mail) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`,
+        u.id, u.email ?? null, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? json(u.emailPending) : null, u.disabledAt ?? null, u.commitEmail ?? null, u.signupNote ?? null, u.commentMail ?? null,
       );
     } catch (err) {
       // The other backends' messages, so register() shows one error whatever the datastore.
@@ -329,8 +331,8 @@ export class SqliteStore implements DataStore {
   }
   async updateUser(u: User) {
     this.run(
-      `UPDATE users SET email=?2,name=?3,salt=?4,hash=?5,created_at=?6,provider=?7,subject=?8,last_seen_at=?9,email_pending=?10,commit_email=?11,signup_note=?12 WHERE id=?1`,
-      u.id, u.email ?? null, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? json(u.emailPending) : null, u.commitEmail ?? null, u.signupNote ?? null,
+      `UPDATE users SET email=?2,name=?3,salt=?4,hash=?5,created_at=?6,provider=?7,subject=?8,last_seen_at=?9,email_pending=?10,commit_email=?11,signup_note=?12,comment_mail=?13 WHERE id=?1`,
+      u.id, u.email ?? null, u.name, u.salt, u.hash, u.createdAt, u.provider ?? null, u.subject ?? null, u.lastSeenAt ?? null, u.emailPending ? json(u.emailPending) : null, u.commitEmail ?? null, u.signupNote ?? null, u.commentMail ?? null,
     );
   }
   async listUsers() { return this.all(`SELECT * FROM users ORDER BY created_at, id`).map((r) => this.rowToUser(r)); }

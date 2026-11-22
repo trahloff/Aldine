@@ -7,6 +7,7 @@ import { useDialogs } from '../components/Dialogs';
 import { useAuth } from '../components/Auth';
 import EmailConfirmBanner from '../components/EmailConfirmBanner';
 import InvitationsStrip from '../components/home/InvitationsStrip';
+import ForYouStrip from '../components/home/ForYouStrip';
 import ShareModal from '../components/ShareModal';
 import { appearanceCommands } from '../components/Appearance';
 import AccountSettings from '../components/AccountSettings';
@@ -1066,6 +1067,7 @@ export default function Home() {
         </div>
         {authEnabled && <EmailConfirmBanner />}
         {authEnabled && show !== 'trash' && <InvitationsStrip refresh={invitesAsked} onAccepted={() => { load(); }} />}
+        {authEnabled && show !== 'trash' && <ForYouStrip refresh={invitesAsked} />}
         {compact && search}
         <nav className="seg home-filter" aria-label="Show">
           {filters.map((f) => (
