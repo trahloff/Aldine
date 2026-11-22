@@ -243,7 +243,7 @@ export async function exchange(head: object, files: Array<{ path: string; read: 
 /** Whether the runner answers and passed its container checks, for the admin's log. */
 export async function runnerHealth(): Promise<{ ready: boolean; problem: string | null; version: string | null }> {
   try {
-    const got = await exchange({ v: 1, health: true }, [], 5000);
+    const got = await exchange({ v: 2, health: true }, [], 5000);
     const h = got.find((f): f is { type: 1; value: any } => f.type === F_HEADER)?.value ?? {};
     return { ready: h.ready === true, problem: typeof h.problem === 'string' ? h.problem.slice(0, 300) : null, version: strict(VERSION_RE, h.runner?.version) ? h.runner.version : null };
   } catch (e) {
@@ -448,7 +448,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   if (job.stopped) throw new RunRefusal('Stopped');
   let got: Frame[];
   try {
-    got = await exchange({ v: 1, command: job.command, timeoutS: TIMEOUT_S }, files, TIMEOUT_S * 1000 + ANSWER_MARGIN_MS, SOCKET, (stop) => {
+    got = await exchange({ v: 2, command: job.command, timeoutS: TIMEOUT_S }, files, TIMEOUT_S * 1000 + ANSWER_MARGIN_MS, SOCKET, (stop) => {
       stoppers.set(job.id, stop);
       if (job.stopped) stop();
     });

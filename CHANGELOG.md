@@ -32,6 +32,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   "busy" to every connection except during the cleanup after a job.
   A run whose app hung up (restart, deadline) is stopped instead of
   running to its time limit.
+  The app and the runner now speak version 2 of their protocol: update
+  both together (the runner overlay uses the same ALDINE_VERSION).
 
 ## [1.21.2] — 2026-11-22
 

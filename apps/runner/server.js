@@ -6,13 +6,16 @@
  *
  * The control process listens on a Unix socket and takes one job per
  * connection, one connection at a time. A request is a frame stream
- * (frames.js): HEADER { v: 1, command, timeoutS }, the project's files as
+ * (frames.js): HEADER { v: 2, command, timeoutS }, the project's files as
  * FILE frames, END. The answer is HEADER { ok, exitCode, signal, timedOut,
  * durationMs, log, deleted, runner: { version, packages } } followed by
  * the created or changed files (FILE) and the files left out (SKIP), END;
  * or HEADER { ok: false, error }, END.
- * HEADER { v: 1, health: true } answers HEADER { ok, ready, problem,
+ * HEADER { v: 2, health: true } answers HEADER { ok, ready, problem,
  * runner }, END.
+ * Version 2: the app keeps its side open until the answer; any byte after
+ * END, or its hanging up, stops the job. A version 1 app half-closed after
+ * END, which this runner would read as a stop, so it is refused instead.
  *
  * The control process never touches job files itself: unpacking, killing,
  * collecting and emptying run as the job user (helper.js), and the command
@@ -421,7 +424,7 @@ function handle(sock) {
     const head = got.find((f) => f.type === frames.HEADER)?.value || {};
     const runner = { version: VERSION, packages: PACKAGES };
     if (head.health) { answer(sock, { ok: true, ready: !problem, problem, insecure: DEV, runner }); release(); return; }
-    if (head.v !== 1) { answer(sock, { ok: false, error: 'This runner does not understand the request; update the app and the runner together' }); release(); return; }
+    if (head.v !== 2) { answer(sock, { ok: false, error: 'This runner does not understand the request; update the app and the runner together' }); release(); return; }
     if (problem) { answer(sock, { ok: false, error: `The runner container is not set up safely: ${problem}` }); release(); return; }
     // The app keeps its side open until the answer: its hanging up (end, or
     // a reset) means nobody waits for this job any more.

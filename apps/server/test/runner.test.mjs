@@ -187,7 +187,7 @@ eq(cut.result.skipped.map((x) => [x.path, x.reason]), [['cut.bin', 'reached the 
 // "busy" and never runs after it (the dev runner runs as this user, so the
 // planted command would touch the marker).
 const marker = path.join(tmp, 'planted-ran');
-const plant = `${process.execPath} -e 'const s=require("net").connect(process.argv[1]);const j=Buffer.from(JSON.stringify({v:1,command:"touch "+process.argv[2]}));const h=Buffer.alloc(5);h[0]=1;h.writeUInt32BE(j.length,1);s.on("connect",()=>{s.write(Buffer.concat([h,j,Buffer.from([0,0,0,0,0])]));setTimeout(()=>process.exit(0),300)})' ${socket} ${marker}`;
+const plant = `${process.execPath} -e 'const s=require("net").connect(process.argv[1]);const j=Buffer.from(JSON.stringify({v:2,command:"touch "+process.argv[2]}));const h=Buffer.alloc(5);h[0]=1;h.writeUInt32BE(j.length,1);s.on("connect",()=>{s.write(Buffer.concat([h,j,Buffer.from([0,0,0,0,0])]));setTimeout(()=>process.exit(0),300)})' ${socket} ${marker}`;
 const planter = await run(P, owner, plant);
 eq([planter.status, planter.result?.exitCode], ['done', 0], `the planting job ran: ${planter.error ?? planter.result?.log ?? ''}`);
 await run(P, owner, 'true');
