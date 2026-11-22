@@ -144,6 +144,24 @@ try {
   res = await call(bea, 'GET', '/api/for-me');
   eq(res.json(), [], 'a resolved thread no longer waits on anyone');
 
+  // ---- For you reads each project's comments once, until a write ----
+  await call(bea, 'POST', `/api/projects/${id}/comments/${thread.id}/resolve`, { resolved: false });
+  await call(bea, 'POST', `/api/projects/${id}/comments/${thread.id}/assign`, { to: cy.id });
+  const store_ = db();
+  const real = store_.loadComments.bind(store_);
+  let reads = 0;
+  store_.loadComments = (pid) => { if (pid === id) reads++; return real(pid); };
+  try {
+    eq((await call(cy, 'GET', '/api/for-me')).json().length, 1, 'the reopened, assigned thread waits on Cy');
+    const first = reads;
+    check(first === 1, `after a write the first list reads the project once (read ${first})`);
+    await call(cy, 'GET', '/api/for-me');
+    await call(ada, 'GET', '/api/for-me');
+    eq(reads, first, 'more For you lists read nothing more');
+    await call(cy, 'POST', `/api/projects/${id}/comments/${thread.id}/resolve`, { resolved: true });
+    eq((await call(cy, 'GET', '/api/for-me')).json(), [], 'a write shows at once');
+  } finally { store_.loadComments = real; }
+
   console.log('comment mentions: ok');
 } finally {
   await app.close();
