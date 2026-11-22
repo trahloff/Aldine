@@ -31,9 +31,11 @@ export function nodeAt(state: EditorState, pos: number, name: string): SyntaxNod
 /**
  * A range that follows every edit (local or a collaborator's) while a widget
  * editor is open on it. `live` turns false when the view leaves Visual mode or
- * is destroyed; nothing may be written through a dead range.
+ * is destroyed; nothing may be written through a dead range. `updated` runs
+ * after every view update, mapped or not: a redraw (KaTeX or a macro
+ * arriving) moves what is drawn for the range without an edit.
  */
-export interface TrackedRange { from: number; to: number; live: boolean }
+export interface TrackedRange { from: number; to: number; live: boolean; updated?: () => void }
 
 const tracked = new WeakMap<EditorView, Set<TrackedRange>>();
 
@@ -52,10 +54,12 @@ export function untrack(view: EditorView, range: TrackedRange): void {
 /** Insertions at either end stay outside a tracked range. */
 export const rangeTracker = ViewPlugin.define((view) => ({
   update(u) {
-    if (!u.docChanged) return;
     for (const r of tracked.get(view) ?? []) {
-      r.from = u.changes.mapPos(r.from, 1);
-      r.to = Math.max(r.from, u.changes.mapPos(r.to, -1));
+      if (u.docChanged) {
+        r.from = u.changes.mapPos(r.from, 1);
+        r.to = Math.max(r.from, u.changes.mapPos(r.to, -1));
+      }
+      r.updated?.();
     }
   },
   destroy() {

@@ -1226,6 +1226,8 @@ test.describe('visual editor: widgets, formulas and keys', () => {
     const scrollBy = (dy: number) => page.evaluate((dy) => { document.querySelector('.cm-scroller')!.scrollTop += dy; }, dy);
     try {
       await openProject(page, id);
+      // drawn as source until KaTeX arrives, then replaced by its typeset drawing
+      await expect(math.locator('.katex')).toBeVisible();
       await math.scrollIntoViewIfNeeded();
       // the formula a third of the way down, with room for the editor below it
       await page.evaluate(() => {
@@ -1245,6 +1247,58 @@ test.describe('visual editor: widgets, formulas and keys', () => {
       await page.keyboard.press('Escape');
       await expect(pop).toHaveCount(0);
     } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the formula editor sits under its formula when KaTeX redraws it before or after the editor opens', async ({ page, request }) => {
+    const id = await seedDoc(request, 'Visual Math Redraw', 'Math $x+y$ here.\nplain end\n');
+    const pop = page.getByTestId('math-popover');
+    const math = page.getByTestId('vis-math');
+    /** Holds the requests for a chunk until the returned function is called. */
+    const hold = async (url: RegExp) => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      await page.route(url, async (route) => { await gate; await route.continue(); });
+      return release;
+    };
+    // the editor's top edge against the formula's bottom edge: 6 px below it
+    const below = async () => {
+      const p = (await pop.boundingBox())!;
+      const m = (await math.boundingBox())!;
+      return p.y - (m.y + m.height);
+    };
+    try {
+      // the click lands on the formula drawn as source; KaTeX redraws it while MathLive loads
+      let katex = await hold(/\/assets\/katex[^/]*\.js/);
+      let mathlive = await hold(/\/assets\/mathlive[^/]*\.js/);
+      await openProject(page, id);
+      await expect(math).toHaveClass(/cm-vis-math--raw/);
+      await math.click();
+      await expect(page.getByTestId('math-popover-loading')).toBeVisible();
+      katex();
+      await expect(math.locator('.katex')).toBeVisible();
+      mathlive();
+      await expect(page.getByTestId('math-field')).toBeFocused();
+      await expect.poll(below).toBeCloseTo(6, 0);
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+
+      // MathLive first: the editor opens at the source drawing, and KaTeX redraws it while open
+      await page.unrouteAll();
+      katex = await hold(/\/assets\/katex[^/]*\.js/);
+      await openProject(page, id);
+      await expect(math).toHaveClass(/cm-vis-math--raw/);
+      await math.click();
+      await expect(page.getByTestId('math-field')).toBeFocused();
+      await expect.poll(below).toBeCloseTo(6, 0);
+      katex();
+      await expect(math.locator('.katex')).toBeVisible();
+      await expect.poll(below).toBeCloseTo(6, 0);
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+    } finally {
+      await page.unrouteAll();
       await cleanup(request, id);
     }
   });

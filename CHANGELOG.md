@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Visual: the formula editor now sits right under its formula when the
+  formula is redrawn while the editor loads or is open, as happens on the
+  first click in a freshly opened file. Before, it kept the place of the
+  formula as first drawn (its source, before KaTeX arrived) and sat off
+  it until the text scrolled.
+
 ## [1.21.1] — 2026-11-22
 
 ## [1.21.0] — 2026-11-22

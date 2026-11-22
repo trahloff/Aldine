@@ -20,8 +20,9 @@ function after(doc: string, op: TableOp, r: number, c: number) {
   const { node, model, src } = table(s);
   const edit = tableEdit(model, src, op, r, c);
   if (!edit) return null;
-  const next = s.update({ changes: edit.changes.map((ch) => ({ from: node.from + ch.from, to: node.from + ch.to, insert: ch.insert })) }).state;
-  return { doc: next.doc.toString(), grid: table(next).model.rows.map((row) => row.map((cell) => cell.text)), focus: edit.focus };
+  const next = s.update({ changes: edit.changes.map((ch) => ({ from: node.from + ch.from, to: node.from + ch.to, insert: ch.insert })) }).state.doc.toString();
+  // a fresh, fully parsed state: the edited one reparses only as far as 20 ms reach
+  return { doc: next, grid: table(state(next)).model.rows.map((row) => row.map((cell) => cell.text)), focus: edit.focus };
 }
 
 const BOOKTABS = '\\begin{tabular}{ll}\n\\toprule\nH1 & H2 \\\\\n\\midrule\na & b \\\\\nc & d \\\\\n\\bottomrule\n\\end{tabular}\n';
