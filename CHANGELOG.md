@@ -27,6 +27,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   the panel rides out a dropped connection and says when a run is gone;
   a file cut off at the 32 MB size limit is no longer written back, and a
   project too large to run names its largest files.
+- Runner preview: since 1.21.2 a job could leave a request at the runner
+  that ran after it, outside the app's checks; the runner again answers
+  "busy" to every connection except during the cleanup after a job.
+  A run whose app hung up (restart, deadline) is stopped instead of
+  running to its time limit.
 
 ## [1.21.2] — 2026-11-22
 

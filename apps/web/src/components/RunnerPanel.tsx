@@ -61,7 +61,8 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged, on
   const logRef = useRef<HTMLPreElement | null>(null);
   const active = job?.status === 'queued' || job?.status === 'running';
 
-  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; if (timer.current) window.clearTimeout(timer.current); }, []);
   useEffect(() => {
     if (!active) return;
     const t = window.setInterval(() => setNow(Date.now()), 500);
@@ -70,7 +71,7 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged, on
 
   const settle = (j: RunnerJob) => {
     setStopping(false);
-    if (j.stopped) { setAnnounce('Run stopped'); return; }
+    if (j.stopped && j.status === 'failed') { setAnnounce('Run stopped'); return; }
     if (j.status === 'failed') { setAnnounce('Run failed'); return; }
     const n = j.result?.written.length ?? 0;
     setAnnounce(`Run finished: ${n ? `${plural(n, 'file')} updated` : 'no files changed'}`);
@@ -82,13 +83,16 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged, on
   const poll = (id: string, misses = 0) => {
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(async () => {
+      if (!mounted.current) return;
       try {
         const { job: j } = await api.runnerJob(projectId, id);
+        if (!mounted.current) return;
         setReconnecting(false);
         setJob(j);
         if (j.status === 'queued' || j.status === 'running') poll(id);
         else settle(j);
       } catch (e) {
+        if (!mounted.current) return;
         const status = e instanceof ApiError ? e.status : 0;
         if ((status === 0 || status >= 500) && misses < 60) { setReconnecting(true); poll(id, misses + 1); return; }
         setReconnecting(false);

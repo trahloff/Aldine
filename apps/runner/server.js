@@ -248,10 +248,9 @@ function jobEnv() {
     OMP_NUM_THREADS: '1',
     OPENBLAS_NUM_THREADS: '1',
     MKL_NUM_THREADS: '1',
-    // Fixed dates in PDFs (Matplotlib, pdfTeX, XeTeX): a figure that did not
-    // change comes back byte for byte the same, so nothing is written.
+    // Fixed dates in PDF metadata (Matplotlib, pdfTeX, XeTeX): an unchanged PDF
+    // or PNG figure comes back the same, so nothing is written. \today is left alone.
     SOURCE_DATE_EPOCH: '1700000000',
-    FORCE_SOURCE_DATE: '1',
     // No network: pip says so at once instead of retrying for seconds.
     PIP_NO_INDEX: '1',
   };
@@ -353,6 +352,9 @@ async function runJob(head, inputFiles, hungUp = () => false) {
 // --- the socket ---------------------------------------------------------------
 
 let busy = false;
+// True only between a job's answer and the end of its wipe: every process of
+// that job is gone (D6), so a connection now cannot come from it.
+let wiping = false;
 const problem = containerProblem();
 if (problem) console.error(`[runner] NOT READY: ${problem}. Every job is refused until the container is fixed (docs/RUNNER.md).`);
 
@@ -370,6 +372,7 @@ function answer(sock, head, files = [], skipped = []) {
 const waiting = [];
 function nextWaiting() {
   busy = false;
+  wiping = false;
   while (waiting.length) {
     const sock = waiting.shift();
     if (!sock.destroyed) { handle(sock); return; }
@@ -378,7 +381,9 @@ function nextWaiting() {
 
 function handle(sock) {
   if (busy) {
-    if (waiting.length >= 4) { answer(sock, { ok: false, error: 'The runner is busy with another job' }); return; }
+    // Only the app's next job waits, sent once it has the previous answer; a
+    // connection made while a command runs may come from that command.
+    if (!wiping || waiting.length >= 4) { answer(sock, { ok: false, error: 'The runner is busy with another job' }); return; }
     sock.on('error', () => {});
     waiting.push(sock);
     return;
@@ -418,7 +423,11 @@ function handle(sock) {
     if (head.health) { answer(sock, { ok: true, ready: !problem, problem, insecure: DEV, runner }); release(); return; }
     if (head.v !== 1) { answer(sock, { ok: false, error: 'This runner does not understand the request; update the app and the runner together' }); release(); return; }
     if (problem) { answer(sock, { ok: false, error: `The runner container is not set up safely: ${problem}` }); release(); return; }
-    sock.on('close', () => { stopAsked = true; if (stopCurrent) stopCurrent(); });
+    // The app keeps its side open until the answer: its hanging up (end, or
+    // a reset) means nobody waits for this job any more.
+    const hangUp = () => { stopAsked = true; if (stopCurrent) stopCurrent(); };
+    sock.on('end', hangUp);
+    sock.on('close', hangUp);
     runJob(head, got.filter((f) => f.type === frames.FILE), () => stopAsked)
       .then((r) => {
         if (r.error) return answer(sock, { ok: false, error: r.error });
@@ -427,7 +436,7 @@ function handle(sock) {
       })
       .catch((e) => answer(sock, { ok: false, error: `The runner failed: ${e.message}` }))
       // Nothing of this job may reach the next one (D6): the next job waits for the wipe.
-      .finally(() => wipe().then(release));
+      .finally(() => { wiping = true; return wipe().then(release); });
   });
 }
 

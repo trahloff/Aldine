@@ -350,8 +350,9 @@ container, and reviewed the panel. Changed after it:
    over the 64 MB input limit is told its largest files.
 2. A run can be stopped (Stop: a waiting run leaves the queue; a running
    one is killed and brings nothing back). Any byte the app sends after
-   the request's END frame asks the runner to stop; the app keeps its
-   side of the connection open for that.
+   the request's END frame asks the runner to stop, and so does the app
+   hanging up (a restart, its deadline): it keeps its side of the
+   connection open until the answer, and so does the release smoke.
 3. The panel finds the person's current or last run again after a
    reload, in another tab, or when Run says a run is already going.
 4. Jobs get `SOURCE_DATE_EPOCH` and `FORCE_SOURCE_DATE`, so an unchanged
@@ -366,6 +367,13 @@ container, and reviewed the panel. Changed after it:
    to screen readers. Python, R and Julia files show in the source view
    of the file tree.
 6. The app logs once at start whether the runner is ready, and why not.
+7. A code review of these changes found that since 1.21.2 a job could
+   connect to the runner's socket (it is open to the job user, D3) and
+   leave a request waiting to run after its own job, without the app's
+   checks, and fill the runner's waiting list. Connections now wait only
+   between a job's answer and the end of its wipe, when every process of
+   that job is gone (D6); any other connection while the runner is busy
+   is answered "busy" at once, as before 1.21.2.
 
 Docker Desktop can run containers without any seccomp filter; the runner
 then reports NOT READY ("no seccomp filter is active") and refuses jobs,

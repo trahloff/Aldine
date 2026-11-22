@@ -16,11 +16,12 @@ function exchange(head, files = []) {
     const got = [];
     sock.on('error', reject);
     sock.on('data', (c) => got.push(...reader.push(c)));
-    sock.on('end', () => (reader.ended ? resolve(got) : reject(new Error('the runner closed early'))));
+    sock.on('end', () => { sock.destroy(); if (reader.ended) resolve(got); else reject(new Error('the runner closed early')); });
     sock.on('connect', () => {
       sock.write(frames.header(head));
       for (const [p, c] of files) sock.write(frames.file(p, Buffer.from(c)));
-      sock.end(frames.end());
+      // Kept open until the answer, as the app does: hanging up asks the runner to stop.
+      sock.write(frames.end());
     });
   });
 }

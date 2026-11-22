@@ -183,6 +183,17 @@ const cut = await run(P, owner, 'head -c 33554432 /dev/zero > cut.bin; echo smal
 eq(cut.result.written, ['small.txt'], 'only the whole file comes back');
 eq(cut.result.skipped.map((x) => [x.path, x.reason]), [['cut.bin', 'reached the 32 MB file size limit, so it is probably cut off']], 'the cut-off file is named with the reason');
 
+// A job may reach the runner's socket (D3); a request it leaves there is answered
+// "busy" and never runs after it (the dev runner runs as this user, so the
+// planted command would touch the marker).
+const marker = path.join(tmp, 'planted-ran');
+const plant = `${process.execPath} -e 'const s=require("net").connect(process.argv[1]);const j=Buffer.from(JSON.stringify({v:1,command:"touch "+process.argv[2]}));const h=Buffer.alloc(5);h[0]=1;h.writeUInt32BE(j.length,1);s.on("connect",()=>{s.write(Buffer.concat([h,j,Buffer.from([0,0,0,0,0])]));setTimeout(()=>process.exit(0),300)})' ${socket} ${marker}`;
+const planter = await run(P, owner, plant);
+eq([planter.status, planter.result?.exitCode], ['done', 0], `the planting job ran: ${planter.error ?? planter.result?.log ?? ''}`);
+await run(P, owner, 'true');
+await new Promise((r) => setTimeout(r, 1500));
+check(!fs.existsSync(marker), 'a request left by a job never runs');
+
 // Pressing Run again while a run waits costs no rate-limit token and says why.
 const holding = await start(P, owner, 'sleep 1');
 const again = await start(P, owner, 'true');

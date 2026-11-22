@@ -336,6 +336,7 @@ export function lastJob(projectId: string, userId: string): (RunJob & { position
 export function stopJob(id: string, userId: string): boolean {
   const j = jobs.get(id);
   if (!j || j.userId !== userId || (j.status !== 'queued' && j.status !== 'running')) return false;
+  // Asked to stop before its copy went out, it is not sent at all.
   j.stopped = true;
   const i = waiting.findIndex((w) => w.job.id === id);
   if (i >= 0) {
@@ -366,6 +367,8 @@ async function next(): Promise<void> {
   running = item.job;
   try {
     item.job.result = await runJob(item.job, item.user);
+    // A Stop that came after the command ended changed nothing: the run is done.
+    item.job.stopped = false;
     item.job.status = 'done';
   } catch (e) {
     item.job.status = 'failed';
@@ -442,6 +445,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   const base = branchDir(id, branch);
   for (const [p, c] of contents) sentHash.set(p, sha256(c));
   const files = sent.filter((e) => contents.has(e.path)).map((e) => ({ path: e.path, read: async () => contents.get(e.path)! }));
+  if (job.stopped) throw new RunRefusal('Stopped');
   let got: Frame[];
   try {
     got = await exchange({ v: 1, command: job.command, timeoutS: TIMEOUT_S }, files, TIMEOUT_S * 1000 + ANSWER_MARGIN_MS, SOCKET, (stop) => {
