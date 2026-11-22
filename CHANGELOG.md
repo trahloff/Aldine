@@ -16,6 +16,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - Runner preview: a run that started right after another one could fail
   with "The runner is busy with another job" while the runner was still
   emptying its folders. It now waits for that instead.
+- Agent API: `edit_comment` and `delete_comment` refused comments Claude
+  wrote for you before 1.21.0 (they record no owner); the signature
+  "Claude (for <you>)" now counts for those.
 
 ## [1.21.1] — 2026-11-22
 
