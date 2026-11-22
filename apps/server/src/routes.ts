@@ -1663,11 +1663,15 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     if (!user || user.guest) return reply.code(401).send({ error: 'Sign in required' });
     const metas = await store.listProjects();
     const rows: Array<{ project: { id: string; name: string }; reason: 'assigned' | 'mentioned'; at: string; comment: { id: string; branch: string; file: string; quote: string; body: string; author: string; createdAt: string; assignee?: comments.Comment['assignee'] } }> = [];
-    for (const m of metas) {
-      // A link member assigned a thread sees it before opening the project once.
-      if (m.deletedAt || !canAccess(m, user)) continue;
-      for (const c of await db().loadComments(m.id)) {
-        if (c.resolved) continue;
+    // A link member assigned a thread sees it before opening the project once.
+    const mine = metas.filter((m) => !m.deletedAt && canAccess(m, user));
+    const threads = new Map<string, comments.Comment[]>();
+    // A few datastore reads at a time: a cold cache must not open one per project at once.
+    for (let i = 0; i < mine.length; i += 8) {
+      await Promise.all(mine.slice(i, i + 8).map(async (m) => { threads.set(m.id, await comments.waitingThreads(m.id)); }));
+    }
+    for (const m of mine) {
+      for (const c of threads.get(m.id) ?? []) {
         const assigned = c.assignee?.id === user.id;
         const mention = [...(c.mentions?.includes(user.id) ? [c.createdAt] : []), ...c.replies.filter((r) => r.mentions?.includes(user.id)).map((r) => r.createdAt)].sort().pop();
         if (!assigned && !mention) continue;

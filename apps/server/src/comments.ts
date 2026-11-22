@@ -17,6 +17,32 @@ const MAX_COMMENTS = 2000;
 export const MAX_COMMENT_TEXT = 20000;
 const cap = (s: string | undefined, n: number) => (s == null ? s : s.slice(0, n));
 
+/**
+ * The open threads of a project that wait on someone (an assignee or a
+ * mention), for /api/for-me, which would otherwise read every project's
+ * comments on each Home visit. Per process: a write here drops the project's
+ * entry at once; a write on another node shows within WAITING_TTL_MS.
+ */
+const WAITING_TTL_MS = Number(process.env.ALDINE_WAITING_TTL_MS || '') || 60_000;
+const waiting = new Map<string, { at: number; list: Promise<Comment[]> }>();
+
+export function waitingThreads(projectId: string, now = Date.now()): Promise<Comment[]> {
+  const hit = waiting.get(projectId);
+  if (hit && now - hit.at < WAITING_TTL_MS) return hit.list;
+  const list = db().loadComments(projectId).then((all) =>
+    all.filter((c) => !c.resolved && (c.assignee || c.mentions?.length || c.replies.some((r) => r.mentions?.length))));
+  waiting.set(projectId, { at: now, list });
+  list.catch(() => { if (waiting.get(projectId)?.list === list) waiting.delete(projectId); });
+  return list;
+}
+
+/** Every write goes through here, so the waiting cache never outlives it.
+ *  Dropped again after the write: a read that started meanwhile saw the old list. */
+async function save(projectId: string, list: Comment[]): Promise<void> {
+  waiting.delete(projectId);
+  try { await db().saveComments(projectId, list); } finally { waiting.delete(projectId); }
+}
+
 export async function listComments(projectId: string, branch: string): Promise<Comment[]> {
   return (await db().loadComments(projectId)).filter((c) => c.branch === branch).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
@@ -35,7 +61,7 @@ export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'cre
     replies: [],
   };
   list.push(comment);
-  await db().saveComments(projectId, list);
+  await save(projectId, list);
   return comment;
 }
 
@@ -45,7 +71,7 @@ export async function replyComment(projectId: string, id: string, author: string
   if (!c) return null;
   if (c.replies.length >= 500) throw new Error('reply limit reached');
   c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString(), ...(mentions?.length ? { mentions } : {}) });
-  await db().saveComments(projectId, list);
+  await save(projectId, list);
   return c;
 }
 
@@ -57,7 +83,7 @@ export async function assignComment(projectId: string, id: string, to: { id: str
   const previous = c.assignee?.id;
   if (to) c.assignee = { id: to.id, name: to.name, at: new Date().toISOString(), ...(by ? { by } : {}) };
   else delete c.assignee;
-  await db().saveComments(projectId, list);
+  await save(projectId, list);
   return { comment: c, previous };
 }
 
@@ -66,7 +92,7 @@ export async function resolveComment(projectId: string, id: string, resolved: bo
   const c = list.find((x) => x.id === id);
   if (!c) return null;
   c.resolved = resolved;
-  await db().saveComments(projectId, list);
+  await save(projectId, list);
   return c;
 }
 
@@ -86,11 +112,11 @@ export async function movePath(projectId: string, branch: string, from: string, 
     c.file = next;
     moved++;
   }
-  if (moved) await db().saveComments(projectId, list);
+  if (moved) await save(projectId, list);
   return moved;
 }
 
 export async function deleteComment(projectId: string, id: string): Promise<void> {
   const list = await db().loadComments(projectId);
-  await db().saveComments(projectId, list.filter((c) => c.id !== id));
+  await save(projectId, list.filter((c) => c.id !== id));
 }
