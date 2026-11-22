@@ -155,6 +155,51 @@ for (const [proj, res] of [[P, first], [P2, second]]) {
   eq(j.status, 'done', `back-to-back jobs both run: ${j.error ?? ''}`);
 }
 
+// A job is checked again when its turn comes: a project trashed while its run waits is not sent.
+const P3 = (await json('POST', '/api/projects', owner, { name: 'Third' })).id;
+await json('PUT', `/api/projects/${P3}/file`, owner, { path: 'main.tex', content: 'x\n' });
+const blocker = await start(P, owner, 'sleep 2');
+const waits = await start(P3, owner, 'echo late > late.txt');
+eq(waits.json().job.status, 'queued', 'the second project waits');
+await json('DELETE', `/api/projects/${P3}`, owner);
+await waitFor(P, owner, blocker.json().job.id);
+// The trashed project's jobs cannot be polled any more; the queue itself is asked.
+let dropped = runner.jobView(waits.json().job.id, owner.id);
+for (let i = 0; i < 200 && dropped.status === 'queued'; i++) { await new Promise((r) => setTimeout(r, 20)); dropped = runner.jobView(waits.json().job.id, owner.id); }
+eq([dropped.status, dropped.error], ['failed', 'Not run: access to the project or the branch changed while the run waited'], 'a waiting run of a trashed project is not run');
+
+// A branch deleted while its run goes is named as such, never as a server path.
+await json('POST', `/api/projects/${P}/branches`, owner, { name: 'feat', from: 'main' });
+const onFeat = await start(P, owner, 'sleep 2; echo f > f.txt', 'feat');
+eq(onFeat.statusCode, 200, 'a run on a branch starts');
+for (let i = 0; i < 200 && (await json('GET', `/api/projects/${P}/runner/jobs/${onFeat.json().job.id}`, owner)).job.status !== 'running'; i++) await new Promise((r) => setTimeout(r, 20));
+await json('DELETE', `/api/projects/${P}/branches?name=feat`, owner);
+const gone = await waitFor(P, owner, onFeat.json().job.id);
+check(!JSON.stringify(gone).includes(tmp), `no server path reaches the person: ${gone.error ?? ''}`);
+eq(gone.result?.written ?? [], [], 'nothing is written to a deleted branch');
+
+// A file at exactly the size limit was cut off by it and does not come back.
+const cut = await run(P, owner, 'head -c 33554432 /dev/zero > cut.bin; echo small > small.txt');
+eq(cut.result.written, ['small.txt'], 'only the whole file comes back');
+eq(cut.result.skipped.map((x) => [x.path, x.reason]), [['cut.bin', 'reached the 32 MB file size limit, so it is probably cut off']], 'the cut-off file is named with the reason');
+
+// A job may reach the runner's socket (D3); a request it leaves there is answered
+// "busy" and never runs after it (the dev runner runs as this user, so the
+// planted command would touch the marker).
+const marker = path.join(tmp, 'planted-ran');
+const plant = `${process.execPath} -e 'const s=require("net").connect(process.argv[1]);const j=Buffer.from(JSON.stringify({v:2,command:"touch "+process.argv[2]}));const h=Buffer.alloc(5);h[0]=1;h.writeUInt32BE(j.length,1);s.on("connect",()=>{s.write(Buffer.concat([h,j,Buffer.from([0,0,0,0,0])]));setTimeout(()=>process.exit(0),300)})' ${socket} ${marker}`;
+const planter = await run(P, owner, plant);
+eq([planter.status, planter.result?.exitCode], ['done', 0], `the planting job ran: ${planter.error ?? planter.result?.log ?? ''}`);
+await run(P, owner, 'true');
+await new Promise((r) => setTimeout(r, 1500));
+check(!fs.existsSync(marker), 'a request left by a job never runs');
+
+// Pressing Run again while a run waits costs no rate-limit token and says why.
+const holding = await start(P, owner, 'sleep 1');
+const again = await start(P, owner, 'true');
+eq([again.statusCode, again.json().error], [409, 'A run of this project is already waiting or running'], 'a second run of the same project is refused with the reason');
+await waitFor(P, owner, holding.json().job.id);
+
 // ---- the path rules (D8) ----
 for (const [p, why] of [
   ['fig/a.pdf', null], ['é.txt'.normalize('NFC'), null],

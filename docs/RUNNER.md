@@ -91,7 +91,9 @@ is a memory, a process and a CPU limit; `/work` is a `tmpfs` owned by the
 job user; the root filesystem is read-only. The insecure development mode
 (`RUNNER_INSECURE_DEV=1`, for tests on a workstation) reports itself in its
 health answer and never runs as user 0. A misconfigured container thus cannot run
-jobs.
+jobs. The app refuses results marked insecure; that catches an honest
+development runner, not a hostile one, which could claim anything (the
+socket is the boundary that matters, D3).
 
 gVisor is not supported in the preview: it does not pass host Unix sockets
 through by default, and the combination is untested.
@@ -138,7 +140,8 @@ length-prefixed frames. It stops reading at the output limit plus a small
 margin. It gives up after the job's timeout plus four and a half minutes (the
 runner's own step deadlines and the upload) and then treats the runner as
 dead. A hostile or broken runner therefore cannot make the
-app hold more than about 64 MB or wait forever. Before every connection the
+app hold more than about 150 MB (the copy it sent and the answer, at
+once) or wait forever. Before every connection the
 app checks that the socket path is a socket and not a symbolic link.
 
 **D8. What comes back.** A file comes back only if all of these hold, in
@@ -312,6 +315,69 @@ them are fixed:
     smoke container is pinned.
 11. The self-check now also covers init, the cgroup limits and user
     namespaces.
+
+## Adversarial test of 2026-11-22
+
+A tester attacked the app side as a hostile runner and as odd users
+(framing, names, clashes, races, access, write-back into open documents).
+Nothing reached outside the project, `.git` or a hidden path, and nothing
+crashed. Fixed after it:
+
+1. A run waiting in the queue is checked again when its turn comes; a
+   trashed project or a revoked person is no longer sent to the runner.
+2. A branch deleted during a run showed the server's file path; the
+   person now sees why nothing was written, and unexpected errors go to
+   the server log only.
+3. The file limit is counted before anything is read, so a huge project
+   no longer holds the project's lock (and everyone's autosave) while it
+   is read only to be refused.
+4. Pressing Run while a run waits no longer uses up the rate limit.
+5. The runner's version and package fields must be strings; the log,
+   errors and skipped names are stored without escape sequences,
+   controls or direction characters, not only shown without them.
+6. The panel keeps polling through a dropped connection, says a run is
+   gone when the server restarted, and tells an unconfirmed address to
+   confirm it.
+
+`ALDINE_RUNNER_USERS`, the socket and the timeout are read when the app
+starts: removing someone takes effect with a restart.
+
+A second tester used the runner as the #349 requester would, on the real
+container, and reviewed the panel. Changed after it:
+
+1. A file that reached the 32 MB file size limit was cut off by it and
+   still written back; it is now left out with that reason. A project
+   over the 64 MB input limit is told its largest files.
+2. A run can be stopped (Stop: a waiting run leaves the queue; a running
+   one is killed and brings nothing back). Any byte the app sends after
+   the request's END frame asks the runner to stop, and so does the app
+   hanging up (a restart, its deadline): it keeps its side of the
+   connection open until the answer, and so does the release smoke.
+3. The panel finds the person's current or last run again after a
+   reload, in another tab, or when Run says a run is already going.
+4. Jobs get `SOURCE_DATE_EPOCH` and `FORCE_SOURCE_DATE`, so an unchanged
+   figure PDF comes back byte for byte the same and nothing is written;
+   `PIP_NO_INDEX` makes pip fail at once without network.
+5. The panel names the environment, explains exit codes 127, 137 and
+   153, says when files were written although the command failed, puts
+   the error line of a failed run above the log and scrolls the log to
+   its end, opens the list of files not brought back when nothing was,
+   names the time limit while running, offers the project's only script
+   as a suggestion, links written files, and announces only state changes
+   to screen readers. Python, R and Julia files show in the source view
+   of the file tree.
+6. The app logs once at start whether the runner is ready, and why not.
+7. A code review of these changes found that since 1.21.2 a job could
+   connect to the runner's socket (it is open to the job user, D3) and
+   leave a request waiting to run after its own job, without the app's
+   checks, and fill the runner's waiting list. Connections now wait only
+   between a job's answer and the end of its wipe, when every process of
+   that job is gone (D6); any other connection while the runner is busy
+   is answered "busy" at once, as before 1.21.2.
+
+Docker Desktop can run containers without any seccomp filter; the runner
+then reports NOT READY ("no seccomp filter is active") and refuses jobs,
+as it should.
 
 ## Out of scope for the preview
 

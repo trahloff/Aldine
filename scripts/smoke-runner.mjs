@@ -16,11 +16,12 @@ function exchange(head, files = []) {
     const got = [];
     sock.on('error', reject);
     sock.on('data', (c) => got.push(...reader.push(c)));
-    sock.on('end', () => (reader.ended ? resolve(got) : reject(new Error('the runner closed early'))));
+    sock.on('end', () => { sock.destroy(); if (reader.ended) resolve(got); else reject(new Error('the runner closed early')); });
     sock.on('connect', () => {
       sock.write(frames.header(head));
       for (const [p, c] of files) sock.write(frames.file(p, Buffer.from(c)));
-      sock.end(frames.end());
+      // Kept open until the answer, as the app does: hanging up asks the runner to stop.
+      sock.write(frames.end());
     });
   });
 }
@@ -28,7 +29,7 @@ function exchange(head, files = []) {
 const fail = (msg) => { console.error(`smoke-runner: FAIL: ${msg}`); process.exit(1); };
 for (let i = 0; i < 60 && !fs.existsSync(SOCKET); i++) await new Promise((r) => setTimeout(r, 1000));
 
-const health = (await exchange({ v: 1, health: true }))[0].value;
+const health = (await exchange({ v: 2, health: true }))[0].value;
 if (!health.ready) fail(`the runner is not ready: ${health.problem}`);
 if (!/^[0-9a-f]{64}$/.test(health.runner.packages)) fail(`no package hash: ${health.runner.packages}`);
 console.log(`runner ${health.runner.version}, packages ${health.runner.packages.slice(0, 12)}: ready`);
@@ -45,7 +46,7 @@ try:
 except Exception:
     print("no network")
 `;
-const got = await exchange({ v: 1, command: 'mkdir -p fig && python plot.py', timeoutS: 120 }, [['plot.py', plot], ['data.csv', '0,1\n1,3\n2,2\n']]);
+const got = await exchange({ v: 2, command: 'mkdir -p fig && python plot.py', timeoutS: 120 }, [['plot.py', plot], ['data.csv', '0,1\n1,3\n2,2\n']]);
 const head = got[0].value;
 if (!head.ok) fail(head.error);
 if (head.exitCode !== 0) fail(`exit ${head.exitCode}: ${head.log}`);

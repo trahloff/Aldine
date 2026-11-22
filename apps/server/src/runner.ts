@@ -112,6 +112,19 @@ export function commandProblem(command: unknown): string | null {
 
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,40}$/;
 const PACKAGES_RE = /^(?:[0-9a-f]{64}|unknown)$/;
+const strict = (re: RegExp, v: unknown): v is string => typeof v === 'string' && re.test(v);
+
+/** Runner text as stored: no escape sequences, controls (but line breaks and
+ *  tabs) or invisible and direction characters, whoever reads the job later. */
+export function plainText(v: unknown, max: number): string {
+  if (typeof v !== 'string') return '';
+  return v.slice(0, max * 2)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-Z\\-_])/g, '')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
+    .replace(new RegExp(INVISIBLE.source, 'gu'), '')
+    .slice(0, max);
+}
 
 // --- frames (apps/runner/frames.js) ------------------------------------------
 
@@ -188,7 +201,7 @@ export class FrameReader {
 
 /** One exchange with the runner: sends `head` and the files, reads the answer
  *  with limits. Rejects when the runner is missing, slow or breaks the format. */
-export async function exchange(head: object, files: Array<{ path: string; read: () => Promise<Buffer> }>, deadlineMs: number, socketPath = SOCKET): Promise<Frame[]> {
+export async function exchange(head: object, files: Array<{ path: string; read: () => Promise<Buffer> }>, deadlineMs: number, socketPath = SOCKET, onStoppable?: (stop: () => void) => void): Promise<Frame[]> {
   // connect() follows a symbolic link; the socket must be the socket (D7).
   const st = await fs.promises.lstat(socketPath).catch(() => null);
   if (!st || !st.isSocket()) throw new Error('The runner is not running (no socket)');
@@ -219,7 +232,9 @@ export async function exchange(head: object, files: Array<{ path: string; read: 
           if (settled) return;
           await write(fileFrame(f.path, await f.read()));
         }
-        sock.end(frame(F_END));
+        // The write side stays open: one more byte asks the runner to stop the job.
+        await write(frame(F_END));
+        onStoppable?.(() => { if (!settled) sock.write(Buffer.from([0])); });
       } catch (e) { done(e as Error); }
     });
   });
@@ -228,12 +243,25 @@ export async function exchange(head: object, files: Array<{ path: string; read: 
 /** Whether the runner answers and passed its container checks, for the admin's log. */
 export async function runnerHealth(): Promise<{ ready: boolean; problem: string | null; version: string | null }> {
   try {
-    const got = await exchange({ v: 1, health: true }, [], 5000);
+    const got = await exchange({ v: 2, health: true }, [], 5000);
     const h = got.find((f): f is { type: 1; value: any } => f.type === F_HEADER)?.value ?? {};
-    return { ready: h.ready === true, problem: typeof h.problem === 'string' ? h.problem.slice(0, 300) : null, version: VERSION_RE.test(h.runner?.version ?? '') ? h.runner.version : null };
+    return { ready: h.ready === true, problem: typeof h.problem === 'string' ? h.problem.slice(0, 300) : null, version: strict(VERSION_RE, h.runner?.version) ? h.runner.version : null };
   } catch (e) {
     return { ready: false, problem: (e as Error).message, version: null };
   }
+}
+
+/** One line in the app's log once the runner answers (or a minute passed):
+ *  a misconfigured container otherwise shows only on someone's first run. */
+export async function logRunnerReadiness(): Promise<void> {
+  if (!runnerConfigured()) return;
+  let h = await runnerHealth();
+  for (let i = 0; i < 12 && !h.ready && /not running|could not be reached/.test(h.problem ?? ''); i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    h = await runnerHealth();
+  }
+  if (h.ready) console.log(`[runner] ready, version ${h.version ?? 'unknown'}`);
+  else console.warn(`[runner] NOT READY: ${h.problem ?? 'no answer'}; runs will fail until this is fixed (docs/RUNNER.md)`);
 }
 
 // --- jobs ---------------------------------------------------------------------
@@ -259,9 +287,18 @@ export interface RunJob {
   command: string;
   status: 'queued' | 'running' | 'done' | 'failed';
   createdAt: number;
+  /** When the copy was taken and the command started. */
+  startedAt?: number;
+  /** The run's time limit, for the panel's "of at most". */
+  timeoutS: number;
+  /** The person pressed Stop. */
+  stopped?: boolean;
   error?: string;
   result?: RunResult;
 }
+
+/** Stops a running job: wired up while its exchange is open. */
+const stoppers = new Map<string, () => void>();
 
 const jobs = new Map<string, RunJob>();
 const waiting: Array<{ job: RunJob; user: PublicUser }> = [];
@@ -280,12 +317,43 @@ export function jobView(id: string, userId: string): (RunJob & { position?: numb
   return { ...j, ...(position >= 0 ? { position: position + 1 } : {}) };
 }
 
-/** Queues a job (D4). Returns the job, or why it cannot be queued. */
-export function enqueue(projectId: string, branch: string, user: PublicUser, command: string): RunJob | string {
+/** Why a job for this project cannot be queued now, or null (D4). */
+export function queueProblem(projectId: string): string | null {
   const busy = (j: RunJob) => j.projectId === projectId && (j.status === 'queued' || j.status === 'running');
   if ((running && busy(running)) || waiting.some((w) => busy(w.job))) return 'A run of this project is already waiting or running';
   if (waiting.length >= RUNNER_LIMITS.waiting) return 'The runner has too many jobs waiting; try again in a minute';
-  const job: RunJob = { id: crypto.randomBytes(12).toString('hex'), projectId, branch, userId: user.id, command, status: 'queued', createdAt: Date.now() };
+  return null;
+}
+
+/** The person's current or last run in this project, for a panel opened later. */
+export function lastJob(projectId: string, userId: string): (RunJob & { position?: number }) | null {
+  let last: RunJob | null = null;
+  for (const j of jobs.values()) if (j.projectId === projectId && j.userId === userId && (!last || j.createdAt >= last.createdAt)) last = j;
+  return last ? jobView(last.id, userId) : null;
+}
+
+/** Stops a run of this person: a waiting one leaves the queue, a running one is ended. */
+export function stopJob(id: string, userId: string): boolean {
+  const j = jobs.get(id);
+  if (!j || j.userId !== userId || (j.status !== 'queued' && j.status !== 'running')) return false;
+  // Asked to stop before its copy went out, it is not sent at all.
+  j.stopped = true;
+  const i = waiting.findIndex((w) => w.job.id === id);
+  if (i >= 0) {
+    waiting.splice(i, 1);
+    j.status = 'failed';
+    j.error = 'Stopped';
+    return true;
+  }
+  stoppers.get(id)?.();
+  return true;
+}
+
+/** Queues a job (D4). Returns the job, or why it cannot be queued. */
+export function enqueue(projectId: string, branch: string, user: PublicUser, command: string): RunJob | string {
+  const problem = queueProblem(projectId);
+  if (problem) return problem;
+  const job: RunJob = { id: crypto.randomBytes(12).toString('hex'), projectId, branch, userId: user.id, command, status: 'queued', createdAt: Date.now(), timeoutS: TIMEOUT_S };
   jobs.set(job.id, job);
   waiting.push({ job, user });
   void next();
@@ -299,37 +367,66 @@ async function next(): Promise<void> {
   running = item.job;
   try {
     item.job.result = await runJob(item.job, item.user);
+    // A Stop that came after the command ended changed nothing: the run is done.
+    item.job.stopped = false;
     item.job.status = 'done';
   } catch (e) {
     item.job.status = 'failed';
-    item.job.error = (e as Error).message.slice(0, 500);
+    // Messages meant for the person are RunRefusal; anything else (a file
+    // system error, say) would show server paths, so it is logged instead.
+    if (e instanceof RunRefusal) item.job.error = e.message.slice(0, 500);
+    else {
+      console.error(`[runner] job ${item.job.id} in ${item.job.projectId}: ${(e as Error).stack ?? e}`);
+      item.job.error = 'The run failed on the server; the administrator can find the reason in its log';
+    }
   } finally {
     running = null;
     void next();
   }
 }
 
+class RunRefusal extends Error {}
+
+/** Names the largest files: the person has to find what to remove. */
+function tooLarge(entries: Array<{ path: string; size?: number }>): string {
+  const big = entries.filter((e) => !runnerPathProblem(e.path)).sort((a, b) => (b.size ?? 0) - (a.size ?? 0)).slice(0, 3)
+    .map((e) => `${e.path} (${((e.size ?? 0) / MB).toFixed(1)} MB)`);
+  return `The project is larger than ${RUNNER_LIMITS.inputBytes / MB} MB, the most a run can copy. Largest files: ${big.join(', ')}`;
+}
+
+/** The person may still run here: jobs wait in the queue, and run for minutes. */
+async function stillAllowed(id: string, branch: string, userId: string): Promise<boolean> {
+  const metaNow = await readMeta(id).catch(() => null);
+  const userNow = await getUser(userId).catch(() => null);
+  return !!metaNow && !metaNow.deletedAt && !!userNow && !userNow.disabledAt && runnerAllowed(pub(userNow)) && mayRunIn(metaNow, pub(userNow))
+    && !isBranchClosed(id, branch) && !!(await gitops.branchHead(id, branch));
+}
+
 async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   const { projectId: id, branch } = job;
   // 1. The run starts from the files as they are: pending typing is flushed.
   const { input, sent: listed, contents } = await gitops.withRepoLock(id, async () => {
+    if (!(await stillAllowed(id, branch, user.id))) throw new RunRefusal('Not run: access to the project or the branch changed while the run waited');
     await gitops.ensureWorktree(id, branch);
     flushBranchDocs(id, branch);
     const head = await gitops.branchHead(id, branch);
     const entries = listFiles(id, branch).filter((e) => e.type === 'file');
+    // Counted before anything is read: the lock also holds up everyone's autosave.
+    if (entries.filter((e) => !runnerPathProblem(e.path)).length > RUNNER_LIMITS.inputFiles) throw new RunRefusal(`The project has more than ${RUNNER_LIMITS.inputFiles} files`);
     // Read under the repo lock, so no commit or checkout moves files meanwhile.
     const contents = new Map<string, Buffer>();
     let bytes = 0;
     for (const e of entries) {
       if (runnerPathProblem(e.path)) continue;
       bytes += e.size ?? 0;
-      if (bytes > RUNNER_LIMITS.inputBytes) throw new Error(`The project is larger than ${RUNNER_LIMITS.inputBytes / MB} MB`);
+      if (bytes > RUNNER_LIMITS.inputBytes) throw new RunRefusal(tooLarge(entries));
       contents.set(e.path, await fs.promises.readFile(safeJoin(branchDir(id, branch), e.path)));
     }
     return { input: head, sent: entries, contents };
   });
   // "running" means the copy is taken: typing from here on is not in the run.
   job.status = 'running';
+  job.startedAt = Date.now();
   // Hidden files (.gitignore, .latexmkrc) stay out of the copy, as they would
   // stay out of what comes back; other names the runner refuses are named.
   const notSent: Array<{ path: string; reason: string }> = [];
@@ -338,34 +435,59 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     if (problem && !e.path.split('/').some((seg) => seg.startsWith('.'))) notSent.push({ path: e.path.slice(0, 300), reason: `not sent to the runner: ${problem}` });
     return !problem;
   });
-  if (sent.length > RUNNER_LIMITS.inputFiles) throw new Error(`The project has more than ${RUNNER_LIMITS.inputFiles} files`);
+  if (sent.length > RUNNER_LIMITS.inputFiles) throw new RunRefusal(`The project has more than ${RUNNER_LIMITS.inputFiles} files`);
   let total = 0;
   for (const e of sent) total += e.size ?? 0;
-  if (total > RUNNER_LIMITS.inputBytes) throw new Error(`The project is larger than ${RUNNER_LIMITS.inputBytes / MB} MB`);
+  if (total > RUNNER_LIMITS.inputBytes) throw new RunRefusal(tooLarge(sent));
 
   // 2. What was sent, as the app itself read it (D8: never the runner's claim).
   const sentHash = new Map<string, string>();
   const base = branchDir(id, branch);
   for (const [p, c] of contents) sentHash.set(p, sha256(c));
   const files = sent.filter((e) => contents.has(e.path)).map((e) => ({ path: e.path, read: async () => contents.get(e.path)! }));
-  const got = await exchange({ v: 1, command: job.command, timeoutS: TIMEOUT_S }, files, TIMEOUT_S * 1000 + ANSWER_MARGIN_MS);
+  if (job.stopped) throw new RunRefusal('Stopped');
+  let got: Frame[];
+  try {
+    got = await exchange({ v: 2, command: job.command, timeoutS: TIMEOUT_S }, files, TIMEOUT_S * 1000 + ANSWER_MARGIN_MS, SOCKET, (stop) => {
+      stoppers.set(job.id, stop);
+      if (job.stopped) stop();
+    });
+  } finally {
+    stoppers.delete(job.id);
+  }
 
   const head = got.find((f): f is { type: 1; value: any } => f.type === F_HEADER)?.value;
-  if (!head || typeof head !== 'object') throw new Error('The runner sent no answer');
-  if (head.ok !== true) throw new Error(typeof head.error === 'string' ? head.error.slice(0, 500) : 'The runner refused the job');
+  if (!head || typeof head !== 'object') throw new RunRefusal('The runner sent no answer');
+  if (head.ok !== true) throw new RunRefusal(job.stopped ? 'Stopped' : plainText(head.error, 500) || 'The runner refused the job');
   // The development mode runs jobs without the container's protections.
-  if (head.insecure !== false && process.env.ALDINE_RUNNER_ALLOW_INSECURE !== '1') throw new Error('The runner runs in its insecure development mode (RUNNER_INSECURE_DEV); its result is not used');
+  if (head.insecure !== false && process.env.ALDINE_RUNNER_ALLOW_INSECURE !== '1') throw new RunRefusal('The runner runs in its insecure development mode (RUNNER_INSECURE_DEV); its result is not used');
   const runner = {
-    version: VERSION_RE.test(head.runner?.version ?? '') ? head.runner.version : 'unknown',
-    packages: PACKAGES_RE.test(head.runner?.packages ?? '') ? head.runner.packages : 'unknown',
+    version: strict(VERSION_RE, head.runner?.version) ? head.runner.version : 'unknown',
+    packages: strict(PACKAGES_RE, head.runner?.packages) ? head.runner.packages : 'unknown',
   };
 
   // 3. Every returned file is checked again (D3, D8).
   const skipped: Array<{ path: string; reason: string }> = [...notSent.slice(0, 50)];
-  const skip = (p: unknown, reason: string) => { if (skipped.length < 200) skipped.push({ path: String(p).slice(0, 300), reason: String(reason).slice(0, 200) }); };
+  const skip = (p: unknown, reason: unknown) => { if (skipped.length < 200) skipped.push({ path: plainText(String(p), 300), reason: plainText(String(reason), 200) }); };
   for (const f of got) if (f.type === F_SKIP) skip(f.value?.path ?? '', f.value?.reason ?? 'left out by the runner');
   // Every file and folder of the project, by its folded name: "Figs/x.png"
   // must not land next to a folder "figs".
+  const result = (written: string[]): RunResult => ({
+    exitCode: Number.isSafeInteger(head.exitCode) ? head.exitCode : null,
+    signal: typeof head.signal === 'string' && /^SIG[A-Z0-9]{1,10}$/.test(head.signal) ? head.signal : null,
+    timedOut: head.timedOut === true,
+    durationMs: Number.isFinite(head.durationMs) ? Math.max(0, Math.round(head.durationMs)) : 0,
+    log: plainText(head.log, RUNNER_LIMITS.logBytes + 200),
+    written,
+    skipped,
+    deleted: Number.isSafeInteger(head.deleted) ? Math.max(0, head.deleted) : 0,
+    input,
+    runner,
+  });
+  if (!(await stillAllowed(id, branch, user.id))) {
+    for (const f of got) if (f.type === F_FILE) skip(f.path, 'not written: access to the project or the branch changed while the job ran');
+    return result([]);
+  }
   const existing = new Map<string, string>();
   for (const e of listFiles(id, branch)) existing.set(foldKey(e.path), e.path);
   const prefixes = (p: string) => p.split('/').map((_, i, segs) => segs.slice(0, i + 1).join('/'));
@@ -392,7 +514,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     const segs = f.path.split('/');
     const parentFile = segs.slice(0, -1).map((_, i) => segs.slice(0, i + 1).join('/')).find((p) => existingTypes.get(p) === 'file');
     if (parentFile) { skip(f.path, `"${parentFile}" is a file in the project`); continue; }
-    if (f.content.length > RUNNER_LIMITS.outputFileBytes) { skip(f.path, `larger than ${RUNNER_LIMITS.outputFileBytes / MB} MB`); continue; }
+    if (f.content.length >= RUNNER_LIMITS.outputFileBytes) { skip(f.path, `reached the ${RUNNER_LIMITS.outputFileBytes / MB} MB file size limit, so it is probably cut off`); continue; }
     if (accepted.length >= RUNNER_LIMITS.outputFiles || outBytes + f.content.length > RUNNER_LIMITS.outputBytes) { skip(f.path, 'over the limit for files a run may bring back'); continue; }
     keys.add(key);
     for (const p of prefixes(f.path)) acceptedPrefix.set(foldKey(p), p);
@@ -407,18 +529,6 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     if (outer) { skip(accepted[i].path, `"${outer}" is also a returned file`); accepted.splice(i, 1); }
   }
 
-  const result = (written: string[]): RunResult => ({
-    exitCode: Number.isSafeInteger(head.exitCode) ? head.exitCode : null,
-    signal: typeof head.signal === 'string' && /^SIG[A-Z0-9]{1,10}$/.test(head.signal) ? head.signal : null,
-    timedOut: head.timedOut === true,
-    durationMs: Number.isFinite(head.durationMs) ? Math.max(0, Math.round(head.durationMs)) : 0,
-    log: typeof head.log === 'string' ? head.log.slice(0, RUNNER_LIMITS.logBytes + 200) : '',
-    written,
-    skipped,
-    deleted: Number.isSafeInteger(head.deleted) ? Math.max(0, head.deleted) : 0,
-    input,
-    runner,
-  });
   if (!accepted.length) return result([]);
 
   // 4. Storage first (it awaits); then flush, check and write with no await
@@ -433,10 +543,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
   return gitops.withRepoLock(id, async () => {
     // Up to the queue's length times the timeout may have passed since the
     // job was accepted: the person, the project and the branch are checked again.
-    const metaNow = await readMeta(id).catch(() => null);
-    const userNow = await getUser(user.id).catch(() => null);
-    const stillAllowed = !!metaNow && !metaNow.deletedAt && !!userNow && !userNow.disabledAt && runnerAllowed(pub(userNow)) && mayRunIn(metaNow, pub(userNow));
-    if (!stillAllowed || isBranchClosed(id, branch) || !(await gitops.branchHead(id, branch))) {
+    if (!(await stillAllowed(id, branch, user.id))) {
       for (const a of accepted) skip(a.path, 'not written: access to the project or the branch changed while the job ran');
       return result([]);
     }

@@ -97,7 +97,17 @@ async function collect() {
         const fst = fs.fstatSync(fd);
         if (!fst.isFile()) { await write(frames.skip(r, 'not a regular file')); continue; }
         if (fst.nlink !== 1) { await write(frames.skip(r, 'hard links are not copied')); continue; }
-        if (fst.size > maxFileBytes) { await write(frames.skip(r, `larger than ${Math.round(maxFileBytes / 1048576)} MB`)); continue; }
+        // An input file the command left alone may be larger than what a run
+        // may write; it is not reported.
+        if (fst.size >= maxFileBytes && manifest.has(r)) {
+          const h = crypto.createHash('sha256');
+          const chunk = Buffer.alloc(1 << 20);
+          let pos = 0;
+          for (;;) { const n = fs.readSync(fd, chunk, 0, chunk.length, pos); if (n === 0) break; h.update(chunk.subarray(0, n)); pos += n; }
+          if (h.digest('hex') === manifest.get(r)) continue;
+        }
+        // The size limit stops writes at exactly the limit: such a file is cut off.
+        if (fst.size >= maxFileBytes) { await write(frames.skip(r, `reached the ${Math.round(maxFileBytes / 1048576)} MB file size limit, so it is probably cut off`)); continue; }
         const content = Buffer.alloc(fst.size);
         let off = 0;
         while (off < fst.size) {

@@ -336,6 +336,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     if (window.matchMedia('(max-width: 640px)').matches) setSidebarHidden(true);
     revealRef.current('editor');
   }, []);
+  const runnerScripts = useMemo(() => files.filter((f) => f.type === 'file' && /\.py$/i.test(f.path)).map((f) => f.path), [files]);
   const [spellcheck, setSpellcheck] = useState(() => safeStorage.get(SPELLCHECK) !== '0');
   const toggleSpellcheck = useCallback(() => setSpellcheck((s) => { safeStorage.set(SPELLCHECK, s ? '0' : '1'); return !s; }), []);
   const [spellLang, setSpellLangState] = useState(() => { const l = safeStorage.get(SPELLCHECK_LANG); return spellLangKnown(l) ? l : ''; });
@@ -2524,7 +2525,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             </div>
             {runnerEnabled && (
               <div className="sidebar__panel" style={{ display: tab === 'runner' ? 'block' : 'none' }}>
-                <RunnerPanel projectId={id} branch={branch} readOnly={locked} onChanged={() => onDocChanged(true)} />
+                <RunnerPanel projectId={id} branch={branch} readOnly={locked} onChanged={() => onDocChanged(true)} onOpenFile={openFile} scripts={runnerScripts} />
               </div>
             )}
             {pluginPanels.map((p) => (

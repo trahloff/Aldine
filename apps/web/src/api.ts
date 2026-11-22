@@ -437,7 +437,12 @@ export interface RunnerJob {
   id: string;
   command: string;
   status: 'queued' | 'running' | 'done' | 'failed';
+  branch: string;
   position?: number;
+  /** Server time the command started; with timeoutS, the panel's "of at most". */
+  startedAt?: number;
+  timeoutS: number;
+  stopped?: boolean;
   error?: string;
   result?: {
     exitCode: number | null;
@@ -738,6 +743,9 @@ export const api = {
   runnerRun: (id: string, branch: string, command: string) =>
     req<{ job: RunnerJob }>(`/api/projects/${id}/runner/run`, { method: 'POST', body: JSON.stringify({ branch, command }) }),
   runnerJob: (id: string, job: string) => req<{ job: RunnerJob }>(`/api/projects/${id}/runner/jobs/${job}`),
+  runnerLast: (id: string) => req<{ job: RunnerJob | null }>(`/api/projects/${id}/runner/jobs`),
+  runnerStop: (id: string, job: string) =>
+    req<{ job: RunnerJob }>(`/api/projects/${id}/runner/jobs/${job}/stop`, { method: 'POST', body: JSON.stringify({}) }),
   commitDiff: (id: string, hash: string) => req<{ patch: string; stat: string }>(`/api/projects/${id}/commit/${hash}/diff`),
   search: (id: string, branch: string, query: SearchQuery, signal?: AbortSignal) => {
     const qs = new URLSearchParams({ branch, q: query.q });

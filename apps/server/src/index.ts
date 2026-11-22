@@ -18,6 +18,7 @@ import { registrationConfigWarnings } from './oauth/registration.js';
 import { backfillMissingLastEdits, flushActivity } from './activity.js';
 import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings, oidcLogoutWarning } from './oidc.js';
 import { startTemplatePreviews } from './templatepreviews.js';
+import { logRunnerReadiness } from './runner.js';
 
 // Never let a stray rejection take down the collaboration server.
 process.on('unhandledRejection', (reason) => { console.error('[aldine] unhandledRejection', reason); captureError(reason); });
@@ -38,6 +39,7 @@ const app = await buildApp();
 await app.listen({ port: config.port, host: '0.0.0.0' });
 // After listen: reading the shipped previews and hashing checkouts never delays it.
 startTemplatePreviews();
+void logRunnerReadiness();
 
 // Yjs collaboration over WebSocket at <basePath>/collab
 const wss = new WebSocketServer({ noServer: true });
