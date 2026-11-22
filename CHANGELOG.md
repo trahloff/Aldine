@@ -7,10 +7,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
-### Changed
-- The runner preview no longer makes a commit per run. The files it
-  brings back are written like a save and reach history with the next
-  autosave.
+## [1.21.0] — 2026-11-22
 
 ### Added
 - The one-box Hetzner stack (`deploy/hetzner`) has the runner preview as an
@@ -25,6 +22,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `list_people` names whom they can pick. Mentions and assignments email
   as usual, from "Claude (for <you>)".
 - Edited comments and replies say so in the Review panel.
+
+### Changed
+- The runner preview no longer makes a commit per run. The files it
+  brings back are written like a save and reach history with the next
+  autosave.
 
 ### Fixed
 - `deploy/hetzner`: a deploy now removes the images of earlier releases
