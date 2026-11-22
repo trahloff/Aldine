@@ -110,7 +110,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
           {!c.resolved && !readOnly && canAccept && <button className="btn btn--small btn--primary" data-testid={`accept-${c.id}`} onClick={() => onAccept(c)}>Accept</button>}
         </div>
       )}
-      <div className="review__meta">{c.author} · {friendlyDate(c.createdAt)}</div>
+      <div className="review__meta">{c.author} · {friendlyDate(c.createdAt)}{c.editedAt ? ' · edited' : ''}</div>
       {(c.assignee || (people.length > 0 && !readOnly && !c.resolved && onAssign)) && (
         <div className="review__assign">
           {people.length > 0 && !readOnly && !c.resolved && onAssign ? (
@@ -128,7 +128,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
       )}
       {c.replies.map((r, i) => (
         <div key={i} className="review__reply">
-          <span className="review__reply-author">{r.author}</span> <MentionText text={r.body} mentions={r.mentions} people={people} />
+          <span className="review__reply-author">{r.author}</span> <MentionText text={r.body} mentions={r.mentions} people={people} />{r.editedAt ? <span className="review__reply-edited"> (edited)</span> : null}
         </div>
       ))}
       {!readOnly && !c.resolved && <ReplyBox c={c} onReply={onReply} people={people} />}

@@ -67,6 +67,9 @@ const WRITES = {
   reply_comment: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   resolve_comment: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   assign_comment: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  edit_comment: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  delete_comment: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  accept_suggestion: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
   push: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   pull: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
 };

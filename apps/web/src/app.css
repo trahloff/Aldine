@@ -1798,6 +1798,7 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 .review__meta { font-size: var(--text-xs); color: var(--text-2); }
 .review__reply { font-size: var(--text-s); color: var(--text); padding-left: 8px; border-left: 2px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; }
 .review__reply-author { font-weight: 600; }
+.review__reply-edited { font-size: var(--text-xs); color: var(--text-2); }
 .review__actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .review__reply-box { display: grid; gap: 4px; }
 .review__reply-row { display: flex; align-items: flex-start; gap: 6px; }

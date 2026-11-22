@@ -295,7 +295,7 @@ export interface OAuthClientInfo {
   kind: 'cimd' | 'dcr';
 }
 /** `mentions`: the accounts the text @mentions (Person ids). */
-export interface CommentReply { author: string; authorId?: string; body: string; createdAt: string; mentions?: string[] }
+export interface CommentReply { author: string; authorId?: string; body: string; createdAt: string; mentions?: string[]; editedAt?: string }
 /** Someone a comment can @mention or be assigned to: an account that can open the project. */
 export interface Person { id: string; name: string }
 export interface Assignee { id: string; name: string; at: string; by?: string }
@@ -321,6 +321,7 @@ export interface Comment {
   replies: CommentReply[];
   mentions?: string[];
   assignee?: Assignee;
+  editedAt?: string;
 }
 
 /** What the Search panel asks for; the toggles go along with every replace too. */

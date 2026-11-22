@@ -231,12 +231,13 @@ const captureLog = async (fn) => {
 const listed = (await client.listTools()).tools;
 const names = listed.map((t) => t.name).sort();
 const expected = [
-  'add_comment', 'batch_write', 'commit', 'compile', 'create_project', 'edit_file', 'get_pdf_url', 'list_citations', 'list_comments', 'list_labels',
-  'list_projects', 'ping', 'project_structure', 'read_file', 'references_add', 'reply_comment', 'resolve_comment', 'trash_project', 'wordcount', 'write_file',
+  'accept_suggestion', 'add_comment', 'assign_comment', 'batch_write', 'commit', 'compile', 'create_project', 'delete_comment', 'edit_comment', 'edit_file',
+  'get_pdf_url', 'list_citations', 'list_comments', 'list_labels', 'list_people', 'list_projects', 'ping', 'project_structure', 'read_file', 'references_add',
+  'reply_comment', 'resolve_comment', 'trash_project', 'wordcount', 'write_file',
 ];
-check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly these 20, no sync tools without ALDINE_MCP_SYNC (got ${names.join(',')})`);
+check(JSON.stringify(names) === JSON.stringify(expected), `tool surface is exactly these 25, no sync tools without ALDINE_MCP_SYNC (got ${names.join(',')})`);
 for (const t of listed) {
-  const ro = ['list_projects', 'project_structure', 'read_file', 'ping', 'list_citations', 'list_labels', 'wordcount', 'get_pdf_url', 'list_comments'].includes(t.name);
+  const ro = ['list_projects', 'project_structure', 'read_file', 'ping', 'list_citations', 'list_labels', 'wordcount', 'get_pdf_url', 'list_comments', 'list_people'].includes(t.name);
   check((t.annotations?.readOnlyHint === true) === ro, `${t.name} readOnlyHint ${ro ? 'present' : 'absent'}`);
 }
 // The viewer resource is listed whether or not the asset is built, but
