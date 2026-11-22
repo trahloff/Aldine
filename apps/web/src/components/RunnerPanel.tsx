@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type RunnerJob } from '../api';
+import { api, ApiError, type RunnerJob } from '../api';
 import { safeStorage } from '../util/safeStorage';
 
 /** The flag that shows this panel (the third switch of docs/RUNNER.md, D10). */
@@ -32,18 +32,25 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged }: 
     return () => window.clearInterval(t);
   }, [active]);
 
-  const poll = (id: string) => {
+  const [reconnecting, setReconnecting] = useState(false);
+  // A dropped connection or a restarting proxy is not the end of the run:
+  // only an answer from the server about the run itself is.
+  const poll = (id: string, misses = 0) => {
     timer.current = window.setTimeout(async () => {
       try {
         const { job: j } = await api.runnerJob(projectId, id);
+        setReconnecting(false);
         setJob(j);
         if (j.status === 'queued' || j.status === 'running') poll(id);
         else if (j.result?.written.length) onChanged();
       } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0;
+        if ((status === 0 || status >= 500) && misses < 60) { setReconnecting(true); poll(id, misses + 1); return; }
+        setReconnecting(false);
         setError((e as Error).message);
         setJob(null);
       }
-    }, POLL_MS);
+    }, misses ? Math.min(POLL_MS * 2 ** misses, 5000) : POLL_MS);
   };
 
   const run = async () => {
@@ -88,6 +95,7 @@ export default function RunnerPanel({ projectId, branch, readOnly, onChanged }: 
         <div className="runner__result" role="status" aria-live="polite" data-testid="runner-status">
           {job.status === 'queued' && <p>Waiting for the runner{job.position ? ` (number ${job.position} in line)` : ''}…</p>}
           {job.status === 'running' && <p>Running for {seconds(now - (started ?? now))}…</p>}
+          {reconnecting && <p className="runner__note" data-testid="runner-reconnecting">Lost the connection to the server; trying again…</p>}
           {job.status === 'failed' && <p className="runner__error" data-testid="runner-failed">The run failed: {plain(job.error ?? 'unknown error')}</p>}
           {r && (
             <>

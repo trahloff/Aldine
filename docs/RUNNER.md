@@ -91,7 +91,9 @@ is a memory, a process and a CPU limit; `/work` is a `tmpfs` owned by the
 job user; the root filesystem is read-only. The insecure development mode
 (`RUNNER_INSECURE_DEV=1`, for tests on a workstation) reports itself in its
 health answer and never runs as user 0. A misconfigured container thus cannot run
-jobs.
+jobs. The app refuses results marked insecure; that catches an honest
+development runner, not a hostile one, which could claim anything (the
+socket is the boundary that matters, D3).
 
 gVisor is not supported in the preview: it does not pass host Unix sockets
 through by default, and the combination is untested.
@@ -138,7 +140,8 @@ length-prefixed frames. It stops reading at the output limit plus a small
 margin. It gives up after the job's timeout plus four and a half minutes (the
 runner's own step deadlines and the upload) and then treats the runner as
 dead. A hostile or broken runner therefore cannot make the
-app hold more than about 64 MB or wait forever. Before every connection the
+app hold more than about 150 MB (the copy it sent and the answer, at
+once) or wait forever. Before every connection the
 app checks that the socket path is a socket and not a symbolic link.
 
 **D8. What comes back.** A file comes back only if all of these hold, in
@@ -312,6 +315,32 @@ them are fixed:
     smoke container is pinned.
 11. The self-check now also covers init, the cgroup limits and user
     namespaces.
+
+## Adversarial test of 2026-11-22
+
+A tester attacked the app side as a hostile runner and as odd users
+(framing, names, clashes, races, access, write-back into open documents).
+Nothing reached outside the project, `.git` or a hidden path, and nothing
+crashed. Fixed after it:
+
+1. A run waiting in the queue is checked again when its turn comes; a
+   trashed project or a revoked person is no longer sent to the runner.
+2. A branch deleted during a run showed the server's file path; the
+   person now sees why nothing was written, and unexpected errors go to
+   the server log only.
+3. The file limit is counted before anything is read, so a huge project
+   no longer holds the project's lock (and everyone's autosave) while it
+   is read only to be refused.
+4. Pressing Run while a run waits no longer uses up the rate limit.
+5. The runner's version and package fields must be strings; the log,
+   errors and skipped names are stored without escape sequences,
+   controls or direction characters, not only shown without them.
+6. The panel keeps polling through a dropped connection, says a run is
+   gone when the server restarted, and tells an unconfirmed address to
+   confirm it.
+
+`ALDINE_RUNNER_USERS`, the socket and the timeout are read when the app
+starts: removing someone takes effect with a restart.
 
 ## Out of scope for the preview
 

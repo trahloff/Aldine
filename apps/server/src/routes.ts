@@ -6,7 +6,7 @@ import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
-import { runnerConfigured, runnerAllowed, mayRunIn, commandProblem, enqueue, jobView } from './runner.js';
+import { runnerConfigured, runnerAllowed, mayRunIn, commandProblem, enqueue, queueProblem, jobView } from './runner.js';
 import { compileProject, compileStatus, synctexLookup, formatText, type FormatRefusal, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import { EDIT_ALLOWANCE_BYTES, storageRefusal, storageUsageFor, type StorageAction } from './storage.js';
@@ -3981,6 +3981,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     const user = reqUser(req);
     if (!runnerConfigured()) return { code: 404, error: 'The runner is not turned on for this instance' };
     if (req.headers.authorization !== undefined) return { code: 403, error: 'Runs start from the Runner panel in Aldine, not with an access token' };
+    if (user && !user.guest && user.emailPending) return { code: 403, error: 'Confirm your email address first; the runner is only for confirmed addresses.' };
     if (!user || !runnerAllowed(user)) return { code: 403, error: 'Your account may not use the runner. The administrator can add your address to ALDINE_RUNNER_USERS.' };
     const origin = req.headers.origin;
     if (typeof origin === 'string') {
@@ -4005,6 +4006,9 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     const problem = commandProblem(req.body?.command);
     if (problem) return reply.code(400).send({ error: problem });
     const user = reqUser(req)!;
+    // A run that cannot be queued costs no token: pressing Run again while one waits must not lock the person out.
+    const busy = queueProblem(req.params.id);
+    if (busy) return reply.code(409).send({ error: busy });
     if (!(await runnerLimiter.take(user.id))) return reply.code(429).send({ error: 'Too many runs in a row; wait a minute and try again' });
     const job = enqueue(req.params.id, branch, user, req.body!.command as string);
     if (typeof job === 'string') return reply.code(409).send({ error: job });
@@ -4015,7 +4019,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     const refused = await runnerRefusal(req);
     if (refused) return reply.code(refused.code).send({ error: refused.error });
     const job = jobView(req.params.job, reqUser(req)!.id);
-    if (!job || job.projectId !== req.params.id) return reply.code(404).send({ error: 'No such run' });
+    if (!job || job.projectId !== req.params.id) return reply.code(404).send({ error: 'This run is gone; the server may have restarted. Run it again.' });
     reply.header('cache-control', 'no-store');
     return { job };
   });
