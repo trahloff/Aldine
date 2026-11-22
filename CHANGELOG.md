@@ -16,6 +16,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The one-box Hetzner stack (`deploy/hetzner`) has the runner preview as an
   opt-in compose profile: `COMPOSE_PROFILES=runner` plus the two runner
   settings in its env file (deploy/hetzner/README.md).
+- Agent API: Claude can now do everything with review comments that the
+  Review panel can, and edit its own. `assign_comment` assigns a thread by
+  name (or `"me"`), `accept_suggestion` applies a suggestion and commits
+  it as Claude (with the same typing guard as `edit_file`), `delete_comment`
+  follows the panel's rule, `edit_comment` rewrites a comment or reply you
+  or Claude for you wrote, and `add_comment`/`reply_comment` take `mentions`.
+  `list_people` names whom they can pick. Mentions and assignments email
+  as usual, from "Claude (for <you>)".
+- Edited comments and replies say so in the Review panel.
 
 ### Fixed
 - `deploy/hetzner`: a deploy now removes the images of earlier releases

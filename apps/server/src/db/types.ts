@@ -56,7 +56,12 @@ export interface EmailPending { hash: string; expiresAt: string; earlier?: Array
 /** `author` is the display name shown with the text; `authorId` is the
  *  account that wrote it (absent without accounts and on older rows). Names
  *  are free text and not unique, so ownership is decided on the id only. */
-export interface Reply { author: string; authorId?: string; body: string; createdAt: string; mentions?: string[] }
+export interface Reply {
+  author: string; authorId?: string; body: string; createdAt: string; mentions?: string[];
+  /** The account an agent wrote this for (MCP): theirs to edit and delete. */
+  agentFor?: string;
+  editedAt?: string;
+}
 /** Who a thread is assigned to: one account, named as it was when assigned. */
 export interface Assignee { id: string; name: string; at: string; by?: string }
 export interface Comment {
@@ -74,6 +79,9 @@ export interface Comment {
   /** Account ids the body @mentions (people.ts). */
   mentions?: string[];
   assignee?: Assignee;
+  /** The account an agent wrote this for (MCP): theirs to edit and delete. */
+  agentFor?: string;
+  editedAt?: string;
 }
 
 export type ShareRole = 'edit' | 'review' | 'view';

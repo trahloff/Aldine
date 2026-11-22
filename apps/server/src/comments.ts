@@ -65,12 +65,12 @@ export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'cre
   return comment;
 }
 
-export async function replyComment(projectId: string, id: string, author: string, body: string, authorId?: string, mentions?: string[]): Promise<Comment | null> {
+export async function replyComment(projectId: string, id: string, author: string, body: string, authorId?: string, mentions?: string[], agentFor?: string): Promise<Comment | null> {
   const list = await db().loadComments(projectId);
   const c = list.find((x) => x.id === id);
   if (!c) return null;
   if (c.replies.length >= 500) throw new Error('reply limit reached');
-  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString(), ...(mentions?.length ? { mentions } : {}) });
+  c.replies.push({ author, ...(authorId ? { authorId } : {}), body: cap(body, MAX_COMMENT_TEXT)!, createdAt: new Date().toISOString(), ...(mentions?.length ? { mentions } : {}), ...(agentFor ? { agentFor } : {}) });
   await save(projectId, list);
   return c;
 }
@@ -119,4 +119,28 @@ export async function movePath(projectId: string, branch: string, from: string, 
 export async function deleteComment(projectId: string, id: string): Promise<void> {
   const list = await db().loadComments(projectId);
   await save(projectId, list.filter((c) => c.id !== id));
+}
+
+export async function getComment(projectId: string, id: string): Promise<Comment | null> {
+  return (await db().loadComments(projectId)).find((c) => c.id === id) ?? null;
+}
+
+/** Rewrite a thread's body or suggestion (null drops it), or reply `replyIndex`'s body; null when either is missing. */
+export async function editComment(projectId: string, id: string, change: { body?: string; suggestion?: string | null }, replyIndex?: number): Promise<Comment | null> {
+  const list = await db().loadComments(projectId);
+  const c = list.find((x) => x.id === id);
+  if (!c) return null;
+  const at = new Date().toISOString();
+  if (replyIndex !== undefined) {
+    const r = c.replies[replyIndex];
+    if (!r) return null;
+    if (change.body !== undefined) { r.body = cap(change.body, MAX_COMMENT_TEXT)!; r.editedAt = at; }
+  } else {
+    if (change.body !== undefined) c.body = cap(change.body, MAX_COMMENT_TEXT)!;
+    if (change.suggestion === null) delete c.suggestion;
+    else if (change.suggestion !== undefined) c.suggestion = cap(change.suggestion, MAX_COMMENT_TEXT)!;
+    c.editedAt = at;
+  }
+  await save(projectId, list);
+  return c;
 }

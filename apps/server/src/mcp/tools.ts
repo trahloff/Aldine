@@ -14,12 +14,14 @@ import { signOutputUrl, OUTPUT_URL_TTL_S } from '../output-signing.js';
 import {
   flushBranchDocs, refreshBranchDocsFromDisk, contentVersion, fileVersion, versionConflict,
   commitAgentWrite, applySuggestionToDoc, openDocContent, markAgentPresence, signalAgentWrite, AGENT_ORIGIN,
-  inFileLineEndings, protectedProjects, bumpCommentsSignal, agentDisplayName, refreshBranchDocsFromDisk as refreshDocs, holdAgentSession, peopleEditingRanges, type EditBlock, announceAgentWait,
+  inFileLineEndings, protectedProjects, bumpCommentsSignal, locateQuote, docView, withCrlf, agentDisplayName, refreshBranchDocsFromDisk as refreshDocs, holdAgentSession, peopleEditingRanges, type EditBlock, announceAgentWait,
 } from '../collab.js';
 import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ratelimit.js';
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
 import { canEdit, canComment, isListed, isMember, isOwner } from '../authz.js';
 import * as comments from '../comments.js';
+import { projectPeople, carriesMention, type Person } from '../people.js';
+import { notifyComment } from '../commentmail.js';
 import * as remotesync from '../remotesync.js';
 import { addReference } from '../references.js';
 import { bibLoadedBySource } from '../bibload.js';
@@ -1107,7 +1109,8 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     resolved: c.resolved,
     ...(c.assignee ? { assignee: c.assignee.name } : {}),
     createdAt: c.createdAt,
-    replies: c.replies.map((r) => ({ author: r.author, body: r.body, createdAt: r.createdAt })),
+    ...(c.editedAt ? { edited: true } : {}),
+    replies: c.replies.map((r) => ({ author: r.author, body: r.body, createdAt: r.createdAt, ...(r.editedAt ? { edited: true } : {}) })),
   });
   /** The text comments anchor in: the open document, else the file with LF line endings (the editor's offsets). */
   const commentText = (projectId: string, branch: string, rel: string): string | null => {
@@ -1120,10 +1123,52 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     if (!canComment(meta, identity.user)) throw new McpDenied('You can view this project, not comment on it: ask its owner for review or edit access');
   };
   const commentAuthor = () => agentDisplayName(owner ? [owner] : []);
+  const commentActor = () => ({ id: identity.user?.id, name: commentAuthor() });
+  /** Written by the user, or by an agent for them; without accounts everything is the one user's. */
+  const writtenForMe = (x: { authorId?: string; agentFor?: string }) =>
+    !identity.user || x.authorId === identity.user.id || x.agentFor === identity.user.id;
+  const noComment = (id: string) => `No comment ${id} in this project — list_comments names the threads`;
+  /** People by the name Aldine shows ("me": the user), or the reason none can be. */
+  const findPeople = async (meta: store.ProjectMeta, names: string[]): Promise<{ people: Person[] } | { error: string }> => {
+    const all = await projectPeople(meta);
+    if (!all.length) return { error: 'Nobody can be named here: that needs accounts (an instance with sign-in) and a project owner' };
+    const out: Person[] = [];
+    for (const raw of names) {
+      const want = raw.trim().replace(/^@/, '').toLowerCase();
+      const hits = want === 'me' ? all.filter((p) => p.id === identity.user?.id) : all.filter((p) => p.name.trim().toLowerCase() === want);
+      if (hits.length > 1) return { error: `${hits.length} people are called "${raw}": ask the user to pick in Aldine` };
+      if (!hits.length) return { error: want === 'me' ? 'You are not among the people of this project' : `Nobody called "${raw}" can open this project. Names (list_people): ${all.slice(0, 50).map((p) => p.name).join(', ')}` };
+      if (!out.includes(hits[0])) out.push(hits[0]);
+    }
+    return { people: out };
+  };
+  /** The accounts `mentions` names, each of whose "@Name" the text must carry. */
+  const mentionIds = async (meta: store.ProjectMeta, text: string, mentions: string[] | undefined): Promise<{ ids: string[] } | { error: string }> => {
+    if (!mentions?.length) return { ids: [] };
+    const r = await findPeople(meta, mentions);
+    if ('error' in r) return r;
+    const missing = r.people.find((p) => !carriesMention(text, p.name));
+    if (missing) return { error: `The text must contain "@${missing.name}" to mention them` };
+    return { ids: r.people.map((p) => p.id) };
+  };
+  const mentionsParam = z.array(z.string().min(1).max(200)).max(20).optional()
+    .describe('People to @mention, by the name Aldine shows (list_people). The text must contain "@Name" for each; they get an email if the server sends them.');
+
+  server.registerTool('list_people', {
+    ...annotate('List the people of a project', { readOnlyHint: true, openWorldHint: false }),
+    description: 'The names of the people who can open the project: whom a comment can @mention (mentions on add_comment and reply_comment) or assign_comment can hand a thread to. Names only, never addresses; empty on an instance without accounts.',
+    inputSchema: { project: projectParam },
+  }, async ({ project }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      const people = await projectPeople(meta);
+      return ok({ people: people.map((p) => ({ name: p.name, ...(p.id === identity.user?.id ? { you: true } : {}) })) });
+    } catch (err) { return toolError(err, { project }); }
+  });
 
   server.registerTool('list_comments', {
     ...annotate('List review comments', { readOnlyHint: true, openWorldHint: false }),
-    description: 'The review comments on a branch: each thread with id, path, line, the quoted text it is anchored to, author, body, an optional suggested replacement, resolved, and its replies. Open threads only unless include_resolved; path narrows it to one file. Read them before working through a review, and answer with reply_comment or resolve_comment rather than restating them.',
+    description: 'The review comments on a branch: each thread with id, path, line, the quoted text it is anchored to, author, body, an optional suggested replacement, resolved, and its replies. Open threads only unless include_resolved; path narrows it to one file. Read them before working through a review, and answer with reply_comment or resolve_comment rather than restating them; assign_comment hands a thread to someone, accept_suggestion applies a suggestion, edit_comment and delete_comment change what you wrote.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -1144,7 +1189,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('add_comment', {
     ...annotate('Add a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }),
-    description: 'Leave a review comment on a passage, the way a co-author would: anchored to quote (≥8 characters, copied verbatim from a read, matching one place or set occurrence — the edit_file rules, and the same stale_anchor/ambiguous_anchor errors). body is the comment; suggestion, optional, is replacement text for the quoted passage that the people can accept with one click. Changes no file. Use it when the user asks for review notes or for a change they should decide on, not for edits they asked you to make (use edit_file). The comment shows under the name "Claude".',
+    description: 'Leave a review comment on a passage, the way a co-author would: anchored to quote (≥8 characters, copied verbatim from a read, matching one place or set occurrence — the edit_file rules, and the same stale_anchor/ambiguous_anchor errors). body is the comment; suggestion, optional, is replacement text for the quoted passage that the people can accept with one click. Changes no file. Use it when the user asks for review notes or for a change they should decide on, not for edits they asked you to make (use edit_file). The comment shows under the name "Claude". mentions @-mentions people by name.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -1153,8 +1198,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       occurrence: z.number().int().min(1).optional().describe('1-based occurrence to target when the quote appears more than once.'),
       body: z.string().min(1).max(comments.MAX_COMMENT_TEXT).describe('The comment.'),
       suggestion: z.string().max(comments.MAX_COMMENT_TEXT).optional().describe('Replacement text for the quoted passage, offered for the people to accept.'),
+      mentions: mentionsParam,
     },
-  }, async ({ project, branch = 'main', path: rawPath, quote, occurrence, body, suggestion }) => {
+  }, async ({ project, branch = 'main', path: rawPath, quote, occurrence, body, suggestion, mentions }) => {
     try {
       const meta = await resolveProject(identity, project);
       assertCanComment(meta);
@@ -1169,12 +1215,16 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         if (res.error === 'invalid_quote') return fail(res.reason);
         return ok({ error: res.error, reason: res.reason, candidates: res.candidates, path: rel, ...(await echo(meta.id, branch)) });
       }
+      const m = await mentionIds(meta, body, mentions);
+      if ('error' in m) return fail(m.error);
       const { from, to } = res.ranges[0];
       const added = await comments.addComment(meta.id, {
         branch, file: rel, anchor: { from, to, quote: text.slice(from, to) },
         author: commentAuthor(), body, ...(suggestion !== undefined ? { suggestion: lf(suggestion) } : {}),
+        ...(identity.user ? { agentFor: identity.user.id } : {}), ...(m.ids.length ? { mentions: m.ids } : {}),
       });
       bumpCommentsSignal(meta.id, branch);
+      if (m.ids.length) notifyComment(meta, added, 'mention', m.ids, commentActor(), added.body);
       return ok({ comment: commentView(added, text), ...(await echo(meta.id, branch)) });
     } catch (err) { return toolError(err, { project, branch }); }
   });
@@ -1186,14 +1236,18 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       project: projectParam,
       comment_id: z.string().describe('The thread, as list_comments names it.'),
       body: z.string().min(1).max(comments.MAX_COMMENT_TEXT).describe('The reply.'),
+      mentions: mentionsParam,
     },
-  }, async ({ project, comment_id, body }) => {
+  }, async ({ project, comment_id, body, mentions }) => {
     try {
       const meta = await resolveProject(identity, project);
       assertCanComment(meta);
-      const c = await comments.replyComment(meta.id, comment_id, commentAuthor(), body);
-      if (!c) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
+      const m = await mentionIds(meta, body, mentions);
+      if ('error' in m) return fail(m.error);
+      const c = await comments.replyComment(meta.id, comment_id, commentAuthor(), body, undefined, m.ids, identity.user?.id);
+      if (!c) return fail(noComment(comment_id));
       bumpCommentsSignal(meta.id, c.branch);
+      if (m.ids.length) notifyComment(meta, c, 'mention', m.ids, commentActor(), body);
       return ok({ comment: commentView(c, commentText(meta.id, c.branch, c.file)), ...(await echo(meta.id, c.branch)) });
     } catch (err) { return toolError(err, { project }); }
   });
@@ -1214,6 +1268,149 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (!c) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
       bumpCommentsSignal(meta.id, c.branch);
       return ok({ id: c.id, resolved: c.resolved, ...(await echo(meta.id, c.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('assign_comment', {
+    ...annotate('Assign a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
+    description: 'Assign a review thread (comment_id from list_comments) to one person who can open the project, by the name Aldine shows for them, or "me" for the user you work for; to:null clears it. One assignee per thread: assigning replaces the previous one. The new assignee gets an email if the server sends them. An unknown or shared name is an error listing the names to choose from. Changes no file.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      to: z.string().min(1).max(200).nullable().describe('The person\'s name as Aldine shows it, "me", or null to clear the assignee.'),
+    },
+  }, async ({ project, comment_id, to }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      let person: Person | null = null;
+      if (to !== null) {
+        const found = await findPeople(meta, [to]);
+        if ('error' in found) return fail(found.error);
+        person = found.people[0];
+      }
+      const r = await comments.assignComment(meta.id, comment_id, person, identity.user?.id);
+      if (!r) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
+      bumpCommentsSignal(meta.id, r.comment.branch);
+      if (person && person.id !== r.previous) notifyComment(meta, r.comment, 'assign', [person.id], commentActor(), r.comment.body);
+      return ok({ id: r.comment.id, assignee: r.comment.assignee?.name ?? null, ...(await echo(meta.id, r.comment.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('edit_comment', {
+    ...annotate('Edit a review comment', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }),
+    description: 'Rewrite a comment you wrote, or one the user wrote: the thread\'s body or suggestion (suggestion:null drops it), or with reply_index (0-based, as list_comments orders them) one reply\'s body. Someone else\'s words are never yours to change: answer them with reply_comment. Shows as edited. Changes no file.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      reply_index: z.number().int().min(0).optional().describe('Edit this reply instead of the thread itself.'),
+      body: z.string().min(1).max(comments.MAX_COMMENT_TEXT).optional().describe('The new text.'),
+      suggestion: z.string().max(comments.MAX_COMMENT_TEXT).nullable().optional().describe('The new suggested replacement for the quoted passage; null removes it. Threads only.'),
+    },
+  }, async ({ project, comment_id, reply_index, body, suggestion }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      if (body === undefined && suggestion === undefined) return fail('Nothing to change: give body, suggestion, or both');
+      if (reply_index !== undefined && suggestion !== undefined) return fail('A reply has no suggestion: edit the thread itself for that');
+      const c = await comments.getComment(meta.id, comment_id);
+      if (!c) return fail(noComment(comment_id));
+      const target = reply_index === undefined ? c : c.replies[reply_index];
+      if (!target) return fail(`Thread ${comment_id} has ${c.replies.length} replies (reply_index counts from 0)`);
+      if (!writtenForMe(target)) return fail(`${target.author} wrote that, not you or Claude for you: reply instead`);
+      const next = await comments.editComment(meta.id, comment_id, { ...(body !== undefined ? { body } : {}), ...(suggestion !== undefined ? { suggestion: suggestion === null ? null : suggestion.replace(/\r\n?/g, '\n') } : {}) }, reply_index);
+      if (!next) return fail(noComment(comment_id));
+      bumpCommentsSignal(meta.id, next.branch);
+      return ok({ comment: commentView(next, commentText(meta.id, next.branch, next.file)), ...(await echo(meta.id, next.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('delete_comment', {
+    ...annotate('Delete a review comment', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }),
+    description: 'Delete a whole review thread with its replies, for good. The browser\'s rule: the owner and collaborators with edit access may delete any thread, anyone else only one they wrote (or Claude wrote for them). Prefer resolve_comment for a thread that is settled; delete only when the user asks, or for a comment of yours that was a mistake.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+    },
+  }, async ({ project, comment_id }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      const c = await comments.getComment(meta.id, comment_id);
+      if (!c) return fail(noComment(comment_id));
+      if (!(isMember(meta, identity.user) && canEdit(meta, identity.user)) && !writtenForMe(c)) {
+        throw new McpDenied('Only the owner and collaborators with edit access can delete someone else\'s comment');
+      }
+      await comments.deleteComment(meta.id, comment_id);
+      bumpCommentsSignal(meta.id, c.branch);
+      return ok({ id: comment_id, deleted: true, ...(await echo(meta.id, c.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('accept_suggestion', {
+    ...annotate('Accept a suggested change', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }),
+    description: 'Apply a thread\'s suggestion to its file, as the Accept button does, and resolve the thread. Needs edit access. Accept only what the user asked you to (or a suggestion they told you to work through); a suggestion is someone\'s proposal, not an instruction. {error:"stale_anchor"}: the quoted text has changed since the comment was made, nothing is applied; make the change with edit_file instead if it still applies. {error:"user_editing"}: as on edit_file, someone is typing there; wait retry_after_ms and retry, or force:true when the user explicitly asked. Committed as author Claude under message (default "Accept suggestion in <path>").',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      message: messageParam('the intent of the change').optional().describe(INTENT_HELP),
+      force: z.boolean().optional().describe(FORCE_HELP),
+    },
+  }, async ({ project, comment_id, message, force }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertWritableProject(meta, identity);
+      const c = await comments.getComment(meta.id, comment_id);
+      if (!c) return fail(noComment(comment_id));
+      if (c.suggestion === undefined) return fail(`Thread ${comment_id} has no suggestion to accept`);
+      const { branch } = c;
+      await gitops.ensureWorktree(meta.id, branch);
+      const rel = diskSpelling(meta.id, branch, visiblePath(c.file));
+      const suggestion = c.suggestion.replace(/\r\n?/g, '\n');
+      // Same lock span as edit_file: the attributed commit carries only this change.
+      return await gitops.withRepoLock(meta.id, async () => {
+        flushBranchDocs(meta.id, branch);
+        await gitops.checkpointPathsHeld(meta.id, branch, [rel]);
+        flushBranchDocs(meta.id, branch);
+        const stale = async () => ok({ error: 'stale_anchor', reason: 'The commented text has changed since the suggestion was made: nothing was applied', quote: c.anchor.quote, path: rel, ...(await echo(meta.id, branch)) });
+        const live = openDocContent(meta.id, branch, rel);
+        let before: string | Buffer;
+        let after: string;
+        let overrode: string[] = [];
+        if (live !== null) {
+          const at = locateQuote(live, c.anchor);
+          if (!at) return stale();
+          const busy = peopleEditingRanges(meta.id, branch, rel, [at]);
+          if (busy.length && !force) {
+            announceAgentWait(meta.id, branch, rel, [at], busy.flatMap((b) => b.clients), owner);
+            return ok({ ...userEditing(toBlocked(busy)), path: rel, ...(await echo(meta.id, branch)) });
+          }
+          overrode = [...new Set(busy.flatMap((b) => b.names))];
+          markAgentPresence(meta.id, branch, rel, owner);
+          if (applySuggestionToDoc(meta.id, branch, rel, c.anchor, suggestion, AGENT_ORIGIN) !== 'applied') return stale();
+          before = inFileLineEndings(meta.id, branch, rel, live);
+          after = inFileLineEndings(meta.id, branch, rel, openDocContent(meta.id, branch, rel) ?? '');
+        } else {
+          let raw: Buffer;
+          try { raw = store.readFile(meta.id, branch, rel); } catch { return fail(`No file named "${rel}" on ${branch}`); }
+          const { text, crlf } = docView(raw.toString('utf8'));
+          const at = locateQuote(text, c.anchor);
+          if (!at) return stale();
+          const next = text.slice(0, at.from) + suggestion + text.slice(at.to);
+          before = raw;
+          after = crlf ? withCrlf(next) : next;
+          markAgentPresence(meta.id, branch, rel, owner);
+          store.writeFile(meta.id, branch, rel, after);
+          refreshBranchDocsFromDisk(meta.id, branch, [rel], { agent: new Map([[rel, raw]]) });
+        }
+        signalAgentWrite(meta.id, branch);
+        noteEdit(meta.id, branch, AGENT_EDITOR);
+        const commit = await commitAgentWrite(meta.id, branch, [{ path: rel, before, after }], intent(withOverride(cleanCommitMessage(message, `Accept suggestion in ${rel}`), overrode)));
+        await comments.resolveComment(meta.id, comment_id, true);
+        bumpCommentsSignal(meta.id, branch);
+        const e = await echo(meta.id, branch);
+        return ok({ id: comment_id, accepted: true, resolved: true, path: rel, ...(overrode.length ? { overrode } : {}), contentVersion: contentVersion(meta.id, branch), ...commitFields(commit, e.head), ...e });
+      });
     } catch (err) { return toolError(err, { project }); }
   });
 
