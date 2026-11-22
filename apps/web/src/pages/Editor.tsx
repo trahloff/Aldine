@@ -2524,7 +2524,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             </div>
             {runnerEnabled && (
               <div className="sidebar__panel" style={{ display: tab === 'runner' ? 'block' : 'none' }}>
-                <RunnerPanel projectId={id} branch={branch} readOnly={locked} onChanged={() => onDocChanged(true)} onOpenHistory={() => setTab('history')} />
+                <RunnerPanel projectId={id} branch={branch} readOnly={locked} onChanged={() => onDocChanged(true)} />
               </div>
             )}
             {pluginPanels.map((p) => (
