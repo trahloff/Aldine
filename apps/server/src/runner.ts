@@ -309,7 +309,6 @@ async function next(): Promise<void> {
   const item = waiting.shift();
   if (!item) return;
   running = item.job;
-  item.job.status = 'running';
   try {
     item.job.result = await runJob(item.job, item.user);
     item.job.status = 'done';
@@ -343,6 +342,8 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     }
     return { input: head, sent: entries, contents };
   });
+  // "running" means the copy is taken: typing from here on is not in the run.
+  job.status = 'running';
   // Hidden files (.gitignore, .latexmkrc) stay out of the copy, as they would
   // stay out of what comes back; other names the runner refuses are named.
   const notSent: Array<{ path: string; reason: string }> = [];

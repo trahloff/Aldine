@@ -62,12 +62,15 @@ const ed = await person('ed@example.org', 'Ed');
 const stan = await person('stan@example.org', 'Stan');
 
 async function waitFor(projectId, who, jobId) {
-  for (let i = 0; i < 400; i++) {
-    const { job } = await json('GET', `/api/projects/${projectId}/runner/jobs/${jobId}`, who);
+  // A loaded CI machine starts Python slowly; the server's own deadline is longer still.
+  const until = Date.now() + 120_000;
+  let job;
+  while (Date.now() < until) {
+    ({ job } = await json('GET', `/api/projects/${projectId}/runner/jobs/${jobId}`, who));
     if (job.status === 'done' || job.status === 'failed') return job;
     await new Promise((r) => setTimeout(r, 50));
   }
-  throw new Error('the run did not finish');
+  throw new Error(`the run did not finish: ${JSON.stringify(job)}`);
 }
 const start = (projectId, who, command, branch = 'main') => call('POST', `/api/projects/${projectId}/runner/run`, who, { branch, command });
 async function run(projectId, who, command) {
