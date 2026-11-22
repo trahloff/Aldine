@@ -55,6 +55,21 @@ starts the stack, waiting until every container is healthy. To upgrade, change
 `ALDINE_VERSION` and run it again. The app is unavailable while its container
 restarts, about a minute.
 
+## The runner (experimental)
+
+The runner preview (docs/RUNNER.md) is in `compose.yml` but stays off. To turn
+it on, add to the env file and deploy again:
+
+```sh
+COMPOSE_PROFILES=runner
+ALDINE_RUNNER_SOCKET=/run/aldine-runner/runner.sock
+ALDINE_RUNNER_USERS=you@example.org
+```
+
+It needs `AUTH_ENABLED=1`. Each listed person then turns the Runner panel on
+from the command palette. Removing the three lines and deploying turns it off
+again; `docker compose --profile runner down runner` stops a running one.
+
 ## Moving existing data in
 
 Take a tarball with `deploy/backup.sh` on the old host (or any tar with

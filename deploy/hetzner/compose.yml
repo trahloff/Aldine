@@ -21,6 +21,7 @@ services:
     volumes:
       - aldine-data:/data
       - aldine-secrets:/secrets
+      - aldine-runner-socket:/run/aldine-runner
     depends_on:
       compiler:
         condition: service_healthy
@@ -60,6 +61,32 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # The runner, an experimental preview (docs/RUNNER.md), only with
+  # COMPOSE_PROFILES=runner in .env plus, for the app,
+  # ALDINE_RUNNER_SOCKET=/run/aldine-runner/runner.sock and
+  # ALDINE_RUNNER_USERS. Keep these settings in step with
+  # deploy/docker-compose.runner.yml; the runner refuses jobs when one is missing.
+  runner:
+    image: ghcr.io/trahloff/aldine-runner:${ALDINE_VERSION}
+    profiles: [runner]
+    network_mode: none
+    volumes:
+      - aldine-runner-socket:/run/aldine-runner
+    tmpfs:
+      - /work:size=512m,uid=10101,gid=10101,mode=0700,noexec,nosuid,nodev
+    shm_size: 64m
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: [no-new-privileges]
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1
+    pids_limit: 128
+    init: true
+    restart: unless-stopped
+    logging: *logging
+
   caddy:
     image: caddy:2-alpine
     ports:
@@ -86,3 +113,10 @@ volumes:
   aldine-secrets:
   caddy-data:
   caddy-config:
+  # Holds only the runner's socket; 1 MB so nothing can fill a disk through it.
+  aldine-runner-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,mode=0755
