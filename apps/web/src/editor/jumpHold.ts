@@ -88,11 +88,15 @@ class Hold {
       const at = view.coordsAtPos(pos);
       const canUp = scroller.scrollTop > 1;
       const canDown = scroller.scrollTop + h < scroller.scrollHeight - 1;
+      // At the edge of a drawn construct taller than the band (a long table)
+      // the position measures as the whole construct, and the caret is drawn
+      // at its top; centring a rect taller than the pane shows its bottom.
+      const tall = !!at && at.bottom - at.top > h * (1 - 2 * BAND);
       const off = !at
         || (at.top < box.top + h * BAND && canUp)
-        || (at.bottom > box.top + h * (1 - BAND) && canDown);
+        || ((tall ? at.top : at.bottom) > box.top + h * (1 - BAND) && canDown);
       if (off) {
-        view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+        view.dispatch({ effects: EditorView.scrollIntoView(pos, tall ? { y: 'start', yMargin: h * 2 * BAND } : { y: 'center' }) });
         this.until = Math.min(this.started + MAX_MS, Math.max(this.until, now + AFTER_FIX_MS));
       }
     }
