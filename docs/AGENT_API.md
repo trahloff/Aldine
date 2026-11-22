@@ -420,6 +420,7 @@ removed by deleting its record from `oauth_clients` in the datastore.
 | `add_comment` | A review comment anchored by `quote`/`occurrence` (the `edit_file` rules and errors), with an optional `suggestion` people accept with one click; signed "Claude (for <person>)". Needs edit or review access. | additive |
 | `reply_comment` | A reply on a thread (`comment_id`), under the same name. | additive |
 | `resolve_comment` | Resolves a thread, or reopens it with `resolved: false`. | additive |
+| `assign_comment` | Assigns a thread to one person who can open the project, by the name Aldine shows (`"me"` for you), or clears it with `to: null`. The new assignee gets the usual assignment email. | additive |
 | `sync_status` | Only with `ALDINE_MCP_SYNC=1`. The linked repository, how main stands against it (`ahead`, `behind`), and `agentSyncAllowed` (the owner's switch); fetches. | read-only |
 | `push` | Only with `ALDINE_MCP_SYNC=1`, in a project whose owner turned on **Let Claude push and pull**. Pushes main to the linked repository through the same token choice as the Sync menu (the project's, the person's, the linker's, the service token), members only. People's unsaved typing is committed first as their own autosave, never as Claude. A refused push is relayed, not retried. | additive |
 | `pull` | Only with `ALDINE_MCP_SYNC=1` and the owner's switch, like `push`. Merges the repository's new commits into main and every open editor; a conflict changes nothing and answers `merge_conflict` with the files, for the person to resolve in Aldine. | destructive |

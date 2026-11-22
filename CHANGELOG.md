@@ -11,6 +11,9 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - The one-box Hetzner stack (`deploy/hetzner`) has the runner preview as an
   opt-in compose profile: `COMPOSE_PROFILES=runner` plus the two runner
   settings in its env file (deploy/hetzner/README.md).
+- Agent API: `assign_comment` assigns a review thread to someone who can
+  open the project, by name (or `"me"`), or clears it. The assignee gets
+  the same email as when a person assigns it.
 
 ## [1.20.0] — 2026-11-22
 

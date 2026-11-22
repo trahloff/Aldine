@@ -1,7 +1,7 @@
 /**
  * The agent's review comments and git sync tools: add_comment anchors by
  * quote and shows under "Claude (for …)", list/reply/resolve work on the same
- * threads the editor shows, a "Can view" person may not comment; push and pull
+ * threads the editor shows, assign_comment picks a person by name, a "Can view" person may not comment; push and pull
  * go through the project's linked repository (a file:// bare repo here) with
  * the same membership rule as the Sync menu, a conflicting pull changes
  * nothing, and an unlinked project says so.
@@ -60,7 +60,7 @@ const connect = async (user) => {
   await client.connect(c);
   const names = (await client.listTools()).tools.map((t) => t.name);
   check(!names.includes('push') && !names.includes('pull') && !names.includes('sync_status'), `no sync tools unless the instance opts in (got ${names.join(', ')})`);
-  check(['list_comments', 'add_comment', 'reply_comment', 'resolve_comment'].every((n) => names.includes(n)), 'the comment tools are always there');
+  check(['list_comments', 'add_comment', 'reply_comment', 'resolve_comment', 'assign_comment'].every((n) => names.includes(n)), 'the comment tools are always there');
   await client.close();
 }
 process.env.ALDINE_MCP_SYNC = '1';
@@ -111,6 +111,22 @@ r = await asAda('list_comments', { project: id, include_resolved: true, path: 'm
 eq([r.body.total, r.body.comments[0].id, r.body.comments[0].replies.length], [1, added.id, 1], 'include_resolved and path show it with its reply');
 r = await asAda('resolve_comment', { project: id, comment_id: 'nope' });
 check(r.isError && /No comment nope/.test(r.body), 'an unknown thread is named');
+
+r = await asAda('assign_comment', { project: id, comment_id: added.id, to: 'vic' });
+eq([r.isError, r.body.assignee], [false, 'Vic'], `assign_comment finds a person by name, any case (got ${JSON.stringify(r.body)})`);
+eq((await comments.listComments(id, 'main')).find((c) => c.id === added.id).assignee?.id, vic.id, 'the thread is stored as assigned to that account');
+r = await asAda('list_comments', { project: id, include_resolved: true });
+eq(r.body.comments[0].assignee, 'Vic', 'list_comments names the assignee');
+r = await asAda('assign_comment', { project: id, comment_id: added.id, to: 'me' });
+eq(r.body.assignee, 'Ada', '"me" is the user the agent works for');
+r = await asAda('assign_comment', { project: id, comment_id: added.id, to: 'Nora' });
+check(r.isError && /Nobody called "Nora"/.test(r.body) && /Ada/.test(r.body) && /Vic/.test(r.body), `someone outside the project is refused, with the names to pick from (got ${JSON.stringify(r.body)})`);
+r = await asAda('assign_comment', { project: id, comment_id: added.id, to: null });
+eq(r.body.assignee, null, 'to:null clears the assignee');
+r = await asAda('assign_comment', { project: id, comment_id: 'nope', to: 'me' });
+check(r.isError && /No comment nope/.test(r.body), 'an unknown thread is named when assigning');
+r = await asVic('assign_comment', { project: id, comment_id: added.id, to: 'me' });
+check(r.isError && /not comment on it/.test(r.body), 'a "Can view" person cannot assign through the agent');
 
 r = await asVic('add_comment', { project: id, path: 'main.tex', quote: 'needs a citation', body: 'mine' });
 check(r.isError && /not comment on it/.test(r.body), `a "Can view" person cannot comment through the agent (got ${JSON.stringify(r.body)})`);

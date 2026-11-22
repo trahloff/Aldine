@@ -20,6 +20,8 @@ import { compileGate, compileLimiter, agentCompileGate, refLimiter } from '../ra
 import { looksBinary, rootSiblingPath, cleanCommitMessage, COMMIT_MESSAGE_MAX } from '../util.js';
 import { canEdit, canComment, isListed, isMember, isOwner } from '../authz.js';
 import * as comments from '../comments.js';
+import { projectPeople, type Person } from '../people.js';
+import { notifyComment } from '../commentmail.js';
 import * as remotesync from '../remotesync.js';
 import { addReference } from '../references.js';
 import { bibLoadedBySource } from '../bibload.js';
@@ -1123,7 +1125,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('list_comments', {
     ...annotate('List review comments', { readOnlyHint: true, openWorldHint: false }),
-    description: 'The review comments on a branch: each thread with id, path, line, the quoted text it is anchored to, author, body, an optional suggested replacement, resolved, and its replies. Open threads only unless include_resolved; path narrows it to one file. Read them before working through a review, and answer with reply_comment or resolve_comment rather than restating them.',
+    description: 'The review comments on a branch: each thread with id, path, line, the quoted text it is anchored to, author, body, an optional suggested replacement, resolved, and its replies. Open threads only unless include_resolved; path narrows it to one file. Read them before working through a review, and answer with reply_comment or resolve_comment rather than restating them; assign_comment hands a thread to someone.',
     inputSchema: {
       project: projectParam,
       branch: branchParam,
@@ -1214,6 +1216,39 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       if (!c) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
       bumpCommentsSignal(meta.id, c.branch);
       return ok({ id: c.id, resolved: c.resolved, ...(await echo(meta.id, c.branch)) });
+    } catch (err) { return toolError(err, { project }); }
+  });
+
+  server.registerTool('assign_comment', {
+    ...annotate('Assign a review comment', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }),
+    description: 'Assign a review thread (comment_id from list_comments) to one person who can open the project, by the name Aldine shows for them, or "me" for the user you work for; to:null clears it. One assignee per thread: assigning replaces the previous one. The new assignee gets an email if the server sends them. An unknown or shared name is an error listing the names to choose from. Changes no file.',
+    inputSchema: {
+      project: projectParam,
+      comment_id: z.string().describe('The thread, as list_comments names it.'),
+      to: z.string().min(1).max(200).nullable().describe('The person\'s name as Aldine shows it, "me", or null to clear the assignee.'),
+    },
+  }, async ({ project, comment_id, to }) => {
+    try {
+      const meta = await resolveProject(identity, project);
+      assertCanComment(meta);
+      let person: Person | null = null;
+      if (to !== null) {
+        const people = await projectPeople(meta);
+        const want = to.trim().toLowerCase();
+        const hits = want === 'me'
+          ? people.filter((p) => p.id === identity.user?.id)
+          : people.filter((p) => p.name.trim().toLowerCase() === want);
+        const names = () => people.slice(0, 50).map((p) => p.name).join(', ');
+        if (!people.length) return fail('Nobody can be assigned here: assignment needs accounts (an instance with sign-in) and a project owner');
+        if (hits.length > 1) return fail(`${hits.length} people are called "${to}": ask the user to assign it in Aldine`);
+        if (!hits.length) return fail(want === 'me' ? 'You are not among the people of this project' : `Nobody called "${to}" can open this project. Names: ${names()}`);
+        person = hits[0];
+      }
+      const r = await comments.assignComment(meta.id, comment_id, person, identity.user?.id);
+      if (!r) return fail(`No comment ${comment_id} in this project — list_comments names the threads`);
+      bumpCommentsSignal(meta.id, r.comment.branch);
+      if (person && person.id !== r.previous) notifyComment(meta, r.comment, 'assign', [person.id], { id: identity.user?.id, name: commentAuthor() }, r.comment.body);
+      return ok({ id: r.comment.id, assignee: r.comment.assignee?.name ?? null, ...(await echo(meta.id, r.comment.branch)) });
     } catch (err) { return toolError(err, { project }); }
   });
 
