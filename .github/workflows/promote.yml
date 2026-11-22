@@ -59,6 +59,15 @@ jobs:
           # image:suffix pairs; the compiler ships a medium (default) and a
           # -full variant, promoted together so latest and latest-full agree.
           targets=("aldine-app:" "aldine-compiler:" "aldine-compiler:-full")
+          # The runner exists from 1.20.0 on and must then be there like the
+          # others. Rolling back to an older version leaves its latest where it
+          # is: an experimental image a step ahead of the app, used only by
+          # instances that added deploy/docker-compose.runner.yml.
+          if [ "$(printf '%s\n' 1.20.0 "$VERSION" | sort -V | head -1)" = "1.20.0" ]; then
+            targets+=("aldine-runner:")
+          else
+            echo "aldine-runner has no $VERSION; its latest is left as it is" >> "$GITHUB_STEP_SUMMARY"
+          fi
           for t in "${targets[@]}"; do
             image="$owner/${t%%:*}"; suffix="${t#*:}"
             # A version that was never built (or never finished building) must

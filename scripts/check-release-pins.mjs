@@ -55,6 +55,8 @@ for (const [file, pin, missing] of pinned) {
     if (!seen.has(image)) found.push([`${file} (${image})`, missing]);
   }
 }
+const runnerPin = /aldine-runner:\$\{ALDINE_VERSION:-([^}]+)\}/.exec(read('deploy/docker-compose.runner.yml'));
+found.push(['deploy/docker-compose.runner.yml (runner)', runnerPin ? runnerPin[1] : `<no ${'${ALDINE_VERSION:-…}'} default>`]);
 const casaVersion = /^ {2}version: "([^"]+)"$/m.exec(read('deploy/casaos/docker-compose.yml'));
 found.push(['deploy/casaos/docker-compose.yml (x-casaos version)', casaVersion ? casaVersion[1] : '<no x-casaos version>']);
 const siteVersion = /"softwareVersion": "([^"]+)"/.exec(read('site/index.html'));
@@ -76,7 +78,7 @@ if (tag) {
 if (problems.length) {
   console.error(`check-release-pins: expected every pin to be ${expected} (from package.json), but:`);
   for (const p of problems) console.error(`  - ${p}`);
-  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default, the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, softwareVersion (with dateModified) in site/index.html, the Status: line in site/llms.txt, and "version" in server.json.');
+  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default (also in deploy/docker-compose.runner.yml), the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, softwareVersion (with dateModified) in site/index.html, the Status: line in site/llms.txt, and "version" in server.json.');
   process.exit(1);
 }
 console.log(`check-release-pins: all ${found.length} pins say ${expected}${tag ? `, tag ${tag} matches` : ''}`);

@@ -23,6 +23,14 @@ you in the fix's release notes unless you prefer otherwise.
   backend network, `cap_drop: [ALL]`, `no-new-privileges`, and the memory/PID
   bounds (the full file adds a CPU cap). If you write your own compose file,
   carry them over.
+- The runner (experimental, off by default) executes code people type. It
+  is only as safe as its container settings: use
+  `deploy/docker-compose.runner.yml` unchanged (no network, a separate
+  unprivileged job user, read-only root, dropped capabilities, Docker's
+  default seccomp profile, limits). The runner checks most of these at start
+  and refuses jobs when one is missing. Hosts that cannot accept the risk of
+  a kernel exploit from inside a container keep it off. See
+  [docs/RUNNER.md](docs/RUNNER.md).
 - Auth is **off by default** (single-tenant). Before exposing an instance to
   the internet, set `AUTH_ENABLED=1` and serve over HTTPS (the `tls` profile in
   `docker-compose.full.yml` ships a Caddy config that gets certificates for you).

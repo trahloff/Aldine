@@ -774,6 +774,22 @@ override file.
 | `TEMPLATE_REPO_MAX_BYTES` | Size cap per template-repository checkout (default `52428800` = 50 MiB); an oversize checkout is deleted and reported as an error |
 | `ALDINE_PERSONAL_TEMPLATE_REPOS` | How many template repositories one account can add in Account settings, seen only by that account (default `5`; `0` turns personal templates off). Needs accounts. A private one is read with the account's git host connection; a host on a private address is refused unless the account connected it. See "Personal repositories" in `templates/README.md` |
 
+### Experimental: the runner
+
+Not covered by the 1.x promise; these may change or go in any release
+([docs/STABILITY.md](../docs/STABILITY.md)). The runner runs one command on
+a throwaway copy of a project and brings back the files it makes, without
+network access ([docs/RUNNER.md](../docs/RUNNER.md) has the design, the
+threat model and how to turn it on with `deploy/docker-compose.runner.yml`).
+It needs sign-in (`AUTH_ENABLED=1`).
+
+| Variable | Description |
+|---|---|
+| `ALDINE_RUNNER_SOCKET` | Path of the runner's Unix socket. Set by `deploy/docker-compose.runner.yml`; unset, the runner is off |
+| `ALDINE_RUNNER_USERS` | Comma-separated confirmed addresses of the people who may start runs; nobody else can |
+| `ALDINE_RUNNER_TIMEOUT_S` | Wall-clock limit per run in seconds, default 120, at most 600 |
+| `RL_RUNNER_BURST`, `RL_RUNNER_REFILL_PER_MIN` | Runs a person may start in a row (30) and how many come back per minute (3) |
+
 ### Tests and internals
 
 These exist for the test suites, for development and for tuning. They are

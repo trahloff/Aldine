@@ -6,6 +6,7 @@ import * as store from './store.js';
 import * as gitops from './gitops.js';
 import * as zotero from './zotero.js';
 import { bibLoadState, addBibLoad, referenceTarget, paperBibFormat } from './bibload.js';
+import { runnerConfigured, runnerAllowed, mayRunIn, commandProblem, enqueue, jobView } from './runner.js';
 import { compileProject, compileStatus, synctexLookup, formatText, type FormatRefusal, forgetPdfUrls, compilerInfo, typesetsSettled, withBranchTypesetsClosed, isBranchClosed, stopTypeset, CompilerUnavailableError } from './compile.js';
 import * as usage from './usage.js';
 import { EDIT_ALLOWANCE_BYTES, storageRefusal, storageUsageFor, type StorageAction } from './storage.js';
@@ -49,7 +50,7 @@ import { ADDRESS_LINK_ID, LINK_ID_RE, isGuestId, LINK_TOKEN_RE, MAX_ACTIVE_LINKS
 import { noteActivity, registerAdminRoutes } from './admin.js';
 import { registerAccountRoutes } from './account.js';
 import { cleanGuestName, clearGuestCookie, guestCookie, guestCookieWithout, guestDisplayName, guestEntry, guestFromRequest, guestRenewal, newGuestId } from './guest.js';
-import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, guestJoinLimiter, guestLinkLimiter, compileGate, compileLimiter, formatLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
+import { loginLimiter, registerLimiter, signInBackoff, confirmResendLimiter, aiLimiter, refLimiter, visitLimiter, guestJoinLimiter, guestLinkLimiter, compileGate, compileLimiter, formatLimiter, runnerLimiter, templateRepoLimiter, searchLimiter, replaceLimiter, copyLimiter, inviteLimiter, shareLimiter, shareBurst, clientKey } from './ratelimit.js';
 import { invitationMail, newInvitationId, inviteExpiry, stateOf, recipientKeys, isOrcidId, isEmailAddress, normalizeEntry, INVITE_ID_RE, type InviteReport } from './invites.js';
 import { searchProject, replaceInProject, SearchError, type ReplaceBody } from './search.js';
 import { safeJoin, isTextFile, rawFileType, RAW_FILE_CSP, importPath, wrapperFolder, isHiddenPath, optionLikePath, cleanCommitMessage, overlongPath, pathConflict, seedError, newId, rootSiblingPath, BRANCH_RE, PROJECT_ID_RE, invalidRootFile, invalidBranchName, publicBase } from './util.js';
@@ -349,6 +350,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const user = reqUser(req);
     return {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
+      runner: runnerAllowed(user),
       mcpEnabled: process.env.ALDINE_MCP === '1', mcpSync: process.env.ALDINE_MCP === '1' && process.env.ALDINE_MCP_SYNC === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
     };
   });
@@ -3971,6 +3973,52 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
         return reply.code(502).send({ error: `AI request failed: ${err.message}` });
       }
     });
+
+  // ---------- runner (experimental preview, docs/RUNNER.md) ----------
+  // D10: a listed person's own browser session, in a project they own or are
+  // named in with edit rights; never a token, a guest or a share link.
+  const runnerRefusal = async (req: any): Promise<{ code: number; error: string } | null> => {
+    const user = reqUser(req);
+    if (!runnerConfigured()) return { code: 404, error: 'The runner is not turned on for this instance' };
+    if (req.headers.authorization !== undefined) return { code: 403, error: 'Runs start from the Runner panel in Aldine, not with an access token' };
+    if (!user || !runnerAllowed(user)) return { code: 403, error: 'Your account may not use the runner. The administrator can add your address to ALDINE_RUNNER_USERS.' };
+    const origin = req.headers.origin;
+    if (typeof origin === 'string') {
+      let host: string | null = null;
+      try { host = new URL(origin).host; } catch { /* not a URL */ }
+      if (host !== req.headers.host) return { code: 403, error: 'This request came from another site' };
+    }
+    let meta: store.ProjectMeta;
+    try { meta = await store.readMeta(req.params.id); } catch { return { code: 404, error: 'Project not found' }; }
+    if (!mayRunIn(meta, user)) return { code: 403, error: 'Only the project\'s owner and collaborators with edit rights may run commands in it' };
+    return null;
+  };
+
+  app.post<{ Params: { id: string }; Body: { branch?: unknown; command?: unknown } }>('/api/projects/:id/runner/run', async (req, reply) => {
+    if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return reply.code(415).send({ error: 'Send the run as JSON' });
+    const refused = await runnerRefusal(req);
+    if (refused) return reply.code(refused.code).send({ error: refused.error });
+    const branch = typeof req.body?.branch === 'string' ? req.body.branch : 'main';
+    if (!BRANCH_RE.test(branch) || branch.includes('..')) return reply.code(400).send({ error: 'invalid branch name' });
+    if (isBranchClosed(req.params.id, branch)) return reply.code(409).send({ error: 'This branch is being deleted' });
+    if (!(await gitops.branchHead(req.params.id, branch))) return reply.code(404).send({ error: `No branch named ${branch}` });
+    const problem = commandProblem(req.body?.command);
+    if (problem) return reply.code(400).send({ error: problem });
+    const user = reqUser(req)!;
+    if (!(await runnerLimiter.take(user.id))) return reply.code(429).send({ error: 'Too many runs in a row; wait a minute and try again' });
+    const job = enqueue(req.params.id, branch, user, req.body!.command as string);
+    if (typeof job === 'string') return reply.code(409).send({ error: job });
+    return { job: jobView(job.id, user.id) };
+  });
+
+  app.get<{ Params: { id: string; job: string } }>('/api/projects/:id/runner/jobs/:job', async (req, reply) => {
+    const refused = await runnerRefusal(req);
+    if (refused) return reply.code(refused.code).send({ error: refused.error });
+    const job = jobView(req.params.job, reqUser(req)!.id);
+    if (!job || job.projectId !== req.params.id) return reply.code(404).send({ error: 'No such run' });
+    reply.header('cache-control', 'no-store');
+    return { job };
+  });
 
   // ---------- plugins ----------
   // The AI fix runs on the server's key: without one its tab would only say

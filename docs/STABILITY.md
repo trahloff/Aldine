@@ -146,9 +146,13 @@ CHANGELOG. Added since 1.0, stable from the release that adds it:
 **Not covered:** the variables under "Tests and internals" in the same file.
 They exist for the test suites and for tuning, and may change in any release.
 
-**Experimental:** no environment variable is experimental today.
-Experimental features are switched on per browser, from the command palette
-(`aldine.experimental.*` flags), and may change or disappear in any release.
+**Experimental:** the runner's settings (`ALDINE_RUNNER_SOCKET`,
+`ALDINE_RUNNER_USERS`, `ALDINE_RUNNER_TIMEOUT_S`, `RL_RUNNER_BURST`,
+`RL_RUNNER_REFILL_PER_MIN`), its compose overlay
+`deploy/docker-compose.runner.yml` and its image `aldine-runner`
+([RUNNER.md](RUNNER.md)). Other experimental features are switched on per
+browser, from the command palette (`aldine.experimental.*` flags). Both may
+change or disappear in any release.
 
 `DATABASE_URL` and `REDIS_URL` are stable settings, but running more than
 one app node with them is not a supported topology

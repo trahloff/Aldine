@@ -144,6 +144,14 @@ export const IconHistory = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** The runner: a play triangle in a box. */
+export const IconRun = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.5" />
+    <path d="M6.5 5.75v4.5L10.25 8Z" />
+  </svg>
+);
+
 /** A bookmark: a version someone named. */
 export const IconBookmark = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} width={11} height={11}>

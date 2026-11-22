@@ -23,12 +23,13 @@ import BranchMenu from '../components/BranchMenu';
 import HistoryPanel from '../components/HistoryPanel';
 import ReviewPanel from '../components/ReviewPanel';
 import SearchPanel, { SearchFocus } from '../components/SearchPanel';
+import RunnerPanel, { RUNNER_FLAG } from '../components/RunnerPanel';
 import Presence, { PresenceUser } from '../components/Presence';
 import FileTabs from '../components/FileTabs';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconRun, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -281,7 +282,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const [searchVersion, setSearchVersion] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const { authEnabled, user, setUser, guest, setGuest, mcpSync } = useAuth();
+  const { authEnabled, user, setUser, guest, setGuest, mcpSync, runner } = useAuth();
   // A guest (no account, here on a share link) never typesets: they see
   // the PDF the others typeset. A ref, for the typeset callbacks.
   const asGuest = authEnabled && !user && guest?.projectId === id;
@@ -348,6 +349,9 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const toggleChangeMarks = useCallback(() => setChangeMarks((v) => { safeStorage.set(CHANGE_MARKS, v ? '0' : '1'); return !v; }), []);
   // Agent-edit fade highlights are behind an experimental flag (presence chip is not).
   const agentPresenceEnabled = safeStorage.get('aldine.experimental.agentPresence') === '1';
+  // The runner (docs/RUNNER.md): the server says this account may use it, and
+  // this browser turned the experimental panel on.
+  const runnerEnabled = runner && safeStorage.get(RUNNER_FLAG) === '1';
   const [mode, setMode] = useState<EditorMode>(() => {
     return safeStorage.get(EDITOR_MODE) === 'visual' ? 'visual' : 'source';
   });
@@ -1915,6 +1919,12 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
           },
         }]
         : []),
+      ...(runner
+        ? [runnerEnabled
+          ? { id: 'experimental-runner-off', group: 'View', title: 'Disable experimental runner', keywords: 'run python script figure', run: () => { safeStorage.set(RUNNER_FLAG, '0'); location.reload(); } }
+          : { id: 'experimental-runner', group: 'View', title: 'Enable experimental runner', keywords: 'run python script figure', run: () => { safeStorage.set(RUNNER_FLAG, '1'); location.reload(); } }]
+        : []),
+      ...(runnerEnabled ? [{ id: 'show-runner', group: 'Actions', title: 'Run a command…', keywords: 'runner python script figure', run: () => { setTab('runner'); setSidebar(false); } }] : []),
       ...(agentPresenceEnabled
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
@@ -2322,6 +2332,19 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             >
               <IconHistory />
             </button>
+            {runnerEnabled && (
+              <button
+                className={`sidebar__tab sidebar__tab--icon ${tab === 'runner' ? 'sidebar__tab--active' : ''}`}
+                onClick={() => setTab('runner')}
+                role="tab"
+                aria-selected={tab === 'runner'}
+                aria-label="Runner (experimental)"
+                title="Runner (experimental): run a command on a copy of the project"
+                data-testid="tab-runner"
+              >
+                <IconRun />
+              </button>
+            )}
             {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => {
               const Icon = PINNED_ICONS[p.id];
               return (
@@ -2499,6 +2522,11 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 readOnly={locked}
               />
             </div>
+            {runnerEnabled && (
+              <div className="sidebar__panel" style={{ display: tab === 'runner' ? 'block' : 'none' }}>
+                <RunnerPanel projectId={id} branch={branch} readOnly={locked} onChanged={() => onDocChanged(true)} onOpenHistory={() => setTab('history')} />
+              </div>
+            )}
             {pluginPanels.map((p) => (
               <div key={p.id} className="sidebar__panel" style={{ display: tab === p.id ? 'block' : 'none' }} ref={(el) => { if (el && !el.hasChildNodes()) p.mount(el); }} />
             ))}

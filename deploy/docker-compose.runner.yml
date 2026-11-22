@@ -1,0 +1,57 @@
+# The runner, an experimental preview (docs/RUNNER.md). Off unless this file
+# is added on purpose:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml up -d
+#
+# and the people who may run jobs are listed for the app, for example in a
+# .env file next to docker-compose.yml:
+#
+#   ALDINE_RUNNER_USERS=you@example.org,colleague@example.org
+#
+# Every setting below is part of the runner's security model; the runner
+# checks most of them at start and refuses jobs when one is missing.
+services:
+  app:
+    environment:
+      ALDINE_RUNNER_SOCKET: /run/aldine-runner/runner.sock
+      ALDINE_RUNNER_USERS: ${ALDINE_RUNNER_USERS:-}
+    volumes:
+      - aldine-runner-socket:/run/aldine-runner
+
+  runner:
+    image: ghcr.io/trahloff/aldine-runner:${ALDINE_VERSION:-1.19.0}
+    # No network at all, not even to the app or the compiler: the app talks
+    # to the runner over a Unix socket in the small volume below.
+    network_mode: none
+    volumes:
+      - aldine-runner-socket:/run/aldine-runner
+    # The only place jobs write files, owned by the job user (uid 10101).
+    tmpfs:
+      - /work:size=512m,uid=10101,gid=10101,mode=0700,noexec,nosuid,nodev
+    shm_size: 64m
+    read_only: true
+    # User 0 inside the container keeps only what it needs to start each job
+    # step as uid 10101; jobs themselves run with no capabilities at all.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges
+    mem_limit: 1g
+    memswap_limit: 1g
+    # One core for jobs, so a run never starves editing and typesetting.
+    cpus: 1
+    pids_limit: 128
+    init: true
+    restart: unless-stopped
+
+volumes:
+  # Holds only the socket; 1 MB so nothing can fill a disk through it.
+  aldine-runner-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,mode=0755

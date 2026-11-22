@@ -8,6 +8,7 @@ dist/
 .data-auth/
 .data-auth-approval/
 .data-auth-logout/
+.data-auth-runner/
 .data-base-path/
 .data-base-path-auth/
 .data-remote/

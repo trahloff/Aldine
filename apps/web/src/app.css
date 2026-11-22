@@ -1820,6 +1820,15 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 .review__commit { font-size: var(--text-s); font-weight: 600; color: var(--text); margin: 14px 0 6px; overflow-wrap: anywhere; }
 
 /* project search: the fields stay put while the results scroll under them */
+.runner { display: flex; flex-direction: column; gap: 8px; padding: 2px; font-size: var(--text-s); }
+.runner__form { display: flex; gap: 6px; }
+.runner__command { flex: 1; min-width: 0; font-family: var(--font-mono); }
+.runner__note { margin: 0; color: var(--text-2); font-size: var(--text-xs); }
+.runner__error { margin: 0; color: var(--error); overflow-wrap: anywhere; }
+.runner__result p { margin: 0 0 6px; }
+.runner__files { margin: 0 0 6px; padding-left: 18px; overflow-wrap: anywhere; }
+.runner__skipped { margin: 0 0 6px; color: var(--text-2); overflow-wrap: anywhere; }
+.runner__log { margin: 0; max-height: 50vh; overflow: auto; padding: 8px 10px; border-radius: var(--radius-s); background: var(--bg-inset); font-family: var(--font-mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
 .search { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
 /* the screen reader's copy of the outcome: always in the tree, never on screen */
 .search__live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
