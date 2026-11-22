@@ -24,6 +24,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [1.21.1] — 2026-11-22
 
+### Fixed
+- Visual: a jump deep into a long file that has just opened (a SyncTeX
+  double-click, a deep link, an Outline click) that lands inside a table,
+  formula or figure now shows its source with the caret in it. Before, it
+  could draw rendered over the caret once the file finished loading, and
+  a tall table left the caret off screen above it.
+
 ## [1.21.0] — 2026-11-22
 
 ### Added
@@ -49,11 +56,6 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 - `deploy/hetzner`: a deploy now removes the images of earlier releases
   once the new one is up. They piled up until the disk was full and the
   next pull failed.
-- Visual: a jump deep into a long file that has just opened (a SyncTeX
-  double-click, a deep link, an Outline click) that lands inside a table,
-  formula or figure now shows its source with the caret in it. Before, it
-  could draw rendered over the caret once the file finished loading, and
-  a tall table left the caret off screen above it.
 
 ## [1.20.0] — 2026-11-22
 
