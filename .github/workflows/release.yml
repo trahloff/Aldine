@@ -116,6 +116,12 @@ jobs:
       ALDINE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-runner@${{ needs.build-runner.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+      # A package GHCR has never seen before starts out private.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Start the runner with the overlay's settings
         run: docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml -f deploy/docker-compose.runner-smoke.yml up -d --quiet-pull runner
       - name: Smoke test
