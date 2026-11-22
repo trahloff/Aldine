@@ -22,4 +22,7 @@ scp -q -o BatchMode=yes "$ENV_FILE" "root@$HOST:/opt/aldine/.env"
   docker compose pull -q
   docker compose up -d --wait --wait-timeout 600
   docker image prune -f >/dev/null
+  # prune keeps tagged images, and each old release holds a ~9 GB compiler. A rollback pulls its version again.
+  v=$(sed -n "s/^ALDINE_VERSION=//p" .env)
+  [ -n "$v" ] && docker images --format "{{.Repository}}:{{.Tag}}" | grep "^ghcr.io/trahloff/aldine-" | grep -v -e ":$v\$" -e ":$v-" | xargs -r docker rmi >/dev/null || true
   docker compose ps --format "table {{.Service}}\t{{.Image}}\t{{.Status}}"'

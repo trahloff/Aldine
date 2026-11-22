@@ -12,6 +12,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   opt-in compose profile: `COMPOSE_PROFILES=runner` plus the two runner
   settings in its env file (deploy/hetzner/README.md).
 
+### Fixed
+- `deploy/hetzner`: a deploy now removes the images of earlier releases
+  once the new one is up. They piled up until the disk was full and the
+  next pull failed.
+
 ## [1.20.0] — 2026-11-22
 
 ### Added
