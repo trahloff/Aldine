@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-11-23
+
 ### Added
 - Autosaves name the people who typed in them. With accounts on, the first
   person whose typing a save holds is its author and everyone else who typed
