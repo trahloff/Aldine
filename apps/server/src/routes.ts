@@ -3568,6 +3568,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       return publicMeta(meta, reqUser(req));
     } catch (err: any) {
       fs.rmSync(store.repoDir(id), { recursive: true, force: true });
+      if (err instanceof gitops.EmptyRepositoryError) return reply.code(400).send({ error: `${info.fullName} has no commits yet. Push a first commit to it on ${p.label}, then import it again.`, code: 'empty-repository' });
       const known = explainGitFailure(String(err?.message || err), { label: p.label, host: conn.baseUrl ? importHost(p, conn) : undefined, fullName: info.fullName, branch: info.defaultBranch, op: 'clone' });
       if (known) return reply.code(known.status).send({ error: known.error, code: known.code });
       return reply.code(400).send({ error: `Import failed: ${err.message}` });
