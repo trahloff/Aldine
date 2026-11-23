@@ -558,7 +558,7 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
   message it was given — the caller is naming the checkpoint, so the
   per-file intents those writes registered are replaced. A collaborator's
   unsaved typing, and anything a person changed over REST, stays pending and
-  reaches history as an ordinary anonymous autosave. Since every write
+  reaches history as an ordinary autosave, under the names of whoever typed. Since every write
   commits itself, the usual answer is `committed:false` with the current head
   and the latest Claude commits on the branch (`recentClaudeCommits`), so
   Claude can name the commit that holds its edits. Claude is still steered to
@@ -567,7 +567,9 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
   reverts are committed under their account name (the server ignores the
   name the browser sends), and collaborators and comment threads see that
   name too, with one colour in every browser; the anonymous "Writer N"
-  identity applies only without accounts. Autosaves carry no author.
+  identity applies only without accounts. Autosaves name the people who
+  typed in them ([TYPING_NAMES.md](TYPING_NAMES.md)); without accounts they
+  carry no author.
 - **Presence.** While Claude edits a document that is open in someone's
   editor, it appears in the presence strip as a violet spark glyph (never an
   initial; the violet is reserved for agents) and leaves about a minute after

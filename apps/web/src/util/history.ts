@@ -118,3 +118,11 @@ export function filesSummary(files: string[], total = files.length, shown = 2): 
   const rest = Math.max(total, files.length) - Math.min(shown, files.length);
   return rest > 0 ? `${head} and ${rest} more` : head;
 }
+
+/** "Ada", "Ada and Ben", "Ada, Ben and Cy", "Ada, Ben and 3 others" */
+export function peopleSummary(names: string[], shown = 2): string {
+  const list = [...new Set(names.filter(Boolean))];
+  if (list.length <= 1) return list[0] ?? '';
+  if (list.length <= shown + 1) return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  return `${list.slice(0, shown).join(', ')} and ${list.length - shown} others`;
+}
