@@ -3,7 +3,7 @@ import { api, LogEntry, localUser } from '../api';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
 import { clockTime, dateTime, sameDay } from '../util/dates';
-import { filesSummary, historyRows, type CommitView, type HistoryRow } from '../util/history';
+import { filesSummary, historyRows, peopleSummary, type CommitView, type HistoryRow } from '../util/history';
 import { askWaitingCommit } from '../util/waitingCommit';
 import DiffView from './DiffView';
 import Modal from './Modal';
@@ -176,6 +176,9 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
   };
 
   const person = (c: LogEntry) => (c.author && c.author !== NO_PERSON ? authorLabel(c) : '');
+  /** Everyone a commit names: its author, then the people who typed with them. */
+  const people = (cs: LogEntry[]) => cs.flatMap((c) => [person(c), ...(c.coAuthors ?? [])]).filter(Boolean);
+  const SHARED_SAVE = 'Everyone who typed in this save. One save can’t say whose line is whose.';
   const span = (from: string, to: string) => {
     if (!sameDay(from, to)) return `${dateTime(from)} – ${dateTime(to)}`;
     return clockTime(from) === clockTime(to) ? dateTime(from) : `${dateTime(from)} – ${clockTime(to)}`;
@@ -197,7 +200,8 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
         </div>
         <div className="history__meta">
           {v.kind === 'agent' && <span className="dot dot--agent" aria-hidden="true" data-testid="agent-commit-dot" />}
-          {[person(c), dateTime(c.date)].filter(Boolean).join(' · ')}
+          <span title={c.coAuthors?.length ? SHARED_SAVE : undefined} data-testid="history-people">{peopleSummary(people([c]))}</span>
+          {person(c) || c.coAuthors?.length ? ' · ' : ''}{dateTime(c.date)}
         </div>
         {!!c.files?.length && <div className="history__files" data-testid="history-files">{filesSummary(c.files, c.fileCount)}</div>}
       </button>
@@ -239,7 +243,10 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
               <span className={`history__chev${unfolded.has(r.key) ? ' history__chev--open' : ''}`} aria-hidden="true"><IconChevronRight /></span>
               {r.views.length} autosaves
             </div>
-            <div className="history__meta">{span(r.views[r.views.length - 1].entry.date, r.views[0].entry.date)}</div>
+            <div className="history__meta">
+              {people(r.views.map((v) => v.entry)).length > 0 && <span title={SHARED_SAVE} data-testid="history-people">{peopleSummary(people([...r.views].reverse().map((v) => v.entry)))} · </span>}
+              {span(r.views[r.views.length - 1].entry.date, r.views[0].entry.date)}
+            </div>
             {r.files.length > 0 && <div className="history__files" data-testid="history-files">{filesSummary(r.files, r.fileCount)}</div>}
           </button>
           {unfolded.has(r.key) && <div className="history__sub">{r.views.map((v) => commitRow(v))}</div>}
@@ -255,7 +262,7 @@ export default function HistoryPanel({ projectId, branch, version = 0, live = fa
       {diff && (
         <Modal onClose={() => setDiff(null)} label={`Changes in “${diff.view.title}”`} wide testId="diff-dialog">
           <h2 style={{ marginBottom: 2 }}>{diff.view.title}</h2>
-          <p className="modal__sub">{[person(diff.view.entry), dateTime(diff.view.entry.date), diff.view.entry.hash.slice(0, 10)].filter(Boolean).join(' · ')}</p>
+          <p className="modal__sub" data-testid="diff-people">{[peopleSummary(people([diff.view.entry]), 8), dateTime(diff.view.entry.date), diff.view.entry.hash.slice(0, 10)].filter(Boolean).join(' · ')}</p>
           <DiffView patch={diff.patch} />
           <div className="modal__row">
             <button className="btn" onClick={() => setDiff(null)} data-testid="diff-close">Close</button>

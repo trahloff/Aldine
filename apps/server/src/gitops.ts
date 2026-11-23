@@ -147,6 +147,88 @@ export function registerAttributedPaths(id: string, branch: string, message: str
   pendingAttributed.set(key, cur);
 }
 
+/** A signed-in person whose writes are on disk and not yet committed. */
+export interface Writer { id: string; name: string; email?: string }
+interface WriterMark { writer: Writer; seq: number }
+/** project::branch -> path -> account id -> the person and when they first
+ *  wrote it. Filled when a write reaches the disk (collab.writeDocToDisk for
+ *  typing, the runner for its files), never per keystroke, so a commit that
+ *  takes it names exactly the people whose bytes it holds. Per process:
+ *  relayed typing (docs/SCALING.md) and a crash lose the names, not the text. */
+const writers = new Map<string, Map<string, Map<string, WriterMark>>>();
+let writerSeq = 0;
+
+export function noteWriters(id: string, branch: string, paths: string[], writer: Writer): void {
+  const name = commitSafeName(writer.name);
+  if (!name || !paths.length) return;
+  const key = attributionKey(id, branch);
+  let byPath = writers.get(key);
+  if (!byPath) { byPath = new Map(); writers.set(key, byPath); }
+  for (const p of paths) {
+    let byId = byPath.get(p);
+    if (!byId) { byId = new Map(); byPath.set(p, byId); }
+    const had = byId.get(writer.id);
+    byId.set(writer.id, { writer: { ...writer, name }, seq: had ? had.seq : ++writerSeq });
+  }
+}
+
+type TakenWriters = Array<{ path: string; mark: WriterMark }>;
+
+/** Remove and return the writers of `paths` (null: every path). Callers hold
+ *  the repo lock and put them back with restoreWriters when the commit fails. */
+function takeWriters(id: string, branch: string, paths: string[] | null): TakenWriters {
+  const key = attributionKey(id, branch);
+  const byPath = writers.get(key);
+  if (!byPath) return [];
+  const out: TakenWriters = [];
+  for (const p of paths ?? [...byPath.keys()]) {
+    for (const mark of byPath.get(p)?.values() ?? []) out.push({ path: p, mark });
+    byPath.delete(p);
+  }
+  if (!byPath.size) writers.delete(key);
+  return out;
+}
+
+function restoreWriters(id: string, branch: string, taken: TakenWriters): void {
+  const key = attributionKey(id, branch);
+  let byPath = writers.get(key);
+  if (!byPath) { byPath = new Map(); writers.set(key, byPath); }
+  for (const { path: p, mark } of taken) {
+    let byId = byPath.get(p);
+    if (!byId) { byId = new Map(); byPath.set(p, byId); }
+    const cur = byId.get(mark.writer.id);
+    if (!cur || cur.seq > mark.seq) byId.set(mark.writer.id, mark);
+  }
+}
+
+/** Test hook: who is waiting to be named on a branch, in first-write order. */
+export function pendingWriters(id: string, branch: string): string[] {
+  const marks = [...(writers.get(attributionKey(id, branch))?.values() ?? [])].flatMap((m) => [...m.values()]);
+  return [...new Map(marks.sort((a, b) => a.seq - b.seq).map((m) => [m.writer.id, m.writer.name])).values()];
+}
+
+/** A name git can carry as an author or in a trailer: angle brackets would
+ *  end the name early, and the two names History reads as "nobody" and "the
+ *  agent" must not be claimed by a person's save. */
+function commitSafeName(name: string): string {
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
+  return clean === AGENT_COMMIT_AUTHOR || clean === 'Aldine' ? '' : clean;
+}
+
+/** The commit that holds the writers' bytes: with no author of its own, the
+ *  first to write signs it; everyone else is a Co-authored-by line. One save
+ *  can name several people and cannot say whose line is whose. */
+function signedBy(message: string, author: CommitAuthor | undefined, taken: TakenWriters): { message: string; author: CommitAuthor | undefined } {
+  const people = [...new Map(taken.sort((a, b) => a.mark.seq - b.mark.seq).map((t) => [t.mark.writer.id, t.mark.writer])).values()];
+  if (!people.length || authorName(author) === AGENT_COMMIT_AUTHOR) return { message, author };
+  const ident = (w: Writer) => `${w.name} <${w.email || authorEmail(w.name)}>`;
+  let by = author;
+  if (!authorName(by)) by = people[0].email ? { name: people[0].name, email: people[0].email } : people[0].name;
+  const me = authorIdent(by!);
+  const others = [...new Set(people.map(ident))].filter((a) => a !== `${me.name} <${me.email}>`);
+  return { message: others.length ? `${message}\n\n${others.map((a) => `Co-authored-by: ${a}`).join('\n')}` : message, author: by };
+}
+
 /** Branches with agent work registered but not yet committed. The shutdown
  *  flush must cover these as well as the open docs: an agent writing with no
  *  browser tab open has no doc, and the ledger dies with the process — the
@@ -225,17 +307,24 @@ export async function commitAllHeld(id: string, branch: string, message: string,
   // Self-heal projects that committed compile output before it was excluded
   // (.papyr-out is the pre-rename output dir).
   await g.raw(['rm', '-r', '--cached', '--ignore-unmatch', '--quiet', '--', '.aldine-out', '.papyr-out']).catch(() => {});
-  await g.add(['-A']);
-  const status = await g.status();
-  // Consumed only once the tree is known clean (or committed below): a failed
-  // add/status must leave the attribution for the debounce to retry.
-  if (status.staged.length === 0 && status.files.length === 0) {
+  const typed = takeWriters(id, branch, null);
+  try {
+    await g.add(['-A']);
+    const status = await g.status();
+    // Consumed only once the tree is known clean (or committed below): a failed
+    // add/status must leave the attribution for the debounce to retry.
+    if (status.staged.length === 0 && status.files.length === 0) {
+      pendingAttributed.delete(attributionKey(id, branch));
+      return { committed: false };
+    }
+    const signed = signedBy(message, author, typed);
+    const hash = await commitArgv(g, signed.message, signed.author);
     pendingAttributed.delete(attributionKey(id, branch));
-    return { committed: false };
+    return { committed: true, hash };
+  } catch (err) {
+    restoreWriters(id, branch, typed);
+    throw err;
   }
-  const hash = await commitArgv(g, message, author);
-  pendingAttributed.delete(attributionKey(id, branch));
-  return { committed: true, hash };
 }
 
 /**
@@ -271,6 +360,14 @@ export async function commitPathsHeld(id: string, branch: string, paths: string[
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
 export function commitPaths(id: string, branch: string, paths: string[], message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   return withRepoLock(id, () => commitPathsHeld(id, branch, paths, message, author));
+}
+
+/** The people's own edits to `paths` as an autosave, named after whoever wrote them. */
+async function commitTypedPathsHeld(id: string, branch: string, paths: string[]): Promise<void> {
+  const taken = takeWriters(id, branch, paths);
+  const signed = signedBy('aldine: autosave', undefined, taken);
+  try { await commitPathsHeld(id, branch, paths, signed.message, signed.author); }
+  catch (err) { restoreWriters(id, branch, taken); throw err; }
 }
 
 /** Commit the removal of `rel` — a file, or a folder with everything git
@@ -368,7 +465,11 @@ export async function commitSnapshotHeld(id: string, branch: string, files: File
  */
 export async function commitWriteHeld(id: string, branch: string, files: Array<{ path: string; before: string | Buffer | null; after: string }>, message: string, author?: CommitAuthor): Promise<{ committed: boolean; hash?: string; files: string[] }> {
   const typed = files.filter((f) => f.before !== null).map((f) => ({ path: f.path, content: f.before as string | Buffer }));
-  if (typed.length) await commitSnapshotHeld(id, branch, typed, 'aldine: autosave');
+  if (typed.length) {
+    const taken = takeWriters(id, branch, typed.map((f) => f.path));
+    const signed = signedBy('aldine: autosave', undefined, taken);
+    await commitSnapshotHeld(id, branch, typed, signed.message, signed.author).catch((err) => { restoreWriters(id, branch, taken); throw err; });
+  }
   return commitSnapshotHeld(id, branch, files.map((f) => ({ path: f.path, content: f.after })), message, author);
 }
 
@@ -401,7 +502,7 @@ export async function checkpointPathsHeld(id: string, branch: string, paths: str
     for (const p of attributed) pending.paths.delete(p);
     if (!pending.paths.size) pendingAttributed.delete(key);
   }
-  if (anonymous.length) await commitPathsHeld(id, branch, anonymous, 'aldine: autosave');
+  if (anonymous.length) await commitTypedPathsHeld(id, branch, anonymous);
 }
 
 /** Takes the repo lock; callers already inside withRepoLock use the Held variant. */
@@ -549,6 +650,16 @@ export interface LogEntry {
   fileCount?: number;
   /** For an agent commit, whose token it was made with. */
   onBehalfOf?: string;
+  /** Names from Co-authored-by lines (everyone else who typed in an
+   *  autosave), without their addresses. */
+  coAuthors?: string[];
+}
+
+/** Co-authored-by values, one per unit separator (a name cannot hold one). */
+const COAUTHOR_FORMAT = '%(trailers:key=Co-authored-by,valueonly,separator=%x1F)';
+function coAuthorsOf(raw: string, author: string): string[] {
+  const names = raw.split('\x1f').map((v) => v.replace(/<[^>]*>\s*$/, '').trim()).filter((n) => n && n !== author);
+  return [...new Set(names)];
 }
 
 const LOG_FILES_MAX = 20;
@@ -570,12 +681,13 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
     // --name-only prints the paths after the header. quotePath off keeps a
     // non-ASCII name readable instead of octal-escaped.
     const raw = await git(repoDir(id)).raw(['-c', 'core.quotePath=false', 'log', branch, ...paging,
-      `--format=%x00%H%x00%aI%x00%an%x00%P%x00${REQUESTER_FORMAT}%x00%s`, '--name-only', '--diff-merges=first-parent', '--']);
+      `--format=%x00%H%x00%aI%x00%an%x00%P%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00%s`, '--name-only', '--diff-merges=first-parent', '--']);
     const f = raw.split('\0');
-    for (let i = 1; i + 5 < f.length; i += 6) {
+    for (let i = 1; i + 6 < f.length; i += 7) {
       const hash = f[i].trim();
       if (!/^[0-9a-f]{40}$/.test(hash)) continue;
-      const lines = f[i + 5].split('\n');
+      const coAuthors = coAuthorsOf(f[i + 5], f[i + 2]);
+      const lines = f[i + 6].split('\n');
       const files = lines.slice(1).map((l) => l.trim()).filter(Boolean);
       const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
       out.push({
@@ -583,17 +695,19 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
         parents: f[i + 3].split(' ').filter(Boolean).length,
         files: files.slice(0, LOG_FILES_MAX), fileCount: files.length,
         ...(onBehalfOf ? { onBehalfOf } : {}),
+        ...(coAuthors.length ? { coAuthors } : {}),
       });
     }
     return out;
   }
-  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, `--format=%H%x00%aI%x00%an%x00%s%x00${REQUESTER_FORMAT}%x00`, '--']);
+  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, `--format=%H%x00%aI%x00%an%x00%s%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00`, '--']);
   const f = raw.split('\0');
-  for (let i = 0; i + 4 < f.length; i += 5) {
+  for (let i = 0; i + 5 < f.length; i += 6) {
     const hash = f[i].trim(); // the newline git prints after each record leads the next hash
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
     const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
-    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}) });
+    const coAuthors = coAuthorsOf(f[i + 5], f[i + 2]);
+    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}), ...(coAuthors.length ? { coAuthors } : {}) });
   }
   return out;
 }
@@ -1135,7 +1249,7 @@ export async function combineUnpushed(id: string, remoteBranch: string, tokenUrl
     // Local branches started inside the range still carry its commits; merging one into main brings them back.
     const forked = (await g.raw(['for-each-ref', '--format=%(refname:short)', '--contains', commits[0], 'refs/heads']))
       .split('\n').map((l) => l.trim()).filter((b) => b && b !== 'main');
-    const authors = (await g.raw(['log', '--format=%an <%ae>', range])).split('\n').map((l) => l.trim()).filter(Boolean);
+    const authors = (await g.raw(['log', '--format=%an <%ae>%n%(trailers:key=Co-authored-by,valueonly)', range])).split('\n').map((l) => l.trim()).filter(Boolean);
     const kept = await freeBranchName(id, keepAs);
     const dir = branchDir(id, kept);
     fs.mkdirSync(path.dirname(dir), { recursive: true });

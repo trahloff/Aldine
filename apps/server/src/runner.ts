@@ -561,6 +561,7 @@ async function runJob(job: RunJob, user: PublicUser): Promise<RunResult> {
     if (!written.length) return result([]);
     refreshBranchDocsFromDisk(id, branch, written);
     noteEdit(id, branch, editorOf(user));
+    if (user.name) gitops.noteWriters(id, branch, written, { id: user.id, name: user.name, ...(user.commitEmail ? { email: user.commitEmail } : {}) });
     // Like any other save: the files reach history with the next autosave.
     scheduleCommit(id, branch);
     return result(written);

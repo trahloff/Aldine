@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LogEntry } from '../../api';
-import { describeCommit, filesSummary, historyRows } from '../history';
+import { describeCommit, filesSummary, historyRows, peopleSummary } from '../history';
 
 let n = 0;
 const entry = (message: string, minute: number, over: Partial<LogEntry> = {}): LogEntry => ({
@@ -73,5 +73,29 @@ describe('filesSummary', () => {
     expect(filesSummary(['a.tex'])).toBe('a.tex');
     expect(filesSummary(['a.tex', 'b.tex'])).toBe('a.tex, b.tex');
     expect(filesSummary(['a.tex', 'b.tex', 'c.tex'], 25)).toBe('a.tex, b.tex and 23 more');
+  });
+});
+
+describe('peopleSummary', () => {
+  it('names everyone who typed in a save, briefly', () => {
+    expect(peopleSummary([])).toBe('');
+    expect(peopleSummary(['Ada'])).toBe('Ada');
+    expect(peopleSummary(['Ada', 'Ben'])).toBe('Ada and Ben');
+    expect(peopleSummary(['Ada', 'Ben', 'Cy'])).toBe('Ada, Ben and Cy');
+    expect(peopleSummary(['Ada', 'Ben', 'Cy', 'Dee', 'Eve'])).toBe('Ada, Ben and 3 others');
+  });
+  it('counts a person once', () => {
+    expect(peopleSummary(['Ada', 'Ben', 'Ada', ''])).toBe('Ada and Ben');
+  });
+});
+
+describe('an autosave signed by a person', () => {
+  it('is still an autosave and folds with the others', () => {
+    const rows = historyRows([
+      { hash: 'a'.repeat(40), date: new Date(2026, 10, 23, 20, 2).toISOString(), message: 'aldine: autosave', author: 'Ada', coAuthors: ['Ben'] },
+      { hash: 'b'.repeat(40), date: new Date(2026, 10, 23, 20, 1).toISOString(), message: 'aldine: autosave', author: 'Aldine' },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('autosaves');
   });
 });

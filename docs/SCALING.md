@@ -63,7 +63,7 @@ unaffected.
    typeset per branch, held per node and stored at most once per autosave
    window: until then another node's list shows an older last edit or
    typeset, and collab updates relayed from a peer node are not recorded on
-   the node that receives them), and the per-project storage counts behind
+   the node that receives them, nor named in its autosaves), and the per-project storage counts behind
    `ALDINE_STORAGE_QUOTA_MB` (a write on another node is seen here at the
    next hourly recount, so a node can let an owner past the limit by what
    the other node wrote since). The datastore is multi-node-ready; these

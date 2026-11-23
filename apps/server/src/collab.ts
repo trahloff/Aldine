@@ -6,7 +6,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import * as Y from 'yjs';
 import { branchDir, readMeta } from './store.js';
 import { config } from './config.js';
-import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR } from './gitops.js';
+import { autosave, ensureWorktree, registerAttributedPaths, pendingAttributionKeys, commitAgentWriteHeld, AGENT_COMMIT_AUTHOR, noteWriters, type Writer } from './gitops.js';
 import { safeJoin, debouncePerKey, importPath, isHiddenPath } from './util.js';
 import { replaceFileDurable } from './durable.js';
 import { AUTH_ENABLED, TOKEN_PREFIX, userFromRequest, userFromToken } from './auth.js';
@@ -184,6 +184,11 @@ export async function commitAgentWrite(projectId: string, branch: string, files:
     return { hash: null, unchanged: false };
   }
 }
+
+/** Who typed into each loaded doc since its last write to disk. A write
+ *  hands them to gitops with the path, so the commit that takes those bytes
+ *  names them; typing that cancels out before a write names nobody. */
+const docWriters = new Map<string, Map<string, Writer>>();
 
 /** Docs evicted because their file/branch was deleted — never write these back. */
 const tombstoned = new Set<string>();
@@ -421,6 +426,8 @@ function isProjectFile(filePath: string): boolean {
 }
 
 export function writeDocToDisk(name: string, document: Y.Doc): void {
+  const typed = docWriters.get(name);
+  docWriters.delete(name);
   if (tombstoned.has(name)) return;
   const parsed = parseDocName(name);
   if (!parsed) return;
@@ -441,6 +448,7 @@ export function writeDocToDisk(name: string, document: Y.Doc): void {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, text);
   lastWritten.set(name, hash);
+  for (const w of typed?.values() ?? []) noteWriters(projectId, branch, [filePath], w);
   markPathsChanged(projectId, branch, [filePath]);
   scheduleAutoCommit(`${projectId}::${branch}`);
 }
@@ -487,7 +495,7 @@ const authHook = AUTH_ENABLED ? {
     // list can name who typed last.
     // A link's expiry ends access to an open socket too (closeExpiredLinkSessions).
     const accessUntil = linkAccessEnds(meta, user.id);
-    return { userId: user.id, userName: user.name || user.email || null, ...(accessUntil !== null ? { accessUntil } : {}) };
+    return { userId: user.id, userName: user.name || user.email || null, commitName: user.name || null, ...(user.commitEmail ? { commitEmail: user.commitEmail } : {}), ...(accessUntil !== null ? { accessUntil } : {}) };
   },
 } : {};
 
@@ -638,11 +646,17 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
   // the server made itself (a REST or tool write, a git rewrite, the agent)
   // is recorded by whatever made it, and one relayed from a peer node by
   // that node.
-  async onChange({ documentName, context, transactionOrigin, document, update }: { documentName: string; context?: { userId?: string; userName?: string | null }; transactionOrigin?: unknown; document?: unknown; update?: Uint8Array }) {
+  async onChange({ documentName, context, transactionOrigin, document, update }: { documentName: string; context?: { userId?: string; userName?: string | null; commitName?: string | null; commitEmail?: string }; transactionOrigin?: unknown; document?: unknown; update?: Uint8Array }) {
     if (!transactionOrigin || typeof transactionOrigin !== 'object') return;
     noteTyping(documentName, document, transactionOrigin, update);
     const parsed = parseDocName(documentName);
     if (!parsed || isSignalDoc(parsed.filePath)) return;
+    // The account name only, never the address: commits leave the server on a push.
+    if (context?.userId && context.commitName) {
+      let ws = docWriters.get(documentName);
+      if (!ws) { ws = new Map(); docWriters.set(documentName, ws); }
+      ws.set(context.userId, { id: context.userId, name: context.commitName, ...(context.commitEmail ? { email: context.commitEmail } : {}) });
+    }
     noteEdit(parsed.projectId, parsed.branch, context?.userId ? editorOf({ id: context.userId, name: context.userName }) : null);
   },
   // Reclaim the change-tracking entry when Hocuspocus unloads an idle doc, so
@@ -657,6 +671,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     lastWritten.delete(documentName);
     lastSnapshot.delete(documentName);
     crlfDocs.delete(documentName);
+    docWriters.delete(documentName);
   },
 });
 

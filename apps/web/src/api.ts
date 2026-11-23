@@ -254,6 +254,8 @@ export interface LogEntry {
   fileCount?: number;
   /** On an agent commit, the person whose token it was made with. */
   onBehalfOf?: string;
+  /** Everyone else named on the commit (Co-authored-by), by name. */
+  coAuthors?: string[];
 }
 /** Claude's commits on a branch past the caller's review mark. `commitCount`
  *  and `fileCount` are a floor when `truncated`; `commits` is capped. */
