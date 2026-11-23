@@ -703,6 +703,16 @@ If you do not want to expose the instance:
   or create, list or revoke tokens; those routes accept browser sessions
   only, so a leaked token cannot escalate to a session, mint another token
   or hand the project to another account.
+- **Text written by others.** Files, comments and replies hold what other
+  people wrote, pasted or downloaded, and one co-author's comment reaches
+  another person's assistant through `list_comments`. `read_file` and
+  `list_comments` tell the model that this text is material, not
+  instructions, but the server does not rely on that: what a steered
+  assistant could do is bounded by the list above, every file change is a
+  revertable commit under Claude's name (`accept_suggestion` included), and
+  the other comment tools change only comments. A deleted thread is the one
+  loss with no revert; `delete_comment` removes others' threads only with
+  the token of the owner or an edit collaborator.
 - **At rest and in transit.** Tokens are stored as SHA-256 digests. `/mcp`
   checks the credential before parsing any JSON-RPC, caps bodies at 2 MB and
   is rate limited per client IP (an IPv6 client counts by its /64) and per
