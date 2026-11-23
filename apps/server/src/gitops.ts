@@ -1098,6 +1098,11 @@ export function injectToken(cloneUrl: string, user: string, token: string): stri
   return stripCreds(cloneUrl).replace(/^(https?:\/\/)/i, `$1${encodeURIComponent(user)}:${encodeURIComponent(token)}@`);
 }
 
+/** The remote has no commit to start a project from. */
+export class EmptyRepositoryError extends Error {
+  constructor() { super('the repository has no commits'); }
+}
+
 /**
  * Clone a remote into a (new) project's repo dir. Aldine is main-centric, so the
  * checked-out default branch is renamed to `main` locally; the original name is
@@ -1112,6 +1117,8 @@ export async function cloneRepo(id: string, tokenUrl: string): Promise<{ remoteB
   await g.remote(['set-url', 'origin', stripCreds(tokenUrl)]); // never persist the token
   await g.addConfig('user.name', 'Aldine');
   await g.addConfig('user.email', 'aldine@localhost');
+  // git clones a repository without commits with a warning, not an error
+  if (!(await g.raw(['rev-parse', '-q', '--verify', 'HEAD']).then((h) => h.trim(), () => ''))) throw new EmptyRepositoryError();
   const remoteBranch = (await g.raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main';
   if (remoteBranch !== 'main') await g.raw(['branch', '-m', 'main']);
   ensureOutputExcluded(id); // cloned repos have no Aldine .gitignore; keep compile output out of their history

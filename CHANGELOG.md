@@ -15,6 +15,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   before this stay anonymous; one save cannot say whose line is whose
   (docs/TYPING_NAMES.md).
 
+### Fixed
+- Importing a repository that has no commits yet says so and what to do,
+  instead of showing git's "ambiguous argument 'HEAD'".
+
 ## [1.21.3] — 2026-11-23
 
 ### Added
