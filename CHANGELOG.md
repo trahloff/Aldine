@@ -7,6 +7,12 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- Agent API: `read_file` and `list_comments` tell the assistant that file
+  text and comments are material to work on, not instructions; the
+  security section of docs/AGENT_API.md says what a steered assistant could
+  still do.
+
 ## [1.22.0] — 2026-11-23
 
 ### Added
