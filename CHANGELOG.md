@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.22.1] — 2026-11-23
+
 ### Changed
 - Agent API: `read_file` and `list_comments` tell the assistant that file
   text and comments are material to work on, not instructions; the
