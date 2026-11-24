@@ -7,6 +7,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Security
+- The app image no longer ships `simple-git` 3.36.0 and `proxy-addr` 2.0.7,
+  which image scanners report as critical (CVE-2026-102828, CVE-2026-102829,
+  CVE-2026-90711). `simple-git` is now 4.1.0 and `proxy-addr` 2.0.8.
+
 ## [1.22.1] — 2026-11-23
 
 ### Changed
