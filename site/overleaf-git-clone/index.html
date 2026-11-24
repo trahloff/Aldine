@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clone an Overleaf project with git: token, username, fixes</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-git-clone/" />
+<meta name="description" content="Clone an Overleaf project with git: find the project URL, use the username git and a token as the password, save it, and fix common errors." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Clone an Overleaf project with git: token, username, fixes" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Clone an Overleaf project with git: find the project URL, use the username git and a token as the password, save it, and fix common errors." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine" />
+<meta property="og:url" content="https://aldine.dev/overleaf-git-clone/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Clone an Overleaf project with git: token, username, fixes" />
+<meta name="twitter:description" content="Clone an Overleaf project with git: find the project URL, use the username git and a token as the password, save it, and fix common errors." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-git-clone/#article",
+      "headline": "How to clone an Overleaf project with git, and what to do when it fails",
+      "description": "Clone an Overleaf project with git: find the project URL, use the username git and a token as the password, save it, and fix common errors.",
+      "url": "https://aldine.dev/overleaf-git-clone/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-git-clone/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Clone Overleaf with git",
+          "item": "https://aldine.dev/overleaf-git-clone/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-git-clone/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What username do I use for Overleaf git?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "git. Not your email address. The password is a git authentication token from your Overleaf account settings."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where do I find my Overleaf project ID?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It is the last part of the project's address in the browser. For https://www.overleaf.com/project/1234567 the ID is 1234567 and the git URL is https://git.overleaf.com/1234567."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I push a branch to Overleaf?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not as a branch. The Overleaf project has one branch, main. You can push a local branch into it with git push overleaf my-branch:main, which updates main."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "My token expired. Do I have to clone again?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Generate a new token, remove the old one from your credential helper, and run git pull. Git asks for the password again and you paste the new token."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can a collaborator clone my project with my token?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf's documentation says not to share tokens. Share the project with them instead; they get the git URL and generate a token of their own."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Clone Overleaf with git</p>
+<h1>How to clone an Overleaf project with git, and what to do when it fails</h1>
+<p class="lede">Run <code>git clone https://git.overleaf.com/&lt;project-id&gt;</code>. When git asks for a username, type <code>git</code>. The password is not your Overleaf password: it is a git authentication token from your account settings. Everything else on this page is detail and troubleshooting.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<p>This page is the step-by-step. For how Overleaf's git integration works in general and which plans include it, see <a href="/overleaf-git/">git with Overleaf</a>. Linking a project to a GitHub repository is a separate feature, covered in <a href="/overleaf-github/">Overleaf GitHub sync</a>.</p>
+
+<h2 id="quick">The short version</h2>
+<pre><code>git clone https://git.overleaf.com/1234567
+Username: git
+Password: &lt;your git authentication token&gt;</code></pre>
+<p>Overleaf's documentation puts it in one line: "When performing Git operations, use the username "git" and use the authentication token as the password." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>On overleaf.com this only works for projects whose owner has git integration. In Overleaf's words, it "is a premium feature, so it will only be available if the project owner has a paid subscription to Overleaf or has been granted access to the feature". <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+
+<h2 id="project-id">Find the git URL and project ID</h2>
+<p>Two ways. Inside the project, select Git from the Integrations menu on the left; a dialog shows the full clone command with the URL in it. Or read it off the address bar. A project at <code>https://www.overleaf.com/project/1234567</code> has the ID <code>1234567</code>, and its git URL is <code>https://git.overleaf.com/1234567</code>. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+<p>The command in the dialog already has the username in it, as <code>https://git@git.overleaf.com/1234567</code>, so git won't ask for one. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>Self-hosted Server Pro uses your own host instead: the docs give <code>https://&lt;SHARELATEX_SITE_URL&gt;/git/1234567</code>, where the placeholder is the host your administrator set. Git-bridge "is not enabled by default in Server Pro", so if the Git option is missing, that is a question for whoever runs the server. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+
+<h2 id="token">Create an authentication token</h2>
+<p>Tokens live in your <a href="https://www.overleaf.com/user/settings">Overleaf account settings</a>, where you create and delete them. If you have never made one, the Git dialog in a project offers a Generate token button as well. The rules, from Overleaf's token page:</p>
+<ul>
+<li>"Tokens will expire after one year."</li>
+<li>"You can have a maximum of 10 tokens." At the limit, delete old or expired ones before you create another.</li>
+<li>One token covers every project you can reach with git, as owner or as collaborator.</li>
+<li>You can't see a token in full after creating it. Forgot it, and no credential helper saved it? Then you generate a new one.</li>
+<li>Password login for git is gone: "The older username and password-based authentication method is no longer available."</li>
+</ul>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>Collaborators need their own. Overleaf's advice for a co-author who doesn't use Overleaf is to share the project with them so they can create an account, get the git URL and generate a token. Never hand over yours. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+
+<h2 id="clone">Clone</h2>
+<pre><code>git clone https://git.overleaf.com/1234567 my-paper
+cd my-paper</code></pre>
+<p>Enter <code>git</code> if a username prompt comes up, then paste the token at the password prompt. Any other git client works the same way, given the URL, <code>git</code> as the username and the token as the password. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>New clones are on a branch called <code>main</code>. Older clones may still say <code>master</code>. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+<p>Got an old clone that used to work with a password? Point it at the token format and keep the checkout:</p>
+<pre><code>git remote set-url origin https://git@git.overleaf.com/1234567
+git remote -v</code></pre>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+
+<h2 id="credential-helper">Stop typing the token every time</h2>
+<p>Overleaf recommends a git credential helper and gives this command:</p>
+<pre><code>git config --global credential.helper store</code></pre>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>Know what <code>store</code> does before you use it, though. Git's own book says it "saves the credentials to a plain-text file on disk, and they never expire", by default in <code>~/.git-credentials</code>. There are other helpers. <code>cache</code> keeps them in memory and forgets them after 15 minutes unless you pass <code>--timeout</code>. On macOS, git ships an <code>osxkeychain</code> helper that keeps them in the system keychain, and on Windows the Git Credential Manager uses the Windows Credential Store. <span class="src">(<a href="https://git-scm.com/book/en/v2/Git-Tools-Credential-Storage">Pro Git: credential storage</a>, as of November 2026)</span></p>
+<pre><code>git config --global credential.helper osxkeychain        # macOS
+git config --global credential.helper 'cache --timeout 3600'  # memory, one hour</code></pre>
+
+<h2 id="pull-push">Pull and push</h2>
+<p>Ordinary git:</p>
+<pre><code>git pull
+# edit, then
+git add -A
+git commit -m "Revise section 3"
+git push</code></pre>
+<p>What is unusual is where the commits come from. Overleaf keeps its own history, and the docs call the git integration "essentially a translation" of it. A pull or fetch creates a commit on demand if none exists for the current state; a push creates one too. While people type in the browser, no commits appear. If several people edited before a commit was generated, the commit carries the name of whoever made the most recent change. Labelling a version in Overleaf's history forces a commit at that point, which is the documented way to get one commit per co-author's round of edits. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+<p>Want the same paper on GitLab or another host as well? The documented route is a local clone with two remotes, one for Overleaf and one for the host, with no direct link between the two. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations">Overleaf docs: Advanced Git operations</a>, as of November 2026)</span></p>
+
+<h2 id="not-supported">Branches and what else isn't supported</h2>
+<p>"The Overleaf Git system does not support branching." The advanced page is more specific: the integration limits the project to one branch, "hard-coded to be called <code>main</code>". You can still work on a local branch and push it into <code>main</code> with a refspec. The example given uses a remote called <code>overleaf</code>:</p>
+<pre><code>git push overleaf my-branch:main</code></pre>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations">Overleaf docs: Advanced Git operations</a>, as of November 2026)</span></p>
+<p>The known limitations table lists the rest. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+<ul>
+<li><strong>Tags</strong> are not supported.</li>
+<li><strong>Git LFS</strong> is not supported.</li>
+<li><strong>Submodules:</strong> a project can be a submodule of another repository but can't contain any.</li>
+<li><strong>Symlinks</strong> become regular files on Overleaf's side.</li>
+<li><strong>Execute permissions</strong> are not kept. The docs suggest <code>git config core.fileMode false</code> in your clone.</li>
+<li><strong>Renamed folders</strong> leave an empty folder with the old name behind.</li>
+<li><strong>Renamed or moved files</strong> become a delete plus a create, which can remove tracked changes and comments on them. More generally, Overleaf does "not recommend mixing active use of Git and the use of track changes and/or comments."</li>
+</ul>
+
+<h2 id="errors">Common errors</h2>
+<h3>Repository not found</h3>
+<p>Overleaf's troubleshooting section says this usually means the wrong URL. Copy it again from Git under Integrations. The same paragraph repeats the plan point: on overleaf.com the integration needs the project owner's paid subscription. So if the URL is right, check whose project it is. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+<h3>Authentication failed</h3>
+<p>For this one the troubleshooting section points to the token page, which narrows the causes down. You typed your account password (no longer accepted), or the username was not <code>git</code>, or the token has expired or been deleted. About the last case the docs say: "you will likely see an authentication error reported by your Git client." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: Git integration authentication tokens</a>, as of November 2026)</span></p>
+<p>The trap after a year is the credential helper, which keeps offering the old token. Tell it to forget the stored entry with <code>git credential reject</code>, a command whose description says it lets the helpers "erase any stored credentials matching the description". <span class="src">(<a href="https://git-scm.com/docs/git-credential">git-credential documentation</a>, as of November 2026)</span></p>
+<pre><code>printf 'protocol=https\nhost=git.overleaf.com\n\n' | git credential reject
+git pull   # asks again: username git, password = the new token</code></pre>
+<h3>Push rejected or "failed to push some refs"</h3>
+<p>Overleaf lists three causes: going over a project's file size or file count limits, or including file types it doesn't handle, such as symlinks or LFS files. If none of those applies, the documented next step is a larger HTTP post buffer, 10 MB instead of the 1 MB default:</p>
+<pre><code>git config --global http.postBuffer 10485760
+# undo later with
+git config --global --unset http.postBuffer</code></pre>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span> The limits themselves are on Overleaf's <a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">plan limits page</a>.</p>
+<h3>Timeouts and rate limits</h3>
+<p>A commit with a very large number of changes can time out. Split it into smaller commits, then try the post buffer setting above. Rate limiting, according to Overleaf, does not generally happen with git commands run by hand; it comes from clients that poll the remote automatically, so turn that polling off or down. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+
+<h2 id="aldine">How cloning works in Aldine</h2>
+<p>Aldine is an open-source, self-hosted collaborative LaTeX editor. Every project in it is a real git repository on the server, with branches you create and merge in the browser. The route to a clone on your laptop is different from Overleaf's, though. Aldine's documentation does not describe a git URL on the Aldine server itself. You publish the project to GitHub, GitLab, Gitea or Forgejo from the editor, and a co-author clones that repository and keeps working in VS Code. Their commits come back into Aldine with one Pull.</p>
+<ul>
+<li><strong>Tokens are the host's.</strong> You connect a GitHub, GitLab, Gitea or Forgejo account; for the last three a personal access token is enough, without an OAuth app. Pushes go over https with that token.</li>
+<li><strong>Branches carry over.</strong> Push, pull and branch switching work with each host, and you can open a pull or merge request from the editor.</li>
+<li><strong>An expired token gets a prompt, not an error wall.</strong> The editor says the host rejected the token, names whose it was, and offers Reconnect next to the branch name.</li>
+<li><strong>A token per project.</strong> An owner can give one project a token limited to its repository, which everyone who syncs that project then uses.</li>
+</ul>
+<p>Aldine has its limits too. It is self-hosted only, and young: first release in July 2026, 1.0 in October 2026. Review works as comments with suggested edits, with no keystroke-level track changes. The <a href="/self-hosting/">self-hosting guide</a> covers setup, which is two containers.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-overleaf">When Overleaf's git integration is the better choice</h2>
+<ul>
+<li><strong>You want a git URL on the editor itself.</strong> Each Overleaf project has its own clone URL. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span> Aldine's documented route goes through a repository on a git host.</li>
+<li><strong>You don't want to run a server.</strong> Overleaf's README says "We run a hosted version at www.overleaf.com". <span class="src">(<a href="https://github.com/overleaf/overleaf">Overleaf repository README</a>, as of November 2026)</span> Aldine has no hosted service today.</li>
+<li><strong>Your co-authors are already on Overleaf</strong> and you just want a local copy to work on in your own editor.</li>
+<li><strong>You use track changes.</strong> Overleaf has them as a premium feature; Aldine doesn't (though Overleaf itself advises against mixing them with git pushes, as above). <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of November 2026)</span></li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>What username do I use for Overleaf git?</h3>
+<p>git. Not your email address. The password is a git authentication token from your Overleaf account settings.</p>
+<h3>Where do I find my Overleaf project ID?</h3>
+<p>It is the last part of the project's address in the browser. For https://www.overleaf.com/project/1234567 the ID is 1234567 and the git URL is https://git.overleaf.com/1234567.</p>
+<h3>Can I push a branch to Overleaf?</h3>
+<p>Not as a branch. The Overleaf project has one branch, main. You can push a local branch into it with git push overleaf my-branch:main, which updates main.</p>
+<h3>My token expired. Do I have to clone again?</h3>
+<p>No. Generate a new token, remove the old one from your credential helper, and run git pull. Git asks for the password again and you paste the new token.</p>
+<h3>Can a collaborator clone my project with my token?</h3>
+<p>Overleaf's documentation says not to share tokens. Share the project with them instead; they get the git URL and generate a token of their own.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/overleaf-git/">Git with Overleaf: what works and a git-native alternative</a></li>
+<li><a href="/overleaf-github/">Overleaf GitHub sync</a></li>
+<li><a href="/overleaf-free-plan/">What the Overleaf free plan includes</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/" aria-current="page">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

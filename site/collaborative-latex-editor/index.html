@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Collaborative LaTeX editors: how to choose one in 2026</title>
+<link rel="canonical" href="https://aldine.dev/collaborative-latex-editor/" />
+<meta name="description" content="What a research group should compare in a collaborative LaTeX editor, cloud or self-hosted, and which tools offer each feature, from their own docs." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Collaborative LaTeX editors: how to choose one in 2026" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="What a research group should compare in a collaborative LaTeX editor, cloud or self-hosted, and which tools offer each feature, from their own docs." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine" />
+<meta property="og:url" content="https://aldine.dev/collaborative-latex-editor/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Collaborative LaTeX editors: how to choose one in 2026" />
+<meta name="twitter:description" content="What a research group should compare in a collaborative LaTeX editor, cloud or self-hosted, and which tools offer each feature, from their own docs." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/collaborative-latex-editor/#article",
+      "headline": "How to choose a collaborative LaTeX editor for a research group",
+      "description": "What a research group should compare in a collaborative LaTeX editor, cloud or self-hosted, and which tools offer each feature, from their own docs.",
+      "url": "https://aldine.dev/collaborative-latex-editor/",
+      "mainEntityOfPage": "https://aldine.dev/collaborative-latex-editor/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Collaborative LaTeX editors",
+          "item": "https://aldine.dev/collaborative-latex-editor/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/collaborative-latex-editor/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there a free collaborative LaTeX editor?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Several. Overleaf and Papeeria have free plans with limits listed on their own pricing pages; CoCalc has a free tier. TeXlyre, Overleaf Community Edition and Aldine are open source under AGPL-3.0, and you run Community Edition and Aldine on your own server."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which collaborative LaTeX editors can I self-host?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf Community Edition, Overleaf Server Pro (licensed separately), Aldine and TeXlyre. CoCalc offers CoCalc Plus for your own computer and CoCalc Star for a machine you control. The page on self-hostable Overleaf alternatives compares these in more depth."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is there an open-source collaborative LaTeX editor?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Overleaf's repository, which is the Community Edition, is released under AGPL-3.0, and so are TeXlyre and Aldine. CoCalc publishes its source under the Microsoft Reference Source License, which is a different kind of licence; check its terms before you plan to run it yourself."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What happened to Crixet?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "OpenAI acquired it, and its announcement of 27 January 2026 says Prism builds on Crixet. crixet.com now redirects to OpenAI's Prism page, and the same announcement carries a notice that Prism will shut down on January 1, 2027."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can a group work in LaTeX without a web editor?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, with a shared git repository and a local editor such as VS Code with LaTeX Workshop. Collaboration is then asynchronous: each author compiles locally and changes travel as commits."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Collaborative LaTeX editors</p>
+<h1>How to choose a collaborative LaTeX editor for a research group</h1>
+<p class="lede">Most groups pick on two questions: can everyone edit the same paper at once, and who runs the server. After that, the choice turns on review, history, references, compile limits, sign-in and cost. This page goes through those criteria one at a time and says, for each, which editor documents what. Overleaf, CoCalc, TeXlyre, Papeeria, Aldine and a plain git setup with VS Code are covered.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<h2 id="tools">The editors on this page</h2>
+<p>We included a tool only if its own site confirmed the facts below today. That leaves seven entries. Prices are as the vendors' pages showed them on the day we checked.</p>
+<ul>
+<li><strong>Overleaf</strong> calls itself "an open-source online real-time collaborative LaTeX editor". It runs a hosted version at overleaf.com, and you can run your own, either the open-source Community Edition or Overleaf Server Pro. <span class="src">(<a href="https://github.com/overleaf/overleaf">Overleaf repository README</a>, as of November 2026)</span></li>
+<li><strong>CoCalc</strong> is a hosted platform for Jupyter, SageMath, terminals and LaTeX. <span class="src">(<a href="https://doc.cocalc.com/latex.html">CoCalc docs: LaTeX editor</a>, as of November 2026)</span></li>
+<li><strong>TeXlyre</strong> describes itself as "A local-first LaTeX &amp; Typst web editor with real-time collaboration &amp; offline support". <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span></li>
+<li><strong>Papeeria</strong> is an online LaTeX editor that needs only a browser: "Full TeX Live environment is already installed and ready to run." <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span></li>
+<li><strong>Aldine</strong> is the open-source, self-hosted editor this site is about.</li>
+<li><strong>git with VS Code and LaTeX Workshop</strong>, the local route, with no web editor at all.</li>
+</ul>
+<p>If you came looking for Crixet, see <a href="#crixet-prism">Crixet and OpenAI Prism</a> below.</p>
+
+<h2 id="table">At a glance</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col"></th><th scope="col">Where it runs</th><th scope="col">Real-time editing</th><th scope="col">Review</th><th scope="col">History and git</th><th scope="col">Reference managers</th><th scope="col">Sign-in and SSO</th><th scope="col">Cost model</th></tr></thead>
+<tbody>
+<tr><th scope="row">Overleaf (overleaf.com)</th><td>Hosted</td><td>Yes; the free plan allows 1 collaborator per project</td><td>Comments; track changes is premium</td><td>24 hours of history on the free plan, full history on paid plans; git and GitHub on paid plans</td><td>Zotero, Mendeley, ReadCube on paid plans</td><td>SAML SSO on the Organizations plan; institutional SSO for some Commons subscribers</td><td>Free plan and paid plans</td></tr>
+<tr><th scope="row">Overleaf Community Edition</th><td>Your server</td><td>Yes</td><td>No commenting or track changes</td><td>Full project history; no git integration</td><td>Not documented</td><td>No SSO</td><td>Free, AGPL-3.0</td></tr>
+<tr><th scope="row">Overleaf Server Pro</th><td>Your server</td><td>Yes</td><td>Commenting and real-time track changes</td><td>Full project history; git integration</td><td>Not documented</td><td>SAML 2 and LDAP</td><td>Separate licence, quote from Overleaf sales</td></tr>
+<tr><th scope="row">CoCalc</th><td>Hosted; CoCalc Plus and Star run on your own machine</td><td>Yes</td><td>Line-anchored discussions; see the note below</td><td>TimeTravel history; git in a terminal</td><td>Not documented</td><td>Not documented for the hosted service</td><td>Free tier, memberships, team seats; Star free of charge</td></tr>
+<tr><th scope="row">TeXlyre</th><td>In the browser; you can host your own copy</td><td>Yes, peer to peer</td><td>Inline comments and tracked changes</td><td>Optional backup to GitHub, GitLab, Gitea, Forgejo</td><td>Zotero, OpenAlex</td><td>No account system described</td><td>Open source, AGPL-3.0; no pricing stated</td></tr>
+<tr><th scope="row">Papeeria</th><td>Hosted</td><td>Yes, no collaborator count limit</td><td>Discussions in the margin</td><td>Per-file history (24 hours free, 30 days paid); git sync, private repositories on the paid plan</td><td>Mendeley on the paid plan</td><td>Not documented</td><td>Free plan with one active private project; and a paid plan</td></tr>
+<tr><th scope="row">Aldine</th><td>Your server only</td><td>Yes</td><td>Review comments with suggested edits</td><td>Every project is a git repository, with branches</td><td>Zotero, whole library or one collection</td><td>OpenID Connect, Google, GitHub, ORCID, or email</td><td>Free, AGPL-3.0; no paid plan</td></tr>
+<tr><th scope="row">git + VS Code + LaTeX Workshop</th><td>Each author's machine plus a git remote</td><td>Not part of LaTeX Workshop</td><td>Through your git host</td><td>It is git</td><td>Not built in; completes keys from your .bib</td><td>Your git host's</td><td>Free tools</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src">Every cell about another product is sourced in the section on that criterion below. "Not documented" means we did not find it on the vendor's pages we checked, not that the feature is missing.</p>
+
+<h2 id="real-time">Real-time co-editing</h2>
+<p>Start here, because it splits the field. Every web editor on this page lets several people type into the same file at once. The local route does not.</p>
+<p>On overleaf.com the number of people who can edit depends on the plan. The plans page lists "Collaborators per project" as "1 user" on the free plan, 10 on Student and Standard, and "Unlimited" on Pro. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span> Viewers are unlimited on every plan; the limit counts editors and reviewers. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/premium-features">Overleaf docs: premium features</a>, as of November 2026)</span> For a group of five on the free plan, that matters, so the <a href="/overleaf-free-plan/">page on Overleaf's free plan</a> goes through it in detail.</p>
+<p>Papeeria's home page says: "No collaborator count limits!" <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span> CoCalc's feature page says "Collaborators edit the same document in real time." <span class="src">(<a href="https://cocalc.ai/features/latex-editor">CoCalc: LaTeX editor</a>, as of November 2026)</span> TeXlyre syncs edits through Yjs over peer-to-peer WebRTC connections, with live cursors and a chat. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span></p>
+<p>In VS Code the usual answer used to be Live Share. Microsoft's page now says the Live Share extension for VS Code "remains in maintenance mode, with no new features planned." <span class="src">(<a href="https://learn.microsoft.com/en-us/visualstudio/liveshare/">Microsoft Learn: What is Live Share?</a>, as of November 2026)</span> So with the local route, plan on asynchronous work through commits.</p>
+
+<h2 id="review">Comments and review</h2>
+<p>Two different things hide under "review". Comments let a co-author say something about a passage. Track changes records each edit so the author can accept or reject it. Groups that supervise theses tend to want both.</p>
+<p>Overleaf's comments are "tied to specific lines of code in the editor", with replies, resolving and @-mentions. <span class="src">(<a href="https://docs.overleaf.com/collaborating/commenting">Overleaf docs: commenting</a>, as of November 2026)</span> The plans page does not list comments, so we cannot tell you from it which plans include them. Track changes is clearer: "Track Changes is a premium feature." <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of November 2026)</span> If you self-host, Overleaf's comparison lists "Commenting" and "Real-time track changes" for Server Pro and not for Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of November 2026)</span></p>
+<p>TeXlyre "supports inline comments and tracked changes for collaborative review", and tracked insertions and deletions can be accepted or rejected in a review panel. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> Papeeria lists "discussions in the margin". <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span></p>
+<p>CoCalc's two pages read differently here. The feature page says "discussions attach to specific lines" <span class="src">(<a href="https://cocalc.ai/features/latex-editor">CoCalc: LaTeX editor</a>, as of November 2026)</span>, while the LaTeX documentation still lists comments that "do not become a part of the source code" as a future plan and points to TimeTravel and Side Chat in the meantime. <span class="src">(<a href="https://doc.cocalc.com/latex.html">CoCalc docs: LaTeX editor</a>, as of November 2026)</span> Try it with a test project before you rely on either.</p>
+
+<h2 id="history-git">History, version control and git</h2>
+<p>History lets you see who changed what and go back. Git goes further: branches, a copy on your own git host, and co-authors who can work outside the browser.</p>
+<p>On overleaf.com, "Document history and version control" is "previous 24 hours only" on the free plan, with full history on the paid ones; Git, GitHub and Dropbox appear among the integrations of the paid plans. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span> Community Edition includes "Full project history" but not "Git integration", which is in Server Pro. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of November 2026)</span> How that integration works, including what it does not carry over from git, is on <a href="/overleaf-git/">using git and GitHub with Overleaf</a>.</p>
+<p>Papeeria has "Per-file edit history" and project snapshots. <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span> On its free plan the file history "covers last 24 hours" and git sync works with public repositories; the paid plan extends history to 30 days and adds git sync for private repositories. <span class="src">(<a href="https://papeeria.com/about/pricing">Papeeria pricing</a>, as of November 2026)</span></p>
+<p>CoCalc offers TimeTravel to "go back to a working version", and "you can also use git in a Linux Terminal to track your changes". <span class="src">(<a href="https://doc.cocalc.com/latex.html">CoCalc docs: LaTeX editor</a>, as of November 2026)</span> TeXlyre can back a project up to GitHub, GitLab, Gitea or Forgejo (Codeberg); this "only activates when you explicitly enable them and provide your own token." <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span></p>
+<p>With the local route, history simply is git.</p>
+
+<h2 id="references">Reference managers</h2>
+<p>If the group shares a Zotero library, check this early. It's easy to overlook and annoying to work around.</p>
+<p>Overleaf says "You can link your ReadCube, Mendeley and Zotero accounts to your Overleaf account", as a premium feature, and notes that "only the project owner can re-sync the imported file." <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/premium-features">Overleaf docs: premium features</a>, as of November 2026)</span> Its on-premises comparison does not mention reference managers. TeXlyre has a Zotero and OpenAlex panel for reference search, import and update. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> Papeeria lists Mendeley integration on its paid plan. <span class="src">(<a href="https://papeeria.com/about/pricing">Papeeria pricing</a>, as of November 2026)</span> CoCalc's LaTeX pages say bibliographies "live in the same project" and that latexmk handles BibTeX, but name no reference manager. <span class="src">(<a href="https://cocalc.ai/features/latex-editor">CoCalc: LaTeX editor</a> and <a href="https://doc.cocalc.com/latex.html">CoCalc docs</a>, as of November 2026)</span></p>
+<p>Locally, LaTeX Workshop offers "completions for bibliography keys" from your .bib files. <span class="src">(<a href="https://github.com/James-Yu/LaTeX-Workshop">LaTeX Workshop README</a>, as of November 2026)</span> The three common ways of keeping that .bib in step with Zotero are on <a href="/zotero-latex/">using Zotero with LaTeX</a>.</p>
+
+<h2 id="compile">Compile environment and limits</h2>
+<p>A thesis with many TikZ figures can take a while to typeset. Look at where the compile runs and how long it may take.</p>
+<p>Overleaf's plan limits table reads "Compile timeout | 10 seconds | 240 seconds" for the free and premium plans. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of November 2026)</span> What to do when a compile hits that limit is on the <a href="/overleaf-compile-timeout/">Overleaf compile timeout page</a>. On a self-hosted Overleaf, "Sandboxed Compiles" are listed for Server Pro, not Community Edition, and the README says Community Edition "is intended for use in environments where all users are trusted". <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a> and <a href="https://github.com/overleaf/overleaf">Overleaf README</a>, as of November 2026)</span></p>
+<p>CoCalc uses latexmk by default, lets you change the build command, and can run PythonTeX, SageTeX and Knitr during the build. <span class="src">(<a href="https://doc.cocalc.com/latex.html">CoCalc docs: LaTeX editor</a>, as of November 2026)</span> If your papers embed computed results, that is the feature to look at. TeXlyre compiles in the browser with WebAssembly engines (pdfTeX, XeTeX and LuaTeX through SwiftLaTeX and BusyTeX), so there is no compile server. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> Papeeria ships a full TeX Live <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span>, and its paid plan adds "auto compiling and priority compiling". <span class="src">(<a href="https://papeeria.com/about/pricing">Papeeria pricing</a>, as of November 2026)</span> On your own machine, LaTeX Workshop will "Build LaTeX (including BibTeX) to PDF automatically on save", with whatever TeX distribution you installed. <span class="src">(<a href="https://github.com/James-Yu/LaTeX-Workshop">LaTeX Workshop README</a>, as of November 2026)</span></p>
+
+<h2 id="hosting">Hosting: cloud or self-hosted</h2>
+<p>A cloud editor means nobody in the group has to run a server. Self-hosting means your institution holds the files and someone has to look after the machine. Neither is free of work.</p>
+<p>Overleaf offers both. Community Edition is AGPL-3.0; Server Pro is licensed separately through Overleaf's sales team, and "An Overleaf Pro plan subscription will not grant you access to, or a license for, Overleaf Server Pro." <span class="src">(<a href="https://github.com/overleaf/overleaf">Overleaf README</a> and <a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of November 2026)</span> CoCalc sells hosted memberships and also lists CoCalc Plus, which "runs on your own computer", and CoCalc Star for a machine you control. <span class="src">(<a href="https://cocalc.ai/pricing">CoCalc pricing</a>, as of November 2026)</span> TeXlyre sits somewhere else entirely: "All your data stays in your browser", collaborators connect peer to peer, and "You can run your own signaling servers". <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> Papeeria is a hosted service.</p>
+<p>The self-hostable options get a fuller comparison, with install footprint and licences, on <a href="/overleaf-alternatives/">Overleaf alternatives you can self-host</a>. For Overleaf's own editions specifically there is <a href="/self-hosted-overleaf/">self-hosting Overleaf: what Community Edition includes</a>.</p>
+
+<h2 id="sign-in">Sign-in and SSO</h2>
+<p>Universities often want people to log in with their institutional account, and IT departments may require it. On overleaf.com the Organizations plan lists "SAML SSO (single sign-on)". <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span> Separately, institutional SSO is "offered by some Overleaf Commons subscribers" and "is implemented using the SAML2 standard". <span class="src">(<a href="https://docs.overleaf.com/accounts-and-security/email-address-and-login-options/logging-in-with-institutional-sso">Overleaf docs: institutional SSO</a>, as of November 2026)</span> For self-hosting, Server Pro has "Single sign-on (SSO) via SAML 2 and LDAP"; Community Edition does not. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of November 2026)</span></p>
+<p>TeXlyre's README describes no account system; projects are shared peer to peer. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> We did not find SSO documented on the CoCalc or Papeeria pages we checked. Our <a href="/sso/">single sign-on page</a> covers OpenID Connect for a self-hosted editor.</p>
+
+<h2 id="cost">Cost model</h2>
+<p>Overleaf has a free plan and paid Student, Standard and Pro plans, billed yearly or monthly, plus an Organizations plan through its sales team. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span> Prices vary by region and change over time, so take them from Overleaf's plans page, not from us.</p>
+<p>CoCalc describes its free tier as "just enough resources to explore the platform and do basic work" and sells memberships plus team and organisation licences. <span class="src">(<a href="https://cocalc.ai/pricing">CoCalc pricing</a>, as of November 2026)</span> Papeeria has a free plan, "Free forever", with "One active private project" and "Unlimited collaborators per project", and a paid plan that raises the number of private projects. <span class="src">(<a href="https://papeeria.com/about/pricing">Papeeria pricing</a>, as of November 2026)</span> Each vendor's pricing page is authoritative.</p>
+<p>TeXlyre's README states no price; the project is AGPL-3.0 and funded by NLnet through the NGI0 Commons Fund. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> Self-hosting software that costs nothing still costs a server and someone's time. Budget for that.</p>
+
+<h2 id="offline">Offline and local editing</h2>
+<p>Trains, planes, conference Wi-Fi. Overleaf's plans page lists an "Offline editing duration" of "2 minutes" on the free plan and "10 minutes" on paid plans <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span>, and its premium git integration "allows you to work offline and synchronize your files whenever you come back online." <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/premium-features">Overleaf docs: premium features</a>, as of November 2026)</span> Papeeria says "You can download projects as ZIP archives at any moment and work offline with your local TeX distro." <span class="src">(<a href="https://papeeria.com/">Papeeria home page</a>, as of November 2026)</span> TeXlyre is built for this case: local-first, installable as a PWA. <span class="src">(<a href="https://github.com/TeXlyre/texlyre">TeXlyre README</a>, as of November 2026)</span> And the local route is offline by default, with sync whenever you push.</p>
+
+<h2 id="crixet-prism">Crixet and OpenAI Prism</h2>
+<p>Crixet was a cloud LaTeX editor. OpenAI's announcement of 27 January 2026 says "Prism builds on the foundation of Crixet, a cloud-based LaTeX platform that OpenAI acquired". The same page now carries a notice: "Prism will shut down on January 1, 2027." <span class="src">(<a href="https://openai.com/index/introducing-prism/">OpenAI: Introducing Prism</a>, as of November 2026)</span> When we checked, crixet.com redirected to OpenAI's Prism page. Given the announced date, we have left both out of the comparison. If you have projects there, the notice asks you to export them before the shutdown.</p>
+
+<h2 id="aldine">Where Aldine fits</h2>
+<p>Aldine is an open-source (AGPL-3.0), self-hosted collaborative LaTeX editor that runs as two Docker containers with one SQLite file by default. Against the criteria above:</p>
+<ul>
+<li><strong>Real-time editing</strong> with Yjs and live cursors, and no limit on collaborators.</li>
+<li><strong>Review</strong> as anchored, threaded comments, optionally with a suggested replacement the author accepts in one click.</li>
+<li><strong>Git underneath.</strong> Every project is a real git repository with branches you create and merge in the UI, and push and pull to GitHub, GitLab, Gitea or Forgejo. A co-author can clone it and keep using VS Code; their commits come back with one Pull.</li>
+<li><strong>Zotero</strong> for a whole library or one collection, personal or group, with no premium tier.</li>
+<li><strong>Compiles</strong> in a sandboxed TeX Live container with no network access. The timeout is yours to set (<code>COMPILE_TIMEOUT_MS</code>, 120 seconds by default).</li>
+<li><strong>Sign-in</strong> with your own OpenID Connect provider, Google, GitHub, ORCID, or email and password.</li>
+<li><strong>Cost:</strong> free to self-host, with no paid plan.</li>
+</ul>
+<p>The limits are real. Aldine is self-hosted only (there is no hosted service today), so someone in the group has to run it. It is young: first release in July 2026, 1.0 in October 2026. It has review comments with suggested edits but no keystroke-level track changes, and one app node is the supported topology. The <a href="/self-hosting/#other-limits">self-hosting guide lists them all</a> and walks through the install. If your group wants an AI assistant in the loop, the optional <a href="/latex-mcp/">MCP server for Claude</a> is described separately.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-other">When another tool is the better choice</h2>
+<ul>
+<li><strong>Nobody wants to run a server.</strong> Then pick a hosted editor: overleaf.com, CoCalc or Papeeria. Aldine has no hosted service.</li>
+<li><strong>You need keystroke-level track changes.</strong> Overleaf has them on premium plans and in Server Pro, and TeXlyre has tracked changes too. Aldine does not.</li>
+<li><strong>Your co-authors are already on Overleaf.</strong> Switching tools in the middle of a paper has its own cost. Overleaf dates from 2011 <span class="src">(<a href="https://www.overleaf.com/about">Overleaf: about</a>, as of November 2026)</span>, so most collaborators will know it.</li>
+<li><strong>Your papers run code.</strong> CoCalc's SageTeX, PythonTeX and Knitr support, next to notebooks and a terminal in the same project, is built for that.</li>
+<li><strong>You want no server and offline-first work.</strong> TeXlyre keeps everything in the browser and compiles there.</li>
+<li><strong>Everyone in the group already uses git.</strong> VS Code with LaTeX Workshop needs nothing hosted beyond a remote.</li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>Is there a free collaborative LaTeX editor?</h3>
+<p>Several. Overleaf and Papeeria have free plans with limits listed on their own pricing pages; CoCalc has a free tier. TeXlyre, Overleaf Community Edition and Aldine are open source under AGPL-3.0, and you run Community Edition and Aldine on your own server.</p>
+<h3>Which collaborative LaTeX editors can I self-host?</h3>
+<p>Overleaf Community Edition, Overleaf Server Pro (licensed separately), Aldine and TeXlyre. CoCalc offers CoCalc Plus for your own computer and CoCalc Star for a machine you control. The page on <a href="/overleaf-alternatives/">self-hostable Overleaf alternatives</a> compares these in more depth.</p>
+<h3>Is there an open-source collaborative LaTeX editor?</h3>
+<p>Yes. Overleaf's repository, which is the Community Edition, is released under AGPL-3.0, and so are TeXlyre and Aldine. CoCalc publishes its source under the Microsoft Reference Source License, which is a different kind of licence; check its terms before you plan to run it yourself. <span class="src">(<a href="https://github.com/sagemathinc/cocalc-ai">CoCalc repository</a>, as of November 2026)</span></p>
+<h3>What happened to Crixet?</h3>
+<p>OpenAI acquired it, and its announcement of 27 January 2026 says Prism builds on Crixet. crixet.com now redirects to OpenAI's Prism page, and the same announcement carries a notice that Prism will shut down on January 1, 2027.</p>
+<h3>Can a group work in LaTeX without a web editor?</h3>
+<p>Yes, with a shared git repository and a local editor such as VS Code with LaTeX Workshop. Collaboration is then asynchronous: each author compiles locally and changes travel as commits.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/overleaf-github/">Overleaf GitHub sync: setup, limits and a git-native route</a></li>
+<li><a href="/overleaf-offline/">Overleaf offline: how to work on a LaTeX project locally</a></li>
+<li><a href="/crixet-alternative/">Crixet and Prism alternatives</a></li>
+<li><a href="/papeeria-alternative/">Papeeria alternatives</a></li>
+<li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
+<li><a href="/overleaf-free-plan/">Is Overleaf free? What the free plan includes and what is paid</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</a></li>
+<li><a href="/zotero-latex/">Using Zotero with LaTeX: three ways to keep references in sync</a></li>
+<li><a href="/overleaf-compile-timeout/">Overleaf compile timeout: the limit on each plan and how to fix a timed-out compile</a></li>
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/sso/">Single sign-on for a self-hosted LaTeX editor</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Papeeria, CoCalc, OpenAI, Prism, Crixet, Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/" aria-current="page">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

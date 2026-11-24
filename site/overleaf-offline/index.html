@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overleaf offline: how to work on a LaTeX project locally</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-offline/" />
+<meta name="description" content="What Overleaf documents about working offline, whether it autosaves, the ways to take a project local, and a local LaTeX setup with TeX Live or Docker." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Overleaf offline: how to work on a LaTeX project locally" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="What Overleaf documents about working offline, whether it autosaves, the ways to take a project local, and a local LaTeX setup with TeX Live or Docker." />
+<meta property="og:image" content="https://aldine.dev/assets/editor-dark.png" />
+<meta property="og:image:width" content="1440" />
+<meta property="og:image:height" content="900" />
+<meta property="og:image:alt" content="The Aldine editor with LaTeX source and the typeset PDF side by side" />
+<meta property="og:url" content="https://aldine.dev/overleaf-offline/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Overleaf offline: how to work on a LaTeX project locally" />
+<meta name="twitter:description" content="What Overleaf documents about working offline, whether it autosaves, the ways to take a project local, and a local LaTeX setup with TeX Live or Docker." />
+<meta name="twitter:image" content="https://aldine.dev/assets/editor-dark.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-offline/#article",
+      "headline": "Working on an Overleaf project offline, and running a LaTeX editor on your own machine",
+      "description": "What Overleaf documents about working offline, whether it autosaves, the ways to take a project local, and a local LaTeX setup with TeX Live or Docker.",
+      "url": "https://aldine.dev/overleaf-offline/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-offline/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/editor-dark.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Overleaf offline",
+          "item": "https://aldine.dev/overleaf-offline/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-offline/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can I use Overleaf offline?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For a short while. After the connection drops you can keep editing the current file for up to 2 minutes on the free plan and up to 10 minutes on a premium plan, then the editor locks until you reconnect. For longer, Overleaf's documentation suggests a local copy via download, Dropbox, git or GitHub."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Overleaf autosave?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Overleaf's documentation says your edits are sent back to the server every few seconds and saved. Edits made while briefly offline are synced back when you reconnect, in most cases automatically."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Overleaf have version control?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It has its own project history, which is not git. On the free plan the History panel shows the last 24 hours plus labelled versions; full history is a premium feature. Git integration and GitHub sync are premium features too."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is there a local LaTeX editor like Overleaf?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For one person, TeX Live or MiKTeX plus VS Code with LaTeX Workshop, or TeXstudio, gives you an editor with a PDF preview on your machine. If you want the browser editor with live collaboration, Aldine runs locally with Docker Compose and opens on localhost:8080."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Overleaf offline</p>
+<h1>Working on an Overleaf project offline, and running a LaTeX editor on your own machine</h1>
+<p class="lede">Overleaf runs in the browser, and its offline support covers short gaps: you can keep typing in the open file for 2 minutes on the free plan or 10 on a premium plan. For a flight or a week without a stable connection, you need a local copy of the project and a TeX installation. This page covers what Overleaf documents, the ways to get the project onto your machine, and a working local setup.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<h2 id="connection-lost">What Overleaf does when the connection drops</h2>
+<p>Overleaf's page on working offline starts plainly: "Overleaf currently offers basic support for working offline. A more advanced offline editing experience is in development." <span class="src">(<a href="https://docs.overleaf.com/writing-and-editing/working-offline">Overleaf docs: working offline</a>, as of November 2026)</span> From the same page:</p>
+<ol>
+<li>When the connection is gone for more than a moment, a "You're offline" message appears at the top of the editor. You can go on editing the current file.</li>
+<li>How long depends on the plan. "Users on any of our premium plans can edit for up to 10 minutes while offline. Users on the free plan can edit for up to 2 minutes."</li>
+<li>When that time runs out, an "Editing paused" banner appears and the editor locks.</li>
+<li>Back online, the edits sync. If a collaborator changed the same file in a conflicting way, Overleaf shows what you typed and lets you save it as a new file or discard it.</li>
+</ol>
+<p>Switching files, compiling, adding comments and the AI features are not available while offline. Overleaf also backs up offline edits in the browser, so a crashed tab may be recoverable. The catch: you have to restore that original tab (from browser history, say), not just open the project again, and it does not work in private or incognito windows.</p>
+
+<h2 id="autosave">Does Overleaf autosave?</h2>
+<p>Yes. In Overleaf's words, "Your edits on Overleaf are sent back to the server every few seconds and saved." <span class="src">(<a href="https://docs.overleaf.com/collaborating/collaborating-in-overleaf">Overleaf docs: collaborating in Overleaf</a>, as of November 2026)</span> There is no save button to remember.</p>
+<p>How far back you can go is a separate question. "For users on our free plan, the History panel will show edits made in the last 24 hours as well as any labeled versions." Full project history is a premium feature, and it follows the project owner's plan. <span class="src">(<a href="https://docs.overleaf.com/writing-and-editing/history-and-versioning">Overleaf docs: history and versioning</a>, as of November 2026)</span> On the free plan, then, labelling a version before a big change is the way to keep a restore point past a day.</p>
+
+<h2 id="take-it-local">Four ways to get the project onto your machine</h2>
+<p>Overleaf's offline page names these for longer periods away, and notes that "Dropbox, Git and GitHub integrations are premium features, available on paid plans." <span class="src">(<a href="https://docs.overleaf.com/writing-and-editing/working-offline">Overleaf docs: working offline</a>, as of November 2026)</span></p>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">Route</th><th scope="col">Plan</th><th scope="col">Direction</th><th scope="col">Getting changes back</th></tr></thead>
+<tbody>
+<tr><th scope="row">Download source ZIP</th><td>No plan named on Overleaf's page</td><td>One-off copy</td><td>Re-upload or paste the files</td></tr>
+<tr><th scope="row">Dropbox</th><td>Premium</td><td>Two-way, automatic</td><td>Dropbox syncs them</td></tr>
+<tr><th scope="row">Git integration</th><td>Premium</td><td>Two-way, manual</td><td><code>git push</code></td></tr>
+<tr><th scope="row">GitHub sync</th><td>Premium</td><td>Two-way, manual</td><td>Push to GitHub, then pull in Overleaf</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Source ZIP.</strong> In the editor choose File, then "Download as source (.zip)", or use the "Download .zip file" button in the project list. Overleaf's page on this names no plan requirement. <span class="src">(<a href="https://docs.overleaf.com/managing-projects-and-files/downloading-a-project">Overleaf docs: downloading a project</a>, as of November 2026)</span> The offline page warns to "Take care with any tracked changes or comments that could become lost during this process." Copying files back by hand also overwrites whatever a co-author changed in the meantime, so tell them you have the paper.</p>
+<p><strong>Dropbox.</strong> Overleaf describes two-way updates: Overleaf changes go to Dropbox, and changes in the Dropbox folder come back. Files always land in Apps, then Overleaf, in your Dropbox, and every active project you can edit is synchronized. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/dropbox">Overleaf docs: Dropbox</a>, as of November 2026)</span></p>
+<p><strong>Git and GitHub.</strong> Both are covered step by step elsewhere on this site: <a href="/overleaf-git-clone/">cloning an Overleaf project with git</a> (token, username, common errors) and <a href="/overleaf-github/">Overleaf's GitHub sync</a>.</p>
+
+<h2 id="local-setup">A local setup that builds the same PDF</h2>
+<p>Once the files are on disk you need two things: a TeX distribution and an editor.</p>
+<h3>1. Install a TeX distribution</h3>
+<ul>
+<li><strong>TeX Live</strong> "provides a comprehensive TeX system" for GNU/Linux, macOS and Windows, supported by the TeX Users Group. <span class="src">(<a href="https://tug.org/texlive/">TeX Live</a>, as of November 2026)</span> The full scheme is large but means a missing package is rarely the problem.</li>
+<li><strong>MiKTeX</strong> is "a modern TeX distribution for Windows, Linux and macOS", and its package manager "installs missing components from the Internet, if required". <span class="src">(<a href="https://miktex.org/">MiKTeX</a>, as of November 2026)</span> Useful on a small disk; less useful on a plane, since a package it has not fetched yet cannot be installed offline.</li>
+</ul>
+<h3>2. Pick an editor</h3>
+<ul>
+<li><strong>VS Code with LaTeX Workshop.</strong> The extension builds LaTeX (BibTeX included) to PDF automatically on save, shows the PDF in VS Code or a browser, and jumps between source and PDF with SyncTeX in both directions. <span class="src">(<a href="https://github.com/James-Yu/LaTeX-Workshop">LaTeX Workshop README</a>, as of November 2026)</span></li>
+<li><strong>TeXstudio</strong>, "an integrated writing environment for creating LaTeX documents", with syntax highlighting and a built-in viewer. It is open source and available for all major operating systems. <span class="src">(<a href="https://www.texstudio.org/">TeXstudio</a>, as of November 2026)</span></li>
+</ul>
+<h3>3. Or compile in a Docker container</h3>
+<p>If you would rather not install TeX at all, the Island of TeX project publishes TeX Live images on Docker Hub as <code>texlive/texlive</code>, with a full installation minus documentation. <span class="src">(<a href="https://hub.docker.com/r/texlive/texlive">texlive/texlive on Docker Hub</a>, as of November 2026)</span> Pull it while you still have a connection, then from the project folder:</p>
+<pre><code>docker run --rm -v "$PWD":/work -w /work texlive/texlive:latest latexmk -pdf main.tex</code></pre>
+<p>Replace <code>main.tex</code> with your root file. If the project uses XeLaTeX or LuaLaTeX in Overleaf's settings, use <code>-xelatex</code> or <code>-lualatex</code> instead of <code>-pdf</code>, or the output will differ.</p>
+
+<h2 id="aldine">A browser editor that runs on your machine</h2>
+<p>The setups above work well for one author. What they do not give you is the Overleaf-style browser editor with co-authors typing in the same file. Aldine, an open-source, self-hosted collaborative LaTeX editor, is one way to get that on your own machine.</p>
+<p>Its quick start is a single <code>docker-compose.yml</code> with two containers, the app and a TeX Live compiler. After <code>docker compose up -d</code> you open <code>http://localhost:8080</code>; nothing needs a server or an account. <span class="src">(<a href="https://github.com/trahloff/Aldine#quick-start">Aldine README: quick start</a>)</span> Plan for the first pull, though. The compiler image is about 2.4 GB to download and about 5 GB on disk, so do it before you leave.</p>
+<ul>
+<li><strong>Bring the Overleaf project.</strong> Download it as a source ZIP and drop it on the home screen. Aldine detects the root file and typesets it.</li>
+<li><strong>Each project is a git repository.</strong> Publish it to GitHub, GitLab, Gitea or Forgejo, and a co-author can clone it and keep editing locally in VS Code; their commits come back with one Pull. <span class="src">(<a href="https://github.com/trahloff/Aldine#features">Aldine README: features</a>)</span></li>
+<li><strong>Dropped connections.</strong> Against a remote instance, the editor shows Saved, Saving…, or Offline and "Not saved"; editing goes on and the edits are saved once the connection is back. <span class="src">(<a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">Aldine changelog, 1.9.0</a>)</span></li>
+</ul>
+<p>The limits, plainly. Aldine is self-hosted only, with no hosted service today. It is young: first release July 2026, 1.0 in October 2026. Review works through comments with suggested edits and git diffs, with no keystroke-level track changes. A copy on your laptop is also a copy only you can reach, unless you share it through a git remote or run it on a server; the <a href="/self-hosting/">self-hosting guide</a> covers that.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-overleaf">When Overleaf is the better choice</h2>
+<ul>
+<li><strong>Your offline gaps are short.</strong> A few minutes of typing is covered by Overleaf's own offline mode, and the edits sync back. <span class="src">(<a href="https://docs.overleaf.com/writing-and-editing/working-offline">Overleaf docs: working offline</a>, as of November 2026)</span></li>
+<li><strong>You already pay for a premium plan.</strong> Then Dropbox or git keeps a local copy in step with the project and you need nothing else.</li>
+<li><strong>You do not want to install or run anything.</strong> overleaf.com needs only a browser; every local route here needs a TeX installation or Docker.</li>
+<li><strong>You need track changes.</strong> Overleaf has them as a premium feature. <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of November 2026)</span></li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>Can I use Overleaf offline?</h3>
+<p>For a short while. After the connection drops you can keep editing the current file for up to 2 minutes on the free plan and up to 10 minutes on a premium plan, then the editor locks until you reconnect. For longer, Overleaf's documentation suggests a local copy via download, Dropbox, git or GitHub.</p>
+<h3>Does Overleaf autosave?</h3>
+<p>Yes. Overleaf's documentation says your edits are sent back to the server every few seconds and saved. Edits made while briefly offline are synced back when you reconnect, in most cases automatically.</p>
+<h3>Does Overleaf have version control?</h3>
+<p>It has its own project history, which is not git. On the free plan the History panel shows the last 24 hours plus labelled versions; full history is a premium feature. Git integration and GitHub sync are premium features too.</p>
+<h3>Is there a local LaTeX editor like Overleaf?</h3>
+<p>For one person, TeX Live or MiKTeX plus VS Code with LaTeX Workshop, or TeXstudio, gives you an editor with a PDF preview on your machine. If you want the browser editor with live collaboration, Aldine runs locally with Docker Compose and opens on localhost:8080.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/overleaf-git-clone/">Clone an Overleaf project with git: token, username, fixes</a></li>
+<li><a href="/overleaf-github/">Overleaf GitHub sync: setup, limits and a git-native route</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/overleaf-free-plan/">What the Overleaf free plan includes</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/" aria-current="page">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

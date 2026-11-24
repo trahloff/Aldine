@@ -130,8 +130,17 @@ Statements about Overleaf are from Overleaf's own pages, checked on 2026-10-12.
 - [Self-hosting Aldine with Docker Compose](https://aldine.dev/self-hosting/): install, upgrade, TeX packages, logins and SSO, reverse proxy, backups, limits
 - [Using Zotero with LaTeX: three ways to keep references in sync](https://aldine.dev/zotero-latex/): Overleaf's integration, Better BibTeX auto-export, Zotero in Aldine
 - [Overleaf compile timeout: plan limits and how to fix it](https://aldine.dev/overleaf-compile-timeout/): the limit on each Overleaf plan, the fixes from Overleaf's documentation, and how a self-hosted editor sets the limit
-- [Is Overleaf free? Free plan limits and pricing](https://aldine.dev/overleaf-free-plan/): what Overleaf's free plan includes and what is paid, as of 12 October 2026, and when a self-hosted editor fits
+- [Is Overleaf free? Free plan limits](https://aldine.dev/overleaf-free-plan/): what Overleaf's free plan includes and what is paid, as of 12 October 2026, and when a self-hosted editor fits
 - [Single sign-on for a self-hosted LaTeX editor](https://aldine.dev/sso/): sign-in methods, OpenID Connect settings, provider notes
+- [Collaborative LaTeX editors: how to choose one](https://aldine.dev/collaborative-latex-editor/): criteria for a research group (real-time editing, review, git, references, compile limits, hosting, SSO, cost) and which tools offer each, cloud and self-hosted
+- [Overleaf GitHub sync: setup, limits and a git-native route](https://aldine.dev/overleaf-github/): linking a project to GitHub step by step, push, pull and conflicts, size limits, GitLab, the source ZIP route
+- [Clone an Overleaf project with git](https://aldine.dev/overleaf-git-clone/): project URL, username git and an authentication token, credential helpers, unsupported git features, common errors
+- [Overleaf free trial](https://aldine.dev/overleaf-free-trial/): length, which plans have one, cancelling, Overleaf Commons and the student plan
+- [Install Overleaf Community Edition with the Overleaf Toolkit](https://aldine.dev/overleaf-toolkit/): requirements, bin/init, bin/up, first admin, TeX Live, upgrades, backups
+- [Overleaf MCP server: what exists](https://aldine.dev/overleaf-mcp/): what Overleaf documents about AI, third-party MCP servers that use its git integration, and Aldine's built-in one
+- [Overleaf offline](https://aldine.dev/overleaf-offline/): what Overleaf does when the connection drops, autosave, ways to take a project local, a local LaTeX setup
+- [Crixet and Prism alternatives](https://aldine.dev/crixet-alternative/): OpenAI's Prism shutdown date, exporting projects, where to take them
+- [Papeeria alternatives](https://aldine.dev/papeeria-alternative/): what Papeeria offers, taking a project out, other options
 - [Documentation](https://aldine.dev/docs/): every guide on aldine.dev and the reference documents on GitHub
 
 ## Documentation

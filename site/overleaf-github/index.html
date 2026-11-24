@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overleaf GitHub sync: setup, limits and a git-native route</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-github/" />
+<meta name="description" content="How to link an Overleaf project to GitHub, what push, pull and conflicts do, the size limits, GitLab, and the free source ZIP route." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Overleaf GitHub sync: setup, limits and a git-native route" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="How to link an Overleaf project to GitHub, what push, pull and conflicts do, the size limits, GitLab, and the free source ZIP route." />
+<meta property="og:image" content="https://aldine.dev/assets/branches-dark.png" />
+<meta property="og:image:width" content="1440" />
+<meta property="og:image:height" content="900" />
+<meta property="og:image:alt" content="The branch menu in Aldine" />
+<meta property="og:url" content="https://aldine.dev/overleaf-github/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Overleaf GitHub sync: setup, limits and a git-native route" />
+<meta name="twitter:description" content="How to link an Overleaf project to GitHub, what push, pull and conflicts do, the size limits, GitLab, and the free source ZIP route." />
+<meta name="twitter:image" content="https://aldine.dev/assets/branches-dark.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-github/#article",
+      "headline": "Connecting Overleaf to GitHub: setup, sync, limits and other routes",
+      "description": "How to link an Overleaf project to GitHub, what push, pull and conflicts do, the size limits, GitLab, and the free source ZIP route.",
+      "url": "https://aldine.dev/overleaf-github/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-github/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/branches-dark.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Overleaf and GitHub",
+          "item": "https://aldine.dev/overleaf-github/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-github/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Overleaf's GitHub sync free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Overleaf documents GitHub synchronization as a premium feature, and its plans page lists the Git and GitHub integrations on the Student, Standard, Pro and Organizations plans, not on Free. Downloading the project source as a ZIP needs no paid plan."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I link an existing Overleaf project to an existing GitHub repository?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not with GitHub sync. You either create a new repository from the Overleaf project or import a repository into a new Overleaf project. With the git integration, Overleaf's advanced git page shows how to pull an existing repository into a new Overleaf project from your own clone."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Overleaf sync with GitLab?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not directly. GitHub sync works with github.com only. Overleaf's documentation points to the git integration as the indirect route: a local repository with two remotes, one for Overleaf and one for GitLab. The git integration is a premium feature too."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens when a pull from GitHub conflicts with edits in Overleaf?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf does not merge into your main branch. It pushes a new branch with the Overleaf version to your repository, and you merge that branch yourself, locally or with a pull request on GitHub."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can collaborators set up GitHub sync?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Only the project owner can create the initial link. For the git integration, a collaborator on a shared project can create their own authentication token and use it to reach the project."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Overleaf and GitHub</p>
+<h1>Connecting Overleaf to GitHub: setup, sync, limits and other routes</h1>
+<p class="lede">Overleaf can link a project to a GitHub repository. It is a premium feature, it works with github.com, and it syncs when someone clicks push or pull rather than on its own. This page walks through the setup as Overleaf documents it, what each sync does, where the size limits sit, how GitLab fits in, and what you can do on the free plan.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<h2 id="paid">Is it a paid feature?</h2>
+<p>Yes. Overleaf's documentation says: "GitHub synchronization is a premium feature." It is open to members of Overleaf Commons institutions, members of group subscriptions and owners of individual subscriptions. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span> On the plans page, Git and GitHub share one "Integrations" row, ticked for the Student, Standard, Pro and Organizations plans and not for Free. <span class="src">(<a href="https://www.overleaf.com/user/subscription/plans">Overleaf plans</a>, as of November 2026)</span> If you searched for Overleaf Pro and GitHub: Pro includes it, and so do the other paid plans listed there.</p>
+<p>Self-hosted Overleaf is a different case. The on-premises comparison table lists git integration for Server Pro and not for Community Edition, and it has no row for GitHub synchronization at all. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Overleaf docs: Server Pro vs. Community Edition</a>, as of November 2026)</span></p>
+
+<h2 id="setup">Setting it up, step by step</h2>
+<p>There are two directions, and you pick one per project. "It is not possible to synchronize an existing Overleaf project with an existing GitHub repository," so either the repository is new or the Overleaf project is. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<h3>First: link your GitHub account</h3>
+<p>You connect GitHub to Overleaf once, in your Overleaf Account Settings. Which repositories Overleaf can then see depends on the permissions you grant on the GitHub side. Repositories that belong to a GitHub organization need one more step: the organization has to approve the Overleaf app, which members can request and owners grant. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span> If an organization's repositories are missing from the list, that approval is the first thing to check.</p>
+<h3>Option A: push an Overleaf project to a new GitHub repository</h3>
+<ol>
+<li>Open the project in the editor.</li>
+<li>Open Integrations in the left-hand sidebar and click GitHub.</li>
+<li>Enter a name for the new repository in the dialog and create it.</li>
+</ol>
+<p>Overleaf's page names only the repository name as a field here. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<h3>Option B: import a GitHub repository as a new Overleaf project</h3>
+<ol>
+<li>On the project dashboard, open the New project menu and choose GitHub repo.</li>
+<li>Find the repository in the list. It shows what your linked GitHub account can see.</li>
+<li>Click Import to Overleaf. A new project is created from the repository.</li>
+</ol>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<p>Choose carefully. "Once a project is linked to a repository, it cannot be unlinked and used to create a new repository." The documented way around that is to copy the project and create a repository from the copy. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+
+<h2 id="push-pull">What push and pull do</h2>
+<p>Nothing moves on its own. "Synchronization between GitHub and Overleaf does not happen automatically." You open the GitHub entry under Integrations, see whether GitHub has changes to pull, and push your Overleaf changes from the same dialog. The push option stays visible even when both sides already match. A push creates one commit on GitHub, with an optional commit message you type in. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<p>Authorship differs by direction. Commits pushed from Overleaf appear on GitHub under the linked GitHub account of the project owner. Going the other way, "Changes in Overleaf history from GitHub will be shown as being authored by anonymous." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span> In practice: if several co-authors edit in Overleaf and you push once, GitHub sees one commit by one person.</p>
+<p>Track changes and comments are a separate thing. Overleaf's limitations table notes that pulling from GitHub can displace them and advises against mixing the two on one project. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+
+<h2 id="conflicts">Merge conflicts</h2>
+<p>Say you edited <code>intro.tex</code> on Overleaf and a co-author changed the same lines on GitHub. When git cannot merge the two, Overleaf does not touch your main branch: "instead of merging into your main branch, we push a new branch to your repository." The branch name carries the date and time, and it holds the Overleaf version. You then merge it into the default branch yourself, either locally with git or by opening a pull request on GitHub and using its conflict editor. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<p>Branches only exist on the GitHub side, though. Overleaf keeps one line of history: "The Overleaf Git system does not support branching." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></p>
+
+<h2 id="limits">Size limits and things that do not sync</h2>
+<ul>
+<li><strong>7 MB of editable content.</strong> "Github sync won't operate if the total amount of editable (not view-only) content surpasses 7 MB," and you get an error message.</li>
+<li><strong>Commits under 100 files.</strong> Overleaf recommends that, and a total project size under 100 MB when you use GitHub sync. Larger projects may work but can run into sync trouble.</li>
+<li><strong>Not carried over:</strong> Git LFS, submodules, symlinks (they become regular files) and execute permissions.</li>
+<li><strong>github.com only.</strong> "GitHub Synchronization can only be used on Github.com", so GitHub Enterprise installations are out.</li>
+</ul>
+<p><span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></p>
+<p>The general plan limits apply on top. They are the same on free and paid plans for everything except compile time and the AI allowance: 2000 files per project, 7 MB of editable material, 2 MB per editable text file and 50 MB per upload. For total size, Overleaf recommends at most 500 MB, or under 100 MB with GitHub sync or the git integration. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of November 2026)</span></p>
+
+<h2 id="roles">Who can do what</h2>
+<p>"Only the project owner can initialize GitHub sync for a project; collaborators cannot set up the initial link." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span> The page does not say whether collaborators can push or pull once the link exists, so check that on your own project before you rely on it.</p>
+<p>For the git integration the rule is about the owner's plan. It "will only be available if the project owner has a paid subscription" (or has been given access to the feature). <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span> A collaborator on a shared project can create their own authentication token and use it to reach the project. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/git-integration-authentication-tokens">Overleaf docs: authentication tokens</a>, as of November 2026)</span> How cloning with a token works is on <a href="/overleaf-git-clone/">cloning an Overleaf project with git</a>.</p>
+
+<h2 id="gitlab">GitLab, Bitbucket and other hosts</h2>
+<p>There is no direct sync. Overleaf's limitations table lists "Direct Synchronization with GitHub Enterprise or GitLab" as unsupported and names the git integration as the indirect route. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span> The advanced git page describes the setup: an intermediary local repository, and "Your local will need to have two remotes so that it points to both your Git host and the Overleaf project." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations">Overleaf docs: advanced Git operations</a>, as of November 2026)</span></p>
+<p>With standard git that looks like this, run in your own clone of the GitLab repository (the Overleaf URL has your project's id in it):</p>
+<pre><code>git remote add overleaf https://git.overleaf.com/1234567
+git pull overleaf main
+git push origin main      # to GitLab
+git push overleaf main    # back to Overleaf</code></pre>
+<p>Two things to know. This route needs the git integration, which is also a premium feature, so it needs a premium plan as well. And Overleaf keeps a single branch, <code>main</code> in new clones (older ones may use <code>master</code>). <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span> When the GitLab repository already exists and the Overleaf project is new, the advanced page shows the first pull with <code>--allow-unrelated-histories</code>. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration/advanced-git-operations">Overleaf docs: advanced Git operations</a>, as of November 2026)</span></p>
+
+<h2 id="free">The free route: source ZIP</h2>
+<p>On the free plan you can still get your files into git. In the editor, choose File, then under Download pick "Download as source (.zip)"; the dashboard has a "Download .zip file" button per project too. The documentation names no plan requirement for either. <span class="src">(<a href="https://docs.overleaf.com/managing-projects-and-files/downloading-a-project">Overleaf docs: downloading a project</a>, as of November 2026)</span> Unzip it over your working copy, review <code>git diff</code>, commit, push to GitHub or GitLab.</p>
+<p>The way back is manual. Overleaf's upload page describes New project, then "Existing project (.zip)", which creates a new project; it caps one upload at 180 files and 7 MB of editable material. <span class="src">(<a href="https://docs.overleaf.com/managing-projects-and-files/uploading-a-project">Overleaf docs: uploading a project</a>, as of November 2026)</span> It does not describe replacing the files of an existing project from a ZIP. So a change made on GitHub comes back as a new Overleaf project, not as an update to the old one. In practice the ZIP route gives you one-way snapshots: useful for backups, less suited to editing in both places.</p>
+
+<h2 id="aldine">How GitHub and GitLab work in Aldine</h2>
+<p>Aldine is an open-source, self-hosted collaborative LaTeX editor, and here it starts from the other end. Every project is already a real git repository on your server, so syncing with a host is plain git push and pull.</p>
+<div class="demo-frame">
+<img src="/assets/branches-dark.png" width="1440" height="900" loading="lazy" alt="The branch menu in Aldine: the current branch, the list of branches of the project, and the actions to create, switch and merge" />
+</div>
+<p class="demo-caption">Branches in Aldine: create, switch and merge from the UI.</p>
+<ul>
+<li><strong>Four hosts.</strong> GitHub, GitLab (gitlab.com or self-hosted), Gitea and Forgejo, Codeberg included. A personal access token is enough to connect; an OAuth app is optional. An administrator can point GitHub sync at a GitHub Enterprise Server.</li>
+<li><strong>Both directions, existing repos included.</strong> Import a repository as a project, or publish a project to a fresh repository.</li>
+<li><strong>Push and pull from the editor</strong> with ahead and behind counts. A conflicting pull lists the files and keeps your version until you take the remote's. You can open a pull or merge request from there.</li>
+<li><strong>Branches.</strong> Create one, edit it, merge it back, all in the browser.</li>
+<li><strong>Mixed tools.</strong> One co-author writes in the browser; another clones the repository and stays in VS Code, and their commits come back with one Pull. Each person can set a commit email so commits show up on their GitHub or GitLab profile.</li>
+<li><strong>Autopush for teams.</strong> An instance can create every new project in a GitLab group and push every autosave from the server.</li>
+</ul>
+<p>The limits are real too. Aldine is self-hosted only, with no hosted service today, and it is young: first release in July 2026, 1.0 in October 2026. Review works as comments with suggested edits, not keystroke-level track changes. The full list is in the <a href="/self-hosting/#other-limits">self-hosting guide</a>, and the broader git comparison is on <a href="/overleaf-git/">git with Overleaf</a>.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-overleaf">When Overleaf's GitHub sync is the better choice</h2>
+<ul>
+<li><strong>You don't want to run a server.</strong> Overleaf's README says: "We run a hosted version at www.overleaf.com." Aldine needs a server of yours. <span class="src">(<a href="https://github.com/overleaf/overleaf">Overleaf repository README</a>, as of November 2026)</span></li>
+<li><strong>Your co-authors already write on Overleaf</strong> and you mostly want a GitHub copy for backup, CI or your own editor.</li>
+<li><strong>You use track changes.</strong> Overleaf offers them as a premium feature. <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of November 2026)</span> Aldine does not have keystroke-level tracking.</li>
+<li><strong>Your institution already pays</strong> through Overleaf Commons or a group subscription, both of which Overleaf names as giving access to GitHub sync. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of November 2026)</span></li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>Is Overleaf's GitHub sync free?</h3>
+<p>No. Overleaf documents GitHub synchronization as a premium feature, and its plans page lists the Git and GitHub integrations on the Student, Standard, Pro and Organizations plans, not on Free. Downloading the project source as a ZIP needs no paid plan.</p>
+<h3>Can I link an existing Overleaf project to an existing GitHub repository?</h3>
+<p>Not with GitHub sync. You either create a new repository from the Overleaf project or import a repository into a new Overleaf project. With the git integration, Overleaf's advanced git page shows how to pull an existing repository into a new Overleaf project from your own clone.</p>
+<h3>Does Overleaf sync with GitLab?</h3>
+<p>Not directly. GitHub sync works with github.com only. Overleaf's documentation points to the git integration as the indirect route: a local repository with two remotes, one for Overleaf and one for GitLab. The git integration is a premium feature too.</p>
+<h3>What happens when a pull from GitHub conflicts with edits in Overleaf?</h3>
+<p>Overleaf does not merge into your main branch. It pushes a new branch with the Overleaf version to your repository, and you merge that branch yourself, locally or with a pull request on GitHub.</p>
+<h3>Can collaborators set up GitHub sync?</h3>
+<p>No. Only the project owner can create the initial link. For the git integration, a collaborator on a shared project can create their own authentication token and use it to reach the project.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and a git-native alternative</a></li>
+<li><a href="/overleaf-git-clone/">Cloning an Overleaf project with git</a></li>
+<li><a href="/overleaf-free-plan/">What the Overleaf free plan includes</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/">Aldine: open-source, self-hosted Overleaf alternative</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/" aria-current="page">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>
