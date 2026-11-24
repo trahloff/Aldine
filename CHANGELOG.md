@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.23.0] — 2026-11-24
+
 ### Added
 - History names the assistant that wrote a change. A commit made through a
   client connected with Connect carries an `Agent-client` trailer with the
