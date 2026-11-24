@@ -24,7 +24,7 @@
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^6.30.0",
+    "react-router-dom": "^7.18.6",
     "y-codemirror.next": "^0.3.5",
     "yjs": "^13.6.27"
   },

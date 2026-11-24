@@ -67,7 +67,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <ToastProvider>
        <DialogProvider>
         <AuthProvider>
-          <BrowserRouter basename={BASE_PATH} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <BrowserRouter basename={BASE_PATH}>
             <Suspense fallback={<div className="page-loading" />}>
              <GuestScope>
               <Routes>
