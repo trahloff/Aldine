@@ -435,6 +435,8 @@ export class SqliteStore implements DataStore {
     if (n <= 0) return 0;
     return this.run(`DELETE FROM oauth_clients WHERE id IN (SELECT id FROM oauth_clients ORDER BY last_used_at ASC, id ASC LIMIT ?1)`, n);
   }
+  async listOAuthClients() { return this.all(`SELECT * FROM oauth_clients ORDER BY last_used_at DESC, id ASC`).map((r) => this.rowToClient(r)); }
+  async deleteOAuthClient(id: string) { return this.run(`DELETE FROM oauth_clients WHERE id=?1`, id) === 1; }
 
   // ---- OAuth refresh tokens ----
   private rowToRefresh(r: Row): RefreshTokenRecord {
@@ -464,6 +466,20 @@ export class SqliteStore implements DataStore {
     this.tx(() => {
       this.run(`UPDATE tokens SET revoked_at=?2 WHERE user_id=?1 AND revoked_at IS NULL`, userId, revokedAt);
       this.run(`UPDATE refresh_tokens SET revoked_at=?2 WHERE user_id=?1 AND revoked_at IS NULL`, userId, revokedAt);
+    });
+  }
+  async listOAuthConnections(now: string) {
+    return this.all(
+      `SELECT client_id, max(client_name) AS client_name, count(DISTINCT family) AS n FROM refresh_tokens
+       WHERE revoked_at IS NULL AND expires_at > ?1 GROUP BY client_id ORDER BY client_id ASC`, now,
+    ).map((r) => ({ clientId: String(r.client_id), clientName: String(r.client_name), connections: Number(r.n) }));
+  }
+  async revokeCredentialsForClient(clientId: string, revokedAt: string) {
+    return this.tx(() => {
+      const families = this.all(`SELECT DISTINCT family FROM refresh_tokens WHERE client_id=?1 AND revoked_at IS NULL`, clientId).map((r) => String(r.family));
+      for (const family of families) this.run(`UPDATE tokens SET revoked_at=?2 WHERE family=?1 AND revoked_at IS NULL`, family, revokedAt);
+      this.run(`UPDATE refresh_tokens SET revoked_at=?2 WHERE client_id=?1 AND revoked_at IS NULL`, clientId, revokedAt);
+      return families.length;
     });
   }
 

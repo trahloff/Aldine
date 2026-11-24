@@ -308,4 +308,71 @@ test.describe('OAuth Connect flow', () => {
       await client.close().catch(() => {});
     }
   });
+
+  test('the administrator sees a connected client on /admin and removes it: its connections end, the row goes', async ({ page, browser, baseURL }) => {
+    const base = baseURL!;
+    // a client of its own: removing it must not take the shared one from the other tests
+    const reg = await anon.post('/oauth/register', { data: { client_name: 'Removable e2e client', redirect_uris: [loopback.redirectUri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'] } });
+    expect(reg.status()).toBe(201);
+    const removable = (await reg.json()).client_id as string;
+
+    // a person connects through it
+    const { verifier, challenge } = pkce();
+    await page.goto(authorizeUrl(challenge, 'removable-state', base, { client_id: removable }));
+    await signUpInline(page, uniq());
+    await expect(page.getByTestId('oauth-consent')).toBeVisible();
+    const landed = loopback.next();
+    await page.getByTestId('oauth-allow').click();
+    const code = (await landed).get('code')!;
+    await page.waitForURL(/127\.0\.0\.1/);
+    const tokens = await (await anon.post('/oauth/token', { form: { grant_type: 'authorization_code', code, client_id: removable, redirect_uri: loopback.redirectUri, code_verifier: verifier } })).json();
+    const ping = () => anon.post('/mcp', { data: { jsonrpc: '2.0', method: 'ping', id: 1 }, headers: { authorization: `Bearer ${tokens.access_token}`, accept: 'application/json, text/event-stream' } });
+    expect((await ping()).status()).toBe(200);
+
+    // the administrator (ALDINE_ADMIN_EMAILS=admin@test.com; a re-run finds the account registered)
+    const adminContext = await browser.newContext();
+    const admin = await adminContext.newPage();
+    try {
+      const made = await admin.request.post('/api/auth/register', { data: { email: 'admin@test.com', password: 'password123', name: 'Admin' } });
+      if (made.ok()) {
+        const { link } = await (await admin.request.get('/api/test/confirmation-link?email=admin%40test.com')).json();
+        const token = new URL(link, 'http://x').searchParams.get('confirm_email');
+        expect((await admin.request.post('/api/auth/confirm-email', { data: { token } })).ok()).toBeTruthy();
+      } else {
+        expect((await admin.request.post('/api/auth/login', { data: { email: 'admin@test.com', password: 'password123' } })).ok()).toBeTruthy();
+      }
+      await admin.goto('/admin');
+      const section = admin.getByTestId('admin-clients');
+      await expect(section).toBeVisible();
+      await expect(section.getByTestId('admin-clients-registration')).toContainText('Registration is open');
+      const row = section.getByTestId('admin-client-row').filter({ hasText: 'Removable e2e client' });
+      await expect(row).toHaveCount(1);
+      await expect(row).toContainText('127.0.0.1');
+      await expect(row).toContainText('Registered here');
+      await expect(row.getByTestId('admin-client-connections')).toHaveText('1');
+
+      // Cancel changes nothing
+      await row.getByTestId('admin-client-remove').click();
+      await expect(admin.getByTestId('dialog-title')).toHaveText('Remove Removable e2e client?');
+      await expect(admin.getByTestId('dialog-message')).toContainText('This ends 1 connection at once');
+      await admin.getByTestId('dialog-cancel').click();
+      await expect(row).toHaveCount(1);
+      expect((await ping()).status()).toBe(200);
+
+      await row.getByTestId('admin-client-remove').click();
+      await admin.getByTestId('dialog-confirm').click();
+      await expect(section.getByTestId('admin-clients-message')).toHaveText('Removed Removable e2e client. 1 connection ended.');
+      await expect(row).toHaveCount(0);
+    } finally {
+      await adminContext.close();
+    }
+
+    // the assistant is out at its next request, and cannot renew or come back under the old id
+    expect((await ping()).status()).toBe(401);
+    const renew = await anon.post('/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: removable } });
+    expect(renew.status()).toBe(400);
+    const again = pkce();
+    await page.goto(authorizeUrl(again.challenge, 'gone-state', base, { client_id: removable }));
+    await expect(page.getByTestId('oauth-error')).toBeVisible();
+  });
 });

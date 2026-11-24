@@ -395,8 +395,25 @@ one registration also serves Claude Code. Hand the ID to your users:
 
 With `ALDINE_DATASTORE=json`, stop the server before adding a client and
 start it again afterwards; the SQLite and Postgres stores take the write
-while the server runs. There is no list or revoke command yet: a client is
-removed by deleting its record from `oauth_clients` in the datastore.
+while the server runs.
+
+### Seeing and removing clients
+
+The admin page (`/admin`, for the accounts in `ALDINE_ADMIN_EMAILS`) has an
+**Assistant clients** section. It lists every client registered on the
+server and every client someone is connected through, whichever way it
+registered: its name, the hosts it sends people back to, when it was
+registered and last used, and how many connections are live over all
+accounts. It does not show whose connections they are; each person sees
+their own on their Agent access card.
+
+**Remove** ends every connection made through that client, for all accounts
+at once, and deletes its registration. The assistant loses access at its
+next request. Access tokens people made by hand are not affected. With
+registration open, the client can register again and people can connect
+again; with `ALDINE_OAUTH_REGISTRATION=closed` it stays out until you add it
+again with `oauth:add-client`. The server log names the administrator, the
+client and the number of connections ended.
 
 ## What the tools do
 

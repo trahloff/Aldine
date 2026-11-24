@@ -16,6 +16,11 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   git author stays "Claude"; commits made with a personal access token and
   older commits read as before. The log and agent-activity answers gain an
   optional `client` field (docs/ASSISTANT_NAMES.md).
+- Admin page: an Assistant clients section lists every client registered on
+  the server or connected through Connect, with its redirect hosts, when it
+  was last used and how many connections are live. Remove ends every
+  connection made through a client, for all accounts, and deletes its
+  registration (#327).
 
 ## [1.22.2] — 2026-11-24
 

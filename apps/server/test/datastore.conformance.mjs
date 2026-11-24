@@ -359,9 +359,21 @@ async function runSuite(store, label) {
   check((await store.getOAuthClient(c1.id)) !== null && (await store.getOAuthClient(c2.id)) !== null, `${label}: newer clients survive`);
   eq(await store.evictOldestOAuthClients(5), 2, `${label}: evictOldestOAuthClients caps at what exists`);
   eq(await store.countOAuthClients(), 0, `${label}: the client table is empty after eviction`);
+  // list (most recently used first, then id) and delete
+  for (const c of [c1, c2, c3]) await store.createOAuthClient(c);
+  eq((await store.listOAuthClients()).map((c) => c.id), [c1.id, c3.id, c2.id], `${label}: listOAuthClients is most recently used first`);
+  eq((await store.listOAuthClients())[0], c1, `${label}: listOAuthClients hands back whole records`);
+  const listAlias = await store.listOAuthClients();
+  listAlias[0].redirectUris.push('https://evil.example/cb');
+  eq((await store.getOAuthClient(c1.id)).redirectUris, c1.redirectUris, `${label}: listOAuthClients result is a copy`);
+  eq(await store.deleteOAuthClient(c3.id), true, `${label}: deleteOAuthClient reports the removal`);
+  check((await store.getOAuthClient(c3.id)) === null, `${label}: the deleted client is gone`);
+  eq(await store.deleteOAuthClient(c3.id), false, `${label}: deleteOAuthClient on a missing id reports nothing removed`);
+  eq((await store.listOAuthClients()).map((c) => c.id), [c1.id, c2.id], `${label}: the other clients stay`);
+  eq(await store.evictOldestOAuthClients(5), 2, `${label}: the table is empty again`);
 
   // ---- OAuth refresh tokens ----
-  const rf = (n, over = {}) => ({ id: `rf${n}-${t}`, hash: `rhash${n}-${t}`, tokenId: `oa${n}-${t}`, userId: user.id, clientId: `aldc_1-${t}`, family: fam, projectIds: null, clientName: 'Claude', expiresAt: '2027-01-01T00:00:00.000Z', usedAt: null, revokedAt: null, ...over });
+  const rf = (n, over = {}) => ({ id: `rf${n}-${t}`, hash: `rhash${n}-${t}`, tokenId: `oa${n}-${t}`, userId: user.id, clientId: `aldc_1-${t}`, family: fam, projectIds: null, clientName: 'Claude', expiresAt: '2099-01-01T00:00:00.000Z', usedAt: null, revokedAt: null, ...over });
   const r1 = rf(1, { projectIds: [`p1${t}`] });
   const r2 = rf(2);
   const r3 = rf(3, { family: `other-${t}` });
@@ -413,6 +425,52 @@ async function runSuite(store, label) {
   eq((await store.getRefreshByHash(uRfOrphan.hash)).revokedAt, '2026-07-07T00:00:00.000Z', `${label}: revokeCredentialsForUser revokes a refresh token with no listed access token`);
   eq((await store.getToken(bPat.id)).revokedAt, null, `${label}: revokeCredentialsForUser leaves another user's tokens alone`);
   eq((await store.getRefreshByHash(bRf.hash)).revokedAt, null, `${label}: revokeCredentialsForUser leaves another user's refresh tokens alone`);
+
+  // ---- every credential of one client (an administrator removes it) ----
+  const kId = `aldc_k-${t}`, mId = `https://m.example/${t}/client.json`;
+  const kRf = (n, over) => rf(n, { clientId: kId, clientName: 'Client K', ...over });
+  const kA = kRf(40, { family: `ka-${t}`, usedAt: '2026-07-05T00:00:00.000Z' });
+  const kA2 = kRf(41, { family: `ka-${t}` });
+  const kB = kRf(42, { family: `kb-${t}`, userId: bystander });
+  // createRefresh prunes by today's date, so "expires soon" is relative to it
+  const inDays = (d) => new Date(Date.now() + d * 864e5).toISOString();
+  const kOld = kRf(43, { family: `kc-${t}`, expiresAt: inDays(1) });
+  const kDone = kRf(44, { family: `kd-${t}`, revokedAt: '2026-06-03T00:00:00.000Z' });
+  const mLive = rf(45, { clientId: mId, clientName: 'Client M', family: `mx-${t}` });
+  // ids that differ in case only, and one client under two names: every backend orders and names them alike
+  const zUp = rf(46, { clientId: `aldc_Z-${t}`, clientName: 'beta', family: `zu-${t}` });
+  const zUp2 = rf(47, { clientId: `aldc_Z-${t}`, clientName: 'Alpha', family: `zu2-${t}` });
+  const zLow = rf(48, { clientId: `aldc_a-${t}`, clientName: 'Lower', family: `zl-${t}` });
+  for (const r of [kA, kA2, kB, kOld, kDone, mLive, zUp, zUp2, zLow]) await store.createRefresh(r);
+  eq((await store.listOAuthConnections(inDays(0))).filter((c) => c.clientId === zUp.clientId || c.clientId === zLow.clientId),
+    [{ clientId: zUp.clientId, clientName: 'beta', connections: 2 }, { clientId: zLow.clientId, clientName: 'Lower', connections: 1 }],
+    `${label}: listOAuthConnections sorts ids in code-unit order (upper case first) and names a client by its greatest name`);
+  const kTok = (n, over) => ({ ...oa1, id: `ktok${n}-${t}`, hash: `digest-ktok${n}-${t}`, ...over });
+  const tKa = kTok(1, { family: `ka-${t}` });
+  const tKb = kTok(2, { family: `kb-${t}`, userId: bystander });
+  // createToken prunes OAuth tokens revoked over a week ago: "earlier" is yesterday
+  const yesterday = inDays(-1);
+  const tKd = kTok(3, { family: `kd-${t}`, revokedAt: yesterday });
+  const tMx = kTok(4, { family: `mx-${t}` });
+  const tPat = { ...tok, id: `kpat-${t}`, hash: `digest-kpat-${t}` };
+  for (const r of [tKa, tKb, tKd, tMx, tPat]) await store.createToken(r);
+  const clientConns = async (now) => (await store.listOAuthConnections(now)).filter((c) => c.clientId === kId || c.clientId === mId);
+  eq(await clientConns(inDays(2)), [{ clientId: kId, clientName: 'Client K', connections: 2 }, { clientId: mId, clientName: 'Client M', connections: 1 }],
+    `${label}: listOAuthConnections counts live families per client, a rotated family once, without expired or revoked ones`);
+  eq(await clientConns(inDays(0)), [{ clientId: kId, clientName: 'Client K', connections: 3 }, { clientId: mId, clientName: 'Client M', connections: 1 }],
+    `${label}: listOAuthConnections reads expiry against the given time`);
+  eq(await store.revokeCredentialsForClient(kId, '2026-08-02T00:00:00.000Z'), 3, `${label}: revokeCredentialsForClient reports the families it ended`);
+  for (const r of [kA, kA2, kB, kOld]) eq((await store.getRefreshByHash(r.hash)).revokedAt, '2026-08-02T00:00:00.000Z', `${label}: revokeCredentialsForClient revokes refresh token ${r.id}`);
+  eq((await store.getRefreshByHash(kDone.hash)).revokedAt, '2026-06-03T00:00:00.000Z', `${label}: revokeCredentialsForClient keeps an earlier refresh revokedAt`);
+  eq((await store.getToken(tKa.id)).revokedAt, '2026-08-02T00:00:00.000Z', `${label}: revokeCredentialsForClient revokes the family's access token`);
+  eq((await store.getToken(tKb.id)).revokedAt, '2026-08-02T00:00:00.000Z', `${label}: revokeCredentialsForClient reaches every user`);
+  eq((await store.getToken(tKd.id)).revokedAt, yesterday, `${label}: revokeCredentialsForClient keeps an earlier access revokedAt`);
+  eq((await store.getToken(tMx.id)).revokedAt, null, `${label}: revokeCredentialsForClient leaves another client's access token alone`);
+  eq((await store.getRefreshByHash(mLive.hash)).revokedAt, null, `${label}: revokeCredentialsForClient leaves another client's refresh token alone`);
+  eq((await store.getToken(tPat.id)).revokedAt, null, `${label}: revokeCredentialsForClient leaves hand-made tokens alone`);
+  eq(await clientConns(inDays(2)), [{ clientId: mId, clientName: 'Client M', connections: 1 }], `${label}: the revoked client has no connections left`);
+  eq(await store.revokeCredentialsForClient(kId, '2026-08-03T00:00:00.000Z'), 0, `${label}: revokeCredentialsForClient twice ends nothing more`);
+  eq(await store.revokeCredentialsForClient(`aldc_none-${t}`, '2026-08-03T00:00:00.000Z'), 0, `${label}: revokeCredentialsForClient on an unknown client ends nothing`);
   await store.revokeCredentialsForUser(`nobody-${t}`, '2026-07-07T00:00:00.000Z');
   check(true, `${label}: revokeCredentialsForUser for a user with no credentials is a no-op`);
 

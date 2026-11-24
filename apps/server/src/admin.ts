@@ -12,6 +12,8 @@ import { storageByOwner, storageLimitFor, storageQuotaBytes } from './storage.js
 import { hocuspocus, onlineUserIds } from './collab.js';
 import { deleteConfirmation, endSockets, removeAccount } from './account.js';
 import { adminLimiter, clientKey } from './ratelimit.js';
+import { registrationMode, type RegistrationMode } from './oauth/registration.js';
+import { discardCodesForClient } from './oauth/codes.js';
 
 /**
  * Instance administration: server-wide metadata for the operator, and the
@@ -164,6 +166,43 @@ async function adminUser(id: string): Promise<AdminUserRow | null> {
 
 // ---------- account actions ----------
 
+/** One assistant client as the administrator sees it. `registered`: stored
+ *  here by dynamic registration or `oauth:add-client`. `metadata`: named by
+ *  its metadata document URL, nothing stored. `removed`: a registration that
+ *  is gone while consents given to it are still live. */
+export interface AdminClientRow {
+  id: string;
+  name: string;
+  kind: 'registered' | 'metadata' | 'removed';
+  /** Where the client may send people back to: the hosts of its redirect
+   *  addresses, or the host of its metadata document. */
+  hosts: string[];
+  createdAt: string | null;
+  lastUsedAt: string | null;
+  /** Consents live right now, over all accounts. */
+  connections: number;
+}
+
+const hostOf = (uri: string): string => { try { return new URL(uri).host; } catch { return ''; } };
+
+async function adminClients(): Promise<{ registration: RegistrationMode; clients: AdminClientRow[] }> {
+  const [stored, live] = await Promise.all([db().listOAuthClients(), db().listOAuthConnections(new Date().toISOString())]);
+  const connections = new Map(live.map((c) => [c.clientId, c]));
+  const rows: AdminClientRow[] = stored.map((c) => ({
+    id: c.id, name: c.name, kind: 'registered',
+    hosts: [...new Set(c.redirectUris.map(hostOf).filter(Boolean))],
+    createdAt: c.createdAt, lastUsedAt: c.lastUsedAt,
+    connections: connections.get(c.id)?.connections ?? 0,
+  }));
+  const known = new Set(stored.map((c) => c.id));
+  for (const c of live) {
+    if (known.has(c.clientId)) continue;
+    const url = /^https?:\/\//i.test(c.clientId);
+    rows.push({ id: c.clientId, name: c.clientName, kind: url ? 'metadata' : 'removed', hosts: url ? [hostOf(c.clientId)].filter(Boolean) : [], createdAt: null, lastUsedAt: null, connections: c.connections });
+  }
+  return { registration: registrationMode(), clients: rows };
+}
+
 /** The account's name in the log: never the display name, which is free text. */
 const who = (u: { id: string; email: string | null; subject?: string }) => `${u.email ?? u.subject ?? 'no address'} [${u.id}]`;
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -311,6 +350,26 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
       }
       audit(t.actor, 'created a password reset link for', t.user);
       return { sent: false, link };
+    });
+
+    // Assistant clients (Connect). The id travels in the body: a metadata
+    // client's id is a URL.
+    admin.get('/api/admin/clients', async () => adminClients());
+    admin.post<{ Body: { id?: unknown } | undefined }>('/api/admin/clients/remove', async (req, reply) => {
+      const actor = reqUser(req);
+      if (!auth.AUTH_ENABLED || !actor) return reply.code(400).send({ error: 'Accounts are off on this server (AUTH_ENABLED is not set)' });
+      const id = typeof req.body?.id === 'string' ? req.body.id : '';
+      const row = id && id.length <= 2048 ? (await adminClients()).clients.find((c) => c.id === id) : undefined;
+      if (!row) return reply.code(404).send({ error: 'There is no such client' });
+      // The registration and the pending codes first, so no new consent
+      // starts and none already given is exchanged after the revocation.
+      // Stopped halfway, the client still shows here as `removed` with its
+      // live connections and can be removed again.
+      const removed = await db().deleteOAuthClient(row.id);
+      discardCodesForClient(row.id);
+      await db().revokeCredentialsForClient(row.id, new Date().toISOString());
+      console.log(`[aldine] admin ${who(actor)} removed assistant client ${JSON.stringify(row.name)} [${row.id}] (${count(row.connections, 'connection')} ended${removed ? '' : ', nothing stored to delete'})`);
+      return { ok: true, removed, connections: row.connections };
     });
 
     admin.post<Act>('/api/admin/users/:userId/delete', async (req, reply) => {

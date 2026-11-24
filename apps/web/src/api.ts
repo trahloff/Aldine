@@ -159,6 +159,21 @@ export interface AdminStats {
   storage?: { bytes: number; quotaBytes: number };
   admins: string[];
 }
+/** One assistant client on the admin page. `registered`: stored on this
+ *  server. `metadata`: named by its metadata document URL. `removed`: its
+ *  registration is gone while consents given to it are still live. */
+export interface AdminClientRow {
+  id: string;
+  name: string;
+  kind: 'registered' | 'metadata' | 'removed';
+  hosts: string[];
+  createdAt: string | null;
+  lastUsedAt: string | null;
+  /** Consents live right now, over all accounts. */
+  connections: number;
+}
+export interface AdminClients { registration: 'open' | 'closed'; clients: AdminClientRow[] }
+
 export interface AdminUserRow {
   id: string;
   email: string | null;
@@ -894,6 +909,8 @@ export const api = {
     req<{ ok: boolean; sent?: boolean; confirmed?: boolean }>('/api/auth/confirm-email/resend', invite ? { method: 'POST', body: JSON.stringify({ invite }) } : { method: 'POST' }),
   adminStats: () => req<AdminStats>('/api/admin/stats'),
   adminUsers: () => req<AdminUserRow[]>('/api/admin/users'),
+  adminClients: () => req<AdminClients>('/api/admin/clients'),
+  removeAdminClient: (id: string) => req<{ ok: true; removed: boolean; connections: number }>('/api/admin/clients/remove', { method: 'POST', body: JSON.stringify({ id }) }),
   adminSupport: () => req<SupportSetting>('/api/admin/instance'),
   setAdminSupport: (support: string) => req<SupportSetting>('/api/admin/instance', { method: 'PUT', body: JSON.stringify({ support }) }),
   // Every account action sends a JSON body: the server refuses any other.

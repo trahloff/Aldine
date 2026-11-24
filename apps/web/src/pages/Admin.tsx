@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, AdminStats, AdminUserRow, type SupportSetting } from '../api';
+import { api, ApiError, AdminStats, AdminUserRow, type AdminClientRow, type AdminClients, type SupportSetting } from '../api';
 import { useAuth } from '../components/Auth';
 import Wordmark from '../components/Wordmark';
 import AdminAccountDialog from '../components/AdminAccountDialog';
+import { useDialogs } from '../components/Dialogs';
 import { useDocumentTitle } from '../util/documentTitle';
 import { formatMb, storageLine } from '../util/storage';
 
@@ -86,6 +87,99 @@ function SupportCard() {
       </form>
       {envNote && <p className="admin__muted" data-testid="admin-support-env">{envNote}</p>}
       {message && <p className={message.error ? 'admin__error' : 'admin__muted'} role={message.error ? 'alert' : 'status'} data-testid="admin-support-message">{message.text}</p>}
+    </section>
+  );
+}
+
+const connectionCount = (n: number) => `${n} ${n === 1 ? 'connection' : 'connections'}`;
+
+/**
+ * The assistant clients people connected with Connect (Claude, ChatGPT and
+ * others), over all accounts, and the one action on them: Remove ends every
+ * connection made through the client and deletes its registration. Whose
+ * connections they are is not shown; each person sees their own in Account
+ * settings. `now` moves with every refresh of the page's numbers; the list
+ * reloads with it.
+ */
+function ClientsCard({ now }: { now: number }) {
+  const dialogs = useDialogs();
+  const [data, setData] = useState<AdminClients | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = () => api.adminClients().then((d) => { setData(d); setFailed(false); }, () => setFailed(true));
+  useEffect(() => { load(); }, [now]);
+  if (!data) {
+    return failed ? (
+      <section data-testid="admin-clients">
+        <h2 className="home__section">Assistant clients</h2>
+        <p className="admin__error" role="alert" data-testid="admin-clients-error">Could not load the assistant clients. Use Refresh to try again.</p>
+      </section>
+    ) : null;
+  }
+  const remove = async (c: AdminClientRow) => {
+    const comeBack = data.registration === 'closed'
+      ? (c.kind === 'registered' ? 'Registration is closed on this server, so the client cannot come back until you register it again.' : 'Registration is closed on this server, so the client cannot connect again.')
+      : 'Registration is open on this server, so the client can register again and people can connect again.';
+    const ends = c.connections ? `This ends ${connectionCount(c.connections)} at once: the assistant loses access at its next request.` : 'Nobody is connected through it.';
+    const ok = await dialogs.confirm({ title: `Remove ${c.name}?`, body: `${ends} ${comeBack} Access tokens people made by hand are not affected.`, confirmLabel: 'Remove client', danger: true });
+    if (!ok) return;
+    setBusy(c.id);
+    setMessage(null);
+    try {
+      const res = await api.removeAdminClient(c.id);
+      setMessage({ text: `Removed ${c.name}. ${res.connections ? `${connectionCount(res.connections)} ended.` : 'Nobody was connected.'}`, error: false });
+    } catch (err) {
+      setMessage({ text: err instanceof ApiError ? err.message : `Could not remove ${c.name}`, error: true });
+    } finally {
+      setBusy(null);
+      load();
+    }
+  };
+  const kind = (c: AdminClientRow) => (c.kind === 'registered' ? 'Registered here' : c.kind === 'metadata' ? 'Metadata document' : 'Registration gone');
+  const kindHint = (c: AdminClientRow) => (c.kind === 'registered'
+    ? 'Stored on this server, by the client itself or with oauth:add-client'
+    : c.kind === 'metadata'
+      ? 'The client names itself with a document at its own address; nothing is stored here'
+      : 'The registration was removed or replaced while people were still connected');
+  return (
+    <section data-testid="admin-clients">
+      <h2 className="home__section">Assistant clients</h2>
+      <p className="admin__muted admin__clients-lead" data-testid="admin-clients-registration">
+        {data.registration === 'closed'
+          ? 'Registration is closed (ALDINE_OAUTH_REGISTRATION=closed): only clients registered on this server can connect.'
+          : 'Registration is open: any assistant client can register itself, and a person still has to approve each connection.'}
+      </p>
+      {data.clients.length === 0 ? (
+        <p className="admin__muted" data-testid="admin-clients-empty">No assistant client is registered or connected.</p>
+      ) : (
+        <div className="admin__table-wrap">
+          <table className="admin__table" data-testid="admin-clients-table">
+            <thead>
+              <tr>
+                <th>Client</th><th>Sends people back to</th><th>Kind</th><th>Registered</th><th>Last used</th>
+                <th className="admin__num">Connections</th><th><span className="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.clients.map((c) => (
+                <tr key={c.id} data-testid="admin-client-row">
+                  <td title={c.id}>{c.name}</td>
+                  <td>{c.hosts.length ? c.hosts.join(', ') : <span className="admin__muted">—</span>}</td>
+                  <td title={kindHint(c)}>{kind(c)}</td>
+                  <td title={c.createdAt ?? undefined}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString() : <span className="admin__muted">—</span>}</td>
+                  <td title={c.lastUsedAt ?? undefined}>{c.lastUsedAt ? ago(c.lastUsedAt, now) : <span className="admin__muted">—</span>}</td>
+                  <td className="admin__num" data-testid="admin-client-connections">{c.connections}</td>
+                  <td>
+                    <button className="btn btn--small" disabled={busy !== null} onClick={() => remove(c)} aria-label={`Remove ${c.name}`} data-testid="admin-client-remove">Remove</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {message && <p className={message.error ? 'admin__error' : 'admin__notice'} role={message.error ? 'alert' : 'status'} data-testid="admin-clients-message">{message.text}</p>}
     </section>
   );
 }
@@ -185,6 +279,8 @@ export default function Admin() {
             </div>
 
             <SupportCard />
+
+            {authEnabled && <ClientsCard now={now} />}
 
             <h2 className="home__section">Accounts</h2>
             <div className="admin__table-wrap">
