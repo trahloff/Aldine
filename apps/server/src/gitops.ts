@@ -853,7 +853,8 @@ export async function changedSinceBaseline(id: string, branch: string, manual: b
  *  author stays AGENT_COMMIT_AUTHOR, which everything that tells Claude's
  *  commits apart keys on. */
 export const AGENT_REQUESTER_TRAILER = 'On-behalf-of';
-const REQUESTER_LINE = new RegExp(`^${AGENT_REQUESTER_TRAILER}:.*$`, 'gim');
+/** Git also reads `Key : value`, with blanks before the colon, as a trailer. */
+const REQUESTER_LINE = new RegExp(`^${AGENT_REQUESTER_TRAILER}[ \\t]*:.*$`, 'gim');
 
 /** An agent commit message: the intent, then the token owner as a trailer.
  *  A requester line already in the intent is dropped, so a message cannot
@@ -871,13 +872,15 @@ export function agentCommitMessage(intent: string, requester: string | null | un
  *  Code"). The name is the client's own claim; the author stays
  *  AGENT_COMMIT_AUTHOR. */
 export const AGENT_CLIENT_TRAILER = 'Agent-client';
-const CLIENT_LINE = new RegExp(`^${AGENT_CLIENT_TRAILER}:.*$`, 'gim');
+const CLIENT_LINE = new RegExp(`^${AGENT_CLIENT_TRAILER}[ \\t]*:.*$`, 'gim');
 const AGENT_CLIENT_MAX = 60;
 
 /** A client name a trailer and a History row can carry: one line, no angle
- *  brackets, and never "Aldine", which History reads as nobody. */
+ *  brackets, and never "Aldine", which History reads as nobody. Parentheses
+ *  and commas go too: the row reads "<clients> (for <people>)", and a client
+ *  must not be able to write the second half or pass as two clients. */
 export function agentClientName(client: string | null | undefined): string {
-  const clean = (client ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, AGENT_CLIENT_MAX).trim();
+  const clean = (client ?? '').replace(/[\u0000-\u001f\u007f(),]/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, AGENT_CLIENT_MAX).trim();
   return clean === 'Aldine' ? '' : clean;
 }
 

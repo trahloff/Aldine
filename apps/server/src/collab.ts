@@ -937,13 +937,17 @@ export const AGENT_ORIGIN = 'aldine-agent';
 export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
 
 /** "ChatGPT (for Ada)": the connected clients the session's calls came
- *  through, "Claude" when none named itself, and the people whose tokens
- *  they ran under. */
+ *  through and the people whose tokens they ran under. A call that names no
+ *  client counts as "Claude" (agentVia), so it is never shown as another
+ *  client's work. */
 export function agentDisplayName(owners: Iterable<string>, via: Iterable<string> = []): string {
   const names = [...new Set(owners)].filter(Boolean);
   const agent = [...new Set(via)].filter(Boolean).join(', ') || AGENT_AWARENESS_USER.name;
   return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }
+
+/** How a call's client is listed: its name, "Claude" when it has none. */
+const agentVia = (via: string | null | undefined): string => via || AGENT_AWARENESS_USER.name;
 
 /** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
 const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS || '') || 60_000;
@@ -1030,7 +1034,7 @@ export function announceAgentWait(projectId: string, branch: string, filePath: s
     ranges: ranges.map((r) => ({ from: rel(r.from), to: rel(r.to) })),
     clients: [...new Set(clients)],
     owners: new Set(owner ? [owner] : []),
-    via: new Set(via ? [via] : []),
+    via: new Set([agentVia(via)]),
     until: Date.now() + AGENT_WAIT_MS,
     timer,
   });
@@ -1101,7 +1105,7 @@ export function markAgentPresence(projectId: string, branch: string, filePath: s
   }
   session.expiresAt = now + AGENT_PRESENCE_TTL_MS;
   if (owner) session.owners.add(owner);
-  if (via) session.via.add(via);
+  session.via.add(agentVia(via));
   armSession(key, session);
   const prev = agentPresence.get(name);
   if (prev) clearTimeout(prev.timer);
@@ -1114,7 +1118,7 @@ export function markAgentPresence(projectId: string, branch: string, filePath: s
   const owners = new Set(prev && prev.expiresAt > now ? prev.owners : []);
   if (owner) owners.add(owner);
   const clients = new Set(prev && prev.expiresAt > now ? prev.via : []);
-  if (via) clients.add(via);
+  clients.add(agentVia(via));
   const live: AgentPresence = { expiresAt: now + AGENT_PRESENCE_TTL_MS, timer, owners, via: clients, session: key };
   agentPresence.set(name, live);
   // An agent edit is landing in this file: whatever it waited on is over.

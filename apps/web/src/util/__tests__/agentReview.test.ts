@@ -86,7 +86,10 @@ describe('agentName', () => {
       { onBehalfOf: 'Ada', client: 'ChatGPT' },
       { onBehalfOf: 'Ben', client: 'Claude Code' },
       { onBehalfOf: 'Ada', client: 'ChatGPT' },
-      { onBehalfOf: 'Ada' },
     ])).toBe('ChatGPT, Claude Code (for Ada, Ben)');
+  });
+
+  it('lists Claude for commits that name no client, beside the ones that do', () => {
+    expect(agentName([{ onBehalfOf: 'Ada', client: 'ChatGPT' }, { onBehalfOf: 'Ada' }])).toBe('ChatGPT, Claude (for Ada)');
   });
 });

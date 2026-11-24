@@ -49,12 +49,13 @@ export function revertSummary(r: { commits: number; files: number; branch: strin
 }
 
 /** "ChatGPT (for Ada)": which connected client wrote and who asked, from the
- *  commits' trailers; "Claude" when no commit names its client. The server
- *  names the presence the same way (collab.ts agentDisplayName). */
+ *  commits' trailers. A commit that names no client counts as "Claude", so
+ *  it never reads as another client's work. The server names the presence
+ *  the same way (collab.ts agentDisplayName). */
 export function agentName(commits: Iterable<{ onBehalfOf?: string; client?: string }>): string {
   const all = [...commits];
   const distinct = (pick: (c: { onBehalfOf?: string; client?: string }) => string | undefined) => [...new Set(all.map(pick).filter((n): n is string => !!n))];
   const names = distinct((c) => c.onBehalfOf);
-  const agent = distinct((c) => c.client).join(', ') || 'Claude';
+  const agent = distinct((c) => c.client || 'Claude').join(', ') || 'Claude';
   return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }

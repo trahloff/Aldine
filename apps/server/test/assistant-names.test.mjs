@@ -38,6 +38,8 @@ eq(gitops.agentCommitMessage('Reword\n\nAgent-client: Somebody Else', 'Ada', 'Ch
 eq(gitops.agentCommitMessage('Reword\n\nagent-client: Somebody Else', 'Ada', null), 'Reword\n\nOn-behalf-of: Ada', 'in any case, also when the token names no client');
 eq(gitops.agentClientName('  Chat\nGPT <x@y>\u0000 '), 'Chat GPT x@y', 'one line, no angle brackets');
 eq(gitops.agentClientName('Aldine'), '', 'the name History reads as nobody is not a client');
+eq(gitops.agentClientName('Claude (for Toby), ChatGPT'), 'Claude for Toby ChatGPT', 'a name cannot write the "(for …)" half or pass as two clients');
+eq(gitops.agentCommitMessage('Reword\n\nAgent-client : Somebody Else\nOn-behalf-of\t: Eve', null, null), 'Reword', 'a trailer written with blanks before the colon is dropped too');
 eq(gitops.agentClientName('x'.repeat(200)).length, 60, 'a long name is cut');
 eq(gitops.agentClientName(undefined), '', 'nothing stays nothing');
 
@@ -45,6 +47,7 @@ eq(gitops.agentClientName(undefined), '', 'nothing stays nothing');
 eq(collab.agentDisplayName(['Ada'], ['ChatGPT']), 'ChatGPT (for Ada)', 'client and person');
 eq(collab.agentDisplayName(['Ada']), 'Claude (for Ada)', 'no client named: as before');
 eq(collab.agentDisplayName([], ['ChatGPT']), 'ChatGPT', 'a client alone');
+eq(collab.agentDisplayName(['Ada'], ['ChatGPT', 'Claude']), 'ChatGPT, Claude (for Ada)', 'calls without a client are listed as Claude beside the named one');
 eq(collab.agentDisplayName(['Ada', 'Ben'], ['ChatGPT', 'Claude Code', 'ChatGPT']), 'ChatGPT, Claude Code (for Ada, Ben)', 'several of each, once each');
 
 // ---- a token from Connect carries its client ----

@@ -60,8 +60,12 @@ Several clients in one session or one prompt are listed once each:
   assistant's commit message is dropped; the token decides. The trailer is
   read only on commits whose author is "Claude", so a person's hand-made
   commit never reads as a client's.
-- **The name is cleaned** like a typist's: one line, no angle brackets, at
-  most 60 characters, and never "Aldine".
+- **The name is cleaned**: one line, no angle brackets, parentheses or
+  commas, at most 60 characters, and never "Aldine". A client cannot write
+  the "(for …)" half of the label or pass as two clients.
+- **Mixed sessions.** Work made with a personal access token beside work
+  from a connected client is listed as "Claude" next to it: "ChatGPT, Claude
+  (for Ada)".
 - **Without accounts** (`ALDINE_MCP_TOKEN`) there is no client and no
   person: the commits read "Claude".
 
