@@ -807,7 +807,13 @@ export async function deleteAccount(userId: string): Promise<void> {
 // ---------- personal access tokens (headless agent credentials) ----------
 /** The prefix makes leaked tokens identifiable in logs and secret scanners. */
 export const TOKEN_PREFIX = 'aldn_';
-export interface TokenScope { tokenId: string; projectIds: string[] | null }
+export interface TokenScope {
+  tokenId: string;
+  projectIds: string[] | null;
+  /** The connected client the token was issued to through Connect; null for
+   *  a personal access token. */
+  clientName?: string | null;
+}
 /** Token record without the digest — safe to serialize in API responses. */
 export interface PublicToken { id: string; name: string; projectIds: string[] | null; createdAt: string; lastUsedAt: string | null; expiresAt: string | null; clientName: string | null }
 
@@ -896,7 +902,7 @@ export async function userFromToken(authorizationHeader: string | undefined): Pr
     // silently un-revoking the token.
     await db().touchToken(rec.id, new Date().toISOString()).catch(() => {});
   }
-  return { user: await pubFull(user), tokenScope: { tokenId: rec.id, projectIds: rec.projectIds } };
+  return { user: await pubFull(user), tokenScope: { tokenId: rec.id, projectIds: rec.projectIds, clientName: rec.clientName ?? null } };
 }
 
 // ---------- cookies ----------

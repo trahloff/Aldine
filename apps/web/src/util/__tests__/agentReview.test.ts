@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeAgentBatches, revertSummary, type AgentBatch } from '../agentReview';
+import { agentName, mergeAgentBatches, revertSummary, type AgentBatch } from '../agentReview';
 
 const commit = (hash: string, minute: number, files: string[]) =>
   ({ hash: hash.repeat(40).slice(0, 40), date: `2026-11-04T10:${String(minute).padStart(2, '0')}:00+01:00`, message: `commit ${hash}`, files });
@@ -66,5 +66,27 @@ describe('revertSummary', () => {
     expect(revertSummary({ commits: 1, files: 1, branch: 'draft', dates: ['2026-11-05T10:00:00Z'], author: null }, now))
       .toBe('This undoes 1 commit Claude made on draft today, in 1 file. It adds a new commit under your name; the history keeps both, and Undo brings the changes back.');
     expect(revertSummary({ commits: 2, files: 3, branch: 'main', dates: [], author: 'Ada' }, now)).toMatch(/^This undoes 2 commits Claude made on main, in 3 files\./);
+  });
+});
+
+describe('agentName', () => {
+  it('reads Claude when no commit names its client', () => {
+    expect(agentName([])).toBe('Claude');
+    expect(agentName([{}])).toBe('Claude');
+    expect(agentName([{ onBehalfOf: 'Ada' }])).toBe('Claude (for Ada)');
+  });
+
+  it('names the connected client beside the person', () => {
+    expect(agentName([{ onBehalfOf: 'Ada', client: 'ChatGPT' }])).toBe('ChatGPT (for Ada)');
+    expect(agentName([{ client: 'ChatGPT' }])).toBe('ChatGPT');
+  });
+
+  it('names each client and each person once over a batch', () => {
+    expect(agentName([
+      { onBehalfOf: 'Ada', client: 'ChatGPT' },
+      { onBehalfOf: 'Ben', client: 'Claude Code' },
+      { onBehalfOf: 'Ada', client: 'ChatGPT' },
+      { onBehalfOf: 'Ada' },
+    ])).toBe('ChatGPT, Claude Code (for Ada, Ben)');
   });
 });

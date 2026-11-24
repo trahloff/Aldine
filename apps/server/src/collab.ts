@@ -936,10 +936,13 @@ export const AGENT_ORIGIN = 'aldine-agent';
  *  collapse. Field shape mirrors what CodePane.tsx sets for humans. */
 export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
 
-/** "Claude (for Ada)": the people whose tokens the session's calls ran under. */
-export function agentDisplayName(owners: Iterable<string>): string {
+/** "ChatGPT (for Ada)": the connected clients the session's calls came
+ *  through, "Claude" when none named itself, and the people whose tokens
+ *  they ran under. */
+export function agentDisplayName(owners: Iterable<string>, via: Iterable<string> = []): string {
   const names = [...new Set(owners)].filter(Boolean);
-  return names.length ? `${AGENT_AWARENESS_USER.name} (for ${names.join(', ')})` : AGENT_AWARENESS_USER.name;
+  const agent = [...new Set(via)].filter(Boolean).join(', ') || AGENT_AWARENESS_USER.name;
+  return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }
 
 /** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
@@ -949,7 +952,7 @@ const AGENT_PRESENCE_TTL_MS = Number(process.env.ALDINE_AGENT_PRESENCE_TTL_MS ||
  *  whom. Kept apart from the loaded docs on purpose — Hocuspocus unloads a
  *  doc with its last connection (a sole viewer's reload), and the presence
  *  must outlive that so the reloaded doc shows it again. */
-interface AgentPresence { expiresAt: number; timer: NodeJS.Timeout; owners: Set<string>; session: string }
+interface AgentPresence { expiresAt: number; timer: NodeJS.Timeout; owners: Set<string>; via: Set<string>; session: string }
 const agentPresence = new Map<string, AgentPresence>();
 
 /**
@@ -960,14 +963,14 @@ const agentPresence = new Map<string, AgentPresence>();
  * not on one file's presence: a person who switches files, or never opens
  * the one Claude is in, must not see a session end that has not.
  */
-interface AgentSession { startedAt: number; expiresAt: number; holds: number; timer: NodeJS.Timeout | null; owners: Set<string> }
+interface AgentSession { startedAt: number; expiresAt: number; holds: number; timer: NodeJS.Timeout | null; owners: Set<string>; via: Set<string> }
 const agentSessions = new Map<string, AgentSession>();
 type AwarenessDoc = { awareness?: { setLocalState(s: unknown): void; getLocalState(): unknown } };
 
 const sessionLive = (s: AgentSession | undefined, now = Date.now()): boolean => !!s && (s.holds > 0 || s.expiresAt > now);
 
 /** An agent edit held off by people typing: what it would change (Yjs relative positions) and which clients it waits on, shown to them in the editor. */
-interface AgentWait { id: string; ranges: Array<{ from: unknown; to: unknown }>; clients: number[]; owners: Set<string>; until: number; timer: NodeJS.Timeout }
+interface AgentWait { id: string; ranges: Array<{ from: unknown; to: unknown }>; clients: number[]; owners: Set<string>; via: Set<string>; until: number; timer: NodeJS.Timeout }
 /** How long a held-off edit is announced, and how long an "Allow now" for it holds. */
 export const AGENT_WAIT_MS = 60_000;
 const agentWaits = new Map<string, AgentWait>();
@@ -994,7 +997,7 @@ function syncAgentAwareness(name: string, doc = hocuspocus.documents.get(name) a
   }
   const session = presence ? agentSessions.get(presence.session) : undefined;
   doc.awareness.setLocalState({
-    user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(presence?.owners ?? wait!.owners), startedAt: session?.startedAt ?? now },
+    user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(presence?.owners ?? wait!.owners, presence?.via ?? wait!.via), startedAt: session?.startedAt ?? now },
     ...(wait ? { agentWait: { id: wait.id, ranges: wait.ranges, clients: wait.clients, until: wait.until } } : {}),
   });
 }
@@ -1012,7 +1015,7 @@ function clearAgentWait(name: string): void {
  * change: they can let it in at once ("Allow now"). One announcement per
  * file, the latest; it lapses after AGENT_WAIT_MS or when an agent edit lands.
  */
-export function announceAgentWait(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>, clients: number[], owner?: string | null): void {
+export function announceAgentWait(projectId: string, branch: string, filePath: string, ranges: Array<{ from: number; to: number }>, clients: number[], owner?: string | null, via?: string | null): void {
   const name = docName(projectId, branch, filePath);
   const doc = hocuspocus.documents.get(name) as (Y.Doc & AwarenessDoc) | undefined;
   if (!doc?.awareness || !ranges.length || !clients.length) return;
@@ -1027,6 +1030,7 @@ export function announceAgentWait(projectId: string, branch: string, filePath: s
     ranges: ranges.map((r) => ({ from: rel(r.from), to: rel(r.to) })),
     clients: [...new Set(clients)],
     owners: new Set(owner ? [owner] : []),
+    via: new Set(via ? [via] : []),
     until: Date.now() + AGENT_WAIT_MS,
     timer,
   });
@@ -1053,7 +1057,7 @@ function publishBranchAgent(projectId: string, branch: string): void {
   const files: string[] = [];
   for (const [name, live] of agentPresence) if (name.startsWith(prefix) && live.expiresAt > now) files.push(name.slice(prefix.length));
   try {
-    doc.awareness.setLocalState({ user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(session.owners), startedAt: session.startedAt }, files: files.sort() });
+    doc.awareness.setLocalState({ user: { ...AGENT_AWARENESS_USER, name: agentDisplayName(session.owners, session.via), startedAt: session.startedAt }, files: files.sort() });
   } catch { /* doc unloaded meanwhile */ }
 }
 
@@ -1085,18 +1089,19 @@ function armSession(key: string, session: AgentSession): void {
  * start time survives re-marks, so its first commit is still the session's
  * after a reload.
  */
-export function markAgentPresence(projectId: string, branch: string, filePath: string, owner?: string | null): void {
+export function markAgentPresence(projectId: string, branch: string, filePath: string, owner?: string | null, via?: string | null): void {
   const name = docName(projectId, branch, filePath);
   const key = changesKey(projectId, branch);
   const now = Date.now();
   let session = agentSessions.get(key);
   if (!session || !sessionLive(session, now)) {
     if (session?.timer) clearTimeout(session.timer);
-    session = { startedAt: now, expiresAt: 0, holds: 0, timer: null, owners: new Set() };
+    session = { startedAt: now, expiresAt: 0, holds: 0, timer: null, owners: new Set(), via: new Set() };
     agentSessions.set(key, session);
   }
   session.expiresAt = now + AGENT_PRESENCE_TTL_MS;
   if (owner) session.owners.add(owner);
+  if (via) session.via.add(via);
   armSession(key, session);
   const prev = agentPresence.get(name);
   if (prev) clearTimeout(prev.timer);
@@ -1108,7 +1113,9 @@ export function markAgentPresence(projectId: string, branch: string, filePath: s
   timer.unref?.();
   const owners = new Set(prev && prev.expiresAt > now ? prev.owners : []);
   if (owner) owners.add(owner);
-  const live: AgentPresence = { expiresAt: now + AGENT_PRESENCE_TTL_MS, timer, owners, session: key };
+  const clients = new Set(prev && prev.expiresAt > now ? prev.via : []);
+  if (via) clients.add(via);
+  const live: AgentPresence = { expiresAt: now + AGENT_PRESENCE_TTL_MS, timer, owners, via: clients, session: key };
   agentPresence.set(name, live);
   // An agent edit is landing in this file: whatever it waited on is over.
   const wait = agentWaits.get(name);

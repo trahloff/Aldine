@@ -48,9 +48,13 @@ export function revertSummary(r: { commits: number; files: number; branch: strin
     + `It adds a new commit ${by}; the history keeps both, and Undo brings the changes back.`;
 }
 
-/** "Claude (for Ada)": who asked, from the commits' requester trailers; the
- *  server names the presence the same way (collab.ts agentDisplayName). */
-export function agentName(requesters: Iterable<string | undefined>): string {
-  const names = [...new Set([...requesters].filter((n): n is string => !!n))];
-  return names.length ? `Claude (for ${names.join(', ')})` : 'Claude';
+/** "ChatGPT (for Ada)": which connected client wrote and who asked, from the
+ *  commits' trailers; "Claude" when no commit names its client. The server
+ *  names the presence the same way (collab.ts agentDisplayName). */
+export function agentName(commits: Iterable<{ onBehalfOf?: string; client?: string }>): string {
+  const all = [...commits];
+  const distinct = (pick: (c: { onBehalfOf?: string; client?: string }) => string | undefined) => [...new Set(all.map(pick).filter((n): n is string => !!n))];
+  const names = distinct((c) => c.onBehalfOf);
+  const agent = distinct((c) => c.client).join(', ') || 'Claude';
+  return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }

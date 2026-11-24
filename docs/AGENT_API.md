@@ -538,7 +538,14 @@ same `path`, `branch`, `head` and `contentVersion` as a success.
   commit's title always names what it holds. With accounts, each Claude
   commit ends with an `On-behalf-of: <name>` trailer naming the owner of
   the access token; the author stays "Claude", which History and the review
-  prompts key on, and a message cannot carry a trailer of its own. Before a write, whatever a
+  prompts key on, and a message cannot carry a trailer of its own. A commit
+  made through a client connected with Connect also carries
+  `Agent-client: <name>`, the name that client registered under and its
+  person approved ("ChatGPT", "Claude Code"); History, the review prompt,
+  the presence chip and the assistant's comments then read "ChatGPT (for
+  Ada)". A personal access token names no client, and those commits read
+  "Claude (for Ada)" as before ([ASSISTANT_NAMES.md](ASSISTANT_NAMES.md)).
+  Before a write, whatever a
   person had typed into that file and not yet committed is checkpointed
   separately, and the commit is built from the text the tool held while it
   applied the edit — not from the working tree — so a Claude commit's diff

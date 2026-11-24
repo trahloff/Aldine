@@ -19,7 +19,7 @@ const NO_PERSON = 'Aldine';
 import { agentName } from '../util/agentReview';
 
 /** The commit's author as History names it: an agent commit says for whom. */
-const authorLabel = (c: LogEntry) => (c.author === 'Claude' ? agentName([c.onBehalfOf]) : c.author);
+const authorLabel = (c: LogEntry) => (c.author === 'Claude' ? agentName([c]) : c.author);
 
 /** `version` bumps whenever the branch changed elsewhere (the files signal,
  *  a revert, an agent session ending); `live` polls while an agent is present,
