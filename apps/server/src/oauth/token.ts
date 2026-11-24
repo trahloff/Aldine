@@ -3,7 +3,7 @@ import { db } from '../db/index.js';
 import type { RefreshTokenRecord } from '../db/types.js';
 import * as auth from '../auth.js';
 import { OAuthError } from './errors.js';
-import { consumeCode } from './codes.js';
+import { clientRemovedSince, consumeCode } from './codes.js';
 import { isOurResource, SCOPE } from './metadata.js';
 
 /**
@@ -84,6 +84,7 @@ export async function exchangeCode(issuer: string, p: Params): Promise<TokenResp
   if (!code || !clientId || !redirectUri) throw new OAuthError('invalid_request', 'code, client_id and redirect_uri are required');
   if (!verifier || !VERIFIER_RE.test(verifier)) throw new OAuthError('invalid_request', 'code_verifier is required (43–128 unreserved characters)');
   checkResource(issuer, param(p, 'resource'));
+  const started = Date.now();
   const hit = consumeCode(code);
   if (hit.status === 'reused') {
     // RFC 6749 §4.1.2: a second exchange revokes everything the first produced.
@@ -101,6 +102,12 @@ export async function exchangeCode(issuer: string, p: Params): Promise<TokenResp
   if (hit.markUsed(family)) {
     // The code was presented again while this exchange was minting: the
     // replay could not name the family yet, so the revocation happens here.
+    await revokeFamily(family);
+    throw new OAuthError('invalid_grant', 'The authorization code is invalid or has expired');
+  }
+  if (clientRemovedSince(g.clientId, started)) {
+    // An administrator removed the client while this exchange was minting:
+    // their revocation ran before the family had a refresh token to find.
     await revokeFamily(family);
     throw new OAuthError('invalid_grant', 'The authorization code is invalid or has expired');
   }

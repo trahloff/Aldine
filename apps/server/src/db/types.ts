@@ -419,7 +419,7 @@ export interface DataStore {
   countOAuthClients(): Promise<number>;
   /** Delete the `n` clients with the oldest lastUsedAt. Returns how many were removed. */
   evictOldestOAuthClients(n: number): Promise<number>;
-  /** Every registered client, most recently used first. */
+  /** Every registered client, most recently used first, then by id; both in code-unit order. */
   listOAuthClients(): Promise<OAuthClient[]>;
   /** Remove one registration. Reports whether it existed. Its tokens are
    *  not touched: revokeCredentialsForClient does that. */
@@ -440,7 +440,9 @@ export interface DataStore {
   revokeCredentialsForUser(userId: string, revokedAt: string): Promise<void>;
   /** Per client id, how many consents are live at `now`: families with a
    *  refresh token that is neither revoked nor expired. Covers clients that
-   *  are not stored (metadata-document ids), with the name they connected under. */
+   *  are not stored (metadata-document ids), with the name they connected
+   *  under (the greatest in code-unit order when consents differ). Sorted by
+   *  client id in code-unit order. */
   listOAuthConnections(now: string): Promise<OAuthConnectionCount[]>;
   /** Revoke every refresh token issued to `clientId` and every access token
    *  in those families, for all users. Returns how many families it ended.

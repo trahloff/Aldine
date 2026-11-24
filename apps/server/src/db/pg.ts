@@ -345,7 +345,7 @@ export class PgStore implements DataStore {
     return rows.length;
   }
   async listOAuthClients() {
-    const { rows } = await this.pool.query(`SELECT * FROM oauth_clients ORDER BY last_used_at DESC, id ASC`);
+    const { rows } = await this.pool.query(`SELECT * FROM oauth_clients ORDER BY last_used_at COLLATE "C" DESC, id COLLATE "C" ASC`);
     return rows.map((r) => this.rowToClient(r));
   }
   async deleteOAuthClient(id: string) {
@@ -389,8 +389,8 @@ export class PgStore implements DataStore {
   }
   async listOAuthConnections(now: string) {
     const { rows } = await this.pool.query(
-      `SELECT client_id, max(client_name) AS client_name, count(DISTINCT family)::int AS n FROM refresh_tokens
-       WHERE revoked_at IS NULL AND expires_at > $1 GROUP BY client_id ORDER BY client_id ASC`, [now],
+      `SELECT client_id, max(client_name COLLATE "C") AS client_name, count(DISTINCT family)::int AS n FROM refresh_tokens
+       WHERE revoked_at IS NULL AND expires_at > $1 GROUP BY client_id ORDER BY client_id COLLATE "C" ASC`, [now],
     );
     return rows.map((r) => ({ clientId: String(r.client_id), clientName: String(r.client_name), connections: Number(r.n) }));
   }

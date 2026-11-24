@@ -29,7 +29,7 @@ const { initDb, closeDb, db } = await import('../src/db/index.ts');
 await initDb();
 const auth = await import('../src/auth.ts');
 const { authenticateMcp } = await import('../src/mcp/guards.ts');
-const { issueCode } = await import('../src/oauth/codes.ts');
+const { issueCode, discardCodesForClient } = await import('../src/oauth/codes.ts');
 const { exchangeCode, refreshTokens } = await import('../src/oauth/token.ts');
 const { registerClient } = await import('../src/oauth/register.ts');
 const { registerRoutes } = await import('../src/routes.ts');
@@ -52,12 +52,14 @@ const live = async (token) => (await authenticateMcp(`Bearer ${token}`, undefine
 
 const ISSUER = 'https://aldine.test';
 /** A consent for `userId` given to `client`, exchanged the way a client does. */
-async function consent(userId, client) {
+function approve(userId, client) {
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
   const code = issueCode({ clientId: client.id, clientName: client.name, redirectUri: client.redirect, codeChallenge: challenge, resource: null, scope: 'projects', userId, projectIds: null });
-  return exchangeCode(ISSUER, { code, client_id: client.id, redirect_uri: client.redirect, code_verifier: verifier });
+  return { code, client_id: client.id, redirect_uri: client.redirect, code_verifier: verifier };
 }
+const consent = (userId, client) => exchangeCode(ISSUER, approve(userId, client));
+const refused = (p) => p.then(() => false, (e) => e.code === 'invalid_grant');
 
 const root = await signUp('root@example.org', 'Root');
 const bob = await signUp('bob@example.org', 'Bob');
@@ -140,6 +142,36 @@ try {
   eq([list.clients[0].id, list.clients[0].kind, list.clients[0].hosts, list.clients[0].connections], [LRU.id, 'removed', [], 1], 'a client whose registration is gone still shows while a consent is live');
   eq((await remove(root.cookie, LRU.id)).json(), { ok: true, removed: false, connections: 1 }, 'and can be ended from the list');
   check(!(await live(carolLru.access_token)), 'which ends the connection');
+
+  // ---- a consent given just before the removal is not exchanged after it ----
+  const late = await registerClient({ client_name: 'Late', redirect_uris: ['https://late.example/cb'] });
+  const LATE = { id: late.client_id, name: 'Late', redirect: 'https://late.example/cb' };
+  const pending = approve(bob.id, LATE);
+  eq((await remove(root.cookie, LATE.id)).json(), { ok: true, removed: true, connections: 0 }, 'a client with only a pending approval is removed');
+  check(await refused(exchangeCode(ISSUER, pending)), 'the code approved before the removal is refused');
+  eq((await clients()).clients, [], 'so the client does not come back with a connection');
+
+  // ---- nor one whose exchange is minting while the administrator removes the client ----
+  const RACE = { id: 'https://race.example/client.json', name: 'Race', redirect: 'https://race.example/cb' };
+  const store = db();
+  const realCreateRefresh = store.createRefresh.bind(store);
+  let accessMinted = null;
+  store.createRefresh = async (r) => {
+    // the removal lands after the access token exists and before its refresh token does
+    store.createRefresh = realCreateRefresh;
+    accessMinted = r.tokenId;
+    discardCodesForClient(RACE.id);
+    await store.revokeCredentialsForClient(RACE.id, new Date().toISOString());
+    return realCreateRefresh(r);
+  };
+  check(await refused(exchangeCode(ISSUER, approve(carol.id, RACE))), 'an exchange overtaken by the removal is refused');
+  check(accessMinted !== null && (await store.getToken(accessMinted)).revokedAt !== null, 'and the access token it had already minted is revoked');
+  eq((await clients()).clients, [], 'no connection is left behind');
+  // a client removed earlier can be approved again later: the marker is about exchanges under way
+  await new Promise((r) => setTimeout(r, 5));
+  const back = await consent(carol.id, RACE);
+  check(await live(back.access_token), 'a consent given after the removal works');
+  await remove(root.cookie, RACE.id);
 
   // ---- closed registration is reported ----
   process.env.ALDINE_OAUTH_REGISTRATION = 'closed';

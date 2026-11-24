@@ -437,7 +437,14 @@ async function runSuite(store, label) {
   const kOld = kRf(43, { family: `kc-${t}`, expiresAt: inDays(1) });
   const kDone = kRf(44, { family: `kd-${t}`, revokedAt: '2026-06-03T00:00:00.000Z' });
   const mLive = rf(45, { clientId: mId, clientName: 'Client M', family: `mx-${t}` });
-  for (const r of [kA, kA2, kB, kOld, kDone, mLive]) await store.createRefresh(r);
+  // ids that differ in case only, and one client under two names: every backend orders and names them alike
+  const zUp = rf(46, { clientId: `aldc_Z-${t}`, clientName: 'beta', family: `zu-${t}` });
+  const zUp2 = rf(47, { clientId: `aldc_Z-${t}`, clientName: 'Alpha', family: `zu2-${t}` });
+  const zLow = rf(48, { clientId: `aldc_a-${t}`, clientName: 'Lower', family: `zl-${t}` });
+  for (const r of [kA, kA2, kB, kOld, kDone, mLive, zUp, zUp2, zLow]) await store.createRefresh(r);
+  eq((await store.listOAuthConnections(inDays(0))).filter((c) => c.clientId === zUp.clientId || c.clientId === zLow.clientId),
+    [{ clientId: zUp.clientId, clientName: 'beta', connections: 2 }, { clientId: zLow.clientId, clientName: 'Lower', connections: 1 }],
+    `${label}: listOAuthConnections sorts ids in code-unit order (upper case first) and names a client by its greatest name`);
   const kTok = (n, over) => ({ ...oa1, id: `ktok${n}-${t}`, hash: `digest-ktok${n}-${t}`, ...over });
   const tKa = kTok(1, { family: `ka-${t}` });
   const tKb = kTok(2, { family: `kb-${t}`, userId: bystander });

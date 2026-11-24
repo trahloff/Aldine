@@ -13,6 +13,7 @@ import { hocuspocus, onlineUserIds } from './collab.js';
 import { deleteConfirmation, endSockets, removeAccount } from './account.js';
 import { adminLimiter, clientKey } from './ratelimit.js';
 import { registrationMode, type RegistrationMode } from './oauth/registration.js';
+import { discardCodesForClient } from './oauth/codes.js';
 
 /**
  * Instance administration: server-wide metadata for the operator, and the
@@ -165,7 +166,6 @@ async function adminUser(id: string): Promise<AdminUserRow | null> {
 
 // ---------- account actions ----------
 
-/** The account's name in the log: never the display name, which is free text. */
 /** One assistant client as the administrator sees it. `registered`: stored
  *  here by dynamic registration or `oauth:add-client`. `metadata`: named by
  *  its metadata document URL, nothing stored. `removed`: a registration that
@@ -203,6 +203,7 @@ async function adminClients(): Promise<{ registration: RegistrationMode; clients
   return { registration: registrationMode(), clients: rows };
 }
 
+/** The account's name in the log: never the display name, which is free text. */
 const who = (u: { id: string; email: string | null; subject?: string }) => `${u.email ?? u.subject ?? 'no address'} [${u.id}]`;
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
@@ -360,10 +361,12 @@ export async function registerAdminRoutes(app: FastifyInstance, reqUser: (req: F
       const id = typeof req.body?.id === 'string' ? req.body.id : '';
       const row = id && id.length <= 2048 ? (await adminClients()).clients.find((c) => c.id === id) : undefined;
       if (!row) return reply.code(404).send({ error: 'There is no such client' });
-      // The registration first, so no consent can complete between the two
-      // steps. Stopped halfway, the client still shows here as `removed`
-      // with its live connections and can be removed again.
+      // The registration and the pending codes first, so no new consent
+      // starts and none already given is exchanged after the revocation.
+      // Stopped halfway, the client still shows here as `removed` with its
+      // live connections and can be removed again.
       const removed = await db().deleteOAuthClient(row.id);
+      discardCodesForClient(row.id);
       await db().revokeCredentialsForClient(row.id, new Date().toISOString());
       console.log(`[aldine] admin ${who(actor)} removed assistant client ${JSON.stringify(row.name)} [${row.id}] (${count(row.connections, 'connection')} ended${removed ? '' : ', nothing stored to delete'})`);
       return { ok: true, removed, connections: row.connections };

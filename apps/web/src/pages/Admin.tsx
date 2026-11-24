@@ -91,36 +91,44 @@ function SupportCard() {
   );
 }
 
-const people = (n: number) => `${n} ${n === 1 ? 'connection' : 'connections'}`;
+const connectionCount = (n: number) => `${n} ${n === 1 ? 'connection' : 'connections'}`;
 
 /**
  * The assistant clients people connected with Connect (Claude, ChatGPT and
  * others), over all accounts, and the one action on them: Remove ends every
  * connection made through the client and deletes its registration. Whose
  * connections they are is not shown; each person sees their own in Account
- * settings.
+ * settings. `now` moves with every refresh of the page's numbers; the list
+ * reloads with it.
  */
-/** `now` moves with every refresh of the page's numbers; the list reloads with it. */
 function ClientsCard({ now }: { now: number }) {
   const dialogs = useDialogs();
   const [data, setData] = useState<AdminClients | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
-  const load = () => api.adminClients().then(setData, () => {});
+  const [failed, setFailed] = useState(false);
+  const load = () => api.adminClients().then((d) => { setData(d); setFailed(false); }, () => setFailed(true));
   useEffect(() => { load(); }, [now]);
-  if (!data) return null;
+  if (!data) {
+    return failed ? (
+      <section data-testid="admin-clients">
+        <h2 className="home__section">Assistant clients</h2>
+        <p className="admin__error" role="alert" data-testid="admin-clients-error">Could not load the assistant clients. Use Refresh to try again.</p>
+      </section>
+    ) : null;
+  }
   const remove = async (c: AdminClientRow) => {
     const comeBack = data.registration === 'closed'
       ? (c.kind === 'registered' ? 'Registration is closed on this server, so the client cannot come back until you register it again.' : 'Registration is closed on this server, so the client cannot connect again.')
       : 'Registration is open on this server, so the client can register again and people can connect again.';
-    const ends = c.connections ? `This ends ${people(c.connections)} at once: the assistant loses access at its next request.` : 'Nobody is connected through it.';
+    const ends = c.connections ? `This ends ${connectionCount(c.connections)} at once: the assistant loses access at its next request.` : 'Nobody is connected through it.';
     const ok = await dialogs.confirm({ title: `Remove ${c.name}?`, body: `${ends} ${comeBack} Access tokens people made by hand are not affected.`, confirmLabel: 'Remove client', danger: true });
     if (!ok) return;
     setBusy(c.id);
     setMessage(null);
     try {
       const res = await api.removeAdminClient(c.id);
-      setMessage({ text: `Removed ${c.name}. ${res.connections ? `${people(res.connections)} ended.` : 'Nobody was connected.'}`, error: false });
+      setMessage({ text: `Removed ${c.name}. ${res.connections ? `${connectionCount(res.connections)} ended.` : 'Nobody was connected.'}`, error: false });
     } catch (err) {
       setMessage({ text: err instanceof ApiError ? err.message : `Could not remove ${c.name}`, error: true });
     } finally {
@@ -272,6 +280,8 @@ export default function Admin() {
 
             <SupportCard />
 
+            {authEnabled && <ClientsCard now={now} />}
+
             <h2 className="home__section">Accounts</h2>
             <div className="admin__table-wrap">
               <table className="admin__table" data-testid="admin-users">
@@ -323,7 +333,6 @@ export default function Admin() {
                 </tbody>
               </table>
             </div>
-            {authEnabled && <ClientsCard now={now} />}
             <p className="admin__foot">
               Admins: {stats.admins.length ? stats.admins.join(', ') : 'none configured (auth is off, so everyone can see this page)'}.
               Activity is recorded to the nearest few minutes. Project files are never shown here.

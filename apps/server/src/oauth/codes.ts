@@ -97,7 +97,31 @@ export function discardCodesForUser(userId: string): void {
   for (const [k, v] of codes) if (v.userId === userId) codes.delete(k);
 }
 
+/** When an administrator removed each client, kept for one code lifetime:
+ *  an exchange that began before the removal and mints after it has to learn
+ *  of it (clientRemovedSince). Per process, like the codes themselves. */
+const removedClients = new Map<string, number>();
+
+/**
+ * An administrator removed the client: no code issued to it may be exchanged
+ * any more. Codes live in this process, so on a multi-node deployment a code
+ * issued by another node survives; the connection it makes shows on the
+ * admin page again and can be removed there.
+ */
+export function discardCodesForClient(clientId: string, now = Date.now()): void {
+  for (const [k, v] of codes) if (v.clientId === clientId) codes.delete(k);
+  for (const [k, at] of removedClients) if (now - at > CODE_TTL_MS) removedClients.delete(k);
+  removedClients.set(clientId, now);
+}
+
+/** Whether the client was removed at or after `since` (a Date.now() value). */
+export function clientRemovedSince(clientId: string, since: number): boolean {
+  const at = removedClients.get(clientId);
+  return at !== undefined && at >= since;
+}
+
 /** Test hook: drop every outstanding code. */
 export function resetCodesForTests(): void {
   codes.clear();
+  removedClients.clear();
 }

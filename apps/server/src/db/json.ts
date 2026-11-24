@@ -424,7 +424,8 @@ export class JsonStore implements DataStore {
   }
 
   async listOAuthClients() {
-    return this.clone(Object.values(this.oauthClients()).sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt) || a.id.localeCompare(b.id)));
+    const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    return this.clone(Object.values(this.oauthClients()).sort((a, b) => order(b.lastUsedAt, a.lastUsedAt) || order(a.id, b.id)));
   }
   async deleteOAuthClient(id: string) {
     const m = this.oauthClients();
@@ -471,10 +472,11 @@ export class JsonStore implements DataStore {
     for (const r of Object.values(this.refreshTokens())) {
       if (r.revokedAt || r.expiresAt <= now) continue;
       const hit = by.get(r.clientId) ?? { clientName: r.clientName, families: new Set<string>() };
+      if (r.clientName > hit.clientName) hit.clientName = r.clientName;
       hit.families.add(r.family);
       by.set(r.clientId, hit);
     }
-    return [...by].map(([clientId, v]) => ({ clientId, clientName: v.clientName, connections: v.families.size })).sort((a, b) => a.clientId.localeCompare(b.clientId));
+    return [...by].map(([clientId, v]) => ({ clientId, clientName: v.clientName, connections: v.families.size })).sort((a, b) => (a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0));
   }
   async revokeCredentialsForClient(clientId: string, revokedAt: string) {
     const refresh = this.refreshTokens();
