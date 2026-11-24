@@ -83,7 +83,7 @@ store.writeFile(p1.id, 'main', 'agent.tex', 'written by the agent\n');
 scheduleCommit(p1.id, 'main', 'Edit agent.tex', 'Claude', ['agent.tex']);
 await sleep(1200);
 
-let log = await gitops.log(p1.id, 'main');
+let log = await untilLog(p1.id, 'main', (l) => l.some((c) => c.author === 'Claude') && l.some((c) => c.message === 'aldine: autosave'));
 const claude1 = log.find((c) => c.author === 'Claude');
 check(claude1 !== undefined && claude1.message === 'Edit agent.tex', 'agent work commits with author Claude and the stated intent');
 const claudeStat1 = (await gitops.commitDiff(p1.id, claude1.hash)).stat;
@@ -104,7 +104,7 @@ store.writeFile(p2.id, 'main', 'human.tex', 'human keystrokes\n');
 scheduleCommit(p2.id, 'main');
 await sleep(1200);
 
-log = await gitops.log(p2.id, 'main');
+log = await untilLog(p2.id, 'main', (l) => l.some((c) => c.author === 'Claude') && l.some((c) => c.message === 'aldine: autosave'));
 const claude2 = log.find((c) => c.author === 'Claude');
 check(claude2 !== undefined && claude2.message === 'Update agent.tex', "a later human scheduling does not bury the agent's attribution");
 const claudeStat2 = (await gitops.commitDiff(p2.id, claude2.hash)).stat;
@@ -118,7 +118,7 @@ const baseLen = (await gitops.log(p3.id, 'main')).length;
 store.writeFile(p3.id, 'main', 'agent.tex', 'solo agent change\n');
 scheduleCommit(p3.id, 'main', 'Add agent.tex', 'Claude', ['agent.tex']);
 await sleep(1200);
-log = await gitops.log(p3.id, 'main');
+log = await untilLog(p3.id, 'main', (l) => l.length >= baseLen + 1);
 check(log.length === baseLen + 1, `an agent-only window makes exactly one commit (got ${log.length - baseLen})`);
 check(log[0].author === 'Claude' && log[0].message === 'Add agent.tex', 'and it is the attributed one');
 
@@ -200,7 +200,7 @@ await gitops.checkpointPaths(p6.id, 'main', ['main.tex']);
 store.writeFile(p6.id, 'main', 'main.tex', 'agent edit one\nagent edit two\n');
 scheduleCommit(p6.id, 'main', 'Edit main.tex', 'Claude', ['main.tex']);
 await sleep(1200);
-log = await gitops.log(p6.id, 'main');
+log = await untilLog(p6.id, 'main', (l) => l.length >= base6 + 2);
 check(log.length === base6 + 2 && log.slice(0, 2).every((c) => c.author === 'Claude'), 'two agent edits to one file yield two Claude commits, no autosave');
 
 // ---- vanished agent path: an untracked agent-created file deleted before
@@ -213,7 +213,7 @@ scheduleCommit(p7.id, 'main', 'Edit other.tex', 'Claude', ['other.tex']);
 store.deleteFile(p7.id, 'main', 'new.tex');
 scheduleCommit(p7.id, 'main');
 await sleep(1200);
-log = await gitops.log(p7.id, 'main');
+log = await untilLog(p7.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
 const claude7 = log.find((c) => c.author === 'Claude');
 check(claude7 !== undefined && (await gitops.commitDiff(p7.id, claude7.hash)).stat.includes('other.tex'), 'the surviving agent path still commits under Claude');
 check(!log.some((c) => c.message === 'aldine: autosave'), 'nothing is left for the anonymous sweep');
@@ -229,7 +229,7 @@ await agentWrite(p8.id, 'notes.tex', 'a note\n', 'Add reviewer notes');
 // a third write to main.tex checkpoints the pending main.tex under ITS intent
 await agentWrite(p8.id, 'main.tex', 'tightened abstract\nsecond pass\n', 'Second pass on the abstract');
 await sleep(1200);
-log = await gitops.log(p8.id, 'main');
+log = await untilLog(p8.id, 'main', (l) => l.length >= base8 + 3);
 const titles8 = log.slice(0, log.length - base8).map((c) => `${c.author}: ${c.message}`);
 check(log.length === base8 + 3 && log.slice(0, 3).every((c) => c.author === 'Claude'), `three agent intents yield three Claude commits, no autosave (got ${JSON.stringify(titles8)})`);
 const byMsg8 = Object.fromEntries(await Promise.all(log.slice(0, 3).map(async (c) => [c.message, (await gitops.commitDiff(p8.id, c.hash)).stat])));
