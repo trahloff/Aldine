@@ -149,10 +149,12 @@ npm pkg set version=0.4.0 --workspaces --include-workspace-root
 #    block, the image tags and x-casaos version in
 #    deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md,
 #    the JSON-LD version and date and the llms.txt status on aldine.dev,
+#    the self-hosting guide (compose block, FROM tag, "Applies to" line),
 #    and the MCP Registry entry:
 sed -i '' -E 's/("softwareVersion": )"[^"]+"/\1"0.4.0"/; s/("dateModified": )"[^"]+"/\1"'"$(date +%F)"'"/' site/index.html
 sed -i '' -E "s/^Status: [^ ]+ \\([A-Za-z]+ [0-9]{4}\\)/Status: 0.4.0 ($(LC_ALL=C date '+%B %Y'))/" site/llms.txt
 jq '.version = "0.4.0"' server.json > server.json.tmp && mv server.json.tmp server.json
+sed -i '' -E 's/(aldine-(app|compiler):(\$\{ALDINE_VERSION:-)?)[0-9]+\.[0-9]+\.[0-9]+/\10.4.0/g; s/Applies to Aldine [0-9.]+[0-9]/Applies to Aldine 0.4.0/' site/self-hosting/index.html
 #    (GNU sed: -i without ''; scripts/check-release-pins.mjs tells you which
 #    pin you missed)
 # 3. commit, then tag
