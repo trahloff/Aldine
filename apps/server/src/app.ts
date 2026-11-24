@@ -75,6 +75,19 @@ const isProxyAddress = (entry: string) => {
   return rest.length === 0 && net.isIP(addr) !== 0 && (bits === undefined || /^\d{1,3}$/.test(bits));
 };
 
+// Where a reverse proxy that stands beside the app connects from: loopback,
+// the private and link-local ranges, and the shared range Tailscale and some
+// pod networks use.
+const NEARBY = new net.BlockList();
+for (const [addr, bits] of [['127.0.0.0', 8], ['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['169.254.0.0', 16], ['100.64.0.0', 10]] as const) NEARBY.addSubnet(addr, bits, 'ipv4');
+for (const [addr, bits] of [['::1', 128], ['fc00::', 7], ['fe80::', 10]] as const) NEARBY.addSubnet(addr, bits, 'ipv6');
+
+/** Whether a connecting address is a loopback, private or link-local one. */
+export function isNearbyAddress(address: string): boolean {
+  const family = net.isIP(address);
+  return family !== 0 && NEARBY.check(address, family === 6 ? 'ipv6' : 'ipv4');
+}
+
 /**
  * Fastify's trustProxy for TRUST_PROXY: a hop count (`1` for the one reverse
  * proxy of the documented setups), or the comma-separated addresses / CIDR
@@ -83,11 +96,20 @@ const isProxyAddress = (entry: string) => {
  * client wrote itself (nginx's $proxy_add_x_forwarded_for and a load
  * balancer append to the client's header rather than replace it). Unset,
  * `0` or an unreadable value: off, req.ip is the socket address.
+ *
+ * A hop count is honoured only for a connection from a nearby address.
+ * Fastify 5.12 refuses a bare number, because a count says nothing about who
+ * connected: anyone who reaches the app's port directly could write the
+ * forwarded headers themselves. A proxy that connects from a public address
+ * has to be named by address.
  */
-export function trustProxySetting(raw: string | undefined): number | string | false {
+export function trustProxySetting(raw: string | undefined): ((address: string, hop: number) => boolean) | string | false {
   const v = (raw || '').trim();
   if (!v || v === '0') return false;
-  if (/^\d+$/.test(v)) return Number(v);
+  if (/^\d+$/.test(v)) {
+    const hops = Number(v);
+    return (address, hop) => hop < hops && (hop > 0 || isNearbyAddress(address));
+  }
   const entries = v.split(',').map((s) => s.trim());
   if (entries.every((e) => PROXY_NAMES.test(e) || isProxyAddress(e))) return entries.join(',');
   console.warn(`[aldine] TRUST_PROXY=${v} is neither a hop count nor a list of proxy addresses; X-Forwarded-For is ignored`);

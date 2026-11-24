@@ -737,7 +737,7 @@ override file.
 | `SENTRY_DSN` | Error tracking. Server errors only (5xx and unhandled rejections); URLs are sent without their query string, and request bodies, cookies and headers are dropped |
 | `SENTRY_ENVIRONMENT` | Which instance an error came from (`production`, `staging`, …). Defaults to `NODE_ENV`, then `production` |
 | `SENTRY_RELEASE` | Build an error belongs to. Defaults to `ALDINE_VERSION`, then the package version |
-| `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
+| `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. A count is honoured only when the proxy connects from a loopback, private or link-local address; a proxy that connects from a public address has to be named. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |
 | `COOKIE_SECURE` | `1` = Secure session cookies (prod overlay sets it) |
 | `RL_LOGIN_BURST`, `RL_REGISTER_BURST`, `RL_AI_BURST`, `RL_AI_REFILL_PER_MIN`, `RL_REF_BURST`, `RL_SEARCH_BURST`, `RL_REPLACE_BURST`, `RL_COPY_BURST`, `RL_TEMPLATE_REPO_BURST` | Rate-limit tuning (sane defaults) |
 | `RL_ADMIN_BURST` | Account actions on `/admin` one administrator may take in a row (default 30, then one every 2 seconds) |
