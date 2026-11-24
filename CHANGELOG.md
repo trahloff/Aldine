@@ -7,15 +7,7 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
-### Security
-- The app image no longer ships `simple-git` 3.36.0 and `proxy-addr` 2.0.7,
-  which image scanners report as critical (CVE-2026-102828, CVE-2026-102829,
-  CVE-2026-90711). `simple-git` is now 4.1.0 and `proxy-addr` 2.0.8.
-- Dependencies with advisories rated high are updated: `fastify` 5.12.8,
-  `@fastify/static` 10.1.12, `nodemailer` 10.6.1, `zod` 4.6.7, the MCP SDK
-  1.32.2 and `fast-uri`, `find-my-way` and `body-parser` beneath them;
-  `react-router-dom` is 7.18.6 and `katex` 0.18.10. `npm audit --omit=dev`
-  now reports only moderate advisories, all inside the optional Sentry SDK.
+## [1.22.2] — 2026-11-24
 
 ### Changed
 - `TRUST_PROXY` as a hop count (`1`, `2`) is honoured only when the proxy
@@ -25,6 +17,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `X-Forwarded-For` themselves. A proxy that connects from a public address
   has to be named: `TRUST_PROXY=<its address or range>`. The documented
   setups need no change.
+
+### Security
+- The app image no longer ships `simple-git` 3.36.0 and `proxy-addr` 2.0.7,
+  which image scanners report as critical (CVE-2026-102828, CVE-2026-102829,
+  CVE-2026-90711). `simple-git` is now 4.1.0 and `proxy-addr` 2.0.8.
+- Dependencies with advisories rated high are updated: `fastify` 5.12.8,
+  `@fastify/static` 10.1.12, `nodemailer` 10.6.1, `zod` 4.6.7, the MCP SDK
+  1.32.2 and `fast-uri`, `find-my-way` and `body-parser` beneath them;
+  `react-router-dom` is 7.18.6 and `katex` 0.18.10. `npm audit --omit=dev`
+  now reports only moderate advisories, all inside the optional Sentry SDK.
 
 ## [1.22.1] — 2026-11-23
 
