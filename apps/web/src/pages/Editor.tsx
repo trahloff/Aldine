@@ -917,7 +917,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
         const n = batch.fileCount;
         const scope = batch.commitCount > batch.commits.length ? ` in ${batch.commitCount}${batch.truncated ? '+' : ''} commits` : '';
         reviewShown.current = batch;
-        toast(`${agentName(batch.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
+        toast(`${agentName(batch.commits)} edited ${n} file${n === 1 ? '' : 's'}${scope}`, 'info', {
           label: 'Review',
           testId: 'agent-session-review',
           key: 'agent-review',
@@ -971,7 +971,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
         const scope = res.commitCount > res.commits.length ? ` in ${res.commitCount}${res.truncated ? '+' : ''} commits` : '';
         const when = res.since ? 'while you were away' : 'in this project';
         reviewShown.current = res;
-        toast(`${agentName(res.commits.map((c) => c.onBehalfOf))} edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
+        toast(`${agentName(res.commits)} edited ${n} file${n === 1 ? '' : 's'}${scope} ${when}`, 'info', {
           label: 'Review',
           testId: 'agent-away-review',
           // One review prompt at a time: a session ending replaces this one.

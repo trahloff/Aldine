@@ -254,6 +254,9 @@ export interface LogEntry {
   fileCount?: number;
   /** On an agent commit, the person whose token it was made with. */
   onBehalfOf?: string;
+  /** On an agent commit, the connected client that made it ("ChatGPT"). Absent
+   *  on older commits and on ones made with a personal access token. */
+  client?: string;
   /** Everyone else named on the commit (Co-authored-by), by name. */
   coAuthors?: string[];
 }
@@ -262,7 +265,7 @@ export interface LogEntry {
 export interface AgentActivity {
   since: { head: string; at: string } | null;
   head: string;
-  commits: Array<{ hash: string; date: string; message: string; files: string[]; onBehalfOf?: string }>;
+  commits: Array<{ hash: string; date: string; message: string; files: string[]; onBehalfOf?: string; client?: string }>;
   commitCount: number;
   fileCount: number;
   /** Every path those commits touched, over the whole scan (an older server leaves it out). */

@@ -7,6 +7,16 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- History names the assistant that wrote a change. A commit made through a
+  client connected with Connect carries an `Agent-client` trailer with the
+  name that client registered under, next to `On-behalf-of`, so History, the
+  review prompt, the presence chip and the assistant's comments read
+  "ChatGPT (for Ada)" instead of "Claude (for Ada)" for every assistant. The
+  git author stays "Claude"; commits made with a personal access token and
+  older commits read as before. The log and agent-activity answers gain an
+  optional `client` field (docs/ASSISTANT_NAMES.md).
+
 ## [1.22.2] — 2026-11-24
 
 ### Changed

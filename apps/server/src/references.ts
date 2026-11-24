@@ -380,12 +380,12 @@ export interface AddedReference { key: string; bibFile: string; duplicate: boole
  * throw with a user-readable message. With `author` set the write is
  * checkpointed and committed at once like every other agent mutation, so
  * the attributed commit carries only the new entry, with `requester` (whose
- * token the agent used) as its trailer. `beforeWrite` runs right before the
+ * token the agent used) and `client` (the connected client) as its trailers. `beforeWrite` runs right before the
  * file is written — and not at all when nothing is.
  * `alsoIn`: other .bib files the paper reads; a paper already in one of them
  * is reported there (duplicate, that file) and nothing is written.
  */
-export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void, alsoIn: string[] = [], requester?: string | null): Promise<AddedReference | null> {
+export async function addReference(projectId: string, branch: string, query: string, bibFile: string, author?: string, beforeWrite?: () => void, alsoIn: string[] = [], requester?: string | null, client?: string | null): Promise<AddedReference | null> {
   const entry = await fetchBibEntry(query.trim());
   if (!entry) return null;
   await ensureWorktree(projectId, branch);
@@ -428,7 +428,7 @@ export async function addReference(projectId: string, branch: string, query: str
     await checkpointPathsHeld(projectId, branch, [bibFile]);
     flushBranchDocs(projectId, branch);
     const { key, bibFile: file, duplicate, created, before, after } = append();
-    if (!duplicate) await commitAgentWrite(projectId, branch, [{ path: bibFile, before, after }], agentCommitMessage(`Add reference ${key || bibFile}`, requester));
+    if (!duplicate) await commitAgentWrite(projectId, branch, [{ path: bibFile, before, after }], agentCommitMessage(`Add reference ${key || bibFile}`, requester, client));
     return { key, bibFile: file, duplicate, created };
   });
 }

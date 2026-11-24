@@ -479,7 +479,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
   const csp = viewerCsp(base);
   /** Whose token the calls run under: named beside Claude in presence and in each commit. */
   const owner = identity.user ? (identity.user.name || identity.user.email || null) : null;
-  const intent = (message: string) => gitops.agentCommitMessage(message, owner);
+  /** The connected client the token was issued to, as History and presence name it; '' for a personal access token. */
+  const via = gitops.agentClientName(identity.tokenScope?.clientName);
+  const intent = (message: string) => gitops.agentCommitMessage(message, owner, via);
   const resourceMeta = csp ? { ui: { csp } } : undefined;
 
   // The resource is always listed so the contract is stable; the tools point
@@ -688,12 +690,12 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           const changed = changedRanges(res.ranges, liveEdits);
           const busy = peopleEditingRanges(meta.id, branch, rel, changed);
           if (busy.length && !force) {
-            announceAgentWait(meta.id, branch, rel, busy.map((b) => changed[b.index]), busy.flatMap((b) => b.clients), owner);
+            announceAgentWait(meta.id, branch, rel, busy.map((b) => changed[b.index]), busy.flatMap((b) => b.clients), owner, via);
             return failed(userEditing(toBlocked(busy)));
           }
           overrode = [...new Set(busy.flatMap((b) => b.names))];
           // Presence first, so the chip is up when the change arrives.
-          markAgentPresence(meta.id, branch, rel, owner);
+          markAgentPresence(meta.id, branch, rel, owner, via);
           // Back-to-front, same tick: earlier offsets stay valid, and no human
           // keystroke can interleave. 'stale' from the CRDT apply is impossible
           // here by construction but handled defensively anyway.
@@ -721,7 +723,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           }
           before = raw;
           newContent = spliceEdits(current, edits, res.ranges);
-          markAgentPresence(meta.id, branch, rel, owner);
+          markAgentPresence(meta.id, branch, rel, owner, via);
           store.writeFile(meta.id, branch, rel, newContent);
           // Reseed rather than mark: a doc of this file that the registry
           // holds under another name would otherwise write the old text back
@@ -771,7 +773,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
         }
         const open = openDocContent(meta.id, branch, rel);
         const before = open !== null ? inFileLineEndings(meta.id, branch, rel, open) : diskContent(meta.id, branch, rel);
-        markAgentPresence(meta.id, branch, rel, owner);
+        markAgentPresence(meta.id, branch, rel, owner, via);
         store.writeFile(meta.id, branch, rel, content);
         refreshBranchDocsFromDisk(meta.id, branch, [rel], { agent: new Map([[rel, before]]) });
         signalAgentWrite(meta.id, branch);
@@ -880,11 +882,11 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           writes.push({ path: f.path, before: raw ?? inFileLineEndings(meta.id, branch, f.path, current), next: spliceEdits(current, edits, res.ranges), live });
         }
         if (blocked.length && !force) {
-          for (const w of waits) announceAgentWait(meta.id, branch, w.path, w.ranges, w.clients, owner);
+          for (const w of waits) announceAgentWait(meta.id, branch, w.path, w.ranges, w.clients, owner, via);
           return failed(blocked[0].path!, userEditing(blocked));
         }
         const overrode = [...new Set(blocked.flatMap((b) => b.editors))];
-        for (const w of writes) markAgentPresence(meta.id, branch, w.path, owner);
+        for (const w of writes) markAgentPresence(meta.id, branch, w.path, owner, via);
         const reseed = new Map<string, string | Buffer | null>();
         for (const w of writes) {
           if (!w.live) { store.writeFile(meta.id, branch, w.path, w.next); reseed.set(w.path, w.before); continue; }
@@ -1122,13 +1124,15 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
     if (protectedProjects.has(meta.id)) throw new McpDenied('That project is read-only');
     if (!canComment(meta, identity.user)) throw new McpDenied('You can view this project, not comment on it: ask its owner for review or edit access');
   };
-  const commentAuthor = () => agentDisplayName(owner ? [owner] : []);
+  const commentAuthor = () => agentDisplayName(owner ? [owner] : [], via ? [via] : []);
+  /** The signature agent comments carried before clients were named. */
+  const legacyCommentAuthor = () => agentDisplayName(owner ? [owner] : []);
   const commentActor = () => ({ id: identity.user?.id, name: commentAuthor() });
   /** Written by the user, or by an agent for them; without accounts everything is the one user's.
    *  Agent comments from before 1.21 carry no agentFor, only the signature. */
   const writtenForMe = (x: { author: string; authorId?: string; agentFor?: string }) =>
     !identity.user || x.authorId === identity.user.id || x.agentFor === identity.user.id
-    || (!x.authorId && !x.agentFor && x.author === commentAuthor());
+    || (!x.authorId && !x.agentFor && x.author === legacyCommentAuthor());
   const noComment = (id: string) => `No comment ${id} in this project — list_comments names the threads`;
   /** People by the name Aldine shows ("me": the user), or the reason none can be. */
   const findPeople = async (meta: store.ProjectMeta, names: string[]): Promise<{ people: Person[] } | { error: string }> => {
@@ -1384,11 +1388,11 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           if (!at) return stale();
           const busy = peopleEditingRanges(meta.id, branch, rel, [at]);
           if (busy.length && !force) {
-            announceAgentWait(meta.id, branch, rel, [at], busy.flatMap((b) => b.clients), owner);
+            announceAgentWait(meta.id, branch, rel, [at], busy.flatMap((b) => b.clients), owner, via);
             return ok({ ...userEditing(toBlocked(busy)), path: rel, ...(await echo(meta.id, branch)) });
           }
           overrode = [...new Set(busy.flatMap((b) => b.names))];
-          markAgentPresence(meta.id, branch, rel, owner);
+          markAgentPresence(meta.id, branch, rel, owner, via);
           if (applySuggestionToDoc(meta.id, branch, rel, c.anchor, suggestion, AGENT_ORIGIN) !== 'applied') return stale();
           before = inFileLineEndings(meta.id, branch, rel, live);
           after = inFileLineEndings(meta.id, branch, rel, openDocContent(meta.id, branch, rel) ?? '');
@@ -1401,7 +1405,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
           const next = text.slice(0, at.from) + suggestion + text.slice(at.to);
           before = raw;
           after = crlf ? withCrlf(next) : next;
-          markAgentPresence(meta.id, branch, rel, owner);
+          markAgentPresence(meta.id, branch, rel, owner, via);
           store.writeFile(meta.id, branch, rel, after);
           refreshBranchDocsFromDisk(meta.id, branch, [rel], { agent: new Map([[rel, raw]]) });
         }
@@ -1529,7 +1533,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       try {
         // Right before the write, like every write tool: a lookup that
         // finds nothing or a duplicate must not show Claude in the .bib.
-        added = await addReference(meta.id, branch, query, target, 'Claude', () => markAgentPresence(meta.id, branch, target, owner), [], owner);
+        added = await addReference(meta.id, branch, query, target, 'Claude', () => markAgentPresence(meta.id, branch, target, owner, via), [], owner, via);
       } catch (err) {
         // references.ts messages name the upstream and its HTTP status — the
         // user can act on them; a bare network failure (undici's TypeError,

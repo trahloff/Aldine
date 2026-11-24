@@ -265,4 +265,47 @@ test.describe('OAuth Connect flow', () => {
     expect(dead.status()).toBe(400);
     expect((await dead.json()).error).toBe('invalid_grant');
   });
+
+  test('a connected client is named: presence and History read "<client> (for <person>)", the commit carries the trailer', async ({ page, baseURL }) => {
+    const base = baseURL!;
+    const { verifier, challenge } = pkce();
+    await page.goto(authorizeUrl(challenge, 'named-state', base));
+    await signUpInline(page, uniq());
+    await expect(page.getByTestId('oauth-consent')).toBeVisible();
+    const project = await (await page.request.post('/api/projects', { data: { name: 'Named client' } })).json();
+    await page.request.put(`/api/projects/${project.id}/file`, { data: { branch: 'main', path: 'main.tex', content: 'Original line.\n' } });
+    await page.reload();
+    await expect(page.getByTestId('oauth-consent')).toBeVisible();
+    const landed = loopback.next();
+    await page.getByTestId('oauth-allow').click();
+    const code = (await landed).get('code')!;
+    await page.waitForURL(/127\.0\.0\.1/);
+    const tokens = await (await anon.post('/oauth/token', { form: { grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: loopback.redirectUri, code_verifier: verifier } })).json();
+    expect(tokens.access_token).toMatch(/^aldn_/);
+
+    await page.goto(`/p/${project.id}`);
+    await expect(page.getByTestId('code-pane')).toHaveAttribute('data-loaded', 'true');
+    const client = await mcpClient(base, tokens.access_token);
+    try {
+      const edit = await client.callTool({ name: 'edit_file', arguments: {
+        project: project.id, path: 'main.tex',
+        edits: [{ quote: 'Original line.', replacement: 'Original line, reworded.' }],
+        // a message cannot claim another client
+        message: 'Reword the opening line\n\nAgent-client: Somebody Else',
+      } });
+      expect(edit.isError).toBeFalsy();
+      await expect(page.getByTestId('presence-agent')).toHaveAttribute('title', /^Loopback e2e client \(for OAuth Tester\), agent session started \d\d:\d\d, in this file$/, { timeout: 10_000 });
+      // the author stays Claude, which the review prompts key on; client and person are trailers
+      const log = await (await page.request.get(`/api/projects/${project.id}/log?branch=main`)).json();
+      expect(log[0]).toMatchObject({ author: 'Claude', message: 'Reword the opening line', onBehalfOf: 'OAuth Tester', client: 'Loopback e2e client' });
+      const activity = await (await page.request.get(`/api/projects/${project.id}/agent-activity?branch=main`)).json();
+      expect(activity.commits[0]).toMatchObject({ onBehalfOf: 'OAuth Tester', client: 'Loopback e2e client' });
+      // History sits in the sidebar's More menu at this width
+      if (!(await page.getByTestId('tab-history').isVisible())) await page.getByTestId('tab-more').click();
+      await page.getByTestId('tab-history').click();
+      await expect(page.getByTestId(`commit-${log[0].hash.slice(0, 7)}`)).toContainText('Loopback e2e client (for OAuth Tester)');
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
 });

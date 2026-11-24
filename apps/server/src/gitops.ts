@@ -650,6 +650,10 @@ export interface LogEntry {
   fileCount?: number;
   /** For an agent commit, whose token it was made with. */
   onBehalfOf?: string;
+  /** For an agent commit, the connected client that made it ("ChatGPT"),
+   *  when the token came from Connect. Absent on older commits and on
+   *  commits made with a personal access token. */
+  client?: string;
   /** Names from Co-authored-by lines (everyone else who typed in an
    *  autosave), without their addresses. */
   coAuthors?: string[];
@@ -681,13 +685,14 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
     // --name-only prints the paths after the header. quotePath off keeps a
     // non-ASCII name readable instead of octal-escaped.
     const raw = await git(repoDir(id)).raw(['-c', 'core.quotePath=false', 'log', branch, ...paging,
-      `--format=%x00%H%x00%aI%x00%an%x00%P%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00%s`, '--name-only', '--diff-merges=first-parent', '--']);
+      `--format=%x00%H%x00%aI%x00%an%x00%P%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00${CLIENT_FORMAT}%x00%s`, '--name-only', '--diff-merges=first-parent', '--']);
     const f = raw.split('\0');
-    for (let i = 1; i + 6 < f.length; i += 7) {
+    for (let i = 1; i + 7 < f.length; i += 8) {
       const hash = f[i].trim();
       if (!/^[0-9a-f]{40}$/.test(hash)) continue;
       const coAuthors = coAuthorsOf(f[i + 5], f[i + 2]);
-      const lines = f[i + 6].split('\n');
+      const client = clientOf(f[i + 6], f[i + 2]);
+      const lines = f[i + 7].split('\n');
       const files = lines.slice(1).map((l) => l.trim()).filter(Boolean);
       const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
       out.push({
@@ -695,19 +700,21 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
         parents: f[i + 3].split(' ').filter(Boolean).length,
         files: files.slice(0, LOG_FILES_MAX), fileCount: files.length,
         ...(onBehalfOf ? { onBehalfOf } : {}),
+        ...(client ? { client } : {}),
         ...(coAuthors.length ? { coAuthors } : {}),
       });
     }
     return out;
   }
-  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, `--format=%H%x00%aI%x00%an%x00%s%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00`, '--']);
+  const raw = await git(repoDir(id)).raw(['log', branch, ...paging, `--format=%H%x00%aI%x00%an%x00%s%x00${REQUESTER_FORMAT}%x00${COAUTHOR_FORMAT}%x00${CLIENT_FORMAT}%x00`, '--']);
   const f = raw.split('\0');
-  for (let i = 0; i + 5 < f.length; i += 6) {
+  for (let i = 0; i + 6 < f.length; i += 7) {
     const hash = f[i].trim(); // the newline git prints after each record leads the next hash
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
     const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
     const coAuthors = coAuthorsOf(f[i + 5], f[i + 2]);
-    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}), ...(coAuthors.length ? { coAuthors } : {}) });
+    const client = clientOf(f[i + 6], f[i + 2]);
+    out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}), ...(client ? { client } : {}), ...(coAuthors.length ? { coAuthors } : {}) });
   }
   return out;
 }
@@ -846,26 +853,50 @@ export async function changedSinceBaseline(id: string, branch: string, manual: b
  *  author stays AGENT_COMMIT_AUTHOR, which everything that tells Claude's
  *  commits apart keys on. */
 export const AGENT_REQUESTER_TRAILER = 'On-behalf-of';
-const REQUESTER_LINE = new RegExp(`^${AGENT_REQUESTER_TRAILER}:.*$`, 'gim');
+/** Git also reads `Key : value`, with blanks before the colon, as a trailer. */
+const REQUESTER_LINE = new RegExp(`^${AGENT_REQUESTER_TRAILER}[ \\t]*:.*$`, 'gim');
 
 /** An agent commit message: the intent, then the token owner as a trailer.
  *  A requester line already in the intent is dropped, so a message cannot
  *  name somebody else. */
-export function agentCommitMessage(intent: string, requester: string | null | undefined): string {
+export function agentCommitMessage(intent: string, requester: string | null | undefined, client?: string | null): string {
   const who = (requester ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 200);
-  const text = intent.replace(REQUESTER_LINE, '').replace(/\n{3,}/g, '\n\n').trim() || 'aldine: agent edit';
-  return who ? `${text}\n\n${AGENT_REQUESTER_TRAILER}: ${who}` : text;
+  const via = agentClientName(client);
+  const text = intent.replace(REQUESTER_LINE, '').replace(CLIENT_LINE, '').replace(/\n{3,}/g, '\n\n').trim() || 'aldine: agent edit';
+  const trailers = [who && `${AGENT_REQUESTER_TRAILER}: ${who}`, via && `${AGENT_CLIENT_TRAILER}: ${via}`].filter(Boolean);
+  return trailers.length ? `${text}\n\n${trailers.join('\n')}` : text;
+}
+
+/** Trailer naming the connected client an agent commit came through, as the
+ *  client registered itself when its person approved it ("ChatGPT", "Claude
+ *  Code"). The name is the client's own claim; the author stays
+ *  AGENT_COMMIT_AUTHOR. */
+export const AGENT_CLIENT_TRAILER = 'Agent-client';
+const CLIENT_LINE = new RegExp(`^${AGENT_CLIENT_TRAILER}[ \\t]*:.*$`, 'gim');
+const AGENT_CLIENT_MAX = 60;
+
+/** A client name a trailer and a History row can carry: one line, no angle
+ *  brackets, and never "Aldine", which History reads as nobody. Parentheses
+ *  and commas go too: the row reads "<clients> (for <people>)", and a client
+ *  must not be able to write the second half or pass as two clients. */
+export function agentClientName(client: string | null | undefined): string {
+  const clean = (client ?? '').replace(/[\u0000-\u001f\u007f(),]/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, AGENT_CLIENT_MAX).trim();
+  return clean === 'Aldine' ? '' : clean;
 }
 
 /** The %(trailers) placeholder that reads the requester back, '' when absent. */
 const REQUESTER_FORMAT = `%(trailers:key=${AGENT_REQUESTER_TRAILER},valueonly,separator=%x2C )`;
+/** The client back, '' when absent. A message can end up with two such lines
+ *  only by hand; the first is the one Aldine wrote. */
+const CLIENT_FORMAT = `%(trailers:key=${AGENT_CLIENT_TRAILER},valueonly,separator=%x1F)`;
+const clientOf = (raw: string, author: string): string => (author === AGENT_COMMIT_AUTHOR ? agentClientName(raw.split('\x1f')[0]) : '');
 /** Commits walked per answer. Past this the counts are a floor
  *  (`truncated`), which is the honest reading of "Claude wrote 300 commits". */
 const AGENT_SCAN_LIMIT = 500;
 /** Commits handed back with a hash — the reviewer pays one diff request each. */
 const AGENT_REVIEW_LIMIT = 20;
 
-export interface AgentCommit { hash: string; date: string; message: string; files: string[]; onBehalfOf?: string }
+export interface AgentCommit { hash: string; date: string; message: string; files: string[]; onBehalfOf?: string; client?: string }
 export interface AgentActivity {
   since: { head: string; at: string } | null;
   head: string;
@@ -909,7 +940,7 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   // committed .mailmap must not be able to rename the agent.
   const args = ['log', usable ? `${mark!.head}..${branch}` : branch,
                 `--max-count=${AGENT_SCAN_LIMIT}`,
-                `--format=%x00%H%x00%aI%x00%an%x00${REQUESTER_FORMAT}%x00%s`, '--name-only'];
+                `--format=%x00%H%x00%aI%x00%an%x00${REQUESTER_FORMAT}%x00${CLIENT_FORMAT}%x00%s`, '--name-only'];
   if (!usable && mark?.at) {
     const t = Date.parse(mark.at);
     if (!Number.isNaN(t)) args.push(`--since=${new Date(t - 1000).toISOString()}`);
@@ -922,17 +953,18 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
   const commits: AgentCommit[] = [];
   let records = 0;
   let commitCount = 0;
-  for (let i = 1; i + 4 < f.length; i += 5) {
+  for (let i = 1; i + 5 < f.length; i += 6) {
     const hash = f[i].trim();
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
     records++;
-    const [date, author, onBehalfOf, rest] = [f[i + 1], f[i + 2], f[i + 3].trim(), f[i + 4]];
+    const [date, author, onBehalfOf, rest] = [f[i + 1], f[i + 2], f[i + 3].trim(), f[i + 5]];
     if (author !== AGENT_COMMIT_AUTHOR) continue;
+    const client = clientOf(f[i + 4], author);
     const lines = rest.split('\n');
     const message = lines[0] ?? '';
     const touched = lines.slice(1).map((l) => l.trim()).filter(Boolean);
     for (const f of touched) files.add(f);
-    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched, ...(onBehalfOf ? { onBehalfOf } : {}) });
+    if (commits.length < AGENT_REVIEW_LIMIT) commits.push({ hash, date, message, files: touched, ...(onBehalfOf ? { onBehalfOf } : {}), ...(client ? { client } : {}) });
     commitCount++;
   }
   return { since: mark, head, commits, commitCount, fileCount: files.size, paths: [...files], truncated: records >= AGENT_SCAN_LIMIT };
