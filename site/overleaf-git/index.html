@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Git with Overleaf: what works and a git-native alternative</title>
+<title>Overleaf git integration explained, and a git-native editor</title>
 <link rel="canonical" href="https://aldine.dev/overleaf-git/" />
-<meta name="description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<meta name="description" content="How Overleaf&#x27;s git integration works, which plans include it, what it does not carry over, and how a LaTeX editor built on real git repos differs." />
 <link rel="icon" href="/favicon.ico" sizes="48x48" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-<meta property="og:title" content="Git with Overleaf: what works and a git-native alternative" />
+<meta property="og:title" content="Overleaf git integration explained, and a git-native editor" />
 <meta property="og:type" content="article" />
 <meta property="og:site_name" content="Aldine" />
-<meta property="og:description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<meta property="og:description" content="How Overleaf&#x27;s git integration works, which plans include it, what it does not carry over, and how a LaTeX editor built on real git repos differs." />
 <meta property="og:image" content="https://aldine.dev/assets/branches-dark.png" />
 <meta property="og:image:width" content="1440" />
 <meta property="og:image:height" content="900" />
 <meta property="og:image:alt" content="The branch menu in Aldine" />
 <meta property="og:url" content="https://aldine.dev/overleaf-git/" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Git with Overleaf: what works and a git-native alternative" />
-<meta name="twitter:description" content="How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs." />
+<meta name="twitter:title" content="Overleaf git integration explained, and a git-native editor" />
+<meta name="twitter:description" content="How Overleaf&#x27;s git integration works, which plans include it, what it does not carry over, and how a LaTeX editor built on real git repos differs." />
 <meta name="twitter:image" content="https://aldine.dev/assets/branches-dark.png" />
 <link rel="stylesheet" href="/assets/site.css" />
 <script type="application/ld+json">
@@ -31,12 +31,12 @@
       "@type": "TechArticle",
       "@id": "https://aldine.dev/overleaf-git/#article",
       "headline": "Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like",
-      "description": "How Overleaf's git integration and GitHub sync work, which plans include them, and how a LaTeX editor built on real git repositories differs.",
+      "description": "How Overleaf's git integration works, which plans include it, what it does not carry over, and how a LaTeX editor built on real git repos differs.",
       "url": "https://aldine.dev/overleaf-git/",
       "mainEntityOfPage": "https://aldine.dev/overleaf-git/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-26",
+      "dateModified": "2026-11-24",
       "image": "https://aldine.dev/assets/branches-dark.png",
       "author": {
         "@type": "Person",
@@ -102,15 +102,7 @@
 <p>On a self-hosted Overleaf, git integration is documented under Server Pro only configuration, available since Server Pro 4.0.1 and switched on with <code>GIT_BRIDGE_ENABLED=true</code>. Overleaf's comparison table lists git integration as not included in Community Edition. <span class="src">(<a href="https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/git-integration">Overleaf docs: Server Pro git integration</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Server Pro vs. Community Edition</a>, as of October 2026)</span></p>
 
 <h2 id="github-sync">How Overleaf's GitHub synchronization works</h2>
-<p>GitHub synchronization links one Overleaf project to one GitHub repository. It is also a premium feature. The points below are from Overleaf's documentation. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span></p>
-<ul>
-<li>Synchronization is manual: "Synchronization between GitHub and Overleaf does not happen automatically." You push and pull from a menu in the editor.</li>
-<li>"Only the project owner can initialize GitHub sync for a project; collaborators cannot set up the initial link."</li>
-<li>"It is not possible to synchronize an existing Overleaf project with an existing GitHub repository."</li>
-<li>"GitHub Synchronization can only be used on Github.com."</li>
-<li>When a pull cannot be merged cleanly, Overleaf pushes a new branch to your repository, and you merge it into your default branch, locally or with a pull request on GitHub.</li>
-<li>There are size limits: sync does not run when the editable content of a project exceeds 7 MB, and Overleaf recommends commits of under 100 files.</li>
-</ul>
+<p>GitHub synchronization links one Overleaf project to one GitHub repository, and it is a premium feature too. You push and pull by hand from the editor; it does not run on its own. Only the project owner can set up the link, it works with github.com only, and a pull that cannot be merged arrives as a new branch in your repository. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/github-synchronization">Overleaf docs: GitHub synchronization</a>, as of October 2026)</span> The step-by-step setup, the size limits and the GitLab route are on <a href="/overleaf-github/">Overleaf GitHub sync: setup and limits</a>. Cloning with a token, and the errors you can hit, are on <a href="/overleaf-git-clone/">cloning an Overleaf project with git</a>.</p>
 
 <h2 id="plan-for">What to plan for</h2>
 <p>These follow from the design above, in which Overleaf translates its own history to git on request.</p>
@@ -170,6 +162,8 @@
 
 <h2 id="related">Related pages</h2>
 <ul class="related">
+<li><a href="/overleaf-github/">Overleaf GitHub sync: setup, limits and a git-native route</a></li>
+<li><a href="/overleaf-git-clone/">Clone an Overleaf project with git: token, username, fixes</a></li>
 <li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
 <li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
 <li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
@@ -193,13 +187,22 @@
         <nav aria-label="Guides">
             <a href="/">Home</a>
             <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
             <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
             <a href="/overleaf-git/" aria-current="page">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
             <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
             <a href="/self-hosting/">Self-hosting guide</a>
             <a href="/zotero-latex/">Zotero with LaTeX</a>
             <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
             <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
             <a href="/sso/">Single sign-on</a>
             <a href="/docs/">Docs</a>
         </nav>

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overleaf MCP server: what exists and a built-in alternative</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-mcp/" />
+<meta name="description" content="Whether Overleaf documents an MCP server, the AI features it does document, community MCP servers built on its git integration, and Aldine's own." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Overleaf MCP server: what exists and a built-in alternative" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Whether Overleaf documents an MCP server, the AI features it does document, community MCP servers built on its git integration, and Aldine's own." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine" />
+<meta property="og:url" content="https://aldine.dev/overleaf-mcp/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Overleaf MCP server: what exists and a built-in alternative" />
+<meta name="twitter:description" content="Whether Overleaf documents an MCP server, the AI features it does document, community MCP servers built on its git integration, and Aldine's own." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-mcp/#article",
+      "headline": "Is there an Overleaf MCP server? What exists today, and an editor with one built in",
+      "description": "Whether Overleaf documents an MCP server, the AI features it does document, community MCP servers built on its git integration, and Aldine's own.",
+      "url": "https://aldine.dev/overleaf-mcp/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-mcp/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Overleaf MCP",
+          "item": "https://aldine.dev/overleaf-mcp/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-mcp/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does Overleaf have an official MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf's documentation does not describe an MCP server as of November 2026, and Overleaf's GitHub organization has no repository named for one. The documentation site has an MCP server of its own, but that one serves the help pages, not your projects."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can Claude edit my Overleaf project?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not through anything Overleaf documents for that purpose. Third-party MCP servers do it by cloning the project with Overleaf's git integration, editing the files and pushing them back. On overleaf.com that integration needs a paid plan on the project owner's side."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Overleaf's AI assistant free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Overleaf says its AI features are available for free within daily limits. The AI assistant itself is on the Student, Standard and Pro plans; Overleaf's page says it is not included on the Free plan or with Commons access."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which LaTeX editor has an MCP server built in?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Aldine, an open-source editor you host yourself, has one. Turn it on with ALDINE_MCP=1 and add the instance to Claude as a connector. Claude can then read and edit files, typeset with latexmk and read the errors, and every change is a git commit authored Claude. The setup is on the LaTeX MCP server page."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Overleaf MCP</p>
+<h1>Is there an Overleaf MCP server? What exists today, and an editor with one built in</h1>
+<p class="lede">Short answer: Overleaf's documentation does not describe an MCP server as of November 2026. What Overleaf does document is a set of AI features inside its own editor. To let Claude or another MCP client work on an Overleaf project, people use third-party servers that go through Overleaf's git integration. A few editors, Aldine among them, ship an MCP server of their own.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<h2 id="official">What Overleaf documents</h2>
+<p>We looked in three places on 24 November 2026. Overleaf's documentation index lists pages for an AI assistant, Error Assist and an AI table generator, and has no page about an MCP server or a public API for projects. <span class="src">(<a href="https://docs.overleaf.com/llms.txt">Overleaf documentation index</a>, as of November 2026)</span> Overleaf's GitHub organization has no repository matching "mcp". <span class="src">(<a href="https://github.com/orgs/overleaf/repositories?q=mcp">Overleaf on GitHub, search for mcp</a>, as of November 2026)</span> And the AI features page describes no MCP, API or agent integration. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/ai-features">Overleaf docs: AI features</a>, as of November 2026)</span></p>
+<p>One thing can mislead a search. Every page of the documentation site carries the line "Agents can also search and read this documentation through its MCP server." That server answers questions about the help pages. It does not open, read or edit your projects. <span class="src">(<a href="https://docs.overleaf.com/writing-and-editing/working-offline">Overleaf docs, page header</a>, as of November 2026)</span></p>
+
+<h2 id="overleaf-ai">The AI features Overleaf does document</h2>
+<p>These run inside the Overleaf editor. Overleaf's page lists an AI assistant (a chat panel that can query your project), Error Assist for LaTeX errors, Writefull language suggestions, rewrite and generate tools, TeXGPT, and equation and table generators. It says the features "are available for free within daily limits", and that each use of a feature counts against a daily allowance that resets every 24 hours. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/ai-features">Overleaf docs: AI features</a>, as of November 2026)</span></p>
+<p>The AI assistant is the exception. "The AI assistant is available on the Student, Standard, and Pro plans. It's not included on the Free plan or with Commons access." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/ai-features/ai-assistant">Overleaf docs: AI assistant</a>, as of November 2026)</span> On where content goes, Overleaf writes that "Some AI features send content to third-party services, including OpenAI." <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/ai-features">Overleaf docs: AI features</a>, as of November 2026)</span></p>
+<p>So if you want an assistant inside Overleaf, that is the documented route. An MCP server answers a different need: you keep working in Claude, Claude Code or another client, and the client reaches into the project.</p>
+
+<h2 id="third-party">Third-party MCP servers for Overleaf</h2>
+<p><strong>These are community projects. They are not made or endorsed by Overleaf.</strong> We have not tested them. Each description below comes from the project's own README, and both projects reach Overleaf the same way: through Overleaf's documented git integration, with a git authentication token.</p>
+<ul>
+<li><strong><a href="https://github.com/mjyoo2/OverleafMCP">OverleafMCP</a></strong> (mjyoo2, MIT licence). The README describes access to Overleaf projects "via Git integration". You supply a project id and a git token created under Account Settings, Git Integration. Its tools list files, read them, parse LaTeX sections and write files or single sections back with a commit message. The tool list has no compile step. The README warns that the token grants full read and write access to the project and should be treated like a password. <span class="src">(<a href="https://github.com/mjyoo2/OverleafMCP">OverleafMCP README</a>, as of November 2026)</span></li>
+<li><strong><a href="https://github.com/YounesBensafia/overleaf-mcp-server">overleaf-mcp-server</a></strong> (YounesBensafia, MIT licence). It keeps a local mirror of the project: it pulls from Overleaf's git remote, edits a file, commits and pushes. Tools are <code>list_files</code>, <code>read_file</code>, <code>write_file</code>, <code>edit_file</code> and <code>sync_project</code>. Its requirements name "An Overleaf plan with Git integration". <span class="src">(<a href="https://github.com/YounesBensafia/overleaf-mcp-server">overleaf-mcp-server README</a>, as of November 2026)</span></li>
+</ul>
+<p>Other Overleaf MCP projects exist on GitHub. Some of them describe working through a browser session cookie or through Overleaf's web interface rather than a documented integration. We leave those out here.</p>
+
+<h3 id="before-you-use">Before you connect one</h3>
+<ul>
+<li><strong>The git integration is a premium feature on overleaf.com.</strong> Overleaf's words: "it will only be available if the project owner has a paid subscription to Overleaf or has been granted access to the feature". <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></li>
+<li><strong>Pushes and review comments do not mix well.</strong> Overleaf's git page says that "pushes from Git to Overleaf can result in the loss or displacement of track changes and comments", and does not recommend using both actively. An agent that edits by pushing is a git user in that sense. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration">Overleaf docs: Git integration</a>, as of November 2026)</span></li>
+<li><strong>Typesetting happens elsewhere.</strong> Neither server above lists a tool that compiles on Overleaf, so checking whether an edit still builds means a local TeX installation or opening the project in the browser.</li>
+<li><strong>Token handling is on you.</strong> How to create and renew git tokens is covered in <a href="/overleaf-git-clone/">cloning an Overleaf project with git</a>.</li>
+</ul>
+
+<h2 id="aldine">An editor with the MCP server built in</h2>
+<p>Aldine is an open-source, self-hosted collaborative LaTeX editor. Its MCP server is part of the editor's backend rather than a bridge in front of it, so Claude works on the same live documents your co-authors have open.</p>
+<ul>
+<li><strong>Read, edit, typeset.</strong> Claude reads the file tree and files, edits by replacing exact quoted text, runs latexmk and gets errors back with file and line, and can show the PDF.</li>
+<li><strong>Every change is a commit.</strong> Each write is a git commit authored "Claude", and the editor offers a review of the diff and a one-click revert.</li>
+<li><strong>Off by default.</strong> You turn it on with <code>ALDINE_MCP=1</code>. It is listed in the official MCP Registry since release 1.6.0. <span class="src">(<a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">Aldine changelog</a>)</span></li>
+</ul>
+<p>The connector setup, the full tool table and a public demo token are on <a href="/latex-mcp/">the LaTeX MCP server page</a>, with the long version in <a href="https://github.com/trahloff/Aldine/blob/main/docs/AGENT_API.md">docs/AGENT_API.md</a>. Moving a paper over is a download: export the Overleaf project as a source ZIP and drop it on Aldine's home screen.</p>
+<p>Now the limits. Aldine is self-hosted only, and there is no hosted service today. It is young (first release July 2026, 1.0 in October 2026). Review works through comments with suggested edits and git diffs; there are no keystroke-level track changes. Which Claude clients can reach an instance on <code>localhost</code>, and which need a public address, is covered on the MCP page.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-overleaf">When Overleaf is the better choice</h2>
+<ul>
+<li><strong>You want AI help inside the editor you already use.</strong> Overleaf's AI features need no extra server, and apart from the AI assistant they are offered for free within daily limits. <span class="src">(<a href="https://docs.overleaf.com/integrations-and-add-ons/ai-features">Overleaf docs: AI features</a>, as of November 2026)</span></li>
+<li><strong>Your co-authors are on Overleaf</strong> and moving the paper is not on the table.</li>
+<li><strong>You do not want to run anything.</strong> overleaf.com is hosted; Aldine is not.</li>
+<li><strong>You rely on track changes.</strong> Overleaf has them as a premium feature. <span class="src">(<a href="https://docs.overleaf.com/collaborating/track-changes">Overleaf docs: track changes</a>, as of November 2026)</span></li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>Does Overleaf have an official MCP server?</h3>
+<p>Overleaf's documentation does not describe an MCP server as of November 2026, and Overleaf's GitHub organization has no repository named for one. The documentation site has an MCP server of its own, but that one serves the help pages, not your projects.</p>
+<h3>Can Claude edit my Overleaf project?</h3>
+<p>Not through anything Overleaf documents for that purpose. Third-party MCP servers do it by cloning the project with Overleaf's git integration, editing the files and pushing them back. On overleaf.com that integration needs a paid plan on the project owner's side.</p>
+<h3>Is Overleaf's AI assistant free?</h3>
+<p>Overleaf says its AI features are available for free within daily limits. The AI assistant itself is on the Student, Standard and Pro plans; Overleaf's page says it is not included on the Free plan or with Commons access.</p>
+<h3>Which LaTeX editor has an MCP server built in?</h3>
+<p>Aldine, an open-source editor you host yourself, has one. Turn it on with <code>ALDINE_MCP=1</code> and add the instance to Claude as a connector. Claude can then read and edit files, typeset with latexmk and read the errors, and every change is a git commit authored Claude. The setup is on the <a href="/latex-mcp/">LaTeX MCP server</a> page.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/latex-mcp/">Connect Claude to a LaTeX project over MCP</a></li>
+<li><a href="/overleaf-git-clone/">Clone an Overleaf project with git: token, username, fixes</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf, and what a git-native LaTeX editor looks like</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/" aria-current="page">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

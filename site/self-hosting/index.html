@@ -36,7 +36,7 @@
       "mainEntityOfPage": "https://aldine.dev/self-hosting/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-26",
+      "dateModified": "2026-11-24",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -93,7 +93,7 @@
 <p class="crumbs"><a href="/">Aldine</a> / Self-hosting guide</p>
 <h1>Self-hosting Aldine with Docker Compose</h1>
 <p class="lede">Aldine is an open-source, self-hosted collaborative LaTeX editor. It runs as two containers: the app and a sandboxed TeX Live compiler. This guide covers the install and what comes after it: upgrades, TeX packages, logins, TLS, backups and limits.</p>
-<p class="checked">Applies to Aldine 1.0.1. Updated on 26 October 2026. The reference is the <a href="https://github.com/trahloff/Aldine#quick-start">README</a> and the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md">single-VPS runbook</a>.</p>
+<p class="checked">Applies to Aldine 1.22.2. Updated on 24 November 2026. The reference is the <a href="https://github.com/trahloff/Aldine#quick-start">README</a> and the <a href="https://github.com/trahloff/Aldine/blob/main/deploy/README.md">single-VPS runbook</a>.</p>
 
 <h2 id="requirements">What it needs to run</h2>
 <ul>
@@ -109,7 +109,7 @@
 
 services:
   app:
-    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-1.0.1}
+    image: ghcr.io/trahloff/aldine-app:${ALDINE_VERSION:-1.22.2}
     ports:
       - &quot;8080:3000&quot;
     volumes:
@@ -120,7 +120,7 @@ services:
     restart: unless-stopped
 
   compiler:
-    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-1.0.1}${ALDINE_TEXLIVE:-}
+    image: ghcr.io/trahloff/aldine-compiler:${ALDINE_VERSION:-1.22.2}${ALDINE_TEXLIVE:-}
     volumes:
       - aldine-data:/data
     # The compiler runs untrusted LaTeX. Keep this block.
@@ -151,7 +151,7 @@ volumes:
 <p>returns <code>{"ok":true,"name":"aldine"}</code>.</p>
 
 <h2 id="upgrade">Version pinning, upgrade and rollback</h2>
-<p>The compose file says <code>${ALDINE_VERSION:-1.0.1}</code>, so you are pinned to a release and nothing changes under a running install on its own. To upgrade, read the <a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">changelog</a>, back up, write the new version into a <code>.env</code> file next to <code>docker-compose.yml</code>, then pull:</p>
+<p>The compose file pins a release with <code>${ALDINE_VERSION:-…}</code>, so nothing changes under a running install on its own. To upgrade, read the <a href="https://github.com/trahloff/Aldine/blob/main/CHANGELOG.md">changelog</a>, back up, write the new version into a <code>.env</code> file next to <code>docker-compose.yml</code>, then pull:</p>
 <pre><code># .env
 ALDINE_VERSION=&lt;new version&gt;</code></pre>
 <pre><code>docker compose pull &amp;&amp; docker compose up -d</code></pre>
@@ -167,7 +167,7 @@ ALDINE_VERSION=&lt;new version&gt;</code></pre>
     image: aldine-compiler-local
     build:
       dockerfile_inline: |
-        FROM ghcr.io/trahloff/aldine-compiler:1.0.1
+        FROM ghcr.io/trahloff/aldine-compiler:1.22.2
         RUN tlmgr install pgfplots tikz-cd</code></pre>
 <p>Bump the <code>FROM</code> tag when you bump <code>ALDINE_VERSION</code>.</p>
 <h3>Get all of TeX Live, including CJK</h3>
@@ -306,13 +306,22 @@ docker compose -f docker-compose.full.yml -f deploy/docker-compose.prod.yml \
         <nav aria-label="Guides">
             <a href="/">Home</a>
             <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
             <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
             <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
             <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
             <a href="/self-hosting/" aria-current="page">Self-hosting guide</a>
             <a href="/zotero-latex/">Zotero with LaTeX</a>
             <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
             <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
             <a href="/sso/">Single sign-on</a>
             <a href="/docs/">Docs</a>
         </nav>

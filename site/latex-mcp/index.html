@@ -171,14 +171,8 @@
 
 <h2 id="overleaf">Is there an Overleaf MCP server?</h2>
 <p>Not an official one that we could find. On 12 October 2026, a search of Overleaf's GitHub organization for "mcp" returned no repositories, and the index of Overleaf's documentation lists AI features (an AI assistant, Error Assist, an AI table generator) but no MCP page. <span class="src">(<a href="https://github.com/orgs/overleaf/repositories?q=mcp">Overleaf on GitHub, search for mcp</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/llms.txt">Overleaf documentation index</a>, as of October 2026)</span></p>
-<p>Community projects bridge Claude to Overleaf. Each describes itself on its own page as follows; none claims an affiliation with Overleaf:</p>
-<ul>
-<li><strong>Overleaf MCP Server by M-H-Amini</strong>, listed on mcp.so: the README asks for a project id and an Overleaf token. <span class="src">(<a href="https://mcp.so/server/overleaf-mcp-server/M-H-Amini">mcp.so listing</a>, <a href="https://github.com/M-H-Amini/Overleaf-MCP-Server">repository</a>, as of October 2026)</span></li>
-<li><strong>OverleafMCP by mjyoo2</strong>: reads and writes project files through Overleaf's git integration with a git token; the README lists no compile tool. <span class="src">(<a href="https://github.com/mjyoo2/OverleafMCP">repository</a>, as of October 2026)</span></li>
-<li><strong>mcp-server-overleaf by yangzichao</strong>: works on a local clone over Overleaf's git integration, compiles with a local latexmk, and pushes edits when you publish them. <span class="src">(<a href="https://github.com/yangzichao/mcp-server-overleaf">repository</a>, as of October 2026)</span></li>
-<li><strong>overleaf-latex by MarcoDotIO</strong>: edits and compiles in your Overleaf account through Overleaf's internal web interfaces with a saved browser session, not an official API. <span class="src">(<a href="https://github.com/MarcoDotIO/overleaf-latex">repository</a>, as of October 2026)</span></li>
-</ul>
-<p>We have not tested any of them, so check who maintains a server and how it reaches your projects before you give it credentials. Aldine takes the other route: the MCP server is part of the editor you host, so there is no separate bridge to trust.</p>
+<p>Community projects bridge Claude to Overleaf, and none of them claims an affiliation with Overleaf. They differ in how they reach your projects: some use Overleaf's documented git integration with a token, others do not. Which ones use the git integration, and what to check before you connect one, is on <a href="/overleaf-mcp/">Overleaf MCP server: what exists today</a>.</p>
+<p>We have not tested them, so check who maintains a server and how it reaches your projects before you give it credentials. Aldine takes the other route: the MCP server is part of the editor you host, so there is no separate bridge to trust.</p>
 <p>Other LaTeX editors have their own. letX, a hosted collaborative LaTeX editor, runs a hosted MCP server at <code>https://api.letx.app/mcp</code> that creates projects, writes files and compiles them to PDF. <span class="src">(<a href="https://letx.app/mcp/">letX: MCP server</a>, as of October 2026)</span> We have not tested it either.</p>
 <p>If your papers live on Overleaf and you want its built-in AI features, that is the simpler path. The rest of this page is about Aldine.</p>
 
@@ -317,13 +311,22 @@ claude mcp login aldine        # or type /mcp in a session and pick Aldine</code
         <nav aria-label="Guides">
             <a href="/">Home</a>
             <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
             <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
             <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
             <a href="/latex-mcp/" aria-current="page">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
             <a href="/self-hosting/">Self-hosting guide</a>
             <a href="/zotero-latex/">Zotero with LaTeX</a>
             <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
             <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
             <a href="/sso/">Single sign-on</a>
             <a href="/docs/">Docs</a>
         </nav>

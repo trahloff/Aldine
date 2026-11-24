@@ -14,6 +14,8 @@
 //     search engines show as the current release
 //   - the "Status:" line of site/llms.txt, which language models quote as the
 //     current release
+//   - the copy-paste compose block, the Dockerfile FROM tag and the "Applies
+//     to Aldine x.y.z" line of the self-hosting guide (site/self-hosting/)
 //   - server.json "version", the entry in the official MCP Registry
 //     (mcp-registry.yml stamps it from the tag anyway; this keeps the file
 //     honest for anyone who validates or publishes it by hand)
@@ -40,6 +42,7 @@ const literalPin = /ghcr\.io\/trahloff\/aldine-(app|compiler):(\d[^\s"'`]*)/g;
 const pinned = [
   ['docker-compose.yml', defaultPin, `<no ${'${ALDINE_VERSION:-…}'} default>`],
   ['README.md', defaultPin, `<no ${'${ALDINE_VERSION:-…}'} default>`],
+  ['site/self-hosting/index.html', defaultPin, `<no ${'${ALDINE_VERSION:-…}'} default>`],
   ['deploy/casaos/docker-compose.yml', literalPin, '<no pinned image tag>'],
   ['docs/TRUENAS.md', literalPin, '<no pinned image tag>'],
 ];
@@ -61,6 +64,11 @@ const casaVersion = /^ {2}version: "([^"]+)"$/m.exec(read('deploy/casaos/docker-
 found.push(['deploy/casaos/docker-compose.yml (x-casaos version)', casaVersion ? casaVersion[1] : '<no x-casaos version>']);
 const siteVersion = /"softwareVersion": "([^"]+)"/.exec(read('site/index.html'));
 found.push(['site/index.html (softwareVersion)', siteVersion ? siteVersion[1] : '<no softwareVersion>']);
+const guide = read('site/self-hosting/index.html');
+const guideFrom = /FROM ghcr\.io\/trahloff\/aldine-compiler:(\d[^\s<]*)/.exec(guide);
+found.push(['site/self-hosting/index.html (FROM)', guideFrom ? guideFrom[1] : '<no FROM tag>']);
+const guideApplies = /Applies to Aldine (\d+\.\d+\.\d+)/.exec(guide);
+found.push(['site/self-hosting/index.html (Applies to)', guideApplies ? guideApplies[1] : '<no "Applies to" line>']);
 const llmsVersion = /^Status: (\S+) \(/m.exec(read('site/llms.txt'));
 found.push(['site/llms.txt (Status)', llmsVersion ? llmsVersion[1] : '<no Status: line>']);
 found.push(['server.json', version('server.json')]);
@@ -78,7 +86,7 @@ if (tag) {
 if (problems.length) {
   console.error(`check-release-pins: expected every pin to be ${expected} (from package.json), but:`);
   for (const p of problems) console.error(`  - ${p}`);
-  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default (also in deploy/docker-compose.runner.yml), the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, softwareVersion (with dateModified) in site/index.html, the Status: line in site/llms.txt, and "version" in server.json.');
+  console.error('Fix: npm pkg set version=X.Y.Z --workspaces --include-workspace-root, then update the compose default (also in deploy/docker-compose.runner.yml), the README block, the image tags and x-casaos version in deploy/casaos/docker-compose.yml, the image tags in docs/TRUENAS.md, softwareVersion (with dateModified) in site/index.html, the Status: line in site/llms.txt, the compose block, FROM tag and "Applies to" line in site/self-hosting/index.html, and "version" in server.json.');
   process.exit(1);
 }
 console.log(`check-release-pins: all ${found.length} pins say ${expected}${tag ? `, tag ${tag} matches` : ''}`);

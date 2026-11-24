@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Install Overleaf Community Edition with the Overleaf Toolkit</title>
+<link rel="canonical" href="https://aldine.dev/overleaf-toolkit/" />
+<meta name="description" content="Installing Overleaf Community Edition with the Overleaf Toolkit, step by step: requirements, bin/init, bin/up, first admin, TeX Live, upgrades, backups." />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta property="og:title" content="Install Overleaf Community Edition with the Overleaf Toolkit" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Aldine" />
+<meta property="og:description" content="Installing Overleaf Community Edition with the Overleaf Toolkit, step by step: requirements, bin/init, bin/up, first admin, TeX Live, upgrades, backups." />
+<meta property="og:image" content="https://aldine.dev/assets/social.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="640" />
+<meta property="og:image:alt" content="Aldine" />
+<meta property="og:url" content="https://aldine.dev/overleaf-toolkit/" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Install Overleaf Community Edition with the Overleaf Toolkit" />
+<meta name="twitter:description" content="Installing Overleaf Community Edition with the Overleaf Toolkit, step by step: requirements, bin/init, bin/up, first admin, TeX Live, upgrades, backups." />
+<meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
+<link rel="stylesheet" href="/assets/site.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://aldine.dev/overleaf-toolkit/#article",
+      "headline": "Installing Overleaf Community Edition with the Overleaf Toolkit",
+      "description": "Installing Overleaf Community Edition with the Overleaf Toolkit, step by step: requirements, bin/init, bin/up, first admin, TeX Live, upgrades, backups.",
+      "url": "https://aldine.dev/overleaf-toolkit/",
+      "mainEntityOfPage": "https://aldine.dev/overleaf-toolkit/",
+      "inLanguage": "en",
+      "datePublished": "2026-11-24",
+      "dateModified": "2026-11-24",
+      "image": "https://aldine.dev/assets/social.png",
+      "author": {
+        "@type": "Person",
+        "name": "Tobias Rahloff",
+        "url": "https://github.com/trahloff"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "@id": "https://aldine.dev/#software",
+        "name": "Aldine",
+        "url": "https://aldine.dev/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Aldine",
+          "item": "https://aldine.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Overleaf Toolkit install",
+          "item": "https://aldine.dev/overleaf-toolkit/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://aldine.dev/overleaf-toolkit/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is the Overleaf Toolkit?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It is Overleaf's own repository of scripts for running Overleaf on your own server, published at github.com/overleaf/toolkit under the AGPL-3.0. The scripts wrap docker compose, and the same Toolkit runs both Community Edition and Server Pro."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which port does Overleaf Community Edition listen on?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Port 80 on 127.0.0.1 by default. OVERLEAF_PORT and OVERLEAF_LISTEN_IP in config/overleaf.rc change that; for direct access from other machines, the listen IP has to be the host's public address. Overleaf's docs say 0.0.0.0 or the external IP will typically cause errors together with the bundled TLS proxy."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I get the full TeX Live in Overleaf Community Edition?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Open a shell with bin/shell, run tlmgr install scheme-full and then tlmgr path add, and save the container as a new image with docker commit. Put the new tag in config/version and run bin/up -d. You repeat this after every upgrade."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I run the Overleaf Toolkit on macOS or Windows?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The Toolkit is tested on Ubuntu Linux and other platforms are not officially supported. On macOS, Overleaf suggests installing GNU coreutils for realpath, and on macOS or Windows the MongoDB data may need a Docker volume instead of a bind mount."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I switch from Community Edition to Server Pro later?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Overleaf describes Server Pro as a drop-in replacement. With a licence and the registry credentials Overleaf supplies, you set SERVER_PRO=true in config/overleaf.rc and run bin/up."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header>
+    <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Aldine home"><svg class="brand-mark" viewBox="39 -719 2854 731" width="62.5" height="16" aria-hidden="true"><use href="/assets/wordmark.svg#wordmark"/></svg></a>
+        <nav aria-label="Site">
+            <a href="/overleaf-alternatives/">Compare</a>
+            <a class="nav-opt" href="/self-hosting/">Self-hosting</a>
+            <a class="nav-icon" href="https://github.com/trahloff/Aldine" aria-label="Aldine on GitHub" title="GitHub"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+            <a class="btn btn--primary" href="https://demo.aldine.dev">Try the demo</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap doc">
+<p class="crumbs"><a href="/">Aldine</a> / Overleaf Toolkit install</p>
+<h1>Installing Overleaf Community Edition with the Overleaf Toolkit</h1>
+<p class="lede">The Overleaf Toolkit is how Overleaf itself tells you to run Community Edition on your own server. You clone it, run <code>bin/init</code>, edit two config files, run <code>bin/up</code> and register the first admin at <code>/launchpad</code>. This guide walks through those steps with the commands exactly as Overleaf documents them, then covers TeX Live packages, upgrades and backups, which is where most of the ongoing work is.</p>
+<p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 24 November 2026.</p>
+
+<h2 id="what-it-is">What the Toolkit is</h2>
+<p>It is Overleaf's own repository, <a href="https://github.com/overleaf/toolkit">github.com/overleaf/toolkit</a>, licensed under the GNU Affero General Public License v3. The README calls it "the standard tools for running a local instance of Overleaf", for Community Edition and for Server Pro alike. <span class="src">(<a href="https://github.com/overleaf/toolkit">Overleaf Toolkit README</a>, as of November 2026)</span> Under the hood it is a set of bash scripts in <code>bin/</code> that wrap <code>docker compose</code>. Overleaf's on-premises docs call it the "recommended way" to deploy and manage both editions. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit">Overleaf docs: using the Toolkit</a>, as of November 2026)</span></p>
+<p>The steps below come from Overleaf's documentation, and the credit is theirs; this page puts them in one place. If you are still deciding between Community Edition, Server Pro and something else, the feature comparison is on <a href="/self-hosted-overleaf/">self-hosting Overleaf: what Community Edition includes</a>. This page assumes you have decided and want it running.</p>
+
+<h2 id="requirements">Requirements</h2>
+<p>The Toolkit itself needs two programs: bash and Docker. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/quick-start-guide.md">Overleaf Toolkit docs: quick start</a>, as of November 2026)</span> Overleaf's software requirements add the details. <span class="src">(<a href="https://docs.overleaf.com/on-premises/getting-started/requirements/software-requirements">Overleaf docs: software requirements</a>, as of November 2026)</span></p>
+<ul>
+<li>Overleaf "highly recommend[s]" a Debian-based system such as Ubuntu.</li>
+<li>Supported dependency versions are "Docker 25.0 and 29", "MongoDB 7.0 and 8.0" and "Redis 6.2 and 7.5".</li>
+<li>You don't install MongoDB or Redis yourself. Docker Compose pulls them, unless you configure an existing installation.</li>
+</ul>
+<p>Before starting, both of these should run without an error:</p>
+<pre><code>docker --version
+docker compose version</code></pre>
+<p>For hardware, the documented baseline is "2 cores and 3GB memory" for "around 5 concurrent users", plus "1 CPU core and 1GB of memory" for every 5 to 10 more. Concurrent is the word that matters; registered users do not count. <span class="src">(<a href="https://docs.overleaf.com/on-premises/getting-started/requirements/hardware-requirements">Overleaf docs: hardware requirements</a>, as of November 2026)</span></p>
+<p>The Toolkit is tested on Ubuntu Linux, and other platforms "are not officially supported". On macOS, Overleaf suggests <code>brew install coreutils</code> to get a working <code>realpath</code>. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/dependencies.md">Overleaf Toolkit docs: dependencies</a>, as of November 2026)</span></p>
+
+<h2 id="install">Install, step by step</h2>
+<h3>1. Clone the Toolkit</h3>
+<p>Overleaf recommends cloning into your user's <code>$HOME</code> directory to avoid permission problems. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/1.-download-the-toolkit">Overleaf docs: download the Toolkit</a>, as of November 2026)</span></p>
+<pre><code>git clone https://github.com/overleaf/toolkit.git ./overleaf-toolkit
+cd ./overleaf-toolkit</code></pre>
+<p>Run every later command from this directory.</p>
+
+<h3>2. Create the configuration</h3>
+<pre><code>bin/init
+ls config</code></pre>
+<p>You should see three files: <code>overleaf.rc</code>, <code>variables.env</code> and <code>version</code>. <code>bin/init</code> does not overwrite configuration files that already exist, so running it twice is harmless. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/3.-initialize-the-configuration">Overleaf docs: initialize the configuration</a>, as of November 2026)</span></p>
+<p>By default the Toolkit uses Community Edition. Nothing to switch. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/quick-start-guide.md">Overleaf Toolkit docs: quick start</a>, as of November 2026)</span></p>
+
+<h3>3. Fill in variables.env</h3>
+<p>Before the first start, Overleaf's install guide has you set three variables in <code>config/variables.env</code>: <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/5.-personalizing-your-instance">Overleaf docs: personalizing your instance</a>, as of November 2026)</span></p>
+<ul>
+<li><code>OVERLEAF_SITE_URL</code>, the public address of the instance. It is used in links and for the websocket connection, and the docs say it "must be configured correctly".</li>
+<li><code>OVERLEAF_EMAIL_FROM_ADDRESS</code>, the sender of outgoing mail.</li>
+<li><code>OVERLEAF_ADMIN_EMAIL</code>, where users reach whoever runs the site.</li>
+</ul>
+
+<h3>4. Start it</h3>
+<pre><code>bin/up</code></pre>
+<p>This downloads the images, creates the containers and starts them with the log output attached. <code>CTRL-C</code> stops the services; <code>bin/start</code> starts them again without attaching to the logs. When it's up, the login page is at <code>http://localhost/</code>. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/5.-personalizing-your-instance">Overleaf docs: personalizing your instance</a>, as of November 2026)</span> <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/quick-start-guide.md">Overleaf Toolkit docs: quick start</a>, as of November 2026)</span></p>
+<p>A running install has three containers, named <code>sharelatex</code>, <code>mongo</code> and <code>redis</code> in Overleaf's example output. <span class="src">(<a href="https://docs.overleaf.com/on-premises/getting-started/requirements/software-requirements">Overleaf docs: software requirements</a>, as of November 2026)</span></p>
+
+<h3 id="admin">5. Create the first admin account</h3>
+<p>Open <code>http://localhost/launchpad</code>, enter the email and password you want for the administrator, and click Register. Then log in at <code>http://localhost/login</code> and click the green button on the welcome page. From <code>http://localhost/project</code> you can create a first example project, which opens the editor next to a PDF preview. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/6.-post-installation-tasks">Overleaf docs: post-installation tasks</a>, as of November 2026)</span></p>
+
+<h2 id="config">The configuration files</h2>
+<p>All of your configuration lives in <code>config/</code>, which git ignores, so updating the Toolkit code leaves it alone. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/configuration.md">Overleaf Toolkit docs: configuration overview</a>, as of November 2026)</span></p>
+<p><strong>overleaf.rc</strong> holds the top-level settings as <code>VARIABLE_NAME=value</code> lines. The ones you are likely to touch first: <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/overleaf-rc.md">Overleaf Toolkit docs: overleaf.rc</a>, as of November 2026)</span></p>
+<ul>
+<li><code>OVERLEAF_LISTEN_IP</code>, default <code>127.0.0.1</code>. With the default, the site is reachable only from the host itself. For direct access from other machines it must be the host's public IP. Combined with the TLS proxy, <code>0.0.0.0</code> or the external IP "will typically cause errors".</li>
+<li><code>OVERLEAF_PORT</code>, default 80.</li>
+<li><code>OVERLEAF_DATA_PATH</code>, the host directory for compile data and project files. Docker writes there as root, so expect root-owned files. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/persistent-data.md">Overleaf Toolkit docs: persistent data</a>, as of November 2026)</span></li>
+</ul>
+<p><strong>variables.env</strong> is loaded into the container as environment variables: the application name shown in the header, email settings, and so on. <strong>version</strong> holds the Docker image version. An optional <code>config/docker-compose.override.yml</code> is passed to <code>docker compose</code> too. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/configuration.md">Overleaf Toolkit docs: configuration overview</a>, as of November 2026)</span></p>
+<p>Easy to miss: a config change does not reach a container that is merely stopped and started with <code>bin/stop</code> and <code>bin/start</code>; you need <code>bin/up</code> (or <code>bin/up -d</code>). Overleaf recommends <code>bin/docker-compose down</code> followed by <code>bin/up</code> after editing <code>overleaf.rc</code> or <code>variables.env</code>. And <code>bin/backup-config -m zip ~/overleaf-config-backup.zip</code> saves the whole directory. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/configuration.md">Overleaf Toolkit docs: configuration overview</a>, as of November 2026)</span></p>
+<p>For HTTPS, the Toolkit ships an optional NGINX proxy. <code>bin/init --tls</code> generates its config and a sample certificate in <code>config/nginx/</code>; you replace the sample with your own certificate, set <code>NGINX_ENABLED=true</code> in <code>overleaf.rc</code> and re-run <code>bin/up</code>. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/quick-start-guide.md">Overleaf Toolkit docs: quick start</a>, as of November 2026)</span></p>
+
+<h2 id="texlive">TeX Live packages</h2>
+<p>To save bandwidth, the image "only come[s] with a minimal install of TeX Live". A paper that needs a package outside that install will not compile until you add it. On Community Edition you add packages with <code>tlmgr</code> inside the container. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/upgrading-tex-live">Overleaf docs: upgrading TeX Live</a>, as of November 2026)</span></p>
+<pre><code>bin/shell
+# now inside the sharelatex container:
+tlmgr install scheme-full
+tlmgr path add</code></pre>
+<p><code>scheme-full</code> is the complete TeX Live. You can also install single packages, for example <code>tlmgr install tikzlings tikzmarmots tikzducks</code>. Since release 3.3.0, <code>tlmgr path add</code> is required after every <code>tlmgr install</code> so the binaries land on the system path.</p>
+<p>Those changes are ephemeral. They vanish the next time Compose recreates the container, which happens whenever you change the config. To keep them, Overleaf's docs commit the container to a new image and point <code>config/version</code> at it:</p>
+<pre><code>cat config/version
+# 6.1.1
+docker commit sharelatex sharelatex/sharelatex:6.1.1-with-texlive-full
+echo 6.1.1-with-texlive-full &gt; config/version
+bin/up -d</code></pre>
+<p>Use your own version number in place of 6.1.1, which is Overleaf's example. You repeat all of this after every upgrade to a new Overleaf version. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/upgrading-tex-live">Overleaf docs: upgrading TeX Live</a>, as of November 2026)</span></p>
+
+<h2 id="upgrade">Upgrades</h2>
+<p>The Toolkit is a git repository, and <code>bin/upgrade</code> does the work. It first offers to update the Toolkit code. If the default image version has changed, it then offers to update <code>config/version</code>, and if you accept it shuts the services down, takes a backup and starts them again. The old version file is kept as <code>config/__old-version</code>. <span class="src">(<a href="https://docs.overleaf.com/on-premises/maintenance/upgrading-your-deployment">Overleaf docs: upgrading your deployment</a>, as of November 2026)</span></p>
+<p>Three warnings from the same page are worth reading before you press yes:</p>
+<ul>
+<li>Take a consistent backup before every major and minor upgrade.</li>
+<li>"Downgrading is not supported." Upgrades run one-time database migrations, so the way back is restoring the pre-upgrade backup, not editing <code>config/version</code>.</li>
+<li>Never skip a major version. If you are more than one major version behind, Overleaf says you must not use <code>bin/upgrade</code> and should upgrade step by step instead, checking the release notes for extra steps on the way.</li>
+</ul>
+<p>Updating the Toolkit code alone does not change the image you run, so that part is low-risk.</p>
+
+<h2 id="backup">Backups</h2>
+<p>Data lives in three places: MongoDB (users and projects), Redis (sessions and in-flight edits) and the Overleaf filesystem under <code>OVERLEAF_DATA_PATH</code> (uploaded files and history). A consistent backup needs all three, taken while nobody can edit. <span class="src">(<a href="https://docs.overleaf.com/on-premises/maintenance/data-and-backups">Overleaf docs: data and backups</a>, as of November 2026)</span></p>
+<pre><code>bin/docker-compose stop sharelatex
+# back up MongoDB (e.g. with mongodump), the data directory (e.g. with rsync)
+# and Redis, then:
+bin/docker-compose start sharelatex</code></pre>
+<p>Redis uses append-only-file persistence by default on new Toolkit installs. Overleaf advises keeping backups on a separate server, ideally somewhere else entirely, and testing them. For moving a whole instance to a new server, the same page gives a recipe: <code>bin/stop</code>, then a tarball of <code>config/</code> and <code>data/</code>, copied across and unpacked before <code>bin/up</code>. <span class="src">(<a href="https://docs.overleaf.com/on-premises/maintenance/data-and-backups">Overleaf docs: data and backups</a>, as of November 2026)</span></p>
+
+<h2 id="troubleshooting">When something does not work</h2>
+<p>Run <code>bin/doctor</code> first. It reports the host, checks dependencies and your configuration, and ends with a list of warnings. Overleaf asks for its output in bug reports. Logs come from <code>bin/logs -f web</code>, or several services at once with <code>bin/logs -f filestore docstore web clsi</code>. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/quick-start-guide.md">Overleaf Toolkit docs: quick start</a>, as of November 2026)</span></p>
+<p>On macOS or Windows, MongoDB can fail to restart with "Failed to start up WiredTiger under any compatibility version". The documented fix is to keep the MongoDB and Redis data in Docker volumes via <code>config/docker-compose.override.yml</code> instead of bind-mounted directories. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/persistent-data.md">Overleaf Toolkit docs: persistent data</a>, as of November 2026)</span></p>
+<p>Help for Community Edition comes from the community, through GitHub issues on the Toolkit repository. <span class="src">(<a href="https://github.com/overleaf/toolkit">Overleaf Toolkit README</a>, as of November 2026)</span></p>
+
+<h2 id="ce-scope">What Community Edition does not include</h2>
+<p>Overleaf's comparison table marks commenting, real-time track changes, git integration, the symbol palette, SSO via SAML 2 and LDAP, and sandboxed compiles as Server Pro features, among others. <span class="src">(<a href="https://docs.overleaf.com/on-premises/welcome/server-pro-vs.-community-edition">Overleaf docs: Server Pro vs. Community Edition</a>, as of November 2026)</span> The full list, with what it means in practice, is on <a href="/self-hosted-overleaf/">our comparison page</a>.</p>
+<p>One of those rows changes how you should run the install. Sandboxed compiles, also called sibling containers, compile each project in its own container. Overleaf states they "are not available in Community Edition, which is intended for use in environments where all users are trusted". Without them, a compile has full read and write access to the <code>sharelatex</code> container's filesystem, network and environment variables. <span class="src">(<a href="https://github.com/overleaf/toolkit/blob/master/doc/sandboxed-compiles.md">Overleaf Toolkit docs: sandboxed compiles</a>, as of November 2026)</span> Overleaf adds that Community Edition "is not appropriate for scenarios where isolation of users is required."</p>
+<p>If you outgrow Community Edition, Overleaf describes Server Pro as "a drop-in replacement". With a licence and the quay.io credentials Overleaf supplies, you set <code>SERVER_PRO=true</code> in <code>config/overleaf.rc</code> and the next <code>bin/up</code> pulls the Server Pro image. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/4.-choose-community-edition-or-server-pro">Overleaf docs: choose Community Edition or Server Pro</a>, as of November 2026)</span></p>
+
+<h2 id="aldine">The same in Aldine</h2>
+<p>Aldine is a separate open-source project (AGPL-3.0), a self-hosted collaborative LaTeX editor, not related to Overleaf. For comparison, here is how the steps above map onto it. The details are on <a href="/self-hosting/">self-hosting Aldine with Docker Compose</a>.</p>
+<ul>
+<li><strong>Install.</strong> Save the compose file from that guide as <code>docker-compose.yml</code> and run <code>docker compose up -d</code>. No clone, no init script; it is two containers (app and compiler) and no database server, and the instance answers on <code>http://localhost:8080</code>.</li>
+<li><strong>First admin.</strong> There is none at first, because login is off by default (single-tenant). <code>AUTH_ENABLED=1</code> turns on accounts, and <code>ALDINE_ADMIN_EMAILS</code> opens the <code>/admin</code> page.</li>
+<li><strong>TeX Live.</strong> The compiler image carries TeX Live's medium scheme plus extra collections; the first pull is about 2.4 GB. A <code>-full</code> image with all of TeX Live is one setting away (<code>ALDINE_TEXLIVE=-full</code>), so there is no <code>docker commit</code> step to repeat after upgrades.</li>
+<li><strong>Upgrades.</strong> The version is pinned in <code>.env</code>. Change it, then <code>docker compose pull &amp;&amp; docker compose up -d</code>.</li>
+<li><strong>Backups.</strong> <code>deploy/backup.sh</code> and <code>deploy/restore.sh</code> in the repository, with a systemd timer for daily snapshots.</li>
+<li><strong>Compile isolation.</strong> Always on: the compiler has no internet access, drops all Linux capabilities and is limited in memory and processes.</li>
+</ul>
+<p>The limits are those of a young project. The first release was in July 2026 and 1.0 in October 2026. Aldine is self-hosted only, supports one app node, and has review comments with suggested edits rather than keystroke-level track changes. The rest is in the <a href="/self-hosting/#other-limits">list of limits</a>.</p>
+<div class="cta-row">
+<a class="btn btn--primary" href="https://demo.aldine.dev">Try the live demo</a>
+<a class="btn" href="https://github.com/trahloff/Aldine">View source on GitHub</a>
+</div>
+<p class="src">No account, no install. The demo is a shared sandbox and resets every night.</p>
+
+<h2 id="when-toolkit">When the Toolkit is the better choice</h2>
+<ul>
+<li><strong>Your users know Overleaf</strong> and you want the same editor on your own hardware.</li>
+<li><strong>You may need Server Pro later.</strong> The Toolkit runs both editions, and switching is one setting once you have a licence. <span class="src">(<a href="https://docs.overleaf.com/on-premises/installation/using-the-toolkit/4.-choose-community-edition-or-server-pro">Overleaf docs: choose Community Edition or Server Pro</a>, as of November 2026)</span></li>
+<li><strong>You need SAML or LDAP sign-in, or vendor support.</strong> Server Pro documents both, and Aldine offers neither SAML nor LDAP.</li>
+<li><strong>You want a long track record.</strong> Overleaf dates from 2011 <span class="src">(<a href="https://www.overleaf.com/about">Overleaf: about</a>, as of November 2026)</span>; Aldine's first release was in July 2026.</li>
+</ul>
+
+<h2 id="faq">Common questions</h2>
+<h3>What is the Overleaf Toolkit?</h3>
+<p>It is Overleaf's own repository of scripts for running Overleaf on your own server, published at github.com/overleaf/toolkit under the AGPL-3.0. The scripts wrap docker compose, and the same Toolkit runs both Community Edition and Server Pro.</p>
+<h3>Which port does Overleaf Community Edition listen on?</h3>
+<p>Port 80 on 127.0.0.1 by default. OVERLEAF_PORT and OVERLEAF_LISTEN_IP in config/overleaf.rc change that; for direct access from other machines, the listen IP has to be the host's public address. Overleaf's docs say 0.0.0.0 or the external IP will typically cause errors together with the bundled TLS proxy.</p>
+<h3>How do I get the full TeX Live in Overleaf Community Edition?</h3>
+<p>Open a shell with bin/shell, run tlmgr install scheme-full and then tlmgr path add, and save the container as a new image with docker commit. Put the new tag in config/version and run bin/up -d. You repeat this after every upgrade.</p>
+<h3>Can I run the Overleaf Toolkit on macOS or Windows?</h3>
+<p>The Toolkit is tested on Ubuntu Linux and other platforms are not officially supported. On macOS, Overleaf suggests installing GNU coreutils for realpath, and on macOS or Windows the MongoDB data may need a Docker volume instead of a bind mount.</p>
+<h3>Can I switch from Community Edition to Server Pro later?</h3>
+<p>Yes. Overleaf describes Server Pro as a drop-in replacement. With a licence and the registry credentials Overleaf supplies, you set SERVER_PRO=true in config/overleaf.rc and run bin/up.</p>
+
+<h2 id="related">Related pages</h2>
+<ul class="related">
+<li><a href="/self-hosted-overleaf/">Self-hosting Overleaf: what Community Edition includes, and an alternative</a></li>
+<li><a href="/self-hosting/">Self-hosting Aldine with Docker Compose</a></li>
+<li><a href="/overleaf-git/">Using git and GitHub with Overleaf</a></li>
+<li><a href="/overleaf-alternatives/">Overleaf alternatives you can self-host, compared</a></li>
+</ul>
+</main>
+
+<footer>
+    <div class="wrap colophon">
+        <p>
+            <span class="mark">ALDINE</span>, after the Aldine Press of Aldus
+            Manutius, Venice 1494, where scholarly publishing became portable.
+            <span class="motto">Festina lente.</span>
+        </p>
+        <p>
+            Overleaf is a trademark of its owner. Docker, Claude, Zotero, GitHub, GitLab
+            and other names are trademarks of their respective owners. Aldine
+            is an independent project, not affiliated with or endorsed by any
+            of them.
+        </p>
+        <nav aria-label="Guides">
+            <a href="/">Home</a>
+            <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
+            <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/" aria-current="page">Overleaf Toolkit install</a>
+            <a href="/overleaf-git/">Git with Overleaf</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
+            <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
+            <a href="/self-hosting/">Self-hosting guide</a>
+            <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
+            <a href="/sso/">Single sign-on</a>
+            <a href="/docs/">Docs</a>
+        </nav>
+        <nav aria-label="Footer">
+            <a href="https://github.com/trahloff/Aldine">GitHub</a>
+            <a href="https://demo.aldine.dev">Demo</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/LICENSE">AGPL-3.0</a>
+            <a href="https://github.com/trahloff/Aldine/blob/main/SECURITY.md">Security</a>
+            <a href="https://github.com/trahloff/Aldine/discussions">Discussions</a>
+            <a href="/privacy/">Privacy policy</a>
+            <a href="/legal/">Legal notice</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

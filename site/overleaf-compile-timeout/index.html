@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Overleaf compile timeout: plan limits and how to fix it</title>
+<title>Overleaf compile timeout: the message, the limits, the fixes</title>
 <link rel="canonical" href="https://aldine.dev/overleaf-compile-timeout/" />
-<meta name="description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<meta name="description" content="Near the compile timeout limit on Overleaf? Free plans get 10 seconds, premium 240. The fixes from Overleaf&#x27;s own docs, step by step." />
 <link rel="icon" href="/favicon.ico" sizes="48x48" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-<meta property="og:title" content="Overleaf compile timeout: the limit on each plan and how to fix it" />
+<meta property="og:title" content="Overleaf compile timeout: the message, the limits, the fixes" />
 <meta property="og:type" content="article" />
 <meta property="og:site_name" content="Aldine" />
-<meta property="og:description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<meta property="og:description" content="Near the compile timeout limit on Overleaf? Free plans get 10 seconds, premium 240. The fixes from Overleaf&#x27;s own docs, step by step." />
 <meta property="og:image" content="https://aldine.dev/assets/social.png" />
 <meta property="og:image:width" content="1280" />
 <meta property="og:image:height" content="640" />
 <meta property="og:image:alt" content="Aldine: write LaTeX together. Fast, versioned, yours." />
 <meta property="og:url" content="https://aldine.dev/overleaf-compile-timeout/" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Overleaf compile timeout: the limit on each plan and how to fix it" />
-<meta name="twitter:description" content="Overleaf&#x27;s compile timeout on each plan, why compiles time out, the fixes from Overleaf&#x27;s own documentation, and how self-hosted editors set the limit." />
+<meta name="twitter:title" content="Overleaf compile timeout: the message, the limits, the fixes" />
+<meta name="twitter:description" content="Near the compile timeout limit on Overleaf? Free plans get 10 seconds, premium 240. The fixes from Overleaf&#x27;s own docs, step by step." />
 <meta name="twitter:image" content="https://aldine.dev/assets/social.png" />
 <link rel="stylesheet" href="/assets/site.css" />
 <script type="application/ld+json">
@@ -31,12 +31,12 @@
       "@type": "TechArticle",
       "@id": "https://aldine.dev/overleaf-compile-timeout/#article",
       "headline": "Overleaf compile timeout: the limit on each plan and how to fix a timed-out compile",
-      "description": "Overleaf's compile timeout on each plan, why compiles time out, the fixes from Overleaf's own documentation, and how self-hosted editors set the limit.",
+      "description": "Near the compile timeout limit on Overleaf? Free plans get 10 seconds, premium 240. The fixes from Overleaf's own docs, step by step.",
       "url": "https://aldine.dev/overleaf-compile-timeout/",
       "mainEntityOfPage": "https://aldine.dev/overleaf-compile-timeout/",
       "inLanguage": "en",
       "datePublished": "2026-10-12",
-      "dateModified": "2026-10-26",
+      "dateModified": "2026-11-24",
       "image": "https://aldine.dev/assets/social.png",
       "author": {
         "@type": "Person",
@@ -156,6 +156,9 @@
 <h1>Overleaf compile timeout: the limit on each plan and how to fix a timed-out compile</h1>
 <p class="lede">Overleaf's documentation gives the compile timeout as 10 seconds on the free plan and 240 seconds on premium plans. A timeout means the compile did not finish within that limit. Overleaf's own guide says timeouts "can often be fixed or prevented", and this page walks through those fixes before it gets to the other options. <span class="src">(<a href="https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits">Overleaf docs: plan limits</a>, as of October 2026)</span> <span class="src">(<a href="https://docs.overleaf.com/troubleshooting-and-support/fixing-and-preventing-compile-timeouts">Overleaf docs: fixing and preventing compile timeouts</a>, as of October 2026)</span></p>
 <p class="checked">Written by the Aldine project, so read it with that in mind. Statements about other products are taken from the linked pages of that product's own documentation. Checked on 12 October 2026.</p>
+
+<h2 id="messages">The messages you see</h2>
+<p>The wording comes from the English strings in Overleaf's open-source code. On the free plan, a slow compile can show "That took a while..." followed by "Your project is near the compile timeout limit for our free plan." Once a compile runs out of time, the message is "Your project exceeded the compile timeout limit on our free plan." Collaborators get a version that starts "This project exceeded", since the limit belongs to the project owner's plan (more on that below). <span class="src">(<a href="https://github.com/overleaf/overleaf/blob/main/services/web/locales/en.json">Overleaf source: English interface strings</a>, as of November 2026)</span> The upgrade prompt next to these messages on overleaf.com may be worded differently. The fixes below apply either way.</p>
 
 <h2 id="limits">The compile timeout on each Overleaf plan</h2>
 <div class="table-scroll">
@@ -303,13 +306,22 @@
         <nav aria-label="Guides">
             <a href="/">Home</a>
             <a href="/overleaf-alternatives/">Overleaf alternatives</a>
+            <a href="/collaborative-latex-editor/">Collaborative LaTeX editors</a>
             <a href="/self-hosted-overleaf/">Self-hosting Overleaf compared</a>
+            <a href="/overleaf-toolkit/">Overleaf Toolkit install</a>
             <a href="/overleaf-git/">Git with Overleaf</a>
-            <a href="/overleaf-free-plan/">Overleaf free plan</a>
-            <a href="/overleaf-compile-timeout/" aria-current="page">Overleaf compile timeout</a>
+            <a href="/overleaf-github/">Overleaf and GitHub</a>
+            <a href="/overleaf-git-clone/">Clone Overleaf with git</a>
             <a href="/latex-mcp/">LaTeX MCP server</a>
+            <a href="/overleaf-mcp/">Overleaf MCP</a>
             <a href="/self-hosting/">Self-hosting guide</a>
             <a href="/zotero-latex/">Zotero with LaTeX</a>
+            <a href="/overleaf-free-plan/">Overleaf free plan</a>
+            <a href="/overleaf-free-trial/">Overleaf free trial</a>
+            <a href="/overleaf-compile-timeout/" aria-current="page">Overleaf compile timeout</a>
+            <a href="/overleaf-offline/">Overleaf offline</a>
+            <a href="/crixet-alternative/">Crixet and Prism alternatives</a>
+            <a href="/papeeria-alternative/">Papeeria alternatives</a>
             <a href="/sso/">Single sign-on</a>
             <a href="/docs/">Docs</a>
         </nav>
