@@ -27,9 +27,11 @@ export function branchDir(id: string, branch: string): string {
 
 /** core.symlinks=false on every command: a link in a cloned or pulled tree
  *  is checked out as a plain file holding the link's target, never as a link
- *  the server would follow. The tree entry keeps its link mode. */
+ *  the server would follow. The tree entry keeps its link mode.
+ *  simple-git 4 wants every config key outside its own safe list named in
+ *  allowConfig; an unnamed one warns on stderr now and is refused in 5. */
 export function git(dir: string): SimpleGit {
-  return simpleGit({ baseDir: dir, config: ['core.symlinks=false'] });
+  return simpleGit({ baseDir: dir, config: ['core.symlinks=false'], allowConfig: ['core.symlinks'] });
 }
 
 /** Throws 'project not found' when absent, preserving the try/catch semantics at call sites. */
