@@ -423,6 +423,17 @@ export class JsonStore implements DataStore {
     return victims.length;
   }
 
+  async listOAuthClients() {
+    return this.clone(Object.values(this.oauthClients()).sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt) || a.id.localeCompare(b.id)));
+  }
+  async deleteOAuthClient(id: string) {
+    const m = this.oauthClients();
+    if (!m[id]) return false;
+    delete m[id];
+    this.write(this.oauthClientsPath, m);
+    return true;
+  }
+
   // ---- OAuth refresh tokens ----
   private refreshTokens() { return this.read<Record<string, RefreshTokenRecord>>(this.refreshPath, {}); }
   async createRefresh(r: RefreshTokenRecord) {
@@ -454,6 +465,28 @@ export class JsonStore implements DataStore {
     const refresh = this.refreshTokens(); changed = false;
     for (const r of Object.values(refresh)) if (r.userId === userId && !r.revokedAt) { r.revokedAt = revokedAt; changed = true; }
     if (changed) this.write(this.refreshPath, refresh);
+  }
+  async listOAuthConnections(now: string) {
+    const by = new Map<string, { clientName: string; families: Set<string> }>();
+    for (const r of Object.values(this.refreshTokens())) {
+      if (r.revokedAt || r.expiresAt <= now) continue;
+      const hit = by.get(r.clientId) ?? { clientName: r.clientName, families: new Set<string>() };
+      hit.families.add(r.family);
+      by.set(r.clientId, hit);
+    }
+    return [...by].map(([clientId, v]) => ({ clientId, clientName: v.clientName, connections: v.families.size })).sort((a, b) => a.clientId.localeCompare(b.clientId));
+  }
+  async revokeCredentialsForClient(clientId: string, revokedAt: string) {
+    const refresh = this.refreshTokens();
+    const mine = Object.values(refresh).filter((r) => r.clientId === clientId);
+    const ended = new Set(mine.filter((r) => !r.revokedAt).map((r) => r.family));
+    if (!ended.size) return 0;
+    for (const r of mine) if (!r.revokedAt) r.revokedAt = revokedAt;
+    this.write(this.refreshPath, refresh);
+    const tokens = this.tokens(); let changed = false;
+    for (const t of Object.values(tokens)) if (t.family && ended.has(t.family) && !t.revokedAt) { t.revokedAt = revokedAt; changed = true; }
+    if (changed) this.write(this.tokensPath, tokens);
+    return ended.size;
   }
 
   // ---- project meta ----

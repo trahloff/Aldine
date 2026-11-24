@@ -245,6 +245,9 @@ export interface OAuthClient {
   lastUsedAt: string;
 }
 
+/** Live consents of one client id (DataStore.listOAuthConnections). */
+export interface OAuthConnectionCount { clientId: string; clientName: string; connections: number }
+
 /**
  * OAuth refresh token. `hash` is the SHA-256 digest of the `aldr_` secret.
  * One `family` per consent; rotation marks the old record `usedAt` and a used
@@ -416,6 +419,11 @@ export interface DataStore {
   countOAuthClients(): Promise<number>;
   /** Delete the `n` clients with the oldest lastUsedAt. Returns how many were removed. */
   evictOldestOAuthClients(n: number): Promise<number>;
+  /** Every registered client, most recently used first. */
+  listOAuthClients(): Promise<OAuthClient[]>;
+  /** Remove one registration. Reports whether it existed. Its tokens are
+   *  not touched: revokeCredentialsForClient does that. */
+  deleteOAuthClient(id: string): Promise<boolean>;
 
   // OAuth refresh tokens (looked up by SHA-256 digest at the token endpoint)
   createRefresh(r: RefreshTokenRecord): Promise<void>;
@@ -430,6 +438,14 @@ export interface DataStore {
    *  access token alone (RFC 7009), so walking the token list is not enough.
    *  An earlier revokedAt is kept. */
   revokeCredentialsForUser(userId: string, revokedAt: string): Promise<void>;
+  /** Per client id, how many consents are live at `now`: families with a
+   *  refresh token that is neither revoked nor expired. Covers clients that
+   *  are not stored (metadata-document ids), with the name they connected under. */
+  listOAuthConnections(now: string): Promise<OAuthConnectionCount[]>;
+  /** Revoke every refresh token issued to `clientId` and every access token
+   *  in those families, for all users. Returns how many families it ended.
+   *  An earlier revokedAt is kept. */
+  revokeCredentialsForClient(clientId: string, revokedAt: string): Promise<number>;
 
   // project metadata
   readMeta(id: string): Promise<ProjectMeta | null>;

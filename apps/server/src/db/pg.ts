@@ -344,6 +344,14 @@ export class PgStore implements DataStore {
     );
     return rows.length;
   }
+  async listOAuthClients() {
+    const { rows } = await this.pool.query(`SELECT * FROM oauth_clients ORDER BY last_used_at DESC, id ASC`);
+    return rows.map((r) => this.rowToClient(r));
+  }
+  async deleteOAuthClient(id: string) {
+    const { rows } = await this.pool.query(`DELETE FROM oauth_clients WHERE id=$1 RETURNING id`, [id]);
+    return rows.length === 1;
+  }
 
   // ---- OAuth refresh tokens ----
   private rowToRefresh(r: any): RefreshTokenRecord {
@@ -378,6 +386,27 @@ export class PgStore implements DataStore {
   async revokeCredentialsForUser(userId: string, revokedAt: string) {
     await this.pool.query(`UPDATE tokens SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, [userId, revokedAt]);
     await this.pool.query(`UPDATE refresh_tokens SET revoked_at=$2 WHERE user_id=$1 AND revoked_at IS NULL`, [userId, revokedAt]);
+  }
+  async listOAuthConnections(now: string) {
+    const { rows } = await this.pool.query(
+      `SELECT client_id, max(client_name) AS client_name, count(DISTINCT family)::int AS n FROM refresh_tokens
+       WHERE revoked_at IS NULL AND expires_at > $1 GROUP BY client_id ORDER BY client_id ASC`, [now],
+    );
+    return rows.map((r) => ({ clientId: String(r.client_id), clientName: String(r.client_name), connections: Number(r.n) }));
+  }
+  async revokeCredentialsForClient(clientId: string, revokedAt: string) {
+    // One statement: the families are read and both tables written in a single
+    // snapshot. A data-modifying WITH runs whether or not the SELECT reads it.
+    const { rows } = await this.pool.query(
+      `WITH ended AS (
+         UPDATE refresh_tokens SET revoked_at=$2 WHERE client_id=$1 AND revoked_at IS NULL RETURNING family
+       ), cut AS (
+         UPDATE tokens SET revoked_at=$2 WHERE family IN (SELECT family FROM ended) AND revoked_at IS NULL RETURNING id
+       )
+       SELECT count(DISTINCT family)::int AS n FROM ended`,
+      [clientId, revokedAt],
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   // ---- project meta ----

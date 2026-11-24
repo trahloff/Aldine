@@ -2139,6 +2139,7 @@ a.btn { text-decoration: none; }
 .admin__error { color: var(--error); }
 .admin__foot { color: var(--text-3); font-size: var(--text-s); margin-top: 14px; }
 .admin__card p { margin: 6px 0 0; font-size: var(--text-s); }
+.admin__clients-lead { margin: 0 0 10px; font-size: var(--text-s); }
 .admin__support-form { margin-top: 10px; max-width: 560px; }
 .admin__support-row { display: flex; gap: 8px; margin-top: 4px; }
 .admin__support-row .input { flex: 1; min-width: 0; height: 32px; }
