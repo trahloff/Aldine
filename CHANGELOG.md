@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.23.1] — 2026-11-25
+
 ### Fixed
 - A file could be emptied while it was being opened (#342). For the moment
   a document takes to load, an empty document stood in its place on the
