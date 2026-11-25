@@ -1463,12 +1463,38 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     markComment(cid);
   }, [setSidebar, markComment]);
 
-  const revealComment = useCallback((c: Comment) => {
+  // The commented text in the preview, next to the jump in the editor. The
+  // editor is where the click leads: the preview scrolls only if it is
+  // there to scroll, no pane changes hands and nothing is said when the PDF
+  // has no such place (a file the paper does not include). The latest jump
+  // wins; `awaitPages` keeps one for the pages a project just opened is
+  // still typesetting.
+  const pdfJumpSeq = useRef(0);
+  const pdfJumpWaiting = useRef<{ file: string; line: number } | null>(null);
+  const showLineInPdf = useCallback(async (file: string, line: number, awaitPages = false) => {
+    const seq = ++pdfJumpSeq.current;
+    const pages = pdfPages.get() !== null;
+    pdfJumpWaiting.current = awaitPages && !pages ? { file, line } : null;
+    if (!pages) return;
+    try {
+      const res = await api.synctex(id, branch, { direction: 'forward', file, line, column: 0 });
+      const rec = res.records?.find((r) => r.page != null && (r.y != null || r.v != null));
+      if (rec && seq === pdfJumpSeq.current) pdfRef.current?.showForward(Number(rec.page), Number(rec.y ?? rec.v));
+    } catch { /* no SyncTeX for this run: the editor jumped, the preview stays */ }
+  }, [id, branch, pdfPages]);
+  useEffect(() => pdfPages.subscribe(() => {
+    const w = pdfJumpWaiting.current;
+    if (w && pdfPages.get() !== null) void showLineInPdf(w.file, w.line);
+  }), [pdfPages, showLineInPdf]);
+
+  const revealComment = useCallback((c: Comment, awaitPages = false) => {
     openFile(c.file);
     // The quote finds the text after edits moved it; selectRange waits for a
     // freshly opened file's doc to sync. The delay lets codeRef reach the new pane.
-    requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, { quote: c.anchor.quote, focus: true }), 80));
-  }, [openFile]);
+    requestAnimationFrame(() => setTimeout(() => codeRef.current?.selectRange(c.anchor.from, c.anchor.to, {
+      quote: c.anchor.quote, focus: true, onPlaced: (line) => { void showLineInPdf(c.file, line, awaitPages); },
+    }), 80));
+  }, [openFile, showLineInPdf]);
 
   // Deep link (/p/:id?comment=<id>, the mention and assignment emails, Home's
   // For you): the thread opens in Review once this branch's comments load,
@@ -1484,7 +1510,8 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     const c = comments.find((x) => x.id === cid);
     if (!c) { toast('That comment is no longer on this branch: it was deleted, or its branch is gone.', 'info'); return; }
     openCommentInReview(c.id);
-    revealComment(c);
+    // A link opens the project: its PDF may still be on the way.
+    revealComment(c, true);
   }, [commentsLoad, comments, files.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- an agent edit waiting on this person's typing ----

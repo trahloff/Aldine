@@ -94,14 +94,17 @@ export interface GotoOptions {
 /** An agent edit waiting on this person: where it would change the text, and until when it waits. */
 export interface AgentWaitNotice { id: string; agent: string; from: number; to: number; until: number }
 
+export interface RangeOptions { quote: string; focus: boolean; context?: MatchContext; onPlaced?(line: number): void }
+
 export interface CodePaneHandle {
   /** Deferred until the collab doc has synced: a fresh pane holds an empty
    *  document until then, and line N of nothing is line 1. */
   gotoLine(line: number, opts?: GotoOptions): void;
   /** Select from..to, re-anchored by `quote` (and the text around it) when
    *  edits moved it, and scroll it into view; deferred like gotoLine.
-   *  Selection only: no document change. */
-  selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }): void;
+   *  Selection only: no document change. `onPlaced` hears the line the
+   *  selection starts on, once it is made. */
+  selectRange(from: number, to: number, opts: RangeOptions): void;
   insertAtCursor(text: string): void;
   /** Cites `key` at the cursor (citeInsert.ts): 'inserted' a new \cite, 'added' to the citation there, or
    *  'present' already; null when the document cannot take it (no view, read-only). */
@@ -306,17 +309,18 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
   const syncedRef = useRef(false);
   const pendingGoto = useRef<
     | { kind: 'line'; line: number; opts: GotoOptions }
-    | { kind: 'range'; from: number; to: number; quote: string; focus: boolean; context?: MatchContext }
+    | { kind: 'range'; from: number; to: number; opts: RangeOptions }
     | null
   >(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoRef = useRef<Y.UndoManager | null>(null);
   const pendingEdits = useRef<Array<() => void>>([]);
 
-  const applyRange = (view: EditorView, from: number, to: number, quote: string, focus: boolean, context?: MatchContext) => {
-    const r = reanchor(view.state.doc, { from, to, quote }, context);
+  const applyRange = (view: EditorView, from: number, to: number, opts: RangeOptions) => {
+    const r = reanchor(view.state.doc, { from, to, quote: opts.quote }, opts.context);
     view.dispatch({ selection: { anchor: r.from, head: r.to }, effects: jumpEffects(r.from) });
-    if (focus) view.focus();
+    if (opts.focus) view.focus();
+    opts.onPlaced?.(view.state.doc.lineAt(r.from).number);
   };
 
   const applyGoto = (view: EditorView, line: number, opts: GotoOptions) => {
@@ -350,10 +354,10 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'line', line, opts }; return; }
       applyGoto(view, line, opts);
     },
-    selectRange(from: number, to: number, opts: { quote: string; focus: boolean; context?: MatchContext }) {
+    selectRange(from: number, to: number, opts: RangeOptions) {
       const view = viewRef.current;
-      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'range', from, to, quote: opts.quote, focus: opts.focus, context: opts.context }; return; }
-      applyRange(view, from, to, opts.quote, opts.focus, opts.context);
+      if (!view || !syncedRef.current) { pendingGoto.current = { kind: 'range', from, to, opts }; return; }
+      applyRange(view, from, to, opts);
     },
     insertAtCursor(text: string) {
       const view = viewRef.current;
@@ -723,7 +727,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
       const back = restore;
       restore = null;
       if (goto?.kind === 'line') applyGoto(view, goto.line, goto.opts);
-      else if (goto?.kind === 'range') applyRange(view, goto.from, goto.to, goto.quote, goto.focus, goto.context);
+      else if (goto?.kind === 'range') applyRange(view, goto.from, goto.to, goto.opts);
       else if (back) {
         const s = clampSpot(back, view.state.doc.length);
         view.dispatch({ selection: spotSelection(s), effects: spotScroll(s) });
