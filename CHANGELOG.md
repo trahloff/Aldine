@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.25.0] — 2026-11-25
+
 ### Added
 - Project memory: four Markdown files at a project's root (`FINDINGS.md`,
   `DECISIONS.md`, `TASKS.md`, `RESULTS.md`) that connected assistants are
