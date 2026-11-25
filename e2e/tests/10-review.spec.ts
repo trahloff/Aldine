@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures';
-import { createProject, openProject, cleanup } from './helpers';
+import { createProject, openProject, cleanup, expectTypesetOk } from './helpers';
 
 test.describe('review mode', () => {
   test('select text, add a comment with a suggestion, accept it, and see the file change', async ({ page, request }) => {
@@ -281,6 +281,48 @@ test.describe('commented text', () => {
       await expect(page.getByTestId(`comment-${later}`)).toHaveClass(/review__item--active/);
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('comment-tip')).toHaveCount(0);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('a comment also scrolls the preview to its text, from the panel and from a link', async ({ page, request }) => {
+    const id = await createProject(request, 'Review Jump PDF');
+    try {
+      const filler = Array.from({ length: 6 }, (_, i) => `Paragraph ${i} of the first page.\\par`).join('\n');
+      const body = `\\documentclass{article}\n\\begin{document}\n${filler}\n\\newpage\nSecond page opener.\\par\nTARGETWORDS on page two.\n\\end{document}\n`;
+      await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: body } });
+      const from = body.indexOf('TARGETWORDS');
+      const c = await (await request.post(`/api/projects/${id}/comments`, {
+        data: { branch: 'main', file: 'main.tex', anchor: { from, to: from + 11, quote: 'TARGETWORDS' }, body: 'page two' },
+      })).json();
+
+      const pane = page.getByTestId('pdf-pane');
+      /** Where the second page's top sits in the pane, as a fraction of its height. */
+      const pageTwoTop = () => pane.evaluate((el) => {
+        const view = el.getBoundingClientRect();
+        const second = el.querySelectorAll('canvas.pdf-page')[1]?.getBoundingClientRect();
+        return second ? (second.top - view.top) / view.height : null;
+      });
+      // the text is at the top of page two: the jump puts it a third down the pane
+      const onPageTwo = () => expect.poll(pageTwoTop, { timeout: 10_000 }).toBeLessThan(0.5);
+
+      await openProject(page, id);
+      await expectTypesetOk(page);
+      await page.getByTestId('tab-review').click();
+      expect(await pageTwoTop()).toBeGreaterThan(0.6);
+      await page.getByTestId(`comment-${c.id}`).locator('.review__anchor').click();
+      await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('TARGETWORDS');
+      await expect(page.locator('.pdf-flash')).toBeVisible({ timeout: 10_000 });
+      await onPageTwo();
+      // the editor keeps the keyboard: the preview only scrolled
+      await expect(page.locator('.cm-content')).toBeFocused();
+
+      // the link from a mention mail: the pages arrive after the editor jumped
+      await page.goto(`/p/${id}?comment=${c.id}`);
+      await expect.poll(() => page.evaluate(() => window.getSelection()?.toString()), { timeout: 15_000 }).toBe('TARGETWORDS');
+      await expectTypesetOk(page);
+      await onPageTwo();
     } finally {
       await cleanup(request, id);
     }

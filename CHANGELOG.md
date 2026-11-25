@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Changed
+- A comment's "Jump to the commented text" now scrolls the preview too: the
+  editor selects the text as before, and the PDF moves to the same place
+  and marks it. The editor keeps the keyboard, and a hidden preview stays
+  hidden. A comment link from a mail does the same once the project's
+  pages are typeset.
+
 ## [1.23.1] — 2026-11-25
 
 ### Fixed
