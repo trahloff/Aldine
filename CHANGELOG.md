@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.24.0] — 2026-11-25
+
 ### Changed
 - A comment's "Jump to the commented text" now scrolls the preview too: the
   editor selects the text as before, and the PDF moves to the same place
