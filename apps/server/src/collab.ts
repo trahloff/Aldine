@@ -425,7 +425,30 @@ function isProjectFile(filePath: string): boolean {
   return importPath(filePath) !== null && !isHiddenPath(filePath);
 }
 
+/**
+ * Documents whose load hook has run to its end. Hocuspocus registers a
+ * document before that hook starts and keeps it registered while the hook
+ * awaits (and, after a failed load, until the unload), so for that time an
+ * empty document stands under the file's name. Stored, it would replace the
+ * file and its snapshot with nothing; refreshed from disk, it would be
+ * seeded with operations no snapshot or open tab knows.
+ */
+const seeded = new WeakSet<Y.Doc>();
+
+/** Whether `doc` is the registered document of `name` and has not loaded:
+ *  nothing may read its text as the file's or write to it. */
+function stillLoading(name: string, doc: Y.Doc): boolean {
+  return !seeded.has(doc) && hocuspocus.documents.get(name) === doc;
+}
+
+/** The registered document of `name` once it has loaded. */
+function loadedDoc(name: string): Y.Doc | undefined {
+  const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
+  return doc && seeded.has(doc) ? doc : undefined;
+}
+
 export function writeDocToDisk(name: string, document: Y.Doc): void {
+  if (stillLoading(name, document)) return;
   const typed = docWriters.get(name);
   docWriters.delete(name);
   if (tombstoned.has(name)) return;
@@ -579,7 +602,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     if (!parsed) throw new Error(`invalid document name: ${documentName}`);
     const { projectId, branch, filePath } = parsed;
     if (await inTrash(projectId)) throw new Error('project not found');
-    if (isSignalDoc(filePath)) return document; // ephemeral coordination channel, nothing to load
+    if (isSignalDoc(filePath)) { seeded.add(document); return document; } // ephemeral coordination channel, nothing to load
     if (!isProjectFile(filePath)) throw new Error(`invalid document name: ${documentName}`);
     // A client whose socket was closed by evictDoc reconnects at once; while
     // the tombstone stands, the file is gone on purpose and a fresh empty doc
@@ -595,7 +618,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     // early return so a doc synced from a peer still writes the file's endings.
     const content = adoptLineEndings(documentName, raw);
     const text = document.getText(TEXT_KEY);
-    if (text.length > 0) return document; // already has state (e.g. synced from a peer node)
+    if (text.length > 0) { seeded.add(document); return document; } // already has state (e.g. synced from a peer node)
 
     // Prefer the Yjs snapshot (preserves operation identity → reconnect-safe).
     // Fall back to a plain-text seed only when there's no snapshot or the file
@@ -627,6 +650,7 @@ export const hocuspocus: Hocuspocus = HocuspocusServer.configure({
     // skips the .tex rewrite (no latexmk churn) — a file with mixed line
     // endings included, which is left as it is until someone edits it.
     lastWritten.set(documentName, sha1(diskText(documentName, content)));
+    seeded.add(document);
     return document;
   },
   // A sole viewer's reload unloads the doc (unloadImmediately) and with it the
@@ -873,7 +897,7 @@ export function applySuggestionToDoc(
   origin?: unknown,
 ): 'applied' | 'stale' | 'no-doc' {
   const name = docName(projectId, branch, filePath);
-  const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
+  const doc = loadedDoc(name);
   if (!doc) return 'no-doc';
   const ytext = doc.getText(TEXT_KEY);
   const at = locateQuote(ytext.toString(), anchor);
@@ -903,7 +927,7 @@ export function applyEditsToDoc(
   origin?: unknown,
 ): 'applied' | 'no-doc' {
   const name = docName(projectId, branch, filePath);
-  const doc = hocuspocus.documents.get(name) as Y.Doc | undefined;
+  const doc = loadedDoc(name);
   if (!doc) return 'no-doc';
   const ytext = doc.getText(TEXT_KEY);
   const order = [...edits].sort((a, b) => b.from - a.from);
@@ -922,7 +946,7 @@ export function applyEditsToDoc(
  *  string is only trustworthy for offsets within the same synchronous tick
  *  (any await lets human keystrokes land in between). */
 export function openDocContent(projectId: string, branch: string, filePath: string): string | null {
-  const doc = hocuspocus.documents.get(docName(projectId, branch, filePath)) as Y.Doc | undefined;
+  const doc = loadedDoc(docName(projectId, branch, filePath));
   return doc ? doc.getText(TEXT_KEY).toString() : null;
 }
 
@@ -1335,6 +1359,9 @@ export function refreshBranchDocsFromDisk(projectId: string, branch: string, cha
   hocuspocus.documents.forEach((doc: Y.Doc & { name: string }, name: string) => {
     const parsed = parseDocName(name);
     if (!parsed || parsed.projectId !== projectId || parsed.branch !== branch) return;
+    // A document still loading reads the file itself; an agent's marks for
+    // it go into its snapshot, as for a closed file.
+    if (stillLoading(name, doc)) return;
     loaded.add(parsed.filePath);
     const abs = safeJoin(branchDir(projectId, branch), parsed.filePath);
     let raw: string | null;

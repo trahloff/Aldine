@@ -7,6 +7,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- A file could be emptied while it was being opened (#342). For the moment
+  a document takes to load, an empty document stood in its place on the
+  server; a typeset, a Zotero sync, a commit or a file save in that moment
+  stored it, so the file and its collaboration snapshot were both replaced
+  by nothing and every editor then showed an empty file. Opening a project
+  starts a typeset and the Zotero sync next to the editor, and with
+  Postgres as the datastore (`DATABASE_URL`) the moment is a network round
+  trip long. A document is now stored, refreshed and read by tools only
+  once it has loaded. The earlier text is still in History: restore the
+  file from the checkpoint before it went empty.
+
 ## [1.23.0] — 2026-11-24
 
 ### Added
