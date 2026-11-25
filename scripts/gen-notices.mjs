@@ -124,7 +124,7 @@ const lines = [
   '# Third-party notices',
   '',
   'Aldine itself is AGPL-3.0 (see [LICENSE](LICENSE)). It ships with the',
-  'open-source packages listed here, each under its own license. Regenerate with',
+  'packages listed here, each under its own license. Regenerate with',
   '`npm run notices`.',
   '',
   `${sorted.length} packages: ` + [...byLicense.entries()]
@@ -140,6 +140,22 @@ const lines = [
   'project at tug.org/texlive.',
   '',
 ];
+
+// The Functional Source License is not an open-source license: it permits
+// everything except offering a competing product, and each release becomes
+// Apache-2.0 two years on. Named in the header so the list is not read as
+// open source throughout.
+const sourceAvailable = sorted.filter((p) => /^FSL-/.test(p.license));
+if (sourceAvailable.length) {
+  lines.push(
+    `Not open source: ${sourceAvailable.map((p) => `\`${p.name}\` (${p.license})`).join(', ')}. The Functional Source License`,
+    'permits everything except offering a product that competes with its',
+    'author, and turns into Apache-2.0 two years after each release. `sentry` is',
+    "Sentry's command-line tool; it comes with the optional error-tracking SDK",
+    '(`@sentry/node`) and Aldine never runs it.',
+    '',
+  );
+}
 
 const gated = platformGated();
 if (gated.length) {
