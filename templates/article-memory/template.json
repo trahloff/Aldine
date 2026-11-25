@@ -1,0 +1,13 @@
+{
+  "id": "article-memory",
+  "name": "Article with project memory",
+  "description": "The Article template plus four notes your assistants read first and keep current: findings, decisions, tasks and results.",
+  "order": 2,
+  "category": "General",
+  "license": "MIT",
+  "licenseUrl": "https://opensource.org/license/mit",
+  "source": {
+    "url": "https://github.com/trahloff/Aldine/tree/main/templates/article-memory",
+    "version": "0.1.0"
+  }
+}

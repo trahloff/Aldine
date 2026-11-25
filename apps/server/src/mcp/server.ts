@@ -7,7 +7,7 @@ import { mcpLimiter } from '../ratelimit.js';
 import { authenticateMcp, mcpRateKeys, type McpIdentity } from './guards.js';
 import { publicBase } from '../util.js';
 import { wwwAuthenticate } from '../oauth/metadata.js';
-import { registerTools, loadViewerHtml } from './tools.js';
+import { registerTools, MEMORY_FILES, loadViewerHtml } from './tools.js';
 import { config } from '../config.js';
 
 /**
@@ -23,10 +23,23 @@ const pkg = createRequire(import.meta.url)('../../package.json') as { version: s
 /** Global body limit is 32 MB — far too generous for JSON-RPC tool calls. */
 const MCP_BODY_LIMIT = 2 * 1024 * 1024;
 
+/**
+ * What every connected client is told once, at initialize (docs/PROJECT_MEMORY.md).
+ * Clients decide whether to show it to their model; the tool descriptions do
+ * not depend on it.
+ */
+export const MEMORY_INSTRUCTIONS = [
+  'Aldine projects can keep a project memory: up to four Markdown files at the project root.',
+  `${MEMORY_FILES.map((f) => f.path).join(', ')} hold, in that order: what the project has established, what people decided and why, open work and its owner, and which script or command produced each figure, table and number.`,
+  'Before you work in a project, call project_structure: its memory field lists the files that exist. Read them first and use them instead of asking the user for context they already wrote down.',
+  'When you learn, finish or are told something these files track, add a short dated entry to the right file in the same session, with edit_file. Add; do not rewrite or delete what others wrote. Record a decision only when a person made it, and name them.',
+  'Do not create the files in a project that has none unless the user asks.',
+].join(' ');
+
 /** One server per identity per request/process; tools.ts owns the registry.
  *  `base` is the instance origin links and the viewer's CSP allowlist name. */
 export function createMcpServer(identity: McpIdentity, base: string): McpServer {
-  const server = new McpServer({ name: 'aldine', version: pkg.version });
+  const server = new McpServer({ name: 'aldine', version: pkg.version }, { instructions: MEMORY_INSTRUCTIONS });
   registerTools(server, identity, { publicBase: base });
   return server;
 }

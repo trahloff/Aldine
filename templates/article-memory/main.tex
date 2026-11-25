@@ -1,0 +1,40 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[backend=biber, style=numeric]{biblatex}
+\usepackage{hyperref}
+\addbibresource{references.bib}
+
+\title{Your Title Here}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A one-paragraph summary of the problem, your approach, and the headline result.
+\end{abstract}
+
+\section{Introduction}
+State the problem and why it matters. Cite prior work like this~\cite{knuth1984}.
+
+\section{Method}
+\label{sec:method}
+Describe your approach. Reference sections with \verb|\ref|, e.g.\ Section~\ref{sec:method}.
+
+\section{Results}
+Equations are first-class citizens:
+\begin{equation}
+  \label{eq:euler}
+  e^{i\pi} + 1 = 0
+\end{equation}
+
+\section{Conclusion}
+Wrap up and point to future work.
+
+\printbibliography
+\end{document}
