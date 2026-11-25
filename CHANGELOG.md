@@ -16,6 +16,18 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   `project_structure` gains a `memory` field listing the files a project
   has (docs/PROJECT_MEMORY.md).
 
+### Changed
+- Assistant commits are authored "Assistant" instead of "Claude", whichever
+  client wrote them; the client stays in the `Agent-client` trailer, so
+  History still reads "ChatGPT (for Ada)". Commits authored "Claude" before
+  this release still count as assistant commits everywhere. A commit with no
+  client named reads "Assistant (for Ada)".
+- Wording that speaks about assistants in general says "the assistant":
+  "Review the assistant's recent edits", "Revert the assistant's changes",
+  "Let assistants push and pull", the file tree and gutter titles, and the
+  PDF viewer's expired-link message. The Connect dialog still names Claude
+  and ChatGPT.
+
 ## [1.24.0] — 2026-11-25
 
 ### Changed

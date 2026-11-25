@@ -255,7 +255,7 @@ test.describe('OAuth Connect flow', () => {
     // a Connect row lists under its own heading, names its project and never shows the daily access-token expiry
     await expect(page.getByTestId('agent-connections')).toBeVisible();
     await expect(page.getByTestId('agent-token-scope').first()).toHaveText('OAuth Picked');
-    await expect(page.getByTestId('agent-token-via-connect')).toHaveAttribute('title', /Claude asks you to connect again/);
+    await expect(page.getByTestId('agent-token-via-connect')).toHaveAttribute('title', /the assistant asks you to connect again/);
     await expect(page.getByTestId('account-settings')).not.toContainText('Expires');
     await page.getByTestId('agent-token-revoke').first().click();
     await page.getByTestId('agent-token-revoke-confirm').click();
@@ -297,7 +297,7 @@ test.describe('OAuth Connect flow', () => {
       await expect(page.getByTestId('presence-agent')).toHaveAttribute('title', /^Loopback e2e client \(for OAuth Tester\), agent session started \d\d:\d\d, in this file$/, { timeout: 10_000 });
       // the author stays Claude, which the review prompts key on; client and person are trailers
       const log = await (await page.request.get(`/api/projects/${project.id}/log?branch=main`)).json();
-      expect(log[0]).toMatchObject({ author: 'Claude', message: 'Reword the opening line', onBehalfOf: 'OAuth Tester', client: 'Loopback e2e client' });
+      expect(log[0]).toMatchObject({ author: 'Assistant', message: 'Reword the opening line', onBehalfOf: 'OAuth Tester', client: 'Loopback e2e client' });
       const activity = await (await page.request.get(`/api/projects/${project.id}/agent-activity?branch=main`)).json();
       expect(activity.commits[0]).toMatchObject({ onBehalfOf: 'OAuth Tester', client: 'Loopback e2e client' });
       // History sits in the sidebar's More menu at this width

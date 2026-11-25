@@ -71,7 +71,7 @@ class AgentLineMarker extends GutterMarker {
   toDOM() {
     const el = document.createElement('span');
     el.className = `cm-agent-mark cm-agent-mark--${this.kind}`;
-    el.title = this.kind === 'ins' ? 'Changed by Claude since your last review' : 'Claude removed text here since your last review';
+    el.title = this.kind === 'ins' ? 'Changed by an assistant since your last review' : 'An assistant removed text here since your last review';
     el.setAttribute('data-testid', 'agent-gutter-mark');
     el.setAttribute('data-kind', this.kind);
     return el;

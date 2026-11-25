@@ -70,7 +70,7 @@ const untilLog = async (id, branch, pred, maxMs = 6000) => {
 const agentWrite = (id, rel, content, message) => gitops.withRepoLock(id, async () => {
   await gitops.checkpointPathsHeld(id, 'main', [rel]);
   store.writeFile(id, 'main', rel, content);
-  scheduleCommit(id, 'main', message, 'Claude', [rel]);
+  scheduleCommit(id, 'main', message, 'Assistant', [rel]);
 });
 
 // ---- direction 1: human schedules first, agent second — before the fix the
@@ -80,17 +80,17 @@ const p1 = await store.createProject('Split human-then-agent', {});
 store.writeFile(p1.id, 'main', 'human.tex', 'typed by a human\n');
 scheduleCommit(p1.id, 'main');
 store.writeFile(p1.id, 'main', 'agent.tex', 'written by the agent\n');
-scheduleCommit(p1.id, 'main', 'Edit agent.tex', 'Claude', ['agent.tex']);
+scheduleCommit(p1.id, 'main', 'Edit agent.tex', 'Assistant', ['agent.tex']);
 await sleep(1200);
 
-let log = await untilLog(p1.id, 'main', (l) => l.some((c) => c.author === 'Claude') && l.some((c) => c.message === 'aldine: autosave'));
-const claude1 = log.find((c) => c.author === 'Claude');
+let log = await untilLog(p1.id, 'main', (l) => l.some((c) => c.author === 'Assistant') && l.some((c) => c.message === 'aldine: autosave'));
+const claude1 = log.find((c) => c.author === 'Assistant');
 check(claude1 !== undefined && claude1.message === 'Edit agent.tex', 'agent work commits with author Claude and the stated intent');
 const claudeStat1 = (await gitops.commitDiff(p1.id, claude1.hash)).stat;
 check(claudeStat1.includes('agent.tex'), 'the Claude commit contains the agent-touched file');
 check(!claudeStat1.includes('human.tex'), "the human's file stays OUT of the Claude commit");
 const autosave1 = log.find((c) => c.message === 'aldine: autosave');
-check(autosave1 !== undefined && autosave1.author !== 'Claude', 'human work commits as an anonymous autosave');
+check(autosave1 !== undefined && autosave1.author !== 'Assistant', 'human work commits as an anonymous autosave');
 check((await gitops.commitDiff(p1.id, autosave1.hash)).stat.includes('human.tex'), "the autosave sweep picks up the human's file");
 
 // ---- direction 2: agent schedules first, human keystroke second — before
@@ -99,42 +99,42 @@ check((await gitops.commitDiff(p1.id, autosave1.hash)).stat.includes('human.tex'
 // no revert coverage) ----
 const p2 = await store.createProject('Split agent-then-human', {});
 store.writeFile(p2.id, 'main', 'agent.tex', 'agent change\n');
-scheduleCommit(p2.id, 'main', 'Update agent.tex', 'Claude', ['agent.tex']);
+scheduleCommit(p2.id, 'main', 'Update agent.tex', 'Assistant', ['agent.tex']);
 store.writeFile(p2.id, 'main', 'human.tex', 'human keystrokes\n');
 scheduleCommit(p2.id, 'main');
 await sleep(1200);
 
-log = await untilLog(p2.id, 'main', (l) => l.some((c) => c.author === 'Claude') && l.some((c) => c.message === 'aldine: autosave'));
-const claude2 = log.find((c) => c.author === 'Claude');
+log = await untilLog(p2.id, 'main', (l) => l.some((c) => c.author === 'Assistant') && l.some((c) => c.message === 'aldine: autosave'));
+const claude2 = log.find((c) => c.author === 'Assistant');
 check(claude2 !== undefined && claude2.message === 'Update agent.tex', "a later human scheduling does not bury the agent's attribution");
 const claudeStat2 = (await gitops.commitDiff(p2.id, claude2.hash)).stat;
 check(claudeStat2.includes('agent.tex') && !claudeStat2.includes('human.tex'), 'the Claude commit covers exactly the agent-touched paths');
 const autosave2 = log.find((c) => c.message === 'aldine: autosave');
-check(autosave2 !== undefined && autosave2.author !== 'Claude', "the human's later keystrokes land as an anonymous autosave");
+check(autosave2 !== undefined && autosave2.author !== 'Assistant', "the human's later keystrokes land as an anonymous autosave");
 
 // ---- agent-only window: the sweep finds a clean tree and commits nothing ----
 const p3 = await store.createProject('Split agent-only', {});
 const baseLen = (await gitops.log(p3.id, 'main')).length;
 store.writeFile(p3.id, 'main', 'agent.tex', 'solo agent change\n');
-scheduleCommit(p3.id, 'main', 'Add agent.tex', 'Claude', ['agent.tex']);
+scheduleCommit(p3.id, 'main', 'Add agent.tex', 'Assistant', ['agent.tex']);
 await sleep(1200);
 log = await untilLog(p3.id, 'main', (l) => l.length >= baseLen + 1);
 check(log.length === baseLen + 1, `an agent-only window makes exactly one commit (got ${log.length - baseLen})`);
-check(log[0].author === 'Claude' && log[0].message === 'Add agent.tex', 'and it is the attributed one');
+check(log[0].author === 'Assistant' && log[0].message === 'Add agent.tex', 'and it is the attributed one');
 
 // ---- explicit commit inside the window consumes the attribution: the
 // agent's edit lands under the explicit author, and what the human types
 // into that file AFTERWARDS must not fire as a Claude commit ----
 const p4 = await store.createProject('Split explicit commit', {});
 store.writeFile(p4.id, 'main', 'main.tex', 'agent edit\n');
-scheduleCommit(p4.id, 'main', 'Edit main.tex', 'Claude', ['main.tex']);
+scheduleCommit(p4.id, 'main', 'Edit main.tex', 'Assistant', ['main.tex']);
 const explicit = await gitops.commitAll(p4.id, 'main', 'wip', 'Alice');
 check(explicit.committed === true, 'the explicit commit lands the pending agent edit');
 store.writeFile(p4.id, 'main', 'main.tex', 'agent edit\nhuman typing after the commit\n');
 scheduleCommit(p4.id, 'main');
 log = await untilLog(p4.id, 'main', (l) => l[0]?.message === 'aldine: autosave');
-check(log[0].message === 'aldine: autosave' && log[0].author !== 'Claude', "the human's post-commit typing commits as an anonymous autosave");
-check(!log.some((c) => c.author === 'Claude'), 'no Claude commit survives an explicit whole-tree commit');
+check(log[0].message === 'aldine: autosave' && log[0].author !== 'Assistant', "the human's post-commit typing commits as an anonymous autosave");
+check(!log.some((c) => c.author === 'Assistant'), 'no Claude commit survives an explicit whole-tree commit');
 
 // ---- same-file checkpoint: a human's uncommitted edits to the file the
 // agent is about to touch commit as an autosave FIRST, so the attributed
@@ -143,13 +143,13 @@ const p5 = await store.createProject('Split same-file checkpoint', {});
 store.writeFile(p5.id, 'main', 'main.tex', 'human paragraph one\nhuman paragraph two\n');
 scheduleCommit(p5.id, 'main'); // typing keeps re-arming the debounce; nothing has landed
 await agentWrite(p5.id, 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n', 'Edit main.tex');
-log = await untilLog(p5.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
-const claude5 = log.find((c) => c.author === 'Claude');
+log = await untilLog(p5.id, 'main', (l) => l.some((c) => c.author === 'Assistant'));
+const claude5 = log.find((c) => c.author === 'Assistant');
 check(claude5 !== undefined, 'the agent edit commits under Claude');
 const patch5 = (await gitops.commitDiff(p5.id, claude5.hash)).patch;
 check(patch5.includes('+agent sentence') && !patch5.includes('+human paragraph'), "the Claude commit's diff is exactly the agent's delta");
 const checkpoint5 = log.find((c) => c.message === 'aldine: autosave');
-check(checkpoint5 !== undefined && checkpoint5.author !== 'Claude', "the human's pending paragraphs were checkpointed as an anonymous autosave");
+check(checkpoint5 !== undefined && checkpoint5.author !== 'Assistant', "the human's pending paragraphs were checkpointed as an anonymous autosave");
 check((await gitops.commitDiff(p5.id, checkpoint5.hash)).patch.includes('+human paragraph two'), 'the checkpoint holds the human paragraphs');
 
 // ---- fire in flight BEFORE the span: the autosave already running when the
@@ -161,13 +161,13 @@ scheduleCommit(p5b.id, 'main');
 const fire5b = gitops.autoCommit(p5b.id, 'main'); // not awaited: in flight
 await agentWrite(p5b.id, 'main.tex', 'human paragraph one\nhuman paragraph two\nagent sentence\n', 'Edit main.tex');
 await fire5b;
-log = await untilLog(p5b.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
-const claudes5b = log.filter((c) => c.author === 'Claude');
+log = await untilLog(p5b.id, 'main', (l) => l.some((c) => c.author === 'Assistant'));
+const claudes5b = log.filter((c) => c.author === 'Assistant');
 check(claudes5b.length === 1, `exactly one Claude commit after a fire in flight (got ${claudes5b.length})`);
 const patch5b = claudes5b[0] ? (await gitops.commitDiff(p5b.id, claudes5b[0].hash)).patch : '';
 check(patch5b.includes('+agent sentence') && !patch5b.includes('+human paragraph'), "the in-flight fire did not sweep the agent's delta: the Claude commit is exactly the delta");
 const autosaves5b = log.filter((c) => c.message === 'aldine: autosave');
-check(autosaves5b.length === 1 && autosaves5b[0].author !== 'Claude', `exactly one anonymous autosave (got ${autosaves5b.length})`);
+check(autosaves5b.length === 1 && autosaves5b[0].author !== 'Assistant', `exactly one anonymous autosave (got ${autosaves5b.length})`);
 check(autosaves5b[0] && (await gitops.commitDiff(p5b.id, autosaves5b[0].hash)).patch.includes('+human paragraph two'), 'the in-flight fire committed the human paragraphs');
 check(log.indexOf(claudes5b[0]) < log.indexOf(autosaves5b[0]), 'the Claude commit is newer than the autosave');
 
@@ -181,10 +181,10 @@ const span5c = agentWrite(p5c.id, 'main.tex', 'human paragraph one\nhuman paragr
 const fire5c = gitops.autoCommit(p5c.id, 'main');
 await Promise.all([span5c, fire5c]);
 log = await gitops.log(p5c.id, 'main');
-check(log[0].author === 'Claude' && log[0].message === 'Edit main.tex', 'the queued fire commits the agent delta under Claude, newest');
+check(log[0].author === 'Assistant' && log[0].message === 'Edit main.tex', 'the queued fire commits the agent delta under Claude, newest');
 const patch5c = (await gitops.commitDiff(p5c.id, log[0].hash)).patch;
 check(patch5c.includes('+agent sentence') && !patch5c.includes('+human paragraph'), "the queued fire's Claude commit is exactly the agent's delta");
-check(log[1].message === 'aldine: autosave' && log[1].author !== 'Claude', 'the checkpoint before it is the anonymous autosave');
+check(log[1].message === 'aldine: autosave' && log[1].author !== 'Assistant', 'the checkpoint before it is the anonymous autosave');
 check((await gitops.commitDiff(p5c.id, log[1].hash)).patch.includes('+human paragraph two'), 'and it holds the human paragraphs');
 const len5c = log.length;
 await sleep(600);
@@ -195,26 +195,26 @@ check((await gitops.log(p5c.id, 'main')).length === len5c, 'the re-armed debounc
 const p6 = await store.createProject('Split consecutive agent edits', {});
 const base6 = (await gitops.log(p6.id, 'main')).length;
 store.writeFile(p6.id, 'main', 'main.tex', 'agent edit one\n');
-scheduleCommit(p6.id, 'main', 'Edit main.tex', 'Claude', ['main.tex']);
+scheduleCommit(p6.id, 'main', 'Edit main.tex', 'Assistant', ['main.tex']);
 await gitops.checkpointPaths(p6.id, 'main', ['main.tex']);
 store.writeFile(p6.id, 'main', 'main.tex', 'agent edit one\nagent edit two\n');
-scheduleCommit(p6.id, 'main', 'Edit main.tex', 'Claude', ['main.tex']);
+scheduleCommit(p6.id, 'main', 'Edit main.tex', 'Assistant', ['main.tex']);
 await sleep(1200);
 log = await untilLog(p6.id, 'main', (l) => l.length >= base6 + 2);
-check(log.length === base6 + 2 && log.slice(0, 2).every((c) => c.author === 'Claude'), 'two agent edits to one file yield two Claude commits, no autosave');
+check(log.length === base6 + 2 && log.slice(0, 2).every((c) => c.author === 'Assistant'), 'two agent edits to one file yield two Claude commits, no autosave');
 
 // ---- vanished agent path: an untracked agent-created file deleted before
 // the fire must not sink the other agent paths into the anonymous sweep ----
 const p7 = await store.createProject('Split vanished path', {});
 store.writeFile(p7.id, 'main', 'new.tex', 'agent-created\n');
-scheduleCommit(p7.id, 'main', 'Update new.tex', 'Claude', ['new.tex']);
+scheduleCommit(p7.id, 'main', 'Update new.tex', 'Assistant', ['new.tex']);
 store.writeFile(p7.id, 'main', 'other.tex', 'agent-edited\n');
-scheduleCommit(p7.id, 'main', 'Edit other.tex', 'Claude', ['other.tex']);
+scheduleCommit(p7.id, 'main', 'Edit other.tex', 'Assistant', ['other.tex']);
 store.deleteFile(p7.id, 'main', 'new.tex');
 scheduleCommit(p7.id, 'main');
 await sleep(1200);
-log = await untilLog(p7.id, 'main', (l) => l.some((c) => c.author === 'Claude'));
-const claude7 = log.find((c) => c.author === 'Claude');
+log = await untilLog(p7.id, 'main', (l) => l.some((c) => c.author === 'Assistant'));
+const claude7 = log.find((c) => c.author === 'Assistant');
 check(claude7 !== undefined && (await gitops.commitDiff(p7.id, claude7.hash)).stat.includes('other.tex'), 'the surviving agent path still commits under Claude');
 check(!log.some((c) => c.message === 'aldine: autosave'), 'nothing is left for the anonymous sweep');
 
@@ -231,7 +231,7 @@ await agentWrite(p8.id, 'main.tex', 'tightened abstract\nsecond pass\n', 'Second
 await sleep(1200);
 log = await untilLog(p8.id, 'main', (l) => l.length >= base8 + 3);
 const titles8 = log.slice(0, log.length - base8).map((c) => `${c.author}: ${c.message}`);
-check(log.length === base8 + 3 && log.slice(0, 3).every((c) => c.author === 'Claude'), `three agent intents yield three Claude commits, no autosave (got ${JSON.stringify(titles8)})`);
+check(log.length === base8 + 3 && log.slice(0, 3).every((c) => c.author === 'Assistant'), `three agent intents yield three Claude commits, no autosave (got ${JSON.stringify(titles8)})`);
 const byMsg8 = Object.fromEntries(await Promise.all(log.slice(0, 3).map(async (c) => [c.message, (await gitops.commitDiff(p8.id, c.hash)).stat])));
 check(byMsg8['Tighten the abstract']?.includes('main.tex') && !byMsg8['Tighten the abstract']?.includes('notes.tex'), 'the checkpoint of main.tex is titled with main.tex\'s own intent and holds only main.tex');
 check(byMsg8['Add reviewer notes']?.includes('notes.tex') && !byMsg8['Add reviewer notes']?.includes('main.tex'), 'notes.tex commits under its own intent and never under main.tex\'s');
@@ -246,7 +246,7 @@ check(shutdownFlushSet().some((d) => d.projectId === p9.id && d.branch === 'main
 await gitops.autoCommit(p9.id, 'main', 'aldine: autosave on shutdown');
 check(!shutdownFlushSet().some((d) => d.projectId === p9.id), 'once committed it leaves the set');
 log = await gitops.log(p9.id, 'main');
-check(log[0].author === 'Claude' && log[0].message === 'Add a line', 'the shutdown flush lands the agent work under Claude');
+check(log[0].author === 'Assistant' && log[0].message === 'Add a line', 'the shutdown flush lands the agent work under Claude');
 
 // ---- a person's whole-tree commit inside the agent window (checkpoint,
 // revert, merge, GitHub push) must not sign Claude's pending delta ----
@@ -257,14 +257,14 @@ const manual = await gitops.autoCommit(p10.id, 'main', 'Checkpoint', 'Alice');
 log = await gitops.log(p10.id, 'main');
 check(manual.committed === true && log[0].author === 'Alice' && log[0].message === 'Checkpoint', `the person's checkpoint is the newest commit under their name (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
 check((await gitops.commitDiff(p10.id, log[0].hash)).stat.includes('human.tex') && !(await gitops.commitDiff(p10.id, log[0].hash)).stat.includes('main.tex'), "the checkpoint holds the person's file only");
-check(log[1].author === 'Claude' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p10.id, log[1].hash)).stat.includes('main.tex'), 'the agent delta committed first, under Claude and its intent');
+check(log[1].author === 'Assistant' && log[1].message === 'Tighten the abstract' && (await gitops.commitDiff(p10.id, log[1].hash)).stat.includes('main.tex'), 'the agent delta committed first, under Claude and its intent');
 
 // ---- fail closed, not stuck: an attributed commit that fails is retried
 // under a neutral title, so a subject git cannot take never blocks the
 // anonymous sweep of everyone else's work ----
 const p11 = await store.createProject('Split failing intent', {});
 store.writeFile(p11.id, 'main', 'main.tex', 'agent edit\n');
-gitops.registerAttributedPaths(p11.id, 'main', 'bad\u0000subject', 'Claude', ['main.tex']);
+gitops.registerAttributedPaths(p11.id, 'main', 'bad\u0000subject', 'Assistant', ['main.tex']);
 const failed = await gitops.autoCommit(p11.id, 'main').then(() => null, (e) => e);
 check(failed instanceof Error, 'a subject git cannot take fails that fire');
 check(shutdownFlushSet().some((d) => d.projectId === p11.id), 'the attribution is kept for the next fire');
@@ -272,7 +272,7 @@ store.writeFile(p11.id, 'main', 'human.tex', 'human line\n');
 await gitops.autoCommit(p11.id, 'main');
 log = await gitops.log(p11.id, 'main');
 check(log[0].message === 'aldine: autosave' && (await gitops.commitDiff(p11.id, log[0].hash)).stat.includes('human.tex'), `the next fire sweeps the person's file (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
-check(log[1].author === 'Claude' && log[1].message === 'aldine: agent edit' && (await gitops.commitDiff(p11.id, log[1].hash)).stat.includes('main.tex'), 'and the agent delta landed under Claude with the retry title');
+check(log[1].author === 'Assistant' && log[1].message === 'aldine: agent edit' && (await gitops.commitDiff(p11.id, log[1].hash)).stat.includes('main.tex'), 'and the agent delta landed under Claude with the retry title');
 
 // ---- a Zotero sync inside the agent window commits the synced .bib and
 // nothing else: Claude's pending delta stays for the fire, which lands it
@@ -287,11 +287,11 @@ await gitops.autoCommit(p12.id, 'main');
 log = await gitops.log(p12.id, 'main');
 const titles12 = log.map((c) => `${c.author}: ${c.message}`);
 const syncCommit = log.find((c) => c.message === 'aldine: sync Zotero library into references.bib');
-check(syncCommit && syncCommit.author !== 'Claude', `the sync commit is not Claude's (got ${JSON.stringify(titles12)})`);
+check(syncCommit && syncCommit.author !== 'Assistant', `the sync commit is not Claude's (got ${JSON.stringify(titles12)})`);
 const syncStat = (await gitops.commitDiff(p12.id, syncCommit.hash)).stat;
 check(syncStat.includes('references.bib') && !syncStat.includes('main.tex'), 'the sync commit holds only the .bib');
 const agentCommit = log.find((c) => c.message === 'Tighten the abstract');
-check(agentCommit?.author === 'Claude' && (await gitops.commitDiff(p12.id, agentCommit.hash)).stat.includes('main.tex'), `Claude's pending edit commits under Claude and its intent (got ${JSON.stringify(titles12)})`);
+check(agentCommit?.author === 'Assistant' && (await gitops.commitDiff(p12.id, agentCommit.hash)).stat.includes('main.tex'), `Claude's pending edit commits under Claude and its intent (got ${JSON.stringify(titles12)})`);
 
 // ---- the MCP commit tool's primitive fails the same way: a checkpoint git
 // refuses puts the attribution back, so the next sweep cannot sign the
@@ -300,13 +300,13 @@ const p13 = await store.createProject('Split commit tool failure', {});
 store.writeFile(p13.id, 'main', 'main.tex', 'agent edit\n');
 // registerAttributedPaths directly, not agentWrite: no debounce is armed, so
 // the fire order below is the test's, not a timer's.
-gitops.registerAttributedPaths(p13.id, 'main', 'Tighten the abstract', 'Claude', ['main.tex']);
+gitops.registerAttributedPaths(p13.id, 'main', 'Tighten the abstract', 'Assistant', ['main.tex']);
 const boom = await gitops.withRepoLock(p13.id, () => gitops.commitAttributedHeld(p13.id, 'main', 'bad\u0000subject')).then(() => null, (e) => e);
 check(boom instanceof Error, 'a subject git cannot take fails the attributed checkpoint');
 check(shutdownFlushSet().some((d) => d.projectId === p13.id), 'the attribution is put back, not lost');
 await gitops.autoCommit(p13.id, 'main');
 log = await gitops.log(p13.id, 'main');
-check(log[0].author === 'Claude' && log[0].message === 'aldine: agent edit', `the next fire lands the agent delta under the retry title (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+check(log[0].author === 'Assistant' && log[0].message === 'aldine: agent edit', `the next fire lands the agent delta under the retry title (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
 
 // ---- the write tools' own commit: built from the snapshots the tool held,
 // so what reaches the working tree while git runs (a store of a person's
@@ -330,11 +330,11 @@ const snap = await gitops.withRepoLock(p14.id, () => gitops.commitAgentWriteHeld
 ], 'Add the agent line'));
 check(snap.committed === true && JSON.stringify(snap.files) === '["main.tex","sections/new.tex"]', `the agent commit lands with both paths (got ${JSON.stringify(snap)})`);
 log = await gitops.log(p14.id, 'main');
-check(log.length === base14 + 2 && log[0].author === 'Claude' && log[0].message === 'Add the agent line', `two commits: the late typing, then the agent's (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
+check(log.length === base14 + 2 && log[0].author === 'Assistant' && log[0].message === 'Add the agent line', `two commits: the late typing, then the agent's (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
 check(log[0].hash === snap.hash, 'the returned hash is the new head');
 const patch14 = (await gitops.commitDiff(p14.id, log[0].hash)).patch;
 check(patch14.includes('+agent line') && patch14.includes('+a new section') && !patch14.includes('+human line') && !patch14.includes('typed during the commit'), "the Claude commit is exactly the agent's delta — the late typing and the mid-commit drift are not in it");
-check(log[1].message === 'aldine: autosave' && log[1].author !== 'Claude' && (await gitops.commitDiff(p14.id, log[1].hash)).patch.includes('+human line typed late'), 'the late typing is the anonymous checkpoint just before it');
+check(log[1].message === 'aldine: autosave' && log[1].author !== 'Assistant' && (await gitops.commitDiff(p14.id, log[1].hash)).patch.includes('+human line typed late'), 'the late typing is the anonymous checkpoint just before it');
 check(store.readFile(p14.id, 'main', 'main.tex').toString('utf8') === after14 + 'typed during the commit\n', 'the working tree is left alone');
 const status14 = (await store.git(store.branchDir(p14.id, 'main')).status()).files.map((f) => `${f.index}${f.working_dir} ${f.path}`);
 check(JSON.stringify(status14) === '[" M main.tex"]', `after the commit the index follows HEAD: the drift is an unstaged change and nothing else is dirty (got ${JSON.stringify(status14)})`);

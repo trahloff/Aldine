@@ -415,7 +415,7 @@ function AgentAccess({ onSecret }: { onSecret?: (shown: boolean) => void }) {
       <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
         {t.clientName !== null && (
-          <span className="gh-repo__badge" title="Created by the Connect button in Claude; revoking ends the connection and Claude asks you to connect again" data-testid="agent-token-via-connect">via Connect</span>
+          <span className="gh-repo__badge" title="Created when you connected an assistant; revoking ends the connection and the assistant asks you to connect again" data-testid="agent-token-via-connect">via Connect</span>
         )}
         <button className="btn btn--ghost btn--small" style={{ flexShrink: 0 }} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`} data-testid="agent-token-revoke">Revoke</button>
       </span>
@@ -534,7 +534,7 @@ function AgentAccess({ onSecret }: { onSecret?: (shown: boolean) => void }) {
               {scopeLabel(revoking)} · {revoking.lastUsedAt ? `last used ${friendlyDate(revoking.lastUsedAt)}` : 'never used'}
             </p>
             <p style={{ color: 'var(--text-2)', fontSize: 'var(--text-m)', margin: 0 }}>
-              Anything connected with it loses access at its next request{revoking.clientName !== null ? ' and Claude will ask you to connect again' : ''}.
+              Anything connected with it loses access at its next request{revoking.clientName !== null ? ' and the assistant will ask you to connect again' : ''}.
             </p>
             <div className="modal__row">
               <button className="btn" onClick={() => setRevoking(null)}>Keep it</button>

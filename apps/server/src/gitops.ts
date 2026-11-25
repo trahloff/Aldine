@@ -212,7 +212,7 @@ export function pendingWriters(id: string, branch: string): string[] {
  *  agent" must not be claimed by a person's save. */
 function commitSafeName(name: string): string {
   const clean = name.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
-  return clean === AGENT_COMMIT_AUTHOR || clean === 'Aldine' ? '' : clean;
+  return isAgentAuthor(clean) || clean === 'Aldine' ? '' : clean;
 }
 
 /** The commit that holds the writers' bytes: with no author of its own, the
@@ -220,7 +220,7 @@ function commitSafeName(name: string): string {
  *  can name several people and cannot say whose line is whose. */
 function signedBy(message: string, author: CommitAuthor | undefined, taken: TakenWriters): { message: string; author: CommitAuthor | undefined } {
   const people = [...new Map(taken.sort((a, b) => a.mark.seq - b.mark.seq).map((t) => [t.mark.writer.id, t.mark.writer])).values()];
-  if (!people.length || authorName(author) === AGENT_COMMIT_AUTHOR) return { message, author };
+  if (!people.length || isAgentAuthor(authorName(author))) return { message, author };
   const ident = (w: Writer) => `${w.name} <${w.email || authorEmail(w.name)}>`;
   let by = author;
   if (!authorName(by)) by = people[0].email ? { name: people[0].name, email: people[0].email } : people[0].name;
@@ -694,7 +694,7 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
       const client = clientOf(f[i + 6], f[i + 2]);
       const lines = f[i + 7].split('\n');
       const files = lines.slice(1).map((l) => l.trim()).filter(Boolean);
-      const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
+      const onBehalfOf = isAgentAuthor(f[i + 2]) ? f[i + 4].trim() : '';
       out.push({
         hash, date: f[i + 1], author: f[i + 2], message: lines[0] ?? '',
         parents: f[i + 3].split(' ').filter(Boolean).length,
@@ -711,7 +711,7 @@ export async function log(id: string, branch: string, limit = 50, { skip = 0, de
   for (let i = 0; i + 6 < f.length; i += 7) {
     const hash = f[i].trim(); // the newline git prints after each record leads the next hash
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
-    const onBehalfOf = f[i + 2] === AGENT_COMMIT_AUTHOR ? f[i + 4].trim() : '';
+    const onBehalfOf = isAgentAuthor(f[i + 2]) ? f[i + 4].trim() : '';
     const coAuthors = coAuthorsOf(f[i + 5], f[i + 2]);
     const client = clientOf(f[i + 6], f[i + 2]);
     out.push({ hash, date: f[i + 1], author: f[i + 2], message: f[i + 3], ...(onBehalfOf ? { onBehalfOf } : {}), ...(client ? { client } : {}), ...(coAuthors.length ? { coAuthors } : {}) });
@@ -728,9 +728,13 @@ export async function branchHead(id: string, branch: string): Promise<string> {
   } catch { return ''; }
 }
 
-/** Author string every agent write commits under; the History dot, the
- *  session review and this answer all key on it. */
-export const AGENT_COMMIT_AUTHOR = 'Claude';
+/** Author string every agent write commits under. */
+export const AGENT_COMMIT_AUTHOR = 'Assistant';
+/** The author agent writes carried before 1.25. Commits are never rewritten,
+ *  so everything that tells agent commits apart (the History dot, the
+ *  session review, the baseline, the trailers) accepts both names. */
+export const LEGACY_AGENT_COMMIT_AUTHOR = 'Claude';
+export const isAgentAuthor = (author: string | undefined): boolean => author === AGENT_COMMIT_AUTHOR || author === LEGACY_AGENT_COMMIT_AUTHOR;
 
 const AUTOSAVE_SUBJECT = /^aldine: autosave( on shutdown)?$/;
 /** search.ts replaceCommitMessage: commits only the files it changed. */
@@ -744,7 +748,7 @@ const BASELINE_SCAN_MAX = 20_000;
 /** Whether a commit by `author` titled `subject` can be the diff baseline,
  *  short of what its files say (isRemovalCommit). */
 function mayBeBaseline(author: string | undefined, subject: string): boolean {
-  return !AUTOSAVE_SUBJECT.test(subject) && author !== AGENT_COMMIT_AUTHOR && !REPLACE_SUBJECT.test(subject);
+  return !AUTOSAVE_SUBJECT.test(subject) && !isAgentAuthor(author) && !REPLACE_SUBJECT.test(subject);
 }
 
 /** The file route's removal commit (`Delete <path>`, `Delete folder <path>`),
@@ -850,7 +854,7 @@ export async function changedSinceBaseline(id: string, branch: string, manual: b
 }
 
 /** Trailer naming whose access token an agent commit was made with: the
- *  author stays AGENT_COMMIT_AUTHOR, which everything that tells Claude's
+ *  author stays AGENT_COMMIT_AUTHOR, which everything that tells agent
  *  commits apart keys on. */
 export const AGENT_REQUESTER_TRAILER = 'On-behalf-of';
 /** Git also reads `Key : value`, with blanks before the colon, as a trailer. */
@@ -889,7 +893,7 @@ const REQUESTER_FORMAT = `%(trailers:key=${AGENT_REQUESTER_TRAILER},valueonly,se
 /** The client back, '' when absent. A message can end up with two such lines
  *  only by hand; the first is the one Aldine wrote. */
 const CLIENT_FORMAT = `%(trailers:key=${AGENT_CLIENT_TRAILER},valueonly,separator=%x1F)`;
-const clientOf = (raw: string, author: string): string => (author === AGENT_COMMIT_AUTHOR ? agentClientName(raw.split('\x1f')[0]) : '');
+const clientOf = (raw: string, author: string): string => (isAgentAuthor(author) ? agentClientName(raw.split('\x1f')[0]) : '');
 /** Commits walked per answer. Past this the counts are a floor
  *  (`truncated`), which is the honest reading of "Claude wrote 300 commits". */
 const AGENT_SCAN_LIMIT = 500;
@@ -958,7 +962,7 @@ export async function agentActivitySince(id: string, branch: string, mark: { hea
     if (!/^[0-9a-f]{40}$/.test(hash)) continue;
     records++;
     const [date, author, onBehalfOf, rest] = [f[i + 1], f[i + 2], f[i + 3].trim(), f[i + 5]];
-    if (author !== AGENT_COMMIT_AUTHOR) continue;
+    if (!isAgentAuthor(author)) continue;
     const client = clientOf(f[i + 4], author);
     const lines = rest.split('\n');
     const message = lines[0] ?? '';

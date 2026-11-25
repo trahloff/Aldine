@@ -88,7 +88,7 @@ test.describe('Claude editing an open project', () => {
 
       // Claude stops: the session ends once, for the work in the file nobody had open
       await expect(page.getByTestId('agent-session-review')).toBeVisible({ timeout: 30_000 });
-      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file');
+      await expect(page.locator('.toast', { hasText: 'Assistant edited' })).toContainText('Assistant edited 1 file');
       await expect(introRow.getByTestId('tree-agent-live')).toHaveCount(0);
     } finally {
       await client.close().catch(() => {});

@@ -32,7 +32,7 @@ export function mergeAgentBatches(older: AgentBatch, newer: AgentBatch, limit: n
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /**
- * What the Revert confirmation says: whose commits go (Claude's), when they
+ * What the Revert confirmation says: whose commits go (the assistant's), when they
  * were made, and whose name the undoing commit carries.
  */
 export function revertSummary(r: { commits: number; files: number; branch: string; dates: string[]; author: string | null }, now = Date.now()): string {
@@ -44,18 +44,18 @@ export function revertSummary(r: { commits: number; files: number; branch: strin
     when = a === b ? ` ${b}` : ` between ${shortDate(first, now)} and ${shortDate(last, now)}`;
   }
   const by = r.author ? `under your name, ${r.author}` : 'under your name';
-  return `This undoes ${plural(r.commits, 'commit')} Claude made on ${r.branch}${when}, in ${plural(r.files, 'file')}. `
+  return `This undoes ${plural(r.commits, 'commit')} the assistant made on ${r.branch}${when}, in ${plural(r.files, 'file')}. `
     + `It adds a new commit ${by}; the history keeps both, and Undo brings the changes back.`;
 }
 
 /** "ChatGPT (for Ada)": which connected client wrote and who asked, from the
- *  commits' trailers. A commit that names no client counts as "Claude", so
+ *  commits' trailers. A commit that names no client counts as "Assistant", so
  *  it never reads as another client's work. The server names the presence
  *  the same way (collab.ts agentDisplayName). */
 export function agentName(commits: Iterable<{ onBehalfOf?: string; client?: string }>): string {
   const all = [...commits];
   const distinct = (pick: (c: { onBehalfOf?: string; client?: string }) => string | undefined) => [...new Set(all.map(pick).filter((n): n is string => !!n))];
   const names = distinct((c) => c.onBehalfOf);
-  const agent = distinct((c) => c.client || 'Claude').join(', ') || 'Claude';
+  const agent = distinct((c) => c.client || 'Assistant').join(', ') || 'Assistant';
   return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }

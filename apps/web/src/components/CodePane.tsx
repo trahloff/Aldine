@@ -561,7 +561,7 @@ const CodePane = forwardRef<CodePaneHandle, Props>(function CodePane({ projectId
         try {
           const from = Math.min(...w.ranges.map((r) => conf.fromYPos(r.from as Y.RelativePosition).pos));
           const to = Math.max(...w.ranges.map((r) => conf.fromYPos(r.to as Y.RelativePosition).pos));
-          notice = { id: w.id, agent: st.user.name || 'Claude', from, to, until: w.until };
+          notice = { id: w.id, agent: st.user.name || 'Assistant', from, to, until: w.until };
         } catch { /* positions from another doc epoch */ }
       });
       const key = notice ? (notice as AgentWaitNotice).id : '';

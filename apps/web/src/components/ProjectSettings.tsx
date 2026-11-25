@@ -258,13 +258,13 @@ export default function ProjectSettings({ project, files, mainDocs, autoTypeset,
           </Row>
           {agentSyncOffered && onSetAgentSync && (
             <Row
-              label="Let Claude push and pull"
+              label="Let assistants push and pull"
               htmlFor="settings-agent-sync"
               hint={!project.remote
-                ? 'Link a git repository first; then Claude can sync with it when you ask'
+                ? 'Link a git repository first; then assistants can sync with it when you ask'
                 : project.agentSync
-                  ? `Claude can push to and pull from ${project.remote.fullName} when asked`
-                  : `Claude can read and edit, but not push to or pull from ${project.remote.fullName}`}
+                  ? `Assistants can push to and pull from ${project.remote.fullName} when asked`
+                  : `Assistants can read and edit, but not push to or pull from ${project.remote.fullName}`}
             >
               <input
                 id="settings-agent-sync"

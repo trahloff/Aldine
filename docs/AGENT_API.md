@@ -4,7 +4,7 @@ The Aldine Agent API serves the [Model Context Protocol](https://modelcontextpro
 at `/mcp`. Add your instance as a connector in claude.ai, Claude Desktop, Cowork
 or Claude Code and Claude reads and edits the LaTeX in your projects, typesets
 them, gets the errors back with file and line, and shows the PDF inside the
-chat. Every edit lands as a git commit authored "Claude", so the session is one
+chat. Every edit lands as a git commit authored "Assistant", so the session is one
 diff to review and one click to revert.
 
 The endpoint is off by default. This page is the setup guide for the person
@@ -17,7 +17,7 @@ who runs the instance. A shorter overview is at
 |---|---|
 | `ALDINE_MCP=1` | Serves `POST /mcp`. Unset: the route does not exist and the MCP SDK is never loaded. |
 | `ALDINE_PUBLIC_URL` | The public URL of the instance — origin plus the path prefix when Aldine is served under one (`https://aldine.example.com` or `https://server/internal/aldine`). The Connect flow names it as the OAuth issuer, the PDF links Claude hands out are absolute against it, and the in-chat PDF viewer is allowed to fetch from exactly that origin. Set it for anything beyond a local experiment; behind a proxy it is the only trustworthy value. |
-| `ALDINE_MCP_SYNC=1` | Optional, off by default. Adds `sync_status`, `push` and `pull`: Claude can then move work between a project and the git repository it is linked to — in the projects whose owner allows it (Project settings → **Let Claude push and pull**, off for every project until then). Linking stays browser-only, so a push only ever reaches the repository the owner chose; but a token — leaked, or steered by an instruction hidden in a document — can then publish work in progress to it. Leave it off on an instance whose token is public (the demo). |
+| `ALDINE_MCP_SYNC=1` | Optional, off by default. Adds `sync_status`, `push` and `pull`: Claude can then move work between a project and the git repository it is linked to — in the projects whose owner allows it (Project settings → **Let assistants push and pull**, off for every project until then). Linking stays browser-only, so a push only ever reaches the repository the owner chose; but a token — leaked, or steered by an instruction hidden in a document — can then publish work in progress to it. Leave it off on an instance whose token is public (the demo). |
 | `ALDINE_MCP_TYPING_GRACE_MS` | Optional, default `8000`. How long after a person's last keystroke an agent edit at or next to where they typed is held off (`user_editing`). `0` turns the guard off. |
 | `ALDINE_SIGNING_SECRET` | Optional. Signs the 15-minute PDF links. Unset, a random secret is generated once into `META_DIR/output-signing-secret` (mode 0600) and reused across restarts. Set it (at least 32 characters, `openssl rand -base64 32`; shorter values refuse to boot) when several app nodes do not share `META_DIR`, or to invalidate every outstanding link at once by rotating it. |
 
@@ -443,7 +443,7 @@ client and the number of connections ended.
 | `accept_suggestion` | Applies a thread's suggestion to its file as the Accept button does, commits it as Claude, and resolves the thread. Needs edit access; `stale_anchor` and `user_editing` as on `edit_file`. | destructive |
 | `list_people` | The names of the people who can open the project: whom `mentions` and `assign_comment` can name. | read-only |
 | `sync_status` | Only with `ALDINE_MCP_SYNC=1`. The linked repository, how main stands against it (`ahead`, `behind`), and `agentSyncAllowed` (the owner's switch); fetches. | read-only |
-| `push` | Only with `ALDINE_MCP_SYNC=1`, in a project whose owner turned on **Let Claude push and pull**. Pushes main to the linked repository through the same token choice as the Sync menu (the project's, the person's, the linker's, the service token), members only. People's unsaved typing is committed first as their own autosave, never as Claude. A refused push is relayed, not retried. | additive |
+| `push` | Only with `ALDINE_MCP_SYNC=1`, in a project whose owner turned on **Let assistants push and pull**. Pushes main to the linked repository through the same token choice as the Sync menu (the project's, the person's, the linker's, the service token), members only. People's unsaved typing is committed first as their own autosave, never as Claude. A refused push is relayed, not retried. | additive |
 | `pull` | Only with `ALDINE_MCP_SYNC=1` and the owner's switch, like `push`. Merges the repository's new commits into main and every open editor; a conflict changes nothing and answers `merge_conflict` with the files, for the person to resolve in Aldine. | destructive |
 | `trash_project` | Moves a project to the workspace trash, where its owner restores it for `ALDINE_TRASH_DAYS` (30 by default); the tool never purges. A GitLab repository Aldine provisioned for the project is deleted with it (`remoteError` in the result when that failed), and a restore provisions a new one. Accepts only projects made with `create_project` (`agentCreated:true` in `list_projects`) and only for their owner — a person's project is refused and Claude is told to ask them to delete it in Aldine. Its description tells Claude to use it only when asked. | destructive |
 | `create_project` | A new project, blank or from a template — a folder template (`article`, `beamer`, `report`, `iac-paper`) or a venue (`venue:<id>`: a publisher class installed in the compiler image, or a kit downloaded from the publisher when the project is created; an unknown id is refused with the full list). Returns the id, the seeded `files` and `contentVersion` for the first write. Refused for a project-scoped credential. | additive |
@@ -555,29 +555,30 @@ seeds them. Details: [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 
 ## How attribution and review work
 
-- **Commits.** Each write tool commits as author "Claude" before it answers,
+- **Commits.** Each write tool commits as author "Assistant" before it answers,
   and the result names the commit. `batch_write` and `commit` carry the
   stated intent as the message; `edit_file` and `write_file` take an
   optional `message` and are otherwise titled by file ("Edit main.tex",
   "Update notes.tex"); `references_add` is titled "Add reference <key>".
   Every call is one commit, so a
-  commit's title always names what it holds. With accounts, each Claude
+  commit's title always names what it holds. With accounts, each assistant
   commit ends with an `On-behalf-of: <name>` trailer naming the owner of
-  the access token; the author stays "Claude", which History and the review
-  prompts key on, and a message cannot carry a trailer of its own. A commit
+  the access token; the author stays "Assistant" whichever client wrote,
+  and a message cannot carry a trailer of its own. Commits from before 1.25
+  carry the author "Claude" and still count as assistant commits everywhere. A commit
   made through a client connected with Connect also carries
   `Agent-client: <name>`, the name that client registered under and its
   person approved ("ChatGPT", "Claude Code"); History, the review prompt,
   the presence chip and the assistant's comments then read "ChatGPT (for
   Ada)". A personal access token names no client, and those commits read
-  "Claude (for Ada)" as before ([ASSISTANT_NAMES.md](ASSISTANT_NAMES.md)).
+  "Assistant (for Ada)" ([ASSISTANT_NAMES.md](ASSISTANT_NAMES.md)).
   Before a write, whatever a
   person had typed into that file and not yet committed is checkpointed
   separately, and the commit is built from the text the tool held while it
-  applied the edit — not from the working tree — so a Claude commit's diff
-  is exactly Claude's change: typing that lands before, between or during
+  applied the edit — not from the working tree — so an assistant commit's diff
+  is exactly the assistant's change: typing that lands before, between or during
   agent edits reaches history as the person's own autosave, and reverting
-  Claude's commits never removes it. The History panel marks these commits
+  the assistant's commits never removes it. The History panel marks these commits
   with a violet dot and shows them as they land. A write that leaves the
   file as HEAD has it makes no commit: the result says `commit: null` with
   `unchanged: true`, and nothing is pending. Should git refuse a commit,

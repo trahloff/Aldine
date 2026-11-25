@@ -2,7 +2,7 @@ import type { LogEntry } from '../api';
 
 /**
  * - `checkpoint`: a commit a person named (Save in History, a commit message);
- * - `agent`: Claude's;
+ * - `agent`: an assistant's;
  * - `autosave`: the edit debounce's, which no one named;
  * - `system`: one Aldine wrote and titled for a person's action (a merge, a
  *   replace, an undo, a deletion, the save before a branch).
@@ -15,8 +15,8 @@ export type HistoryRow =
   | { kind: 'commit'; view: CommitView }
   | { kind: 'autosaves'; key: string; views: CommitView[]; files: string[]; fileCount: number };
 
-/** gitops.AGENT_COMMIT_AUTHOR */
-const AGENT = 'Claude';
+/** gitops.AGENT_COMMIT_AUTHOR, and LEGACY_AGENT_COMMIT_AUTHOR for commits before 1.25. */
+export const isAgentCommit = (e: { author: string }): boolean => e.author === 'Assistant' || e.author === 'Claude';
 
 /** Subjects Aldine writes under its own `aldine:` prefix, in words. */
 const PREFIXED: Array<[RegExp, (m: RegExpExecArray) => string]> = [
@@ -28,7 +28,7 @@ const PREFIXED: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/^import assets$/, () => 'Imported the images and other files'],
   [/^publish to (.+)$/, (m) => `Saved before publishing to ${m[1]}`],
   [/^sync Zotero library into (.+)$/, (m) => `Synced the Zotero library into ${m[1]}`],
-  [/^agent edit$/, () => 'Claude’s edit'],
+  [/^agent edit$/, () => 'The assistant’s edit'],
 ];
 
 /** Subjects Aldine writes for a person's action, unprefixed. */
@@ -41,7 +41,7 @@ const SYSTEM = [
   /^Redo “.*”$/,
   /^Undo the project-wide (replace|delete)$/,
   /^Undo the deletion of .+$/,
-  /^Revert (Claude’s edits|agent changes)$/,
+  /^Revert (Claude’s edits|the assistant’s edits|agent changes)$/,
   /^Revert ".*"$/,
   /^Local changes before pull$/,
   /^Save before switching branch$/,
@@ -68,13 +68,13 @@ export function describeCommit(entry: LogEntry): CommitView {
       const hit = re.exec(rest);
       if (hit) {
         const title = words(hit);
-        const kind: CommitKind = entry.author === AGENT ? 'agent' : title === 'Autosave' ? 'autosave' : title === 'Checkpoint' ? 'checkpoint' : 'system';
+        const kind: CommitKind = isAgentCommit(entry) ? 'agent' : title === 'Autosave' ? 'autosave' : title === 'Checkpoint' ? 'checkpoint' : 'system';
         return { entry, kind, title };
       }
     }
-    return { entry, kind: entry.author === AGENT ? 'agent' : 'system', title: rest ? rest[0].toUpperCase() + rest.slice(1) : m };
+    return { entry, kind: isAgentCommit(entry) ? 'agent' : 'system', title: rest ? rest[0].toUpperCase() + rest.slice(1) : m };
   }
-  if (entry.author === AGENT) return { entry, kind: 'agent', title: m };
+  if (isAgentCommit(entry)) return { entry, kind: 'agent', title: m };
   if (SYSTEM.some((re) => re.test(m)) || isDeletion(entry)) return { entry, kind: 'system', title: m };
   return { entry, kind: 'checkpoint', title: m };
 }

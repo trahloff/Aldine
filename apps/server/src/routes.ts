@@ -2018,7 +2018,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       if (!meta) return;
       const { name, rootFile, engine, stopOnFirstError, manualCommits, agentSync } = req.body || {};
       // What reaches the owner's linked repository is the owner's call.
-      if (agentSync !== undefined && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can let Claude push and pull this project' });
+      if (agentSync !== undefined && !isOwner(meta, reqUser(req))) return reply.code(403).send({ error: 'Only the owner can let assistants push and pull this project' });
       if (name !== undefined) {
         const trimmed = String(name).trim();
         if (!trimmed) return reply.code(400).send({ error: 'Project name cannot be empty' });
@@ -2774,7 +2774,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
           noteEdit(req.params.id, branch, editorOf(reqUser(req)));
           // Success-metric line (docs/plans/agent-api/00-overview.md, "% of
           // agent commits reverted"): only reverts that undo Claude's work.
-          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => a === gitops.AGENT_COMMIT_AUTHOR).length;
+          const agentCommits = (await gitops.commitAuthors(req.params.id, hashes).catch(() => [])).filter((a) => gitops.isAgentAuthor(a)).length;
           if (agentCommits) console.log(`[metric] agent_revert user=${reqUser(req)?.id ?? 'operator'} project=${req.params.id} commits=${agentCommits}`);
         }
         return { ...result, author: gitops.authorName(author) ?? null };

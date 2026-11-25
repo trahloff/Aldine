@@ -41,7 +41,7 @@ export function branchAgentOf(states: Map<number, unknown>): BranchAgent | null 
     const s = state as { user?: { name?: unknown; isAgent?: unknown; startedAt?: unknown }; files?: unknown } | null;
     if (!s?.user?.isAgent) continue;
     return {
-      name: typeof s.user.name === 'string' ? s.user.name : 'Claude',
+      name: typeof s.user.name === 'string' ? s.user.name : 'Assistant',
       ...(typeof s.user.startedAt === 'number' ? { startedAt: s.user.startedAt } : {}),
       files: Array.isArray(s.files) ? s.files.filter((f): f is string => typeof f === 'string') : [],
     };

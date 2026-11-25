@@ -94,15 +94,15 @@ test.describe('MCP over PAT auth', () => {
       const committed = await call(client, 'commit', { project: project.id, message: 'Change the opening line' });
       expect(committed.body.committed).toBe(false);
       const log = await (await request.get(`/api/projects/${project.id}/log?branch=main`)).json();
-      const claude = log.find((c: any) => c.author === 'Claude');
+      const claude = log.find((c: any) => c.author === 'Assistant');
       expect(claude).toBeTruthy();
 
       // the client claims the anonymous collab identity; the session wins
-      const reverted = await (await request.post(`/api/projects/${project.id}/revert`, { data: { branch: 'main', hashes: [claude.hash], message: 'Revert Claude’s edits', author: 'Writer 457' } })).json();
+      const reverted = await (await request.post(`/api/projects/${project.id}/revert`, { data: { branch: 'main', hashes: [claude.hash], message: 'Revert the assistant’s edits', author: 'Writer 457' } })).json();
       expect(reverted.ok).toBe(true);
       expect(reverted.author).toBe('Ada Researcher');
       const after = await (await request.get(`/api/projects/${project.id}/log?branch=main`)).json();
-      expect(after[0].message).toBe('Revert Claude’s edits');
+      expect(after[0].message).toBe('Revert the assistant’s edits');
       expect(after[0].author).toBe('Ada Researcher');
       const read = await call(client, 'read_file', { project: project.id, path: 'main.tex' });
       expect(read.body.content).toBe('Original line.\n');
@@ -127,16 +127,16 @@ test.describe('MCP over PAT auth', () => {
         message: 'Reword the opening line',
       });
       expect(edit.isError).toBeFalsy();
-      await expect(page.getByTestId('presence-agent')).toHaveAttribute('title', /^Claude \(for Ada Lovelace\), agent session started \d\d:\d\d, in this file$/, { timeout: 10_000 });
+      await expect(page.getByTestId('presence-agent')).toHaveAttribute('title', /^Assistant \(for Ada Lovelace\), agent session started \d\d:\d\d, in this file$/, { timeout: 10_000 });
       // the author stays Claude, which the review prompts key on; the owner is a trailer
       const log = await (await page.request.get(`/api/projects/${project.id}/log?branch=main`)).json();
-      expect(log[0]).toMatchObject({ author: 'Claude', message: 'Reword the opening line', onBehalfOf: 'Ada Lovelace' });
+      expect(log[0]).toMatchObject({ author: 'Assistant', message: 'Reword the opening line', onBehalfOf: 'Ada Lovelace' });
       const activity = await (await page.request.get(`/api/projects/${project.id}/agent-activity?branch=main`)).json();
       expect(activity.commits[0]).toMatchObject({ message: 'Reword the opening line', onBehalfOf: 'Ada Lovelace' });
       // History sits in the sidebar's More menu at this width
       if (!(await page.getByTestId('tab-history').isVisible())) await page.getByTestId('tab-more').click();
       await page.getByTestId('tab-history').click();
-      await expect(page.getByTestId(`commit-${log[0].hash.slice(0, 7)}`)).toContainText('Claude (for Ada Lovelace)');
+      await expect(page.getByTestId(`commit-${log[0].hash.slice(0, 7)}`)).toContainText('Assistant (for Ada Lovelace)');
     } finally {
       await client.close().catch(() => {});
     }

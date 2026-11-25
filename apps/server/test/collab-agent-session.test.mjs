@@ -39,17 +39,17 @@ eq(branchState(), null, 'no session, nothing on the branch');
 collab.markAgentPresence(id, 'main', 'b.tex', 'Ada'); // b.tex is open nowhere
 let s = branchState();
 check(s?.user?.isAgent === true && typeof s.user.startedAt === 'number', `the session is on the branch's signal doc (got ${JSON.stringify(s)})`);
-eq(s.user.name, 'Claude (for Ada)', 'named for the token owner');
+eq(s.user.name, 'Assistant (for Ada)', 'named for the token owner');
 eq(s.files, ['b.tex'], 'with the file Claude is writing, which no editor has open');
 const startedAt = s.user.startedAt;
 
 collab.markAgentPresence(id, 'main', 'a.tex', 'Ben');
 s = branchState();
 eq(s.files, ['a.tex', 'b.tex'], 'every file it writes in the session');
-eq(s.user.name, 'Claude (for Ada, Ben)', 'everyone whose token the session ran under');
+eq(s.user.name, 'Assistant (for Ada, Ben)', 'everyone whose token the session ran under');
 eq(s.user.startedAt, startedAt, 'the session keeps its start');
 const inA = loaded('a.tex').awareness.getLocalState();
-eq(inA.user.name, 'Claude (for Ben)', "a file's own presence names whom the agent wrote it for");
+eq(inA.user.name, 'Assistant (for Ben)', "a file's own presence names whom the agent wrote it for");
 eq(inA.user.startedAt, startedAt, 'with the session start');
 check(collab.agentSessionActive(id, 'main'), 'the session is live');
 
@@ -72,7 +72,7 @@ check(collab.agentSessionActive(id, 'main'), 'the session outlives its idle time
 s = branchState();
 check(s?.user?.isAgent === true, 'and stays on the branch');
 eq(s.files, [], 'with no file being written meanwhile');
-eq(s.user.name, 'Claude', 'a token without an owner names Claude alone');
+eq(s.user.name, 'Assistant', 'a token without an owner names Claude alone');
 release();
 check(collab.agentSessionActive(id, 'main'), 'the typeset ending starts the idle timeout again');
 await sleep(TTL);

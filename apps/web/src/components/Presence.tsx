@@ -15,7 +15,7 @@ export interface PresenceUser {
   startedAt?: number;
 }
 
-/** The name may carry its own parentheses: "Claude (for Ada)". */
+/** The name may carry its own parentheses: "ChatGPT (for Ada)". */
 function agentTitle(u: PresenceUser): string {
   if (!u.startedAt) return `${u.name}, agent`;
   const d = new Date(u.startedAt);

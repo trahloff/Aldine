@@ -25,9 +25,9 @@ Co-authored-by: Ben Okafor <ben.okafor@aldine.local>
 - **A person's own commit** (a checkpoint, a merge, the save before a pull)
   is authored by that person as before. Anyone else whose typing it holds
   gets a Co-authored-by line.
-- **Claude's commits** never carry a typist. The typing in a file Claude is
+- **Assistant commits** never carry a typist. The typing in a file an assistant is
   about to write is saved first, under the people who typed it.
-- **Not used as names:** "Claude" and "Aldine" (History reads those as the
+- **Not used as names:** "Assistant", "Claude" and "Aldine" (History reads those as the
   agent and as nobody), and angle brackets or line breaks in a name.
 - **History** shows the author and co-authors by name ("Ada Lovelace and Ben
   Okafor"); the log answer carries names only, never the addresses.

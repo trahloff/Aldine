@@ -126,7 +126,7 @@ test.describe('MCP connector (static-token mode)', () => {
       const logAfter = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
       expect(logAfter.length).toBe(logBefore.length + 1);
       expect(logAfter[0].message).toBe('Add discussion section');
-      expect(logAfter[0].author).toBe('Claude');
+      expect(logAfter[0].author).toBe('Assistant');
       const withInput = await (await request.get(`/api/projects/${id}/file?branch=main&path=main.tex`)).text();
       expect(withInput).toContain('\\input{discussion}');
 
@@ -242,7 +242,7 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(edit.body.commit).toMatch(/^[0-9a-f]{7,}$/);
       const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
       let log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-      expect(log[0].author).toBe('Claude');
+      expect(log[0].author).toBe('Assistant');
       expect(log[0].message).toBe('Edit main.tex');
 
       // typing BETWEEN two agent edits: the window that used to end up in the
@@ -258,7 +258,7 @@ test.describe('MCP connector (static-token mode)', () => {
       expect(second.body.commit).toMatch(/^[0-9a-f]{7,}$/);
 
       log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-      const claude = log.filter((c) => c.author === 'Claude');
+      const claude = log.filter((c) => c.author === 'Assistant');
       expect(claude.map((c) => c.message)).toEqual(['Edit the opening line', 'Edit main.tex']);
       const claudePatches = await Promise.all(claude.map((c) => patchOf(c.hash)));
       expect(claudePatches[1]).toMatch(/^\+.*markedly/m);
@@ -304,7 +304,7 @@ test.describe('MCP connector (static-token mode)', () => {
 
       const patchOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).patch;
       let log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-      const claude = log.filter((c) => c.author === 'Claude');
+      const claude = log.filter((c) => c.author === 'Assistant');
       expect(claude).toHaveLength(1);
       expect(claude[0].message).toBe('Add reviewer notes');
       const claudePatch = await patchOf(claude[0].hash);
@@ -334,7 +334,7 @@ test.describe('MCP connector (static-token mode)', () => {
         }
         return false;
       }, { timeout: 60_000, intervals: [1000] }).toBe(true);
-      expect(human!.author).not.toBe('Claude');
+      expect(human!.author).not.toBe('Assistant');
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
@@ -363,10 +363,10 @@ test.describe('MCP connector (static-token mode)', () => {
 
       // each write committed before it answered: nothing to wait for
       const log: Array<{ hash: string; author: string; message: string }> = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
-      expect(log.filter((c) => c.author === 'Claude')).toHaveLength(3);
+      expect(log.filter((c) => c.author === 'Assistant')).toHaveLength(3);
       const statOf = async (hash: string): Promise<string> => (await (await request.get(`/api/projects/${id}/commit/${hash}/diff`)).json()).stat;
       const byMessage: Record<string, string> = {};
-      for (const c of log.filter((x) => x.author === 'Claude')) byMessage[c.message] = await statOf(c.hash);
+      for (const c of log.filter((x) => x.author === 'Assistant')) byMessage[c.message] = await statOf(c.hash);
       expect(Object.keys(byMessage).sort()).toEqual(['Add reviewer notes', 'Edit main.tex', 'Strengthen the results claim']);
       expect(byMessage['Strengthen the results claim']).toContain('main.tex');
       expect(byMessage['Strengthen the results claim']).not.toContain('notes.tex');
@@ -523,7 +523,7 @@ test.describe('MCP connector (static-token mode)', () => {
       const log = await (await request.get(`/api/projects/${id}/log?branch=main`)).json();
       const refCommit = log.find((c: any) => c.message === 'Add reference doe2020');
       expect(refCommit).toBeTruthy();
-      expect(refCommit.author).toBe('Claude');
+      expect(refCommit.author).toBe('Assistant');
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);
@@ -751,7 +751,7 @@ test.describe('MCP connector (static-token mode)', () => {
       const cid = added.body.comment.id as string;
       const thread = page.getByTestId(`comment-${cid}`);
       await expect(thread, 'the comment arrives without a reload').toContainText('Too vague: by how much?');
-      await expect(thread).toContainText('Claude');
+      await expect(thread).toContainText('Assistant');
 
       const replied = await call(client, 'reply_comment', { project: id, comment_id: cid, body: 'Suggested the measured figure.' });
       expect(replied.body.comment.replies).toHaveLength(1);
@@ -779,7 +779,7 @@ test.describe('MCP connector (static-token mode)', () => {
       await expect(box).not.toBeChecked();
       await expect(page.getByText('Link a git repository first')).toBeVisible();
       await box.check();
-      await expect(page.getByText('Claude can now push and pull this project when asked')).toBeVisible();
+      await expect(page.getByText('Assistants can now push and pull this project when asked')).toBeVisible();
       const meta = await (await request.get(`/api/projects/${id}`)).json();
       expect(meta.agentSync).toBe(true);
       // still unlinked: the tool says so, and where linking happens
