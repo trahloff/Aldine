@@ -428,7 +428,7 @@ async function loadPdf(url: string): Promise<void> {
     if (gen !== state.generation) return;
     if (!res.ok) {
       const expired = res.status === 403;
-      throw new Error(expired ? 'This PDF link has expired — ask Claude for a fresh link, or open the project in Aldine.' : `The PDF could not be fetched (HTTP ${res.status}).`);
+      throw new Error(expired ? 'This PDF link has expired — ask the assistant for a fresh link, or open the project in Aldine.' : `The PDF could not be fetched (HTTP ${res.status}).`);
     }
     const declared = Number(res.headers.get('content-length') || 0);
     if (declared > MAX_PDF_BYTES) throw new Error(`This PDF is ${fmtBytes(declared)} — too large to preview here. Open it in Aldine instead.`);

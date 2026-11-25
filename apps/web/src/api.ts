@@ -104,7 +104,7 @@ export interface ProjectSummary {
 
 /** Last change to a project's files on any branch, by anyone: a collab edit,
  *  upload, rename, delete, replace, agent write, import or pull. `byId` is the
- *  account; an agent write has `byName` "Claude" and a null `byId`; both are
+ *  account; an agent write has `byName` "Assistant" (before 1.25, "Claude") and a null `byId`; both are
  *  null when nobody is known (from git history, or a write without accounts). */
 export interface LastEdit { at: string; byId: string | null; byName: string | null; branch: string }
 

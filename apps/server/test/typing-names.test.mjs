@@ -57,7 +57,7 @@ eq(log[1].coAuthors, undefined, 'a save by one person has no co-authors');
 
 // the names History reads as nobody or the agent, and brackets, are refused
 edit('a.tex');
-gitops.noteWriters(id, 'main', ['a.tex'], { id: 'u-c', name: 'Claude' });
+gitops.noteWriters(id, 'main', ['a.tex'], { id: 'u-c', name: 'Assistant' });
 gitops.noteWriters(id, 'main', ['a.tex'], { id: 'u-d', name: '  Aldine ' });
 await gitops.autosave(id, 'main');
 eq(head('%an'), 'Aldine', 'a person named Claude or Aldine leaves the save anonymous');
@@ -94,7 +94,7 @@ gitops.registerAttributedPaths(id, 'main', 'Tighten the intro', gitops.AGENT_COM
 edit('b.tex');
 await gitops.autosave(id, 'main');
 const two = await gitops.log(id, 'main', 2);
-eq(two[1].author, 'Claude', 'the agent’s path commits under Claude');
+eq(two[1].author, 'Assistant', 'the agent’s path commits under Claude');
 eq(two[1].coAuthors, undefined, 'with no typist on it');
 eq(two[0].author, 'Ada Lovelace', 'the sweep after it is Ada’s');
 

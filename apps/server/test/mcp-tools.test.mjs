@@ -402,8 +402,8 @@ check(body.ok === true && typeof body.commit === 'string' && body.commit.length 
 check(body.head === body.commit, 'head echo matches the new commit');
 const logAfter = await gitops.log(p1.id, 'main');
 check(logAfter[0].message === 'Add abstract and sharpen the note', 'the commit message is the stated intent');
-check(logAfter[0].author === 'Claude', 'the commit author is Claude');
-check(logAfter.filter((c) => c.author === 'Claude').length === logBefore.filter((c) => c.author === 'Claude').length + 1, 'batch_write makes exactly ONE Claude commit');
+check(logAfter[0].author === 'Assistant', 'the commit author is Claude');
+check(logAfter.filter((c) => c.author === 'Assistant').length === logBefore.filter((c) => c.author === 'Assistant').length + 1, 'batch_write makes exactly ONE Claude commit');
 const batchPatch = (await gitops.commitDiff(p1.id, logAfter[0].hash)).patch;
 check(batchPatch.includes('+A sharper note.') && batchPatch.includes('+The abstract.'), "the Claude commit carries the batch's writes");
 check(!batchPatch.includes('human.tex') && !batchPatch.includes('+A human line'), "the Claude commit carries NONE of the human's pending work");
@@ -456,7 +456,7 @@ check(agentCompileGate.tryAcquire(gateKey) === true && (agentCompileGate.release
 // names it and History shows it at once (no debounce to wait out).
 const titled = async (message) => {
   const c = (await gitops.log(p1.id, 'main')).find((x) => x.message === message);
-  return c && c.author === 'Claude' ? (await gitops.commitDiff(p1.id, c.hash)).stat : '';
+  return c && c.author === 'Assistant' ? (await gitops.commitDiff(p1.id, c.hash)).stat : '';
 };
 ({ body } = await call('write_file', { project: p1.id, path: 'intent.tex', content: 'Intent test.\n', message: 'Add the intent file' }));
 check(typeof body.commit === 'string' && body.commit === body.head, `write_file answers with the commit it made (got ${JSON.stringify(body)})`);
@@ -522,13 +522,13 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
   ({ body } = await call('write_file', { project: pc.id, path: 'agent.tex', content: 'Written by the agent.\n', message: 'Add the agent file' }));
   check(typeof body.commit === 'string', 'setup: the write committed on its own');
   store.writeFile(pc.id, 'main', 'agent.tex', 'Written by the agent.\nRetried line.\n');
-  gitops.registerAttributedPaths(pc.id, 'main', 'Retry the agent file', 'Claude', ['agent.tex']);
+  gitops.registerAttributedPaths(pc.id, 'main', 'Retry the agent file', 'Assistant', ['agent.tex']);
   ({ body } = await call('commit', { project: pc.id, message: 'Land the agent work' }));
   check(body.committed === true && typeof body.hash === 'string' && body.hash === body.head, `commit reports the new head (got ${JSON.stringify(body)})`);
   check(JSON.stringify(body.files) === '["agent.tex"]', `commit names exactly the paths that landed (got ${JSON.stringify(body.files)})`);
   check(typeof body.contentVersion === 'number' && body.branch === 'main', 'commit carries contentVersion and the branch echo');
   let clog = await gitops.log(pc.id, 'main');
-  check(clog[0].author === 'Claude' && clog[0].message === 'Land the agent work', `the checkpoint is one Claude commit under the caller's message (got ${JSON.stringify(`${clog[0].author}: ${clog[0].message}`)})`);
+  check(clog[0].author === 'Assistant' && clog[0].message === 'Land the agent work', `the checkpoint is one Claude commit under the caller's message (got ${JSON.stringify(`${clog[0].author}: ${clog[0].message}`)})`);
   const cstat = (await gitops.commitDiff(pc.id, clog[0].hash)).stat;
   check(cstat.includes('agent.tex') && !cstat.includes('human.tex'), `the commit holds only the agent's path (got ${JSON.stringify(cstat)})`);
   check(!clog.some((c) => c.message === 'Retry the agent file'), "the caller's message replaced the pending per-path intent");
@@ -562,10 +562,10 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
   check(typeof body.commit === 'string', 'write_file lands the agent delta on a file the person had also edited');
   check(collab.agentSessionActive(pd.id, 'main') === true && collab.agentSessionActive(pd.id, 'other') === false, 'the write opens an agent session on that branch only (no doc is loaded)');
   let dlog = await gitops.log(pd.id, 'main');
-  check(dlog[0].author === 'Claude' && dlog[0].message === 'Add the agent sentence', `the newest commit is the Claude write under its intent (got ${JSON.stringify(`${dlog[0].author}: ${dlog[0].message}`)})`);
+  check(dlog[0].author === 'Assistant' && dlog[0].message === 'Add the agent sentence', `the newest commit is the Claude write under its intent (got ${JSON.stringify(`${dlog[0].author}: ${dlog[0].message}`)})`);
   const dpatch = (await gitops.commitDiff(pd.id, dlog[0].hash)).patch;
   check(dpatch.includes('+agent sentence') && !dpatch.includes('+human paragraph two'), "the Claude commit's diff is exactly the agent's delta");
-  check(dlog[1].message === 'aldine: autosave' && dlog[1].author !== 'Claude', `the person's pending paragraph was checkpointed anonymously first (got ${JSON.stringify(`${dlog[1].author}: ${dlog[1].message}`)})`);
+  check(dlog[1].message === 'aldine: autosave' && dlog[1].author !== 'Assistant', `the person's pending paragraph was checkpointed anonymously first (got ${JSON.stringify(`${dlog[1].author}: ${dlog[1].message}`)})`);
   check((await gitops.commitDiff(pd.id, dlog[1].hash)).patch.includes('+human paragraph two'), 'that anonymous checkpoint holds the person\'s paragraph');
   ({ body } = await call('commit', { project: pd.id, message: 'Checkpoint the agent work' }));
   check(body.committed === false && body.recentClaudeCommits[0]?.message === 'Add the agent sentence', `nothing is left for the commit tool; it names the commit that holds the write (got ${JSON.stringify(body)})`);
@@ -606,12 +606,12 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
   // whose Claude: the token owner rides along as a trailer, the author stays
   // Claude (what History and the review prompts key on), and the presence
   // says it too
-  check(agentState.user.name === 'Claude (for Ada)', `the presence names the token owner (got ${JSON.stringify(agentState.user.name)})`);
+  check(agentState.user.name === 'Assistant (for Ada)', `the presence names the token owner (got ${JSON.stringify(agentState.user.name)})`);
   dlog = await gitops.log(pd.id, 'main');
-  check(dlog[0].author === 'Claude' && dlog[0].message === 'Batch into an open document' && dlog[0].onBehalfOf === 'Ada', `an agent commit keeps author Claude and its title, and names Ada (got ${JSON.stringify(dlog[0])})`);
+  check(dlog[0].author === 'Assistant' && dlog[0].message === 'Batch into an open document' && dlog[0].onBehalfOf === 'Ada', `an agent commit keeps author Claude and its title, and names Ada (got ${JSON.stringify(dlog[0])})`);
   const fullMessage = execFileSync('git', ['log', '-1', '--format=%B', dlog[0].hash], { cwd: store.branchDir(pd.id, 'main') }).toString();
   check(/\n\nOn-behalf-of: Ada\n*$/.test(fullMessage), `the trailer is the message's last paragraph (got ${JSON.stringify(fullMessage)})`);
-  check(dlog.filter((c) => c.author !== 'Claude').every((c) => c.onBehalfOf === undefined), 'nobody else\'s commit claims a requester');
+  check(dlog.filter((c) => c.author !== 'Assistant').every((c) => c.onBehalfOf === undefined), 'nobody else\'s commit claims a requester');
   const activity = await gitops.agentActivitySince(pd.id, 'main', null);
   check(activity.commits.length >= 3 && activity.commits.every((c) => c.onBehalfOf === 'Ada'), `the review answer still finds every Claude commit, each naming Ada (got ${JSON.stringify(activity.commits)})`);
   check(activity.paths.includes('main.tex') && activity.paths.includes('sections/new.tex'), `and lists every path they touched (got ${JSON.stringify(activity.paths)})`);
@@ -672,7 +672,7 @@ check((await gitops.autoCommit(p1.id, 'main')).committed === false || !(await gi
     check(/Ben is typing/.test(body.reason) && /hold off/.test(body.reason) && /force/.test(body.reason), `the reason says who and what to do (got ${JSON.stringify(body.reason)})`);
     check(body.path === 'main.tex' && body.branch === 'main' && typeof body.head === 'string' && typeof body.contentVersion === 'number', 'the refusal echoes like every error body');
     const top = (await gitops.log(pd.id, 'main'))[0];
-    check(ytext.toString() === held && (top.hash === headBefore || top.author !== 'Claude'), `nothing was applied and Claude committed nothing (the checkpoint may commit Ben's typing) (got ${JSON.stringify(top)})`);
+    check(ytext.toString() === held && (top.hash === headBefore || top.author !== 'Assistant'), `nothing was applied and Claude committed nothing (the checkpoint may commit Ben's typing) (got ${JSON.stringify(top)})`);
     // ... and once their pause outlasts the hint, the same edit lands
     await settle(body.retry_after_ms + 30);
     ({ body } = await call('edit_file', { project: pd.id, path: 'main.tex', edits: [{ quote: 'Claude Ben paragraph two', replacement: 'Claude Ben paragraph 2' }] }));
@@ -810,7 +810,7 @@ check(typeof body.note === 'string' && /No \.tex file on main loads nope\/missin
 check(store.fileExists(p1.id, 'main', 'nope/missing.bib'), 'the folder and file exist');
 ({ body } = await call('commit', { project: p1.id, message: 'Land reference' }));
 const refCommits = (await gitops.log(p1.id, 'main')).filter((c) => c.message === 'Add reference doe2020');
-check(refCommits.length === 2 && refCommits.every((c) => c.author === 'Claude'), `each reference landed as an attributed Claude commit (got ${refCommits.length})`);
+check(refCommits.length === 2 && refCommits.every((c) => c.author === 'Assistant'), `each reference landed as an attributed Claude commit (got ${refCommits.length})`);
 
 // an entry added under an older key style (doi.org's `Doe_2020`) is the same
 // paper: the DOI says so, and the existing key is what the caller should cite;
@@ -1312,7 +1312,7 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
   // commit on a project with no Claude commits: the note must not claim edits landed
   const p7 = await store.createProject('Untouched', undefined, user.id);
   ({ body } = await call('commit', { project: p7.id, message: 'Nothing here' }));
-  check(body.committed === false && body.recentClaudeCommits.length === 0 && /no commits by Claude yet/.test(body.note) && !/your edits already landed/.test(body.note), `with no Claude commits the note says so (got ${JSON.stringify(body.note)})`);
+  check(body.committed === false && body.recentClaudeCommits.length === 0 && /no commits by an assistant yet/.test(body.note) && !/your edits already landed/.test(body.note), `with no Claude commits the note says so (got ${JSON.stringify(body.note)})`);
 }
 
 // Path spelling: "./main.tex" is main.tex. The open-doc lookup, the
@@ -1336,7 +1336,7 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
   check(body.applied === 1, `edit_file ./main.tex applies (got ${JSON.stringify(body)})`);
   check(collab.openDocContent(p4.id, 'main', 'main.tex') === 'Goodbye world line one.\n', 'the edit went through the open doc (CRDT path), not around it');
   await gitops.autoCommit(p4.id, 'main');
-  const spelled = (await gitops.log(p4.id, 'main')).find((c) => c.author === 'Claude');
+  const spelled = (await gitops.log(p4.id, 'main')).find((c) => c.author === 'Assistant');
   check(spelled !== undefined && spelled.message === 'Edit main.tex', `the attribution matched the git path: a Claude commit named after the canonical path (got ${JSON.stringify((await gitops.log(p4.id, 'main')).map((c) => `${c.author}: ${c.message}`))})`);
   check((await gitops.commitDiff(p4.id, spelled.hash)).patch.includes('+Goodbye world line one.'), 'the Claude commit carries the edit');
   await conn.transact((doc) => { doc.getText('content').insert(0, 'X'); });
@@ -1375,7 +1375,7 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
   check(collab.openDocContent(p4.id, 'main', 'main.tex') === 'Cased rewrite.\n', 'the edit under a case variant went through the open main.tex doc');
   await gitops.autoCommit(p4.id, 'main');
   const cased = (await gitops.log(p4.id, 'main'))[0];
-  check(cased.author === 'Claude' && cased.message === 'Edit main.tex', `edit_file Main.tex commits as Claude under the listed spelling (got ${JSON.stringify(`${cased.author}: ${cased.message}`)})`);
+  check(cased.author === 'Assistant' && cased.message === 'Edit main.tex', `edit_file Main.tex commits as Claude under the listed spelling (got ${JSON.stringify(`${cased.author}: ${cased.message}`)})`);
   check((await gitops.commitDiff(p4.id, cased.hash)).patch.includes('+Cased rewrite.'), 'that Claude commit carries the edit');
   await conn3.disconnect();
   // a whole-file write under a case variant is refused rather than folded:
@@ -1418,7 +1418,7 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
     await gitops.autoCommit(p4.id, 'main');
     const before = await gitops.log(p4.id, 'main');
     store.writeFile(p4.id, 'main', '--amend', 'planted\n');
-    const dash = await gitops.commitPaths(p4.id, 'main', ['--amend'], 'Agent intent', 'Claude');
+    const dash = await gitops.commitPaths(p4.id, 'main', ['--amend'], 'Agent intent', 'Assistant');
     const after = await gitops.log(p4.id, 'main');
     check(dash.committed === true && after.length === before.length + 1 && after[1].hash === before[0].hash, `a "--amend" pathspec at the primitive adds a commit and leaves the previous one in place (got ${after.length} vs ${before.length})`);
     check((await gitops.commitDiff(p4.id, after[0].hash)).stat.includes('--amend'), 'the planted file is what got committed');
@@ -1434,17 +1434,17 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
   collab.scheduleCommit(p4.id, 'main');
   await gitops.autoCommit(p4.id, 'main');
   const cleanedLog = await gitops.log(p4.id, 'main');
-  const cleaned = cleanedLog.find((c) => c.author === 'Claude' && /Tighten/.test(c.message));
+  const cleaned = cleanedLog.find((c) => c.author === 'Assistant' && /Tighten/.test(c.message));
   check(cleaned !== undefined && cleaned.message === 'Tighten the abstract[31m now', `the commit subject is the message minus control characters, CR as a space (got ${JSON.stringify(cleaned?.message)})`);
   check(cleanedLog[0].message === 'aldine: autosave' && (await gitops.commitDiff(p4.id, cleanedLog[0].hash)).stat.includes('human.tex'), 'the anonymous sweep after it still commits the person\'s file');
   // The log parser splits on delimiters a subject cannot carry: a message
   // shaped like simple-git's record separator cannot move itself into the
   // author field the History panel and the session review key on.
-  await gitops.commitAll(p4.id, 'main', 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', 'Claude');
+  await gitops.commitAll(p4.id, 'main', 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', 'Assistant');
   store.writeFile(p4.id, 'main', 'human.tex', 'typed again\n');
-  await gitops.commitAll(p4.id, 'main', 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', 'Claude');
+  await gitops.commitAll(p4.id, 'main', 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', 'Assistant');
   const spoof = (await gitops.log(p4.id, 'main'))[0];
-  check(spoof.author === 'Claude' && spoof.message === 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', `a record-separator-shaped subject stays in the subject (got ${JSON.stringify(spoof)})`);
+  check(spoof.author === 'Assistant' && spoof.message === 'Tighten abstract \xf2  \xf2  \xf2 Alice \xf2 alice@example.com', `a record-separator-shaped subject stays in the subject (got ${JSON.stringify(spoof)})`);
   const caseSensitiveFs = !fs.existsSync(path.join(store.branchDir(p4.id, 'main'), 'MAIN.TEX'));
   if (caseSensitiveFs) {
     store.writeFile(p4.id, 'main', 'Ambig.tex', 'a\n');
@@ -1477,12 +1477,12 @@ check(body.ok === true, 'a fresh read of the recreated branch writes');
     check(store.readFile(p5.id, 'main', rel).toString('utf8') === `agent wrote ${rel}\n`, `${JSON.stringify(rel)} is a file of that literal name`);
     await gitops.autoCommit(p5.id, 'main');
     const titled = (await gitops.log(p5.id, 'main')).find((c) => c.message === message);
-    check(titled !== undefined && titled.author === 'Claude', `${JSON.stringify(rel)} commits under Claude with its intent (got ${JSON.stringify((await gitops.log(p5.id, 'main')).slice(0, 3).map((c) => `${c.author}: ${c.message}`))})`);
+    check(titled !== undefined && titled.author === 'Assistant', `${JSON.stringify(rel)} commits under Claude with its intent (got ${JSON.stringify((await gitops.log(p5.id, 'main')).slice(0, 3).map((c) => `${c.author}: ${c.message}`))})`);
     const { stat, patch } = await gitops.commitDiff(p5.id, titled.hash);
     check(stat.includes(rel) && !patch.includes('human line two') && !patch.includes('other line two'), `the Claude commit for ${JSON.stringify(rel)} holds only that file, none of the person's pending edits (stat: ${stat.trim().replace(/\n/g, ' | ')})`);
     check(stat.trim().split('\n').filter((l) => l.includes('|')).length === 1, `exactly one file in the ${JSON.stringify(rel)} commit`);
   }
-  const claudes = (await gitops.log(p5.id, 'main')).filter((c) => c.author === 'Claude');
+  const claudes = (await gitops.log(p5.id, 'main')).filter((c) => c.author === 'Assistant');
   check(claudes.length === 4, `four literal writes, four Claude commits (got ${claudes.length})`);
 }
 

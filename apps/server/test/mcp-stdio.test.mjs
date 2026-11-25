@@ -72,19 +72,19 @@ check(typeof project.id === 'string', 'create_project over stdio returns the pro
 const w1 = await call(s1.client, 'write_file', { project: project.id, path: 'main.tex', content: 'A line from Claude.\n', message: 'Add a line' });
 check(w1.ok === true && typeof w1.commit === 'string', `write_file over stdio lands and names its commit (got ${JSON.stringify(w1)})`);
 let log = gitLog(project.id);
-check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a line', `the write is committed under Claude with its intent before the tool answers (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
+check(log[0]?.author === 'Assistant' && log[0]?.message === 'Add a line', `the write is committed under Claude with its intent before the tool answers (got ${JSON.stringify(log.map((c) => `${c.author}: ${c.message}`))})`);
 check(gitDirty(project.id) === '', 'nothing is left for a later anonymous autosave');
 await s1.client.close();
 check(await exited(s1.transport), `the process exits on the stdin close (stderr: ${JSON.stringify(s1.stderr())})`);
 log = gitLog(project.id);
-check(log.filter((c) => c.author === 'Claude').length === 1 && gitDirty(project.id) === '', 'the stdin close and the SIGTERM that may follow it commit nothing more');
+check(log.filter((c) => c.author === 'Assistant').length === 1 && gitDirty(project.id) === '', 'the stdin close and the SIGTERM that may follow it commit nothing more');
 
 // ---- bare SIGTERM (a wrapper or the OS stopping the process) ----
 const s2 = await session();
 const w2 = await call(s2.client, 'write_file', { project: project.id, path: 'main.tex', content: 'A line from Claude.\nA second line.\n', message: 'Add a second line' });
 check(w2.ok === true && typeof w2.commit === 'string', 'a second session writes and commits');
 log = gitLog(project.id);
-check(log[0]?.author === 'Claude' && log[0]?.message === 'Add a second line', `the second write is committed at once (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
+check(log[0]?.author === 'Assistant' && log[0]?.message === 'Add a second line', `the second write is committed at once (got ${JSON.stringify(log.slice(0, 2).map((c) => `${c.author}: ${c.message}`))})`);
 process.kill(s2.transport.pid, 'SIGTERM');
 check(await exited(s2.transport), `the process exits on SIGTERM (stderr: ${JSON.stringify(s2.stderr())})`);
 check(gitDirty(project.id) === '' && gitLog(project.id).length === log.length, 'the tree is clean and SIGTERM committed nothing more');

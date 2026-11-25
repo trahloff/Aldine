@@ -84,7 +84,7 @@ function folderMark(marks: ReadonlyMap<string, AgentTreeMark> | undefined, dir: 
 
 function AgentMark({ kind }: { kind: AgentTreeMark | undefined }) {
   if (!kind) return null;
-  const label = kind === 'live' ? 'Claude is editing this file' : 'Changed by Claude since your last review';
+  const label = kind === 'live' ? 'An assistant is editing this file' : 'Changed by an assistant since your last review';
   return (
     <span className={`tree__agent tree__agent--${kind}`} title={label} aria-label={label} role="img" data-testid={`tree-agent-${kind}`}>
       {kind === 'live' && <IconSpark />}

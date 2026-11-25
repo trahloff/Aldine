@@ -3,7 +3,7 @@
  * files change: typing (who sent the last update over the collab socket,
  * since autosave commits are anonymous), uploads, renames, deletes, replace,
  * an accepted suggestion, a reference, a Zotero sync, revert, merge, a pull,
- * a ZIP import, agent writes (named "Claude") and a project the agent
+ * a ZIP import, agent writes (named "Assistant") and a project the agent
  * creates. A write that changes nothing records nothing. The store sees at
  * most one write per project per autosave window however fast people type,
  * and what it holds is what a restarted server reads, typesets included.
@@ -116,7 +116,7 @@ async function records(what, id, by, step, branch = 'main') {
   await step();
   const after = await lastEdit(id);
   check(after && (!before || after.at > before.at), `${what}: a newer last edit (before ${before?.at}, after ${after?.at})`);
-  const want = by === 'agent' ? [null, 'Claude'] : by ? [people[by].user.id, people[by].user.name] : [null, null];
+  const want = by === 'agent' ? [null, 'Assistant'] : by ? [people[by].user.id, people[by].user.name] : [null, null];
   eq([after.byId, after.byName, after.branch], [...want, branch], `${what}: by ${by ?? 'nobody'} on ${branch}`);
 }
 async function recordsNothing(what, id, step) {
@@ -216,7 +216,7 @@ try {
     check(r.committed, `"${message}" committed`);
     return r;
   });
-  const agentCommit = await commitFile('main', 'claude.tex', 'agent text\n', 'Add a file', 'Claude');
+  const agentCommit = await commitFile('main', 'claude.tex', 'agent text\n', 'Add a file', 'Assistant');
   await records('a revert', id, 'bob', () => ok('POST', `/api/projects/${id}/revert`, 'bob', { hashes: [agentCommit.hash] }, 'revert'));
   await ok('POST', `/api/projects/${id}/branches`, 'ada', { name: 'feat' }, 'a branch');
   await commitFile('feat', 'feat.tex', 'feature\n', 'Feature', 'Ada');
@@ -272,7 +272,7 @@ try {
   await records('the agent edits the open file', id, 'agent', () => call('edit_file', { project: id, path: 'main.tex', edits: [{ quote: '\\begin{document}', replacement: '\\begin{document}\n% agent' }], message: 'Annotate' }));
   await records('the agent adds a reference', id, 'agent', () => call('references_add', { project: id, query: '10.1234/mock.2' }));
   const made = await call('create_project', { name: 'Agent paper' });
-  eq([(await lastEdit(made.id))?.byId, (await lastEdit(made.id))?.byName], [null, 'Claude'], 'a project the agent creates is the agent\'s first edit');
+  eq([(await lastEdit(made.id))?.byId, (await lastEdit(made.id))?.byName], [null, 'Assistant'], 'a project the agent creates is the agent\'s first edit');
 
   // ---- what a restarted server reads ----
   await ok('POST', `/api/projects/${id}/compile`, 'ada', { branch: 'main' }, 'a typeset');

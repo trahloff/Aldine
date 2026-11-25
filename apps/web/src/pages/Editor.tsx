@@ -883,7 +883,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
       setAgentReview({ branch: onBranch, files, hashes: shown.map((c) => c.hash), commits, dates: shown.flatMap((c) => (c.date ? [c.date] : [])), total, truncated: total > shown.length });
       return true;
     } catch (err: any) {
-      toast(`Could not load Claude’s changes: ${err.message}`, 'error');
+      toast(`Could not load the assistant’s changes: ${err.message}`, 'error');
       return false;
     }
   }, [id, toast]);
@@ -1023,30 +1023,30 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     if (!agentReview) return;
     const review = agentReview;
     const confirmed = await dialogs.confirm({
-      title: 'Revert Claude’s changes?',
+      title: 'Revert the assistant’s changes?',
       body: revertSummary({ commits: review.hashes.length, files: review.files.length, branch: review.branch, dates: review.dates, author: authEnabled ? identity.name : null }),
-      confirmLabel: 'Revert Claude’s changes',
+      confirmLabel: 'Revert the assistant’s changes',
       danger: true,
     });
     if (!confirmed) return;
     const checkpoint = project?.manualCommits
-      ? await askWaitingCommit(dialogs, id, [review.branch], { before: 'reverting Claude’s edits', confirmLabel: 'Commit and revert' })
+      ? await askWaitingCommit(dialogs, id, [review.branch], { before: 'reverting the assistant’s edits', confirmLabel: 'Commit and revert' })
       : undefined;
     if (checkpoint === null) return;
     try {
       // log order is newest-first — exactly what the revert endpoint expects.
-      const res = await api.revertCommits(id, review.branch, review.hashes, 'Revert Claude’s edits', identity.name, checkpoint);
+      const res = await api.revertCommits(id, review.branch, review.hashes, 'Revert the assistant’s edits', identity.name, checkpoint);
       setAgentReview(null);
       if (!res.ok) { toast('Nothing to revert — these changes were already undone', 'info'); bumpHistory(); return; }
       // The revert is one commit; reverting it brings Claude's edits back.
       const revertHash = res.hash;
-      toast(`Reverted Claude’s edits${res.author ? ` as ${res.author}` : ''}`, 'ok', revertHash ? {
+      toast(`Reverted the assistant’s edits${res.author ? ` as ${res.author}` : ''}`, 'ok', revertHash ? {
         label: 'Undo',
         testId: 'agent-revert-undo',
         onClick: async () => {
           try {
-            const back = await api.revertCommits(id, review.branch, [revertHash], 'Bring back Claude’s edits', identity.name);
-            toast(back.ok ? 'Claude’s edits are back' : 'Nothing to undo — Claude’s edits are already back', back.ok ? 'ok' : 'info');
+            const back = await api.revertCommits(id, review.branch, [revertHash], 'Bring back the assistant’s edits', identity.name);
+            toast(back.ok ? 'The assistant’s edits are back' : 'Nothing to undo — the assistant’s edits are already back', back.ok ? 'ok' : 'info');
             await afterRevert();
           } catch (err: any) {
             toast(/^Could not revert/.test(err.message) ? err.message : `Could not undo the revert: ${err.message}`, 'error');
@@ -1065,10 +1065,10 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const reviewClaudeEdits = useCallback(async () => {
     try {
       const res = await api.agentActivity(id, branch, null, true);
-      if (!res.commitCount) { toast(`Claude has not edited ${branch}`, 'info'); return; }
+      if (!res.commitCount) { toast(`No assistant has edited ${branch}`, 'info'); return; }
       if (await openAgentReview(res.commits, res.commitCount, branch)) await recordSeen(res.head, 'acknowledged');
     } catch (err: any) {
-      toast(`Could not load Claude’s edits: ${err.message}`, 'error');
+      toast(`Could not load the assistant’s edits: ${err.message}`, 'error');
     }
   }, [id, branch, toast, openAgentReview, recordSeen]);
 
@@ -1148,7 +1148,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
     setProject((prev) => (prev ? { ...prev, agentSync: on } : prev));
     try {
       await api.patchProject(id, { agentSync: on });
-      toast(on ? 'Claude can now push and pull this project when asked' : 'Claude can no longer push or pull this project', 'ok');
+      toast(on ? 'Assistants can now push and pull this project when asked' : 'Assistants can no longer push or pull this project', 'ok');
     } catch (err: any) {
       setProject((prev) => (prev ? { ...prev, agentSync: !on } : prev));
       toast(`Could not change it: ${err.message}`, 'error');
@@ -1957,7 +1957,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
         ? [{ id: 'experimental-agent-off', group: 'View', title: 'Disable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '0'); location.reload(); } }]
         : [{ id: 'experimental-agent', group: 'View', title: 'Enable experimental agent edit highlights', run: () => { safeStorage.set('aldine.experimental.agentPresence', '1'); location.reload(); } }]),
       { id: 'show-history', group: 'Git', title: 'Show history', keywords: 'versions checkpoints commits', run: () => { setTab('history'); setSidebar(false); } },
-      { id: 'review-claude', group: 'Git', title: 'Review Claude’s recent edits', keywords: 'agent ai claude session revert undo', run: () => { void reviewClaudeEdits(); } },
+      { id: 'review-claude', group: 'Git', title: 'Review the assistant’s recent edits', keywords: 'agent ai assistant claude chatgpt session revert undo', run: () => { void reviewClaudeEdits(); } },
       { id: 'commit', group: 'Git', title: 'Save a checkpoint…', keywords: 'history versions commit', run: () => { setTab('history'); setSidebar(false); setCommitFocusRequest((n) => n + 1); } },
       {
         id: 'newbranch', group: 'Git', title: 'New branch…', run: () => {
@@ -2810,7 +2810,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             {phone && shown === 'pdf' && phoneSwitch}
             <span className="pdf-status" data-testid="pdf-status">
               {agentTypesetting && compile.status !== 'compiling' ? (
-                <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting Claude’s edits…</span>
+                <span data-testid="agent-typesetting"><span className="dot dot--busy" /> Typesetting the assistant’s edits…</span>
               ) : (compile.status === 'ok' || compile.status === 'error' || (compile.status === 'idle' && compile.outdated)) && compile.result ? (
                 // The run's outcome opens its log: after a clean run there is no
                 // problems panel to hold the button.
@@ -2941,9 +2941,9 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
       {connectOpen && <ConnectClaudeModal onClose={() => setConnectOpen(false)} />}
 
       {agentReview && (
-        <Modal onClose={() => setAgentReview(null)} label="Review Claude’s edits" wide testId="agent-review-modal">
+        <Modal onClose={() => setAgentReview(null)} label="Review the assistant’s edits" wide testId="agent-review-modal">
           <div>
-            <h2>Claude’s edits</h2>
+            <h2>The assistant’s edits</h2>
             <p className="modal__sub">
               {agentReview.files.length} file{agentReview.files.length === 1 ? '' : 's'} · {agentReview.hashes.length} commit{agentReview.hashes.length === 1 ? '' : 's'} on {agentReview.branch}
             </p>

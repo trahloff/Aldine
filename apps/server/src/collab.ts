@@ -150,7 +150,7 @@ const scheduleAutoCommit = debouncePerKey<[]>(AUTOCOMMIT_DEBOUNCE_MS, (key) => {
 /** Schedule the same debounced auto-commit for non-collab writes (REST file
  *  upload / rename / reference add, MCP tools) so working-tree changes reach
  *  git history even when no Yjs doc is open — not just on the next manual
- *  push. Agent (MCP) callers pass their stated intent + author "Claude" +
+ *  push. Agent (MCP) callers pass their stated intent + AGENT_COMMIT_AUTHOR +
  *  the touched paths, which commit separately from the anonymous sweep.
  *  Agent (MCP) callers invoke this inside gitops.withRepoLock, in the same
  *  synchronous run as their disk write, after checkpointPathsHeld — the lock
@@ -958,11 +958,11 @@ export const AGENT_ORIGIN = 'aldine-agent';
 /** Reserved agent awareness identity (UX.md): the violet is kept OUT of the
  *  human color palette — if a human can get agent-violet, the semantics
  *  collapse. Field shape mirrors what CodePane.tsx sets for humans. */
-export const AGENT_AWARENESS_USER = { name: 'Claude', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
+export const AGENT_AWARENESS_USER = { name: 'Assistant', color: '#a78bfa', colorLight: '#a78bfa55', isAgent: true } as const;
 
 /** "ChatGPT (for Ada)": the connected clients the session's calls came
  *  through and the people whose tokens they ran under. A call that names no
- *  client counts as "Claude" (agentVia), so it is never shown as another
+ *  client counts as "Assistant" (agentVia), so it is never shown as another
  *  client's work. */
 export function agentDisplayName(owners: Iterable<string>, via: Iterable<string> = []): string {
   const names = [...new Set(owners)].filter(Boolean);
@@ -970,7 +970,7 @@ export function agentDisplayName(owners: Iterable<string>, via: Iterable<string>
   return names.length ? `${agent} (for ${names.join(', ')})` : agent;
 }
 
-/** How a call's client is listed: its name, "Claude" when it has none. */
+/** How a call's client is listed: its name, "Assistant" when it has none. */
 const agentVia = (via: string | null | undefined): string => via || AGENT_AWARENESS_USER.name;
 
 /** Overridable so the session-review e2e can see the idle toast without a 60 s wait. */
@@ -1112,7 +1112,7 @@ function armSession(key: string, session: AgentSession): void {
  * it writes. MCP writes run in-process with no Hocuspocus connection, so
  * presence rides the loaded docs' own awareness instances (the server
  * relays its local state to clients). `owner` is whom the token belongs to,
- * shown as "Claude (for Ada)". Expires ~60 s after the last tool call so an
+ * shown as "Assistant (for Ada)". Expires ~60 s after the last tool call so an
  * idle agent doesn't permanently haunt the presence chip; the session's
  * start time survives re-marks, so its first commit is still the session's
  * after a reload.

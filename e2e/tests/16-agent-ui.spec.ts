@@ -132,8 +132,8 @@ test.describe('agent presence and audit UI', () => {
       // Revert asks first, saying whose commits it undoes and when they were
       // made; Cancel leaves everything as it was.
       await page.getByTestId('agent-revert').click();
-      await expect(page.getByTestId('dialog-title')).toHaveText('Revert Claude’s changes?');
-      await expect(page.getByTestId('dialog-message')).toContainText('This undoes 1 commit Claude made on main today, in 1 file.');
+      await expect(page.getByTestId('dialog-title')).toHaveText('Revert the assistant’s changes?');
+      await expect(page.getByTestId('dialog-message')).toContainText('This undoes 1 commit the assistant made on main today, in 1 file.');
       await page.getByTestId('dialog-cancel').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
       await expect(page.locator('.cm-content')).toContainText('AGENT-ADDED-SENTENCE');
@@ -152,7 +152,7 @@ test.describe('agent presence and audit UI', () => {
 
       // Undo brings Claude's edit back, as one more commit.
       await page.getByTestId('agent-revert-undo').click();
-      await expect(page.locator('.toast', { hasText: 'Claude’s edits are back' })).toBeVisible();
+      await expect(page.locator('.toast', { hasText: 'The assistant’s edits are back' })).toBeVisible();
       await expect(page.locator('.cm-content')).toContainText('AGENT-ADDED-SENTENCE', { timeout: 15_000 });
     } finally {
       await client.close().catch(() => {});
@@ -180,7 +180,7 @@ test.describe('agent presence and audit UI', () => {
 
       await openProject(page, id);
       await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file in this project');
+      await expect(page.locator('.toast', { hasText: 'Assistant edited' })).toContainText('Assistant edited 1 file in this project');
 
       await page.getByTestId('agent-away-review').click();
       await expect(page.getByTestId('agent-review-modal')).toBeVisible();
@@ -218,7 +218,7 @@ test.describe('agent presence and audit UI', () => {
       // First open: nobody had ever seen this project, so the wording says so.
       await openProject(page, id);
       await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file in this project');
+      await expect(page.locator('.toast', { hasText: 'Assistant edited' })).toContainText('Assistant edited 1 file in this project');
 
       // Second open without acting: the same batch is raised again.
       await page.reload();
@@ -347,7 +347,7 @@ test.describe('agent presence and audit UI', () => {
       await expect(page.getByTestId('agent-session-review')).toBeVisible({ timeout: 90_000 });
       // one review prompt, not two with different commit sets behind them
       await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
-      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toHaveCount(1);
+      await expect(page.locator('.toast', { hasText: 'Assistant edited' })).toHaveCount(1);
       // and the one left covers the batch it replaced
       await page.getByTestId('agent-session-review').click();
       await expect(page.getByTestId('agent-review-commit')).toHaveCount(2);
@@ -494,7 +494,7 @@ test.describe('agent presence and audit UI', () => {
 
       await openProject(page, id);
       await expect(page.getByTestId('agent-away-review')).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator('.toast', { hasText: 'Claude edited' })).toContainText('Claude edited 1 file while you were away');
+      await expect(page.locator('.toast', { hasText: 'Assistant edited' })).toContainText('Assistant edited 1 file while you were away');
     } finally {
       await client.close().catch(() => {});
       await cleanup(request, id);

@@ -45,9 +45,9 @@ eq(gitops.agentClientName(undefined), '', 'nothing stays nothing');
 
 // ---- the display name ----
 eq(collab.agentDisplayName(['Ada'], ['ChatGPT']), 'ChatGPT (for Ada)', 'client and person');
-eq(collab.agentDisplayName(['Ada']), 'Claude (for Ada)', 'no client named: as before');
+eq(collab.agentDisplayName(['Ada']), 'Assistant (for Ada)', 'no client named: the neutral name');
 eq(collab.agentDisplayName([], ['ChatGPT']), 'ChatGPT', 'a client alone');
-eq(collab.agentDisplayName(['Ada'], ['ChatGPT', 'Claude']), 'ChatGPT, Claude (for Ada)', 'calls without a client are listed as Claude beside the named one');
+eq(collab.agentDisplayName(['Ada'], ['ChatGPT', 'Assistant']), 'ChatGPT, Assistant (for Ada)', 'calls without a client are listed as Assistant beside the named one');
 eq(collab.agentDisplayName(['Ada', 'Ben'], ['ChatGPT', 'Claude Code', 'ChatGPT']), 'ChatGPT, Claude Code (for Ada, Ben)', 'several of each, once each');
 
 // ---- a token from Connect carries its client ----
@@ -89,7 +89,7 @@ const fullMessage = (hash) => execFileSync('git', ['-C', store.repoDir(id), 'log
 let r = await viaChatGPT('edit_file', { project: id, path: 'main.tex', edits: [{ quote: 'The first sentence.', replacement: 'The first sentence, reworded.' }], message: 'Reword the opening' });
 check(!r.isError, `edit_file answers (got ${JSON.stringify(r.body)})`);
 let log = await gitops.log(id, 'main', 10);
-eq([log[0].author, log[0].message, log[0].onBehalfOf, log[0].client], ['Claude', 'Reword the opening', 'Ada', 'ChatGPT'], 'the log names the client beside the person; the author stays Claude');
+eq([log[0].author, log[0].message, log[0].onBehalfOf, log[0].client], ['Assistant', 'Reword the opening', 'Ada', 'ChatGPT'], 'the log names the client beside the person; the author is Assistant');
 let detailed = await gitops.log(id, 'main', 10, { details: true });
 eq([detailed[0].client, detailed[0].onBehalfOf, detailed[0].files], ['ChatGPT', 'Ada', ['main.tex']], 'so does the detailed log, with the files still in place');
 check(/\n\nOn-behalf-of: Ada\nAgent-client: ChatGPT\n*$/.test(fullMessage(log[0].hash)), `the trailers are the message's last paragraph (got ${JSON.stringify(fullMessage(log[0].hash))})`);
@@ -106,7 +106,7 @@ eq([log[0].message, log[0].client], ['Reword', 'ChatGPT'], 'the token decides th
 r = await viaToken('edit_file', { project: id, path: 'main.tex', edits: [{ quote: 'reworded.\nThe second', replacement: 'reworded again.\nThe second' }], message: 'Script edit\n\nAgent-client: ChatGPT' });
 check(!r.isError, `the token edit answers (got ${JSON.stringify(r.body)})`);
 log = await gitops.log(id, 'main', 10);
-eq([log[0].author, log[0].message, log[0].onBehalfOf, log[0].client], ['Claude', 'Script edit', 'Ada', undefined], 'no client on a personal token, whatever the message says');
+eq([log[0].author, log[0].message, log[0].onBehalfOf, log[0].client], ['Assistant', 'Script edit', 'Ada', undefined], 'no client on a personal token, whatever the message says');
 check(/\n\nOn-behalf-of: Ada\n*$/.test(fullMessage(log[0].hash)), 'and the requester trailer is still last');
 
 // ---- a person's commit never reads as a client's ----
@@ -120,11 +120,19 @@ eq([detailed[0].author, detailed[0].client, detailed[1].client, detailed[2].clie
 activity = await gitops.agentActivitySince(id, 'main', null);
 eq(activity.commits.map((c) => c.client), [undefined, 'ChatGPT', 'ChatGPT'], 'the review answer too, newest first');
 
+// ---- commits authored "Claude" before 1.25 still read as assistant commits ----
+execFileSync('git', ['-c', 'user.name=Claude', '-c', 'user.email=claude@aldine.local', 'commit', '-q', '--allow-empty', '-m', 'Old agent edit\n\nOn-behalf-of: Ada\nAgent-client: ChatGPT'], { cwd: wt });
+log = await gitops.log(id, 'main', 10);
+eq([log[0].author, log[0].onBehalfOf, log[0].client], ['Claude', 'Ada', 'ChatGPT'], 'an old "Claude" commit keeps its requester and client');
+activity = await gitops.agentActivitySince(id, 'main', null);
+check(activity.commits.some((c) => c.message === 'Old agent edit'), 'and the review answer still counts it');
+check(gitops.isAgentAuthor('Claude') && gitops.isAgentAuthor('Assistant') && !gitops.isAgentAuthor('Ada'), 'both names are agent authors, a person is not');
+
 // ---- comments are signed with the client ----
 r = await viaChatGPT('add_comment', { project: id, path: 'main.tex', quote: 'reworded again', body: 'Is this better?' });
 eq(r.body.comment?.author, 'ChatGPT (for Ada)', 'a comment through a connected client is signed with it');
 r = await viaToken('add_comment', { project: id, path: 'main.tex', quote: 'reworded again', body: 'And this?' });
-eq(r.body.comment?.author, 'Claude (for Ada)', 'through a personal token as before');
+eq(r.body.comment?.author, 'Assistant (for Ada)', 'through a personal token, under the neutral name');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('Assistant names: ALL PASSED');

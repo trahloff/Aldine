@@ -1,6 +1,6 @@
 /**
  * The agent's review comments and git sync tools: add_comment anchors by
- * quote and shows under "Claude (for …)", list/reply/resolve work on the same
+ * quote and shows under "Assistant (for …)", list/reply/resolve work on the same
  * threads the editor shows, assign_comment picks a person by name, a "Can view" person may not comment; push and pull
  * go through the project's linked repository (a file:// bare repo here) with
  * the same membership rule as the Sync menu, a conflicting pull changes
@@ -91,7 +91,7 @@ await remotes.setConnection(ada.id, 'github', { token: 'ada-token', login: 'ada'
 let r = await asAda('add_comment', { project: id, path: 'main.tex', quote: 'needs a citation', body: 'Which source backs this?', suggestion: 'needs a citation \\cite{doe2020}' });
 check(!r.isError, `add_comment answers (got ${JSON.stringify(r.body)})`);
 const added = r.body.comment;
-eq([added.path, added.line, added.quote, added.author, added.resolved], ['main.tex', 3, 'needs a citation', 'Claude (for Ada)', false], 'the comment is anchored by its quote and signed as the agent for Ada');
+eq([added.path, added.line, added.quote, added.author, added.resolved], ['main.tex', 3, 'needs a citation', 'Assistant (for Ada)', false], 'the comment is anchored by its quote and signed as the agent for Ada');
 const stored = (await comments.listComments(id, 'main')).find((c) => c.id === added.id);
 eq(MAIN.slice(stored.anchor.from, stored.anchor.to), 'needs a citation', 'the stored anchor spans the quote in the editor text');
 eq(stored.suggestion, 'needs a citation \\cite{doe2020}', 'the suggestion is kept for one-click accept');
@@ -102,7 +102,7 @@ r = await asAda('add_comment', { project: id, path: 'main.tex', quote: 'second',
 check(r.isError && /8 characters|at least/i.test(r.body), `a too-short quote is refused (got ${JSON.stringify(r.body)})`);
 
 r = await asAda('reply_comment', { project: id, comment_id: added.id, body: 'Added the citation.' });
-eq(r.body.comment.replies.map((x) => [x.author, x.body]), [['Claude (for Ada)', 'Added the citation.']], 'a reply lands on the thread under the agent\'s name');
+eq(r.body.comment.replies.map((x) => [x.author, x.body]), [['Assistant (for Ada)', 'Added the citation.']], 'a reply lands on the thread under the agent\'s name');
 r = await asAda('resolve_comment', { project: id, comment_id: added.id });
 eq(r.body.resolved, true, 'resolve_comment closes the thread');
 r = await asAda('list_comments', { project: id });
@@ -137,9 +137,9 @@ eq(r.body.total, 1, 'but can read the threads');
 r = await asAda('sync_status', { project: id });
 eq([r.body.linked, r.body.repository, r.body.ahead, r.body.behind, r.body.agentSyncAllowed], [true, 'ada/paper', 0, 0, false], 'sync_status names the repository, level with it, and that push and pull are not allowed yet');
 r = await asAda('push', { project: id });
-check(r.isError && /owner has not let Claude push and pull/.test(r.body) && /Project settings/.test(r.body), `push is refused until the owner allows it, and says where (got ${JSON.stringify(r.body)})`);
+check(r.isError && /owner has not let assistants push and pull/.test(r.body) && /Project settings/.test(r.body), `push is refused until the owner allows it, and says where (got ${JSON.stringify(r.body)})`);
 r = await asAda('pull', { project: id });
-check(r.isError && /owner has not let Claude push and pull/.test(r.body), 'and so is pull');
+check(r.isError && /owner has not let assistants push and pull/.test(r.body), 'and so is pull');
 
 // the switch: the owner's alone
 const app = Fastify();

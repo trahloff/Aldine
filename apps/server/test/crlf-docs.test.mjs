@@ -101,7 +101,7 @@ check(ytext.toString().includes('\\section{One}\nline two\nline 3\nline 4\nplain
 const afterEdit = CRLF.replace('line three\r\nline four', 'line 3\r\nline 4').replace('plain end', 'plain end, rewritten');
 eq(disk(id, 'main.tex'), afterEdit, 'the file holds the edit with CRLF line endings throughout');
 eq(await changedLines(id, edited.commit), ['-line three\r', '-line fourXYZ\r', '+line 3\r', '+line 4\r'], "the agent's commit changes only the two quoted lines");
-check((await gitops.log(id, 'main'))[0].author === 'Claude', 'and is the agent\'s commit');
+check((await gitops.log(id, 'main'))[0].author === 'Assistant', 'and is the agent\'s commit');
 eq(await gitops.uncommittedPaths(id, 'main'), [], 'nothing is left uncommitted');
 await conn.disconnect();
 

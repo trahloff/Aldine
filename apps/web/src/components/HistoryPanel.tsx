@@ -3,7 +3,7 @@ import { api, LogEntry, localUser } from '../api';
 import { useToast } from './Toast';
 import { useDialogs } from './Dialogs';
 import { clockTime, dateTime, sameDay } from '../util/dates';
-import { filesSummary, historyRows, peopleSummary, type CommitView, type HistoryRow } from '../util/history';
+import { filesSummary, historyRows, peopleSummary, type CommitView, type HistoryRow, isAgentCommit } from '../util/history';
 import { askWaitingCommit } from '../util/waitingCommit';
 import DiffView from './DiffView';
 import Modal from './Modal';
@@ -19,7 +19,7 @@ const NO_PERSON = 'Aldine';
 import { agentName } from '../util/agentReview';
 
 /** The commit's author as History names it: an agent commit says for whom. */
-const authorLabel = (c: LogEntry) => (c.author === 'Claude' ? agentName([c]) : c.author);
+const authorLabel = (c: LogEntry) => (isAgentCommit(c) ? agentName([c]) : c.author);
 
 /** `version` bumps whenever the branch changed elsewhere (the files signal,
  *  a revert, an agent session ending); `live` polls while an agent is present,

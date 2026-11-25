@@ -171,7 +171,7 @@ test.describe('History', () => {
       await expect(page.getByTestId('agent-away-review')).toHaveCount(0);
 
       await page.getByTestId('palette-open').click();
-      await page.getByTestId('palette-input').fill('review claude');
+      await page.getByTestId('palette-input').fill('review the assistant');
       await expect(page.getByTestId('palette-item-review-claude')).toHaveAttribute('aria-selected', 'true');
       await page.keyboard.press('Enter');
       await expect(page.getByTestId('agent-review-modal')).toContainText('Add a closing sentence');
