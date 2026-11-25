@@ -734,7 +734,7 @@ override file.
 | `DATABASE_URL` | Postgres datastore (blank = `ALDINE_DATASTORE`) |
 | `PG_POOL_MAX` | Postgres pool size (default 10) |
 | `REDIS_URL` | Shared rate limits + collab sync across app nodes |
-| `SENTRY_DSN` | Error tracking. Server errors only (5xx and unhandled rejections); URLs are sent without their query string, and request bodies, cookies and headers are dropped |
+| `SENTRY_DSN` | Error tracking. Server errors only (5xx, unhandled rejections and crashes): the stack, the error text with addresses and credentials cut, and the route as registered (`/api/projects/:id/file`). No URL, request body, cookie or header is sent, and no trail of log lines or outgoing requests |
 | `SENTRY_ENVIRONMENT` | Which instance an error came from (`production`, `staging`, …). Defaults to `NODE_ENV`, then `production` |
 | `SENTRY_RELEASE` | Build an error belongs to. Defaults to `ALDINE_VERSION`, then the package version |
 | `TRUST_PROXY` | How many reverse proxies stand in front of the app; the client address is the one the outermost of them adds to `X-Forwarded-For`. `1` = one proxy (set by the prod overlay; needed behind any proxy), `2` = a CDN or load balancer in front of your proxy. A count is honoured only when the proxy connects from a loopback, private or link-local address; a proxy that connects from a public address has to be named. Or the proxies' addresses and CIDR ranges, comma-separated (`loopback,10.0.0.0/8`). Unset or `0` = off |

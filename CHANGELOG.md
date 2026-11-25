@@ -13,6 +13,23 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   and marks it. The editor keeps the keyboard, and a hidden preview stays
   hidden. A comment link from a mail does the same once the project's
   pages are typeset.
+- What an error report to Sentry holds is now named item by item instead of
+  left to the SDK's defaults, which in version 11 record request bodies,
+  cookies, headers, console lines, outgoing request URLs and local variables
+  unless told otherwise. A report holds the stack, the error text with
+  addresses and credentials cut, and the route as registered
+  (`/api/projects/:id/file`) with the method, in place of the URL. Requests
+  Aldine makes to other services carry no trace headers. A test reads what
+  the SDK would send and fails if any of this changes.
+- The app image now contains Sentry's command-line tool, which the SDK
+  depends on and Aldine never runs. It is under the Functional Source
+  License, which is not an open-source license; THIRD-PARTY-NOTICES.md says
+  so at the top.
+
+### Security
+- The optional error-tracking SDK (`@sentry/node`) is 11.17.0, and `vite`
+  and `vitest` are updated. `npm audit` reports no advisory in anything
+  Aldine installs.
 
 ## [1.23.1] — 2026-11-25
 

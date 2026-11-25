@@ -6,14 +6,14 @@ import type { FastifyInstance } from 'fastify';
  * enabled only when SENTRY_DSN is set (and @sentry/node is installed). Dynamic
  * import keeps it out of the hot path and tolerant of a missing package.
  */
-let sentry: { captureException(e: unknown): void } | null = null;
+let sentry: { captureException(e: unknown, hint?: { tags?: Record<string, string> }): unknown } | null = null;
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 interface ScrubbableEvent {
   request?: { url?: string; query_string?: unknown; data?: unknown; cookies?: unknown; headers?: unknown };
   message?: string;
-  exception?: { values?: Array<{ value?: string }> };
+  exception?: { values?: Array<{ value?: string; stacktrace?: { frames?: Array<{ vars?: unknown }> } }> };
   breadcrumbs?: unknown;
   user?: unknown;
 }
@@ -52,7 +52,12 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
   delete event.breadcrumbs;
   delete event.user;
   if (typeof event.message === 'string') event.message = scrubText(event.message);
-  for (const v of event.exception?.values ?? []) if (typeof v.value === 'string') v.value = scrubText(v.value);
+  for (const v of event.exception?.values ?? []) {
+    if (typeof v.value === 'string') v.value = scrubText(v.value);
+    // A frame's local variables hold whatever the function was working on:
+    // the text of a file, a token, an address.
+    for (const frame of v.stacktrace?.frames ?? []) delete frame.vars;
+  }
   return event;
 }
 
@@ -77,19 +82,66 @@ export function sentrySettings(env: NodeJS.ProcessEnv = process.env): SentrySett
   };
 }
 
-export async function initObservability(app: FastifyInstance): Promise<void> {
+type Sentry = typeof import('@sentry/node');
+type SentryOptions = NonNullable<Parameters<Sentry['init']>[0]>;
+
+/**
+ * Every category the SDK can collect, off. Typed as complete on purpose: a
+ * category a later SDK adds fails the typecheck here instead of arriving
+ * switched on, which is how version 11 introduced most of these.
+ */
+export const NOTHING_COLLECTED: Required<Omit<NonNullable<SentryOptions['dataCollection']>, 'frameContextLines'>> = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [],
+  urlQueryParams: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  mcp: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  stackFrameVariables: false,
+};
+
+/**
+ * What the SDK is started with. The integrations are named one by one
+ * instead of taking the SDK's defaults: the defaults record console lines,
+ * outgoing request URLs, the arguments of spawned git commands and local
+ * variables as a trail on every event, add trace headers to requests Aldine
+ * makes to other services, and grow with each SDK version. These six report
+ * an error with its stack, its causes and the source lines around it, and
+ * nothing about the request or the person. No tracesSampleRate: tracing is
+ * off, not sampled at zero, so the span-streaming integration the SDK adds
+ * regardless has nothing to send.
+ */
+export function sentryOptions(sdk: Sentry, settings: SentrySettings): SentryOptions {
+  return {
+    dsn: settings.dsn,
+    environment: settings.environment,
+    release: settings.release,
+    defaultIntegrations: false,
+    integrations: [
+      sdk.eventFiltersIntegration(),
+      sdk.linkedErrorsIntegration(),
+      sdk.dedupeIntegration(),
+      sdk.contextLinesIntegration(),
+      sdk.nodeContextIntegration(),
+      sdk.onUncaughtExceptionIntegration(),
+    ],
+    dataCollection: NOTHING_COLLECTED,
+    sendClientReports: false,
+    beforeSend: (event) => scrubEvent(event),
+  };
+}
+
+/** `transport` replaces the SDK's HTTP transport; a test reads what would be sent through it. */
+export async function initObservability(app: FastifyInstance, transport?: SentryOptions['transport']): Promise<void> {
   const settings = sentrySettings();
   if (settings) {
     try {
       const Sentry = await import('@sentry/node');
-      Sentry.init({
-        dsn: settings.dsn,
-        environment: settings.environment,
-        release: settings.release,
-        tracesSampleRate: 0,
-        sendDefaultPii: false,
-        beforeSend: (event) => scrubEvent(event),
-      });
+      Sentry.init({ ...sentryOptions(Sentry, settings), ...(transport ? { transport } : {}) });
       sentry = Sentry;
       console.log(`[aldine] Sentry error tracking enabled — environment ${settings.environment}, release ${settings.release}`);
     } catch {
@@ -100,7 +152,9 @@ export async function initObservability(app: FastifyInstance): Promise<void> {
   app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
     const status = err.statusCode;
     req.log.error({ err, url: req.url, method: req.method }, 'request error');
-    if (!status || status >= 500) captureError(err);
+    // The route as registered (`/api/projects/:id/file`), never the URL: the
+    // pattern says where it failed without naming a project or a file.
+    if (!status || status >= 500) captureError(err, { route: req.routeOptions?.url ?? 'unmatched', method: req.method });
     if (!reply.sent) {
       reply.code(status && status < 500 ? status : 500)
         .send({ error: status && status < 500 ? err.message : 'Internal server error' });
@@ -108,6 +162,6 @@ export async function initObservability(app: FastifyInstance): Promise<void> {
   });
 }
 
-export function captureError(e: unknown): void {
-  if (sentry) { try { sentry.captureException(e); } catch { /* never let telemetry throw */ } }
+export function captureError(e: unknown, tags?: Record<string, string>): void {
+  if (sentry) { try { sentry.captureException(e, tags ? { tags } : undefined); } catch { /* never let telemetry throw */ } }
 }

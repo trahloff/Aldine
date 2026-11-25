@@ -34,8 +34,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vitest": "^4.1.10"
+    "vite": "^6.4.6",
+    "vitest": "^4.1.12"
   },
   "license": "AGPL-3.0-only"
 }
