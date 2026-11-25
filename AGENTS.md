@@ -112,6 +112,10 @@ traces as the `playwright-<suite>` artifact.
   `type=gha`, makes every instance re-download TeX Live (1.4 GB) on the next
   release. OS package steps in the Dockerfiles go below `ARG
   PACKAGES_REFRESH`, or a cached layer freezes them without security fixes.
+- Write `package-lock.json` with npm 11 (`npx -y npm@11 install`, `npx -y npm@11
+  version`). npm 10 marks rollup's platform builds as dev whenever it rewrites
+  the file, although `@sentry/node` reaches rollup outside dev; the notices are
+  generated from those flags, so `notices:check` then fails in CI.
 - `test:unit` discovers `apps/server/test/*.test.mjs`; never enumerate test
   files in package.json again (two branches adding tests conflicted on that
   line and the merge silently dropped one side's tests).
