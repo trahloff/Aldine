@@ -421,7 +421,7 @@ client and the number of connections ended.
 |---|---|---|
 | `ping` | Confirms the connector is reachable and who the token belongs to. | read-only |
 | `list_projects` | Projects the credential can reach, with branches, root file and engine, and `canEdit`: false where the owner shares the project as "Can review" or "Can view", whose write tools are refused. | read-only |
-| `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `contentVersion` for conflict-safe writes (Versions and conflicts, below). | read-only |
+| `project_structure` | File tree of a branch (`binary` is by extension; `read_file` decides text by content) plus `memory` (the project memory files it has, below) and `contentVersion` for conflict-safe writes (Versions and conflicts, below). | read-only |
 | `read_file` | A text file as the editor shows it now (open documents are flushed first), windowable by line (`from_line`/`to_line`, echoed back; a window past the end or running backwards is an error). Text is decided by content, not extension. Returns `contentVersion` and `fileVersion`. | read-only |
 | `edit_file` | Replaces exact quoted text (`path`, `edits[]` of `{quote, replacement, occurrence?}`, `base_version?`, `message?`); merges with live typing as a CRDT edit. A drifted quote applies nothing and returns candidate lines (`stale_anchor`); a quote that matches several places returns them with the `occurrence` that picks each (`ambiguous_anchor`); an edit at text someone is typing right now applies nothing and names them, with `retry_after_ms` (`user_editing`; `force: true` overrides it when the user asked for that edit). | destructive |
 | `write_file` | Creates or replaces a whole file (`path`, `content`, `base_version?`, `message?`); refuses with `version_conflict` when that file changed after the given base version (a change to another file does not conflict). In a document someone has open only the lines that differ are replaced, so their cursor stays where it was. Folders come into being with the first file written inside them; the first `.tex` written into a project with no main document becomes it (`newRoot`). | destructive |
@@ -543,6 +543,15 @@ awareness field `agentAllow: {id}`. It lapses after 60 s or when an agent edit
 lands in the file. A
 person whose editor shows another file has no cursor in this one. Error results carry the
 same `path`, `branch`, `head` and `contentVersion` as a success.
+
+## Project memory
+
+A project can keep four Markdown files at its root that assistants read
+first and extend as they work: `FINDINGS.md`, `DECISIONS.md`, `TASKS.md`
+and `RESULTS.md`. The server's `instructions` (sent at initialize) describe
+the convention, and `project_structure` answers `memory`, the files the
+project has, in that order. The "Article with project memory" template
+seeds them. Details: [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 
 ## How attribution and review work
 

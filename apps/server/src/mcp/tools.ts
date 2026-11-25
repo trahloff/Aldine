@@ -474,6 +474,16 @@ const annotate = (title: string, hints: ToolHints): { title: string; annotations
   ({ title, annotations: { title, ...hints } });
 const READ: ToolHints = { readOnlyHint: true, openWorldHint: false };
 
+/** The project memory convention (docs/PROJECT_MEMORY.md): plain files at
+ *  the project root, found by exact name. The template article-memory seeds
+ *  them; the server instructions tell clients to read and extend them. */
+export const MEMORY_FILES = [
+  { path: 'FINDINGS.md', holds: 'findings' },
+  { path: 'DECISIONS.md', holds: 'decisions' },
+  { path: 'TASKS.md', holds: 'tasks' },
+  { path: 'RESULTS.md', holds: 'results' },
+] as const;
+
 export function registerTools(server: McpServer, identity: McpIdentity, ctx: ToolContext = { publicBase: config.publicUrl }): void {
   const base = ctx.publicBase.replace(/\/$/, '');
   const csp = viewerCsp(base);
@@ -582,7 +592,7 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
 
   server.registerTool('project_structure', {
     ...annotate('Show a project\'s files', READ),
-    description: 'File tree of a project branch plus rootFile, engine, and contentVersion (pass it as base_version to edit_file, write_file or a batch_write entry — a write is refused only when its own file changed after that version). Call it before working in a project you have not read yet.',
+    description: 'File tree of a project branch plus rootFile, engine, memory (the project memory files that exist: FINDINGS.md, DECISIONS.md, TASKS.md, RESULTS.md at the root; read them before you work and add to them as you learn), and contentVersion (pass it as base_version to edit_file, write_file or a batch_write entry — a write is refused only when its own file changed after that version). Call it before working in a project you have not read yet.',
     inputSchema: { project: projectParam, branch: branchParam },
   }, async ({ project, branch = 'main' }) => {
     try {
@@ -590,7 +600,9 @@ export function registerTools(server: McpServer, identity: McpIdentity, ctx: Too
       await gitops.ensureWorktree(meta.id, branch);
       flushBranchDocs(meta.id, branch);
       const files = store.listFiles(meta.id, branch).map((f) => ({ path: f.path, type: f.type, size: f.size, ...(f.type === 'file' ? { binary: !!f.binary } : {}) }));
-      return ok({ files, rootFile: meta.rootFile, engine: meta.engine, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
+      const present = new Set(files.filter((f) => f.type === 'file').map((f) => f.path));
+      const memory = MEMORY_FILES.filter((m) => present.has(m.path)).map((m) => ({ ...m }));
+      return ok({ files, rootFile: meta.rootFile, engine: meta.engine, memory, contentVersion: contentVersion(meta.id, branch), ...(await echo(meta.id, branch)) });
     } catch (err) { return toolError(err, { project, branch }); }
   });
 

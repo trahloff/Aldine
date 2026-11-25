@@ -92,7 +92,7 @@ test.describe('New project chooser', () => {
 
     const list = page.getByRole('listbox', { name: 'Templates' });
     await expect(list).toHaveCount(1);
-    await expect(list.getByRole('option', { name: /^Article/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(list.getByTestId('template-article')).toHaveAttribute('aria-selected', 'true');
     await expect(list.getByRole('group').first()).toHaveAccessibleName(/.+/);
     expect(await page.locator('[data-testid="template-grid"] [aria-pressed]').count()).toBe(0);
     // Arrow moves are announced by focus; the choice line itself is not live.
