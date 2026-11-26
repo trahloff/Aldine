@@ -55,6 +55,18 @@ starts the stack, waiting until every container is healthy. To upgrade, change
 `ALDINE_VERSION` and run it again. The app is unavailable while its container
 restarts, about a minute.
 
+## Following main (the maintainer's instance)
+
+`ALDINE_VERSION=main` runs the newest main commit instead of a release.
+`.github/workflows/main-images.yml` moves the `main` tags (`main-full` for the
+compiler) only after that commit has passed CI, a smoke test, and the upgrade
+and restore drills. `deploy.sh` installs `aldine-follow-main.timer`, which
+every ten minutes pulls `main` and restarts the services whose image changed.
+With any other `ALDINE_VERSION` the timer does nothing. `main` is not a release
+and carries no promise; self-hosters pin `x.y.z`. To go back to a release, set
+`ALDINE_VERSION` to it and run `deploy.sh` again. The data must be one that
+release can start on, so pick the newest release.
+
 ## The runner (experimental)
 
 The runner preview (docs/RUNNER.md) is in `compose.yml` but stays off. To turn

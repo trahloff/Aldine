@@ -14,11 +14,15 @@ SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@$HOST")
 grep -q '^ALDINE_VERSION=' "$ENV_FILE" || { echo "error: ALDINE_VERSION missing in $ENV_FILE" >&2; exit 1; }
 
 "${SSH[@]}" 'cloud-init status --wait >/dev/null; mkdir -p /opt/aldine'
-scp -q -o BatchMode=yes "$HERE/compose.yml" "$HERE/offbox-backup.sh" "$HERE/restore-drill.sh" "$HERE/../backup.sh" "$HERE/../restore.sh" "$HERE/../Caddyfile" "root@$HOST:/opt/aldine/"
+scp -q -o BatchMode=yes "$HERE/aldine-follow-main.service" "$HERE/aldine-follow-main.timer" "root@$HOST:/etc/systemd/system/"
+scp -q -o BatchMode=yes "$HERE/compose.yml" "$HERE/follow-main.sh" "$HERE/offbox-backup.sh" "$HERE/restore-drill.sh" "$HERE/../backup.sh" "$HERE/../restore.sh" "$HERE/../Caddyfile" "root@$HOST:/opt/aldine/"
 scp -q -o BatchMode=yes "$ENV_FILE" "root@$HOST:/opt/aldine/.env"
 [ -n "$OFFBOX_FILE" ] && scp -q -o BatchMode=yes "$OFFBOX_FILE" "root@$HOST:/opt/aldine/offbox.env"
 
 "${SSH[@]}" 'set -e; cd /opt/aldine; chmod 600 .env; [ -f offbox.env ] && chmod 600 offbox.env
+  # follow-main.sh takes the same lock, so it never restarts the stack mid-deploy
+  exec 9>/run/aldine-deploy.lock; flock 9
+  systemctl daemon-reload; systemctl enable --now aldine-follow-main.timer >/dev/null 2>&1
   docker compose pull -q
   docker compose up -d --wait --wait-timeout 600
   docker image prune -f >/dev/null

@@ -40,6 +40,16 @@ on:
         required: false
         type: string
         default: ''
+      packages-refresh:
+        description: PACKAGES_REFRESH build arg (default the version). main-images.yml passes the newest release, so a main build reuses that release's OS package layers
+        required: false
+        type: string
+        default: ''
+      commit-tag:
+        description: Also tag sha-<commit>. Off for main builds, whose version tag already names the commit, so sha- tags stay release-only
+        required: false
+        type: boolean
+        default: true
     outputs:
       digest:
         description: Digest of the pushed multi-arch index
@@ -101,12 +111,12 @@ jobs:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           platforms: ${{ matrix.platform }}
-          # PACKAGES_REFRESH changes every release, so the Dockerfiles rerun
+          # PACKAGES_REFRESH changes every release (main builds keep the newest release's), so the Dockerfiles rerun
           # their OS package steps (and all later steps) instead of reusing a
           # cached layer without the latest security fixes.
           build-args: |
             ${{ inputs.build-args }}
-            PACKAGES_REFRESH=${{ inputs.version }}
+            PACKAGES_REFRESH=${{ inputs.packages-refresh || inputs.version }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # The layer cache lives in the image's own package, one tag per
           # variant and architecture (aldine-compiler:buildcache-compiler-full-linux-arm64).
@@ -164,10 +174,9 @@ jobs:
           fi
           refs=()
           for f in /tmp/digests/*; do refs+=("$IMAGE@$(cat "$f")"); done
-          docker buildx imagetools create \
-            -t "$IMAGE:$VERSION_TAG" \
-            -t "$IMAGE:sha-${GITHUB_SHA::7}${{ inputs.tag-suffix }}" \
-            "${refs[@]}"
+          tags=(-t "$IMAGE:$VERSION_TAG")
+          if [ "${{ inputs.commit-tag }}" = true ]; then tags+=(-t "$IMAGE:sha-${GITHUB_SHA::7}${{ inputs.tag-suffix }}"); fi
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
           digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "Pushed $IMAGE:$VERSION_TAG = $digest" >> "$GITHUB_STEP_SUMMARY"

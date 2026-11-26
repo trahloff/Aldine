@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow Aldine main when .env pins ALDINE_VERSION=main
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/aldine/follow-main.sh
