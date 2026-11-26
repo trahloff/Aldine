@@ -29,6 +29,10 @@ const h = (tag, attrs = {}, ...children) => {
   }
   return el;
 };
+/** el.append() for the children h() takes: the DOM itself writes a null child as the text "null". */
+const add = (el, ...children) => {
+  for (const c of children.flat()) if (c !== null && c !== undefined) el.append(c);
+};
 
 export default {
   activate(aldine) {
@@ -392,7 +396,7 @@ export default {
 
           if (state.view === 'ask-owner') {
             Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' });
-            wrap.append(
+            add(wrap,
               section('Zotero'),
               h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: '0' }, dataset: { testid: 'zotero-ask-owner' } },
                 `Only ${state.ownerName ? `${state.ownerName}, the project owner,` : 'the project owner'} can link a Zotero library. Ask them to link one; its references then show here.`),
@@ -402,7 +406,7 @@ export default {
 
           if (state.view === 'connect') {
             Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '10px', padding: '8px 6px' });
-            wrap.append(
+            add(wrap,
               section('Connect Zotero'),
               h('p', { style: { color: 'var(--text-2)', fontSize: '12px', lineHeight: '1.5', margin: '0' } },
                 'Paste a Zotero API key with library read access. ',
@@ -437,7 +441,7 @@ export default {
           }
 
           if (state.view === 'pick') {
-            wrap.append(
+            add(wrap,
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' } },
                 section(`Signed in as ${state.username}`),
                 h('button', {
@@ -467,7 +471,7 @@ export default {
             if (state.collections.some((c) => c.key === state.collectionKey)) colSelect.value = state.collectionKey;
             colSelect.addEventListener('change', () => { state.collectionKey = colSelect.value; });
             const target = state.changing && state.link ? state.link.bibFile : 'zotero.bib';
-            wrap.append(
+            add(wrap,
               libSelect,
               colSelect,
               h('button', {
@@ -501,7 +505,7 @@ export default {
             state.isOwner ? h('button', { class: 'btn btn--small btn--ghost', dataset: { testid: 'zotero-change' }, disabled: busy ? '' : null, onclick: startChange }, 'Change library or collection') : null,
             state.isOwner ? h('button', { class: 'btn btn--small btn--ghost', dataset: { testid: 'zotero-unlink' }, onclick: unlink }, 'Unlink') : null,
           ].filter(Boolean);
-          wrap.append(
+          add(wrap,
             section('Linked library'),
             h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '0 2px 6px' }, dataset: { testid: 'zotero-linked' } },
               `${library}${collection} → ${z.bibFile}`,

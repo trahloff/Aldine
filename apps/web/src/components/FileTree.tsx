@@ -725,7 +725,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
             >
               <span className={`tree__chevron ${open ? 'tree__chevron--open' : ''}`}><IconChevronRight /></span>
               <span className="tree__icon"><FolderIcon /></span>
-              {node.name}
+              <span className="tree__name">{node.name}</span>
               {!open && <AgentMark kind={folderMark(agentMarks, node.path)} />}
               {!open && <ChangeMark kind={folderChange(changeMarks, node.path)} noun={changeNoun} folder />}
             </button>
@@ -759,7 +759,7 @@ export default function FileTree({ files, active, rootFile, projectId, branch, o
         >
           <span className="tree__chevron" />
           <span className="tree__icon">{fileIcon(node.path, node.path === rootFile)}</span>
-          {node.name}
+          <span className="tree__name">{node.name}</span>
           {node.path === rootFile && <span className="tree__root-tag">root</span>}
           <AgentMark kind={agentMarks?.get(node.path)} />
           <ChangeMark kind={changeMarks?.get(node.path)} noun={changeNoun} />

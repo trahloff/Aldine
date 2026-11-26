@@ -1683,7 +1683,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
           project: { id: m.id, name: m.name },
           reason: assigned ? 'assigned' : 'mentioned',
           at: assigned ? c.assignee!.at : mention!,
-          comment: { id: c.id, branch: c.branch, file: c.file, quote: c.anchor.quote.slice(0, 200), body: c.body.slice(0, 300), author: c.author, createdAt: c.createdAt, ...(c.assignee ? { assignee: c.assignee } : {}) },
+          comment: { id: c.id, branch: c.branch, file: c.file, quote: (c.anchor.quote ?? '').slice(0, 200), body: c.body.slice(0, 300), author: c.author, createdAt: c.createdAt, ...(c.assignee ? { assignee: c.assignee } : {}) },
         });
       }
     }
@@ -3225,13 +3225,15 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
       if (typeof from !== 'number' || typeof to !== 'number' || from < 0 || to <= from) {
         return reply.code(400).send({ error: 'Invalid comment anchor' });
       }
+      // every reader shows the quote; a client that sends none gets the anchored text
+      const quote = typeof b.anchor.quote === 'string' ? b.anchor.quote : store.readFile(req.params.id, branch, b.file).toString('utf8').slice(from, to);
       if (typeof b.body === 'string' && b.body.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Comment is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
       if (typeof b.suggestion === 'string' && b.suggestion.length > comments.MAX_COMMENT_TEXT) return reply.code(400).send({ error: `Suggestion is too long (max ${comments.MAX_COMMENT_TEXT.toLocaleString('en-US')} characters)` });
       const mentions = reqUser(req) && !reqUser(req)!.guest ? await mentionsOf(req.params.id, b.body || '', b.mentions) : [];
       const added = await comments.addComment(req.params.id, {
         branch,
         file: b.file,
-        anchor: b.anchor,
+        anchor: { ...b.anchor, quote },
         author: reqUser(req)?.name || b.author || 'Anonymous',
         ...(reqUser(req) ? { authorId: reqUser(req)!.id } : {}),
         body: b.body || '',

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, CompileResult, ImportedProject, ProjectDetail, TreeEntry, Comment, type Person, ReplaceResult, SearchMatch, localUser, accountIdentity, onSignedOut, setLocalName, type AuthUser } from '../api';
 import { normalizeDeepLinkPath, resolveDeepLinkFile } from '../util/deepLink';
@@ -29,7 +29,7 @@ import FileTabs from '../components/FileTabs';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconHistory, IconQuote, IconRun, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconBook, IconHistory, IconQuote, IconRun, IconSpark, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -89,11 +89,13 @@ const STOP_AFTER_MS = 1000;
  *  Claude wrote hundreds of commits into shows a count, not a wall. */
 const AGENT_REVIEW_MAX_COMMITS = 20;
 
-/** The plugin panels with a sidebar tab of their own, beside Files, Search,
- *  History and Review; every other one sits in the More menu. */
+/** The plugin panels whose tab sits among the built-in ones, before Review;
+ *  every other panel follows Review and is the first to move into the More
+ *  menu when the row runs out of room. */
 const PINNED_PANELS = ['plugin:references'];
-/** A pinned panel's tab is an icon, like every tab in the row. */
-const PINNED_ICONS: Record<string, typeof IconQuote> = { 'plugin:references': IconQuote };
+/** Plugin panel tabs are icons, like every tab in the row; a panel without one
+ *  here shows its title's first letter. */
+const PANEL_ICONS: Record<string, typeof IconQuote> = { 'plugin:references': IconQuote, 'plugin:zotero': IconBook, 'plugin:aifix': IconSpark };
 const SIDEBAR_HIDDEN = 'aldine.sidebarHidden';
 /** The sidebar's width in px, once someone has dragged it. */
 const SIDEBAR_WIDTH = 'aldine.sidebarWidth';
@@ -227,6 +229,10 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   // Everyone else on the branch and the file they have open (the branch signal).
   const [peers, setPeers] = useState<BranchPeer[]>([]);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
+  const tabRowRef = useRef<HTMLDivElement>(null);
+  /** How many of the unpinned plugin panels get a tab of their own; the rest
+   *  sit in the More menu, which only shows when one is left over. */
+  const [extraTabs, setExtraTabs] = useState(0);
   const [pluginActions, setPluginActions] = useState<PluginErrorsAction[]>([]);
   const [pluginCommands, setPluginCommands] = useState<PluginCommand[]>([]);
   const [auto, setAuto] = useState(() => safeStorage.get('aldine.autoTypeset') !== '0');
@@ -353,6 +359,28 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   // The runner (docs/RUNNER.md): the server says this account may use it, and
   // this browser turned the experimental panel on.
   const runnerEnabled = runner && safeStorage.get(RUNNER_FLAG) === '1';
+  useLayoutEffect(() => {
+    const row = tabRowRef.current;
+    if (!row) return;
+    const measure = () => {
+      const extra = pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id)).length;
+      const first = row.querySelector<HTMLElement>('.sidebar__tab--icon');
+      const collapse = row.querySelector<HTMLElement>('.sidebar__collapse');
+      if (!extra || !first || !collapse) { setExtraTabs(0); return; }
+      const style = getComputedStyle(row);
+      // a slot is a tab's basis plus the gap; a shrunk tab's width would overcount
+      const slot = (parseFloat(getComputedStyle(first).flexBasis) || first.offsetWidth) + (parseFloat(style.columnGap) || 0);
+      const room = row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - collapse.offsetWidth;
+      const fixed = row.querySelectorAll('.sidebar__tab--icon:not([data-overflow])').length;
+      const free = Math.floor(room / slot) - fixed;
+      // the More button takes a slot itself, so it only pays off for two or more
+      setExtraTabs(free >= extra ? extra : Math.max(0, free - 1));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [pluginPanels, runnerEnabled]);
   const [mode, setMode] = useState<EditorMode>(() => {
     return safeStorage.get(EDITOR_MODE) === 'visual' ? 'visual' : 'source';
   });
@@ -2326,7 +2354,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
           data-testid="sidebar"
           style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
         >
-          <div className="sidebar__tabs" role="tablist">
+          <div className="sidebar__tabs" role="tablist" ref={tabRowRef}>
             <button
               className={`sidebar__tab sidebar__tab--icon ${tab === 'files' ? 'sidebar__tab--active' : ''}`}
               onClick={() => setTab('files')}
@@ -2374,7 +2402,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
               </button>
             )}
             {pluginPanels.filter((p) => PINNED_PANELS.includes(p.id)).map((p) => {
-              const Icon = PINNED_ICONS[p.id];
+              const Icon = PANEL_ICONS[p.id];
               return (
                 <button key={p.id} className={`sidebar__tab sidebar__tab--icon ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} aria-label={p.title} title={p.title} data-testid={`tab-${p.id}`}>
                   {Icon ? <Icon /> : p.title.slice(0, 1)}
@@ -2391,8 +2419,16 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 </button>
               );
             })()}
+            {pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id)).slice(0, extraTabs).map((p) => {
+              const Icon = PANEL_ICONS[p.id];
+              return (
+                <button key={p.id} className={`sidebar__tab sidebar__tab--icon ${tab === p.id ? 'sidebar__tab--active' : ''}`} onClick={() => setTab(p.id)} role="tab" aria-selected={tab === p.id} aria-label={p.title} title={p.title} data-testid={`tab-${p.id}`} data-overflow="">
+                  {Icon ? <Icon /> : p.title.slice(0, 1)}
+                </button>
+              );
+            })}
             {(() => {
-              const more = pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id));
+              const more = pluginPanels.filter((p) => !PINNED_PANELS.includes(p.id)).slice(extraTabs);
               const shown = more.find((p) => p.id === tab);
               if (!more.length) return null;
               return (

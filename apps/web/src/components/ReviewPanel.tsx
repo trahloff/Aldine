@@ -100,7 +100,7 @@ export default function ReviewPanel({ comments, load = 'ok', onRetry, activeFile
       data-testid={`comment-${c.id}`} data-comment-card={c.id} aria-current={active?.id === c.id || undefined}>
       <button className="review__anchor" onClick={() => onReveal(c)} title="Jump to the commented text">
         <span className="review__file">{c.file !== activeFile ? c.file + ' · ' : ''}</span>
-        <span className="review__quote">“{c.anchor.quote.slice(0, 60)}{c.anchor.quote.length > 60 ? '…' : ''}”</span>
+        <span className="review__quote">“{(c.anchor.quote ?? '').slice(0, 60)}{(c.anchor.quote ?? '').length > 60 ? '…' : ''}”</span>
       </button>
       <div className="review__body"><MentionText text={c.body} mentions={c.mentions} people={people} /></div>
       {c.suggestion !== undefined && (

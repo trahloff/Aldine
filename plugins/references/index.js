@@ -148,7 +148,8 @@ export default {
         const bibFilter = h('input', {
           class: 'input',
           placeholder: 'Filter by key, author, title…',
-          style: { width: '100%' },
+          // an input in a scrolling flex column shrinks below its own height
+          style: { width: '100%', flex: 'none' },
           dataset: { testid: 'cite-bib-filter' },
           oninput: (e) => { filter = e.target.value; drawBib(); },
         });

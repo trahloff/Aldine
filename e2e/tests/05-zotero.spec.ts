@@ -49,11 +49,15 @@ test.describe('Zotero integration (via plugin system)', () => {
 
       // the Zotero plugin registered a sidebar tab — proves the plugin system loads
       await openPluginTab(page, 'zotero');
+      // an optional part left out is not written as the word "null"
+      await expect(page.getByTestId('zotero-key')).toBeVisible();
+      await expect(page.getByTestId('zotero-panel')).not.toContainText('null');
 
       // connect with the mock key
       await page.getByTestId('zotero-key').fill('test-key-123');
       await page.getByTestId('zotero-connect').click();
       await expect(page.getByTestId('zotero-library')).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByTestId('zotero-panel')).not.toContainText('null');
 
       // library picker shows My Library + the group
       await expect(page.getByTestId('zotero-library')).toContainText('My Library');

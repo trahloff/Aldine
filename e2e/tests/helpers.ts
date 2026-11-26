@@ -58,9 +58,9 @@ export async function typeAtEnd(page: Page, text: string): Promise<void> {
  *  own, or an item of the More menu. */
 export async function openSidebarTab(page: Page, id: string): Promise<void> {
   const tab = page.getByTestId(`tab-${id}`);
-  const more = page.getByTestId('tab-more');
-  await expect(more).toBeVisible({ timeout: 15_000 });
-  if (!(await tab.isVisible())) await more.click();
+  // a panel has a tab of its own when the row has room, else it is in More
+  await expect(tab.or(page.getByTestId('tab-more')).first()).toBeVisible({ timeout: 15_000 });
+  if (!(await tab.isVisible())) await page.getByTestId('tab-more').click();
   await tab.click();
 }
 

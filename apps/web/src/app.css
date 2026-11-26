@@ -605,12 +605,14 @@ a.operator--bar { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
 /* files keep an empty chevron column, so icons line up level by level */
 .tree__chevron { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; color: var(--text-3); transition: transform 150ms var(--ease-out); transform: rotate(0deg); }
 .tree__chevron--open { transform: rotate(90deg); }
-.tree__root-tag { margin-left: 6px; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); border: 1px solid var(--hairline); border-radius: 999px; padding: 0 5px; }
+.tree__root-tag { flex: none; margin-left: 6px; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); border: 1px solid var(--hairline); border-radius: 999px; padding: 0 5px; }
 
 /* The branch pill's menu (BranchMenu, RemoteSync): the branches and, for a
    project linked to a git host, the host's sync controls above them. */
 .branch { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .branch-menu { top: 32px; left: 0; width: 300px; }
+/* wider where the window has room, so long branch names stay tellable apart */
+@media (min-width: 900px) { .branch-menu { width: 420px; } }
 .branch-menu__row { display: flex; align-items: center; }
 .branch-menu__row .menu__item { flex: 1; min-width: 0; }
 .branch-menu__check { width: 14px; flex: none; text-align: center; }
@@ -1026,6 +1028,8 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 }
 @media (hover: hover) and (pointer: fine) { .tree__item:hover { background: var(--bg-hover); } }
 .tree__item:active { background: var(--bg-active); }
+/* the row is a flex box, so its own text-overflow never reaches the name */
+.tree__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Claude in the file now (the spark), or its unreviewed changes there (a dot) */
 .tree__agent { flex: none; display: inline-flex; align-items: center; color: var(--agent); }
 .tree__agent--changed { width: 6px; height: 6px; border-radius: 50%; background: var(--agent); }
@@ -1856,7 +1860,9 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 .search__toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
 .search__toggle--word { text-decoration: underline; text-underline-offset: 2px; }
 .search__toggle--mono { font-family: var(--font-mono); }
-.search__replace { display: flex; align-items: center; gap: 4px; }
+.search__replace { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* in a narrow sidebar the buttons go to a second line before the field drops below 120px */
+.search__replace .search__input { flex: 1 1 120px; width: auto; }
 .search__replace .btn { flex: none; height: 28px; }
 .search__replace .search__delete-all { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 /* aria-disabled keeps the button focusable; it looks like .btn:disabled */
@@ -1915,7 +1921,9 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
   .search__replace-one { position: static; transform: none; opacity: 1; }
 }
 @media (max-width: 640px) {
-  /* 16px keeps iOS from zooming into a focused field */
+  /* 16px keeps iOS from zooming into a focused field; important because
+     several fields set a smaller size of their own */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select { font-size: 16px !important; }
   .search__input { height: 44px; font-size: 16px; }
   .search__field .search__input { padding-right: 128px; }
   .search__toggle { width: 40px; height: 40px; }
@@ -2059,8 +2067,10 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 
 /* the files tab: the tree scrolls, the outline of the open file below it */
 .sidebar__panel--files { flex-direction: column; overflow: hidden; }
-.sidebar__tree { flex: 1 1 auto; min-height: 80px; overflow: auto; }
-.outline { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 0; max-height: 45%; border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 4px; }
+/* The tree takes what the outline leaves (basis 0): with basis auto a long tree
+   out-shrinks the outline down to a clipped sliver of its header. */
+.sidebar__tree { flex: 1 1 0; min-height: 80px; overflow: auto; }
+.outline { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; max-height: 45%; border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 4px; }
 .outline__head { display: flex; align-items: center; gap: 4px; flex: none; border: 0; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); text-align: left; padding: 4px 6px; border-radius: var(--radius-s); cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .outline__head:hover { color: var(--text); background: var(--bg-hover); } }
 .outline__chev { display: inline-flex; transition: transform 150ms var(--ease); }

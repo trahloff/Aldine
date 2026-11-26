@@ -183,7 +183,7 @@ export function LocalBranchRow({ name, current, onOpen, onMerge, onDelete, readO
 }) {
   return (
     <div className="branch-menu__row">
-      <button className="menu__item" onClick={onOpen} data-testid={`branch-${name}`}>
+      <button className="menu__item" onClick={onOpen} title={name} data-testid={`branch-${name}`}>
         <span className="branch-menu__check">{current ? '✓' : ''}</span>
         <span className="branch-menu__name">{name}</span>
       </button>
