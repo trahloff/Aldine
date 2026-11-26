@@ -648,12 +648,14 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
       applyDeepLink(p, f);
       applyReopen(p);
       setFilesLoaded(true);
-      // One-time nudge per project: work on an unlinked project exists only on
-      // this server until it's published to a git host. Only the owner can
-      // publish, so only the owner is nudged.
+      // One nudge per browser, on the first unlinked project opened: work on
+      // it exists only on this server until it's published to a git host.
+      // Per project, it sat over the Problems bar and the Cite panel's button
+      // on every new project. Only the owner can publish, so only the owner
+      // is nudged. (aldine.remoteNudged.<id> is what earlier versions set.)
       const owner = !authEnabled || !!p.isOwner;
-      if (owner && !p.remote && !safeStorage.get(`aldine.remoteNudged.${id}`)) {
-        safeStorage.set(`aldine.remoteNudged.${id}`, '1');
+      if (owner && !p.remote && !safeStorage.get('aldine.remoteNudged') && !safeStorage.get(`aldine.remoteNudged.${id}`)) {
+        safeStorage.set('aldine.remoteNudged', '1');
         toast('This project lives only on this server — publish it to a git host to keep a synced copy.', 'info', { label: 'Publish…', testId: 'remote-nudge-publish', onClick: () => setPublishOpen(true) });
       }
     })();
@@ -2070,7 +2072,7 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
       cmds.push({ id: `snippet-${s.id}`, group: 'Insert', title: s.title, run: () => insertAtCursor(s.text) });
     }
     for (const f of files.filter(isUserFile)) {
-      cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, run: () => openFile(f.path) });
+      cmds.push({ id: `open-${f.path}`, group: 'Files', title: f.path, path: true, run: () => openFile(f.path) });
     }
     for (const c of pluginCommands) cmds.push({ id: `plugin-${c.id}`, group: c.group || 'Plugins', title: c.title, keywords: c.keywords, run: () => c.run() });
     // A showcase refuses every write; these commands would only fail or open nothing.

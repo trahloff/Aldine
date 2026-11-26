@@ -14,6 +14,9 @@ export interface Command {
   group?: string;
   /** Other words it answers to; the title is always searched. */
   keywords?: string;
+  /** The title is a file path: a long one is cut in the folders, never in
+   *  the file name. */
+  path?: boolean;
   run(): void;
 }
 
@@ -175,7 +178,14 @@ export default function CommandPalette({ open, commands, onClose, placeholder = 
                   onPointerMove={() => { if (i !== sel) setSel(i); }}
                   onClick={() => choose(i)}
                 >
-                  <span className="palette__title">{c.title}</span>
+                  {c.path && c.title.includes('/')
+                    ? (
+                      <span className="palette__title palette__title--path" title={c.title}>
+                        <span className="palette__dir">{c.title.slice(0, c.title.lastIndexOf('/') + 1)}</span>
+                        <span className="palette__base">{c.title.slice(c.title.lastIndexOf('/') + 1)}</span>
+                      </span>
+                    )
+                    : <span className="palette__title">{c.title}</span>}
                   {c.hint && <span className="palette__hint">{c.hint}</span>}
                 </div>
               );

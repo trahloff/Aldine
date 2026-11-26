@@ -72,3 +72,27 @@ test.describe('editor toolbar', () => {
     } finally { await cleanup(request, id); }
   });
 });
+
+test.describe('preview header', () => {
+  test('stays one row in a 1024 px window, like the editor header beside it', async ({ page, request }) => {
+    const id = await createProject(request, 'Narrow Preview Header');
+    try {
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await openProject(page, id);
+      const header = page.locator('.pane--preview > .pane__header');
+      await expect(header).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('pdf-status')).toBeVisible({ timeout: 120_000 });
+      const m = await header.evaluate((el) => ({
+        pane: Math.round(el.getBoundingClientRect().width),
+        height: Math.round(el.getBoundingClientRect().height),
+        overflow: el.scrollWidth > el.clientWidth + 1,
+        kids: [...el.children].map((c) => `${c.className || c.tagName}:${Math.round(c.getBoundingClientRect().width)}`),
+      }));
+      console.log('preview header', JSON.stringify(m));
+      expect(m.height, JSON.stringify(m)).toBeLessThanOrEqual(36);
+      expect(m.overflow, JSON.stringify(m)).toBe(false);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+});
