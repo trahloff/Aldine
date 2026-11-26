@@ -23,6 +23,7 @@ services:
       TRUST_PROXY: "1"            # req.ip comes from Caddy's X-Forwarded-For
       ALDINE_COMPILE_QUOTA_MIN: ${ALDINE_COMPILE_QUOTA_MIN:-}  # monthly compile-minutes/user (blank = unmetered)
       ALDINE_STORAGE_QUOTA_MB: ${ALDINE_STORAGE_QUOTA_MB:-}    # storage per project owner in MB (blank = unlimited)
+      ALDINE_IMPORT_MAX_MB: ${ALDINE_IMPORT_MAX_MB:-}          # largest project ZIP the import accepts, in MB (blank = 60)
 
   compiler:
     logging:

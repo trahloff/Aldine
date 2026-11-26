@@ -167,6 +167,25 @@ test.describe('ZIP import hardening', () => {
     }
   });
 
+  test('the browser states the limit the server reports (ALDINE_IMPORT_MAX_MB), and spares the upload', async ({ page }) => {
+    const name = `limit-${Date.now()}`;
+    const { dir, file } = tmpZip(`${name}.zip`, buildZip({ 'main.tex': doc('x'), 'pad.bin': Buffer.alloc(2 * 1024 * 1024) }));
+    let uploads = 0;
+    await page.route('**/api/auth/me', async (route) => {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, json: { ...(await res.json()), importMaxMb: 1 } });
+    });
+    await page.route('**/api/projects/import', async (route) => { uploads += 1; await route.continue(); });
+    try {
+      await importFromHome(page, file);
+      await expect(page.locator('.toast').filter({ hasText: 'ZIP is 2.0 MB; the limit is 1 MB' })).toBeVisible();
+      expect(uploads).toBe(0);
+      expect(await projectNamed(page, name)).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('the JSON base64 body keeps working for API clients', async ({ request }) => {
     const name = `base64-${Date.now()}`;
     const res = await request.post('/api/projects/import', { data: { name, zipBase64: buildZip({ 'main.tex': doc('B64') }).toString('base64') } });

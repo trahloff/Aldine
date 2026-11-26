@@ -130,6 +130,11 @@ ALDINE_COMPILE_QUOTA_MIN=
 # true; editing keeps working and nothing is deleted.
 ALDINE_STORAGE_QUOTA_MB=
 
+# largest project ZIP the import accepts, in MB (blank = 60, at most 1024).
+# The archive is held in memory while it is imported; a reverse proxy in
+# front has to allow this figure times 4/3 plus 1 MB (81 MB for the default).
+ALDINE_IMPORT_MAX_MB=
+
 # error tracking (optional). SENTRY_ENVIRONMENT separates this instance from
 # your others in the issue list; without it every instance files as production.
 # Events carry the stack and the error text only: no request body, headers,
@@ -174,6 +179,8 @@ Then pick the ingress you already run. Aldine is one upstream (`127.0.0.1:8080`)
 serving the app, `/api`, `/plugins`, and the `/collab` WebSocket — any reverse
 proxy works as long as it forwards WebSocket upgrades and allows 81 MB bodies
 (a 60 MB ZIP import travels base64-encoded inside JSON; uploads need 32 MB).
+With `ALDINE_IMPORT_MAX_MB` set, the figure is that limit times 4/3 plus 1 MB;
+the server prints it at start.
 
 ### 3a. nginx (most common)
 
@@ -188,7 +195,8 @@ sudo nginx -t && sudo systemctl reload nginx
 
 See [`deploy/nginx.conf`](nginx.conf) — the load-bearing lines are
 `client_max_body_size 81m` (nginx's 1 MB default breaks ZIP import; 32m from
-an older copy cuts a ZIP import off at about 24 MB) and the
+an older copy cuts a ZIP import off at about 24 MB; a higher
+`ALDINE_IMPORT_MAX_MB` needs a higher figure here) and the
 `Upgrade`/`Connection` headers on `/collab` (without them the editor loads but
 live cursors never appear).
 
@@ -744,6 +752,7 @@ override file.
 | `RL_EXPORT_BURST` | "Export your data" downloads one account may start in a row (default 3, then one every 10 minutes) |
 | `RL_INVITE_BURST` | Invitation mails a project owner may send per hour when sharing by email, Resend included (default 20). Over it, the invitation is still made and the owner is told who was not mailed |
 | `RL_SHARE_BURST` | Invitations a project owner may make per hour (default 200): each address or ORCID iD invited from the share dialog, and each Invite again, counts once. Over it, the request is refused and nothing of it is saved |
+| `ALDINE_IMPORT_MAX_MB` | Largest project ZIP the import accepts, in whole MB (default `60`, at most `1024`). Unpacked, the files may come to three times that, and at least 200 MB; one file inside stays limited to 40 MB when compressed. The server holds the archive and its unpacked files in memory during an import, so it needs several times the limit in free memory. A reverse proxy in front has to allow the limit times 4/3 plus 1 MB (`client_max_body_size` in nginx); the start log names the figure |
 | `COPY_MAX_BYTES` | Largest project, in bytes of files, that Duplicate copies (default 256 MB); a larger one is refused with a pointer to Download ZIP |
 | `RL_GUEST_JOIN_BURST`, `RL_GUEST_LINK_BURST` | Guests joining through share links without an account: per client address (default 20, one more every 30 s) and per link (default 50, one more every 20 s) |
 | `RL_MCP_BURST`, `RL_VISIT_BURST`, `RL_OAUTH_TOKEN_BURST`, `RL_OAUTH_REGISTER_BURST`, `RL_OAUTH_CLIENT_BURST` | Bursts for MCP requests (default 60), review-mark writes (60), the OAuth token endpoint (30), client registration (10) and consent-page client lookups (60) |
