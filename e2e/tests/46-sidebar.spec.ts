@@ -195,6 +195,9 @@ test.describe('sidebar', () => {
       await expect(page.getByTestId('cite-bib-knuth')).toContainText('The TeXbook');
       await expect(page.getByTestId('reference-search')).toBeInViewport();
       await expect(page.getByTestId('reference-add')).toBeInViewport();
+      // the filter above the long list keeps the height of the other fields
+      const filterH = (await page.getByTestId('cite-bib-filter').boundingBox())!.height;
+      expect(filterH).toBe((await page.getByTestId('reference-search').boundingBox())!.height);
       const list = page.getByTestId('cite-project');
       expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
       // scrolling the entries leaves the footer where it was
@@ -283,6 +286,12 @@ test.describe('sidebar', () => {
         return { cut: el.scrollHeight > el.clientHeight + 1, outside: box.bottom > outline.bottom + 1, short: box.height < 20 };
       });
       expect(clipped).toEqual({ cut: false, outside: false, short: false });
+      // a name too long for the row ends in an ellipsis inside it
+      await put(request, id, 'chapters/a_really_long_descriptive_chapter_file_name_that_cannot_fit.tex', '\\section{L}\n');
+      const long = page.getByTestId('file-chapters/a_really_long_descriptive_chapter_file_name_that_cannot_fit.tex');
+      await expect(long).toBeVisible({ timeout: 15_000 });
+      const name = await long.locator('.tree__name').evaluate((el) => ({ ellipsis: getComputedStyle(el).textOverflow, cut: el.scrollWidth > el.clientWidth, inside: el.getBoundingClientRect().right <= el.parentElement!.getBoundingClientRect().right + 1 }));
+      expect(name).toEqual({ ellipsis: 'ellipsis', cut: true, inside: true });
       // the tree scrolls instead: its last row is reachable
       await page.getByTestId('file-chapters/c59.tex').scrollIntoViewIfNeeded();
       await expect(page.getByTestId('file-chapters/c59.tex')).toBeInViewport();

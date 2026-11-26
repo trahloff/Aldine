@@ -16,6 +16,19 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
   result was squeezed to a sliver with its title and authors cut off.
 - The Outline under a long file tree is no longer squeezed to a cut-off
   sliver; the tree scrolls instead.
+- A review comment created without its quoted text (possible through the
+  API) no longer stops the editor from opening; the server fills in the
+  anchored text, and comments already stored that way show an empty quote.
+- The Zotero panel no longer prints the word "null" under its buttons.
+- Cite: the filter above a long bibliography keeps its full height.
+- File tree: long file and folder names end in "…" inside the row instead of
+  running under the row's menu button and the ROOT badge.
+- The branch menu is wider on a wide window and shows each branch's full
+  name on hover, so long names that differ at the end can be told apart.
+- Search: in a narrow sidebar the "Replace all" buttons move to a second line
+  instead of squeezing the replace field.
+- On a phone, every text field uses a 16 px font, so iOS no longer zooms the
+  page when one is tapped.
 
 ## [1.26.0] — 2026-11-26
 

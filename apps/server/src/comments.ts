@@ -44,7 +44,9 @@ async function save(projectId: string, list: Comment[]): Promise<void> {
 }
 
 export async function listComments(projectId: string, branch: string): Promise<Comment[]> {
-  return (await db().loadComments(projectId)).filter((c) => c.branch === branch).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return (await db().loadComments(projectId)).filter((c) => c.branch === branch).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    // stored before the route filled in a missing quote; every reader slices it
+    .map((c) => (typeof c.anchor.quote === 'string' ? c : { ...c, anchor: { ...c.anchor, quote: '' } }));
 }
 
 export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'createdAt' | 'resolved' | 'replies'>): Promise<Comment> {
@@ -54,7 +56,7 @@ export async function addComment(projectId: string, c: Omit<Comment, 'id' | 'cre
     ...c,
     body: cap(c.body, MAX_COMMENT_TEXT)!,
     suggestion: cap(c.suggestion, MAX_COMMENT_TEXT),
-    anchor: { ...c.anchor, quote: cap(c.anchor.quote, 2000)! },
+    anchor: { ...c.anchor, quote: cap(c.anchor.quote ?? '', 2000)! },
     id: crypto.randomBytes(8).toString('base64url'),
     createdAt: new Date().toISOString(),
     resolved: false,
