@@ -7,6 +7,13 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Git commands run through the server again stop at the data directory. Since
+  the move to simple-git 4 they had lost that limit, so an autosave in a
+  project folder whose repository was just deleted could commit into a git
+  checkout that holds the data directory (for example a development
+  worktree).
+
 ### Changed
 - The sidebar shows every panel as a tab when it has room, Zotero and Fix
   included; the "⋯" menu only appears for the panels that do not fit.
