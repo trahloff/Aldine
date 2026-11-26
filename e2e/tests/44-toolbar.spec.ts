@@ -72,3 +72,69 @@ test.describe('editor toolbar', () => {
     } finally { await cleanup(request, id); }
   });
 });
+
+test.describe('preview header', () => {
+  test('stays one row in a 1024 px window, like the editor header beside it', async ({ page, request }) => {
+    const id = await createProject(request, 'Narrow Preview Header');
+    try {
+      // two-digit page count, the widest the header gets in practice
+      const pages = Array.from({ length: 25 }, (_, i) => `\\section{Part ${i + 1}}\nWords on page ${i + 1}.\n\\newpage\n`).join('');
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: 'main.tex', content: `\\documentclass{article}\n\\begin{document}\n${pages}\\end{document}\n` } })).ok()).toBeTruthy();
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await openProject(page, id);
+      const header = page.locator('.pane--preview > .pane__header');
+      await expect(header).toBeVisible({ timeout: 15_000 });
+      // typeset: the status then carries the time and the page count
+      await expectTypesetOk(page);
+      const m = await header.evaluate((el) => ({
+        pane: Math.round(el.getBoundingClientRect().width),
+        height: Math.round(el.getBoundingClientRect().height),
+        overflow: el.scrollWidth > el.clientWidth + 1,
+        kids: [...el.children].map((c) => `${c.className || c.tagName}:${Math.round(c.getBoundingClientRect().width)}:${(c.textContent || '').trim().slice(0, 30)}`),
+      }));
+      console.log('preview header', JSON.stringify(m));
+      expect(m.height, JSON.stringify(m)).toBeLessThanOrEqual(36);
+      expect(m.overflow, JSON.stringify(m)).toBe(false);
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the palette cuts a long path in its folders and keeps the file name whole', async ({ page, request }) => {
+    const id = await createProject(request, 'Palette Paths');
+    try {
+      const file = 'sections/introduction_and_motivation/a_really_quite_long_descriptive_folder/file_74_final.tex';
+      expect((await request.put(`/api/projects/${id}/file`, { data: { branch: 'main', path: file, content: 'x\n' } })).ok()).toBeTruthy();
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await openProject(page, id);
+      await page.keyboard.press('ControlOrMeta+k');
+      await page.getByTestId('palette-input').fill('file_74');
+      const row = page.getByTestId(`palette-item-open-${file}`);
+      await expect(row).toBeVisible();
+      const m = await row.evaluate((el) => {
+        const base = el.querySelector('.palette__base')!;
+        const dir = el.querySelector('.palette__dir')!;
+        return { base: base.textContent, baseCut: base.scrollWidth > base.clientWidth, dirCut: dir.scrollWidth > dir.clientWidth };
+      });
+      expect(m).toEqual({ base: 'file_74_final.tex', baseCut: false, dirCut: true });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
+  test('the publish nudge comes once per browser, not on every new project', async ({ page, request }) => {
+    const first = await createProject(request, 'Nudge One');
+    const second = await createProject(request, 'Nudge Two');
+    try {
+      await openProject(page, first);
+      await expect(page.getByTestId('remote-nudge-publish')).toBeVisible({ timeout: 15_000 });
+      await openProject(page, second);
+      await expect(page.getByTestId('editor-shell')).toBeVisible();
+      await page.waitForTimeout(1500);
+      await expect(page.getByTestId('remote-nudge-publish')).toHaveCount(0);
+    } finally {
+      await cleanup(request, first);
+      await cleanup(request, second);
+    }
+  });
+});

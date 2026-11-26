@@ -7,6 +7,22 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- Git commands run through the server again stop at the data directory. Since
+  the move to simple-git 4 they had lost that limit, so an autosave in a
+  project folder whose repository was just deleted could commit into a git
+  checkout that holds the data directory (for example a development
+  worktree).
+- The PDF pane's header stays one row in a 1024 px window; it wrapped to
+  two rows once the PDF had ten or more pages. The Jump button drops its
+  shortcut in a narrow pane (the tooltip keeps it).
+- The command palette cuts a long file path in its folders, so the file name
+  stays readable.
+
+### Changed
+- The "publish to a git host" hint shows once per browser instead of once per
+  project, so it no longer covers buttons on every new project.
+
 ### Changed
 - The sidebar shows every panel as a tab when it has room, Zotero and Fix
   included; the "⋯" menu only appears for the panels that do not fit.

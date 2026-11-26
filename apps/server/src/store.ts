@@ -29,9 +29,13 @@ export function branchDir(id: string, branch: string): string {
  *  is checked out as a plain file holding the link's target, never as a link
  *  the server would follow. The tree entry keeps its link mode.
  *  simple-git 4 wants every config key outside its own safe list named in
- *  allowConfig; an unnamed one warns on stderr now and is refused in 5. */
+ *  allowConfig; an unnamed one warns on stderr now and is refused in 5.
+ *  Its environment guard also strips ambient GIT_* variables from every
+ *  child: GIT_CEILING_DIRECTORIES (config.ts) must be let through, or a
+ *  project dir that lost its repo lets git find an enclosing checkout and
+ *  commit it as "aldine: autosave". */
 export function git(dir: string): SimpleGit {
-  return simpleGit({ baseDir: dir, config: ['core.symlinks=false'], allowConfig: ['core.symlinks'] });
+  return simpleGit({ baseDir: dir, config: ['core.symlinks=false'], allowConfig: ['core.symlinks'], allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
 }
 
 /** Throws 'project not found' when absent, preserving the try/catch semantics at call sites. */

@@ -920,9 +920,15 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
    the pane, not the window, since the pane is resizable. Only a pane too
    narrow for even that (a phone) wraps. The widths are measured with a
    two-digit page count and a five-digit word count: all of it needs 656px; the
-   default pane (576px) keeps the word count. */
+   default pane (576px) keeps the word count. Below 428px the gaps narrow and
+   Jump drops its shortcut (the tooltip keeps it): a 1024px window's pane is
+   about 410px and wrapped to two rows with a two-digit page count. */
 .pane--preview { container-type: inline-size; }
-@container (min-width: 428px) {
+@container (max-width: 427px) {
+  .pane--preview > .pane__header { gap: 4px; }
+  .pane--preview > .pane__header .btn .kbd { display: none; }
+}
+@container (min-width: 340px) {
   .pane--preview > .pane__header { flex-wrap: nowrap; }
   .pane--preview > .pane__header > * { flex-shrink: 0; }
   .pane--preview > .pane__header > .pdf-status:not(.pdf-words) { min-width: 24px; flex-shrink: 1; overflow: hidden; white-space: nowrap; }
@@ -1698,6 +1704,9 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 /* opened from the keyboard: there and gone at once */
 .modal-backdrop--instant, .modal-backdrop--instant > .palette { animation: none; }
 .palette__title { flex: 1; font-size: var(--text-m); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette__title--path { display: flex; min-width: 0; }
+.palette__dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette__base { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette__hint { font-size: var(--text-xs); color: var(--text-2); }
 .palette__empty { padding: 18px; text-align: center; color: var(--text-2); font-size: var(--text-m); }
 
