@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Fixed
+- References panel: a long list of paper search results scrolls again. Each
+  result was squeezed to a sliver with its title and authors cut off.
+
 ## [1.26.0] — 2026-11-26
 
 ### Added

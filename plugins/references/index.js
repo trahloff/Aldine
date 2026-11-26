@@ -160,6 +160,7 @@ export default {
           dataset: { testid: 'reference-search' },
           oninput: (e) => onSearchInput(e.target.value),
         });
+        // rows carry flex: none; in a height-capped flex column they would shrink and clip instead of scrolling
         const hits = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }, dataset: { testid: 'reference-hits' } });
         const queryInput = h('input', {
           class: 'input',
@@ -181,7 +182,7 @@ export default {
           const matches = bib.filter((e) => !q || [e.key, e.author, e.title, e.year].some((v) => String(v || '').toLowerCase().includes(q)));
           const rows = matches.slice(0, 50).map((e) => h('button', {
             class: 'tree__item',
-            style: { height: 'auto', padding: '5px 8px', display: 'block' },
+            style: { height: 'auto', flex: 'none', padding: '5px 8px', display: 'block' },
             dataset: { testid: `cite-bib-${e.key}` },
             title: `Insert \\cite{${e.key}}`,
             onclick: () => insertKey(e.key),
@@ -207,7 +208,7 @@ export default {
             ...(searchStatus ? [h('p', { style: { color: 'var(--text-2)', fontSize: '12px', padding: '2px 4px', margin: 0 }, dataset: { testid: 'reference-search-status' } }, searchStatus)] : []),
             ...results.slice(0, 12).map((hit) => h('button', {
               class: 'tree__item',
-              style: { height: 'auto', padding: '6px 8px', display: 'block' },
+              style: { height: 'auto', flex: 'none', padding: '6px 8px', display: 'block' },
               dataset: { testid: `search-hit-${hit.id}` },
               title: `Insert \\cite for “${hit.title}”`,
               onclick: () => cite(hit),

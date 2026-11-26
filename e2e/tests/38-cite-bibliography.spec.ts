@@ -87,6 +87,27 @@ test.describe('Cite panel: the project bibliography', () => {
     }
   });
 
+  test('a full page of paper hits scrolls instead of squeezing each row', async ({ page, request }) => {
+    const id = await createProject(request, 'Bib Many');
+    try {
+      await openProject(page, id);
+      await openPluginTab(page, 'references');
+      const hits = Array.from({ length: 12 }, (_, i) => ({ id: `R${i}`, title: `Riemann surfaces, part ${i + 1}`, authors: 'Forster, Otto', year: 1981, venue: 'Graduate Texts in Mathematics' }));
+      await page.route('**/api/references/search*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(hits) }));
+      const search = page.getByTestId('reference-search');
+      await search.click();
+      await page.keyboard.type('riemann', { delay: 30 });
+      await expect(page.getByTestId('search-hit-R11')).toBeAttached();
+      const clipped = await page.getByTestId('reference-hits').evaluate((list) => {
+        const rows = [...list.querySelectorAll('button')];
+        return { rows: rows.length, clipped: rows.filter((r) => r.scrollHeight > r.clientHeight).length, scrolls: list.scrollHeight > list.clientHeight };
+      });
+      expect(clipped).toEqual({ rows: 12, clipped: 0, scrolls: true });
+    } finally {
+      await cleanup(request, id);
+    }
+  });
+
   test('the paper search says so when the request fails', async ({ page, request }) => {
     const id = await createProject(request, 'Bib Failed');
     try {
