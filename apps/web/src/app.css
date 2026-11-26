@@ -920,9 +920,15 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
    the pane, not the window, since the pane is resizable. Only a pane too
    narrow for even that (a phone) wraps. The widths are measured with a
    two-digit page count and a five-digit word count: all of it needs 656px; the
-   default pane (576px) keeps the word count. */
+   default pane (576px) keeps the word count. Below 428px the gaps narrow and
+   Jump drops its shortcut (the tooltip keeps it): a 1024px window's pane is
+   about 410px and wrapped to two rows with a two-digit page count. */
 .pane--preview { container-type: inline-size; }
-@container (min-width: 428px) {
+@container (max-width: 427px) {
+  .pane--preview > .pane__header { gap: 4px; }
+  .pane--preview > .pane__header .btn .kbd { display: none; }
+}
+@container (min-width: 340px) {
   .pane--preview > .pane__header { flex-wrap: nowrap; }
   .pane--preview > .pane__header > * { flex-shrink: 0; }
   .pane--preview > .pane__header > .pdf-status:not(.pdf-words) { min-width: 24px; flex-shrink: 1; overflow: hidden; white-space: nowrap; }
