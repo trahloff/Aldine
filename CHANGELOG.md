@@ -7,6 +7,8 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+## [1.26.0] — 2026-11-26
+
 ### Added
 - `ALDINE_IMPORT_MAX_MB` sets the largest project ZIP the import accepts, in
   whole megabytes up to 1024. Unset, the limit is 60 MB as before. The
