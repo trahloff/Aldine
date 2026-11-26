@@ -106,7 +106,9 @@ traces as the `playwright-<suite>` artifact.
   in `docker/metadata-action`, set `flavor: latest=false` or it re-adds
   `latest` for every release semver. `docker-compose.yml` pins
   `${ALDINE_VERSION:-x.y.z}` on purpose. Do not "simplify" either back to
-  `latest`.
+  `latest`. `main` / `main-full` are a separate moving tag for the maintainer's
+  instance (`main-images.yml`, `deploy/hetzner/follow-main.sh`), never a
+  release; main builds have no `sha-` tag.
 - The `buildcache-<variant>-<arch>` tags in the GHCR packages are the release
   layer cache, not images. Deleting one, or moving `build-image.yml` back to
   `type=gha`, makes every instance re-download TeX Live (1.4 GB) on the next

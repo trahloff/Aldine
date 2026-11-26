@@ -1,0 +1,171 @@
+name: Main images
+
+# Every commit on main that passes the same checks as a release builds the
+# images the maintainer's own instance runs. Not a release: nothing a
+# self-hoster pulls changes (they pin x.y.z or `latest`, which only
+# promote.yml moves), and releases stay weekly.
+#
+#   verify     the full CI suite on the commit
+#   build      aldine-app, aldine-compiler (-full) and aldine-runner as
+#              main-<commit>, immutable, with no sha- tag (those stay release-only)
+#   smoke      the user-facing compose file typesets on those digests
+#   lifecycle  upgrade from the pinned release and from OLDEST_SUPPORTED, and
+#              the backup/restore drill, on all three datastores
+#   publish    moves `main` (`main-full` for the compiler) to the digests
+#
+# A deploy/hetzner box whose .env says ALDINE_VERSION=main pulls `main` within
+# ten minutes (follow-main.sh). Only the newest pending commit runs: a push
+# while one run is busy replaces any run still waiting.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: main-images
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      refresh: ${{ steps.plan.outputs.refresh }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        run: |
+          echo "version=main-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "refresh=$(git describe --tags --abbrev=0 --match 'v*')" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: plan
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  build-app:
+    needs: [plan, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: app
+      context: .
+      dockerfile: apps/server/Dockerfile
+      version: ${{ needs.plan.outputs.version }}
+      packages-refresh: ${{ needs.plan.outputs.refresh }}
+      commit-tag: false
+    secrets: inherit
+
+  build-compiler-full:
+    needs: [plan, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: compiler
+      context: apps/compiler
+      dockerfile: apps/compiler/Dockerfile
+      version: ${{ needs.plan.outputs.version }}
+      build-args: TEXLIVE_SCHEME=full
+      tag-suffix: -full
+      free-disk: true
+      packages-refresh: ${{ needs.plan.outputs.refresh }}
+      commit-tag: false
+    secrets: inherit
+
+  build-runner:
+    needs: [plan, verify]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      name: runner
+      context: apps/runner
+      dockerfile: apps/runner/Dockerfile
+      version: ${{ needs.plan.outputs.version }}
+      build-args: VERSION=${{ needs.plan.outputs.version }}
+      packages-refresh: ${{ needs.plan.outputs.refresh }}
+      commit-tag: false
+    secrets: inherit
+
+  smoke:
+    needs: [build-app, build-compiler-full]
+    runs-on: ubuntu-latest
+    env:
+      ALDINE_APP_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-app@${{ needs.build-app.outputs.digest }}
+      ALDINE_COMPILER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler-full.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Free runner disk for the compiler image
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+      - name: Start the stack from the pushed digests
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml up -d --quiet-pull
+      - name: Smoke test
+        run: node scripts/smoke-image.mjs
+        env:
+          ALDINE_URL: http://localhost:8080
+          EXPECT_SCHEME: full
+      - name: Container logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.smoke.yml logs --no-color | tail -200
+
+  smoke-runner:
+    needs: [build-runner]
+    runs-on: ubuntu-latest
+    env:
+      ALDINE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/aldine-runner@${{ needs.build-runner.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start the runner with the overlay's settings
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml -f deploy/docker-compose.runner-smoke.yml up -d --quiet-pull runner
+      - name: Smoke test
+        run: |
+          docker run --rm --network none -v aldine_aldine-runner-socket:/run/aldine-runner -v "$PWD:/repo:ro" \
+            node:22-trixie-slim@sha256:68c76cfad89921b927eae28ba21407475e29d0ce450afcdbe70c1532db042b64 node /repo/scripts/smoke-runner.mjs
+      - name: Container logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f deploy/docker-compose.runner.yml -f deploy/docker-compose.runner-smoke.yml logs --no-color runner | tail -100
+
+  lifecycle:
+    needs: [build-app, build-compiler-full]
+    uses: ./.github/workflows/lifecycle.yml
+    with:
+      app-image: ghcr.io/${{ github.repository_owner }}/aldine-app@${{ needs.build-app.outputs.digest }}
+      compiler-image: ghcr.io/${{ github.repository_owner }}/aldine-compiler@${{ needs.build-compiler-full.outputs.digest }}
+
+  publish:
+    needs: [build-app, build-compiler-full, build-runner, smoke, smoke-runner, lifecycle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move main to the tested digests
+        env:
+          OWNER: ghcr.io/${{ github.repository_owner }}
+          APP: ${{ needs.build-app.outputs.digest }}
+          COMPILER: ${{ needs.build-compiler-full.outputs.digest }}
+          RUNNER: ${{ needs.build-runner.outputs.digest }}
+        run: |
+          set -e
+          docker buildx imagetools create -t "$OWNER/aldine-app:main" "$OWNER/aldine-app@$APP"
+          docker buildx imagetools create -t "$OWNER/aldine-compiler:main-full" "$OWNER/aldine-compiler@$COMPILER"
+          docker buildx imagetools create -t "$OWNER/aldine-runner:main" "$OWNER/aldine-runner@$RUNNER"
+          {
+            echo "main now points at ${GITHUB_SHA::7}:"
+            echo "- aldine-app@$APP"
+            echo "- aldine-compiler@$COMPILER (main-full)"
+            echo "- aldine-runner@$RUNNER"
+          } >> "$GITHUB_STEP_SUMMARY"
