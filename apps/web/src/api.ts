@@ -891,7 +891,7 @@ export const api = {
   deleteComment: (id: string, cid: string) =>
     req<{ ok: boolean }>(`/api/projects/${id}/comments/${cid}`, { method: 'DELETE' }),
 
-  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; mcpSync?: boolean; runner?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval' }>('/api/auth/me'),
+  me: () => req<{ authEnabled: boolean; passwordAuth: boolean; user: AuthUser | null; providers: OAuthProviderInfo[]; admin: boolean; mcpEnabled?: boolean; mcpSync?: boolean; runner?: boolean; publicUrl?: string | null; sendsEmail?: boolean; signup?: 'open' | 'approval'; importMaxMb?: number }>('/api/auth/me'),
   /** The guest this browser is in `project` without an account, if any. */
   guestMe: (project: string) => req<{ guest: GuestInfo | null }>(`/api/auth/guest?project=${encodeURIComponent(project)}`),
   /** Stop being a guest in `project`: off its link, and out of this browser. */

@@ -47,11 +47,6 @@ declare const __ALDINE_VERSION__: string;
 /** AGPL section 13: the source of the version running here (About.tsx says the same). */
 const SOURCE_URL = 'https://github.com/trahloff/Aldine';
 
-/** Mirrors IMPORT_MAX_ZIP_BYTES in apps/server/src/routes.ts — the server
- *  enforces it; this pre-flight only spares the upload. */
-const IMPORT_MAX_ZIP_MB = 60;
-const IMPORT_MAX_ZIP_BYTES = IMPORT_MAX_ZIP_MB * 1024 * 1024;
-
 /** The palette's sections before anything is typed: projects first. */
 const PALETTE_GROUPS = ['Projects', 'New', 'Appearance', 'More'];
 
@@ -135,7 +130,7 @@ export default function Home() {
   const dismissToast = useToastDismiss();
   const dialogs = useDialogs();
   const appearance = useAppearance();
-  const { authEnabled, user, admin, setUser, providers } = useAuth();
+  const { authEnabled, user, admin, setUser, providers, importMaxMb } = useAuth();
   const myId = user?.id ?? null;
   const compact = useMediaQuery(PHONE);
   const now = useMinuteTick();
@@ -689,12 +684,13 @@ export default function Home() {
     const jobs: (ImportJob & { file: File })[] = zips.map((file, i) => ({
       key: `import-${Date.now()}-${i}`, name: file.name.replace(/\.zip$/i, ''), file, state: 'uploading', progress: 0, ctrl: new AbortController(),
     }));
-    const tooBig = jobs.filter((j) => j.file.size > IMPORT_MAX_ZIP_BYTES);
+    // The server enforces its limit; this only spares the upload.
+    const tooBig = jobs.filter((j) => j.file.size > importMaxMb * 1024 * 1024);
     for (const j of tooBig) {
       j.state = 'failed';
-      j.error = `the ZIP is ${(j.file.size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`;
+      j.error = `the ZIP is ${(j.file.size / (1024 * 1024)).toFixed(1)} MB; the limit is ${importMaxMb} MB`;
     }
-    if (single && tooBig.length) { toast(`ZIP is ${(zips[0].size / (1024 * 1024)).toFixed(1)} MB; the limit is ${IMPORT_MAX_ZIP_MB} MB`, 'error'); return; }
+    if (single && tooBig.length) { toast(`ZIP is ${(zips[0].size / (1024 * 1024)).toFixed(1)} MB; the limit is ${importMaxMb} MB`, 'error'); return; }
     // The placeholders and the new projects are drawn in the list of all projects.
     if (!single && show !== 'all') navigate('/');
     setImports((cur) => [...jobs.map(({ file: _f, ...j }) => j), ...cur]);
@@ -743,7 +739,7 @@ export default function Home() {
         // below what the app allows — the size is the only number worth stating.
         const mb = (j.file.size / (1024 * 1024)).toFixed(1);
         const msg = err instanceof ApiError && err.status === 413 && !/limit is/.test(err.message)
-          ? `${mb} MB was refused before it reached the app, which allows ${IMPORT_MAX_ZIP_MB} MB`
+          ? `${mb} MB was refused before it reached the app, which allows ${importMaxMb} MB`
           : err.message;
         if (single) { drop(j.key); toast(`Import failed: ${msg}`, 'error'); return; }
         pending.delete(j.key);

@@ -36,6 +36,8 @@ interface AuthState {
   sendsEmail: boolean;
   /** ALDINE_SIGNUP=approval: new accounts wait until an administrator approves them. */
   signupApproval: boolean;
+  /** Largest project ZIP the server imports, in MB (ALDINE_IMPORT_MAX_MB). */
+  importMaxMb: number;
   emailNotice: EmailNotice | null;
   clearEmailNotice(): void;
   setUser(u: AuthUser | null): void;
@@ -46,7 +48,10 @@ interface AuthState {
   setGuest(g: GuestInfo | null): void;
 }
 
-const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, mcpSync: false, runner: false, publicUrl: null, sendsEmail: false, signupApproval: false, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {}, guest: null, setGuest: () => {} });
+/** What a server that does not report its limit accepts (every release before ALDINE_IMPORT_MAX_MB). */
+const DEFAULT_IMPORT_MAX_MB = 60;
+
+const Ctx = createContext<AuthState>({ loading: true, authEnabled: false, user: null, admin: false, providers: [], passwordAuth: true, mcpEnabled: false, mcpSync: false, runner: false, publicUrl: null, sendsEmail: false, signupApproval: false, importMaxMb: DEFAULT_IMPORT_MAX_MB, emailNotice: null, clearEmailNotice: () => {}, setUser: () => {}, refresh: async () => {}, guest: null, setGuest: () => {} });
 
 const CONFIRM_PARAM = 'confirm_email';
 const CONFIRMED = 'Your email address is confirmed. Projects shared with it are in your list now, and invitations to it are on this page.';
@@ -104,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [sendsEmail, setSendsEmail] = useState(false);
   const [signupApproval, setSignupApproval] = useState(false);
+  const [importMaxMb, setImportMaxMb] = useState(DEFAULT_IMPORT_MAX_MB);
   const [emailNotice, setEmailNotice] = useState<EmailNotice | null>(null);
   const [guest, setGuest] = useState<GuestInfo | null>(null);
   const [deletedNotice] = useState<string | null>(() => {
@@ -131,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRunner(me.runner === true);
       setPublicUrl(me.publicUrl || null);
       setSendsEmail(me.sendsEmail === true);
+      setImportMaxMb(typeof me.importMaxMb === 'number' && me.importMaxMb > 0 ? me.importMaxMb : DEFAULT_IMPORT_MAX_MB);
       setSignupApproval(me.signup === 'approval');
     } catch {
       setAuthEnabled(false);
@@ -202,7 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return signIn;
   }
 
-  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, mcpSync, runner, publicUrl, sendsEmail, signupApproval, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh, guest: user ? null : guest, setGuest }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ loading, authEnabled, user, admin, providers, passwordAuth, mcpEnabled, mcpSync, runner, publicUrl, sendsEmail, signupApproval, importMaxMb, emailNotice, clearEmailNotice: () => setEmailNotice(null), setUser, refresh, guest: user ? null : guest, setGuest }}>{children}</Ctx.Provider>;
 }
 
 /** The share link token project `projectId`'s page came with, kept for

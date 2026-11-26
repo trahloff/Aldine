@@ -14,6 +14,7 @@ import { initDb, closeDb } from './db/index.js';
 import { initRateLimit } from './ratelimit.js';
 import { ensureSigningSecret } from './output-signing.js';
 import { AUTH_ENABLED, signupConfigWarnings } from './auth.js';
+import { IMPORT_LIMIT, IMPORT_DEFAULT_MB, proxyBodyMb } from './importlimit.js';
 import { registrationConfigWarnings } from './oauth/registration.js';
 import { backfillMissingLastEdits, flushActivity } from './activity.js';
 import { discover, oidcBootLine, oidcConfig, oidcConfigWarnings, oidcLogoutWarning } from './oidc.js';
@@ -55,6 +56,8 @@ app.server.on('upgrade', (request, socket, head) => {
 
 console.log(`[aldine] server on :${config.port}${config.basePath} — data=${config.dataDir} compiler=${config.compilerUrl}`);
 for (const warning of signupConfigWarnings()) console.warn(warning);
+if (IMPORT_LIMIT.warning) console.warn(IMPORT_LIMIT.warning);
+if (IMPORT_LIMIT.mb !== IMPORT_DEFAULT_MB) console.log(`[aldine] ZIP import up to ${IMPORT_LIMIT.mb} MB; a reverse proxy in front has to allow ${proxyBodyMb()} MB bodies`);
 for (const warning of registrationConfigWarnings()) console.warn(warning);
 for (const warning of instance.warnings) console.warn(warning);
 if (AUTH_ENABLED) {

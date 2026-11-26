@@ -30,6 +30,7 @@ import { PersonalRepoError, addPersonalRepo, loadPersonalRepos, personalLimit, p
 import { addReference, fetchBibEntry, searchWorks } from './references.js';
 import { bibIndex, labelIndex, wordCount } from './indexes.js';
 import { unzip, zipEntryCount, ZipError } from './unzip.js';
+import { IMPORT_LIMIT } from './importlimit.js';
 import { archiveFolderName, branchArchive } from './archive.js';
 import { guessRoot, detectRoot, adoptRootIfUnset } from './root.js';
 import { config } from './config.js';
@@ -142,8 +143,8 @@ function oauthProviders(): Array<{ id: string; label: string }> {
 /** Last HEAD we successfully pushed per project — lets auto-sync skip a no-op
  *  network push. In-memory (single-node); cleared on restart → push-when-unsure. */
 
-/** Raw ZIP size the import route accepts; the web import dialog states the same figure. */
-export const IMPORT_MAX_ZIP_BYTES = 60 * 1024 * 1024;
+/** Raw ZIP size the import route accepts (importlimit.ts); the web import dialog reads it from /api/auth/me. */
+export const IMPORT_MAX_ZIP_BYTES = IMPORT_LIMIT.zipBytes;
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
 /** Collaborators and open invitations a project holds at most, together. */
@@ -352,6 +353,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       authEnabled: auth.AUTH_ENABLED, passwordAuth: !auth.SSO_ONLY, user, providers: oauthProviders(), admin: !!user && isAdmin(user),
       runner: runnerAllowed(user),
       mcpEnabled: process.env.ALDINE_MCP === '1', mcpSync: process.env.ALDINE_MCP === '1' && process.env.ALDINE_MCP_SYNC === '1', publicUrl: config.publicUrl || null, sendsEmail: sendsEmail(), signup: auth.SIGNUP_MODE,
+      importMaxMb: IMPORT_LIMIT.mb,
     };
   });
 
@@ -1893,7 +1895,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
   // global 32 MB one would cap imports at ~24 MB while the UI promises
   // IMPORT_MAX_ZIP_BYTES. deploy/nginx.conf's client_max_body_size must stay
   // >= this figure.
-  const importBodyLimit = Math.ceil(IMPORT_MAX_ZIP_BYTES * 4 / 3) + 1024 * 1024;
+  const importBodyLimit = IMPORT_LIMIT.bodyBytes;
   app.addContentTypeParser('multipart/form-data', { parseAs: 'buffer' }, (req, body: Buffer, done) => {
     try {
       const boundary = multipartBoundary(req.headers['content-type']);
@@ -1937,7 +1939,7 @@ button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0
     }
     let created: store.ProjectMeta | null = null;
     try {
-      const entries = unzip(buf);
+      const entries = unzip(buf, { maxTotalBytes: IMPORT_LIMIT.unpackedBytes });
       entryCount = Object.keys(entries).length;
       // Every entry is placed (or rejected) before the project exists, so a bad
       // path can never leave a half-imported project behind.

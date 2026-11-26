@@ -7,6 +7,15 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- `ALDINE_IMPORT_MAX_MB` sets the largest project ZIP the import accepts, in
+  whole megabytes up to 1024. Unset, the limit is 60 MB as before. The
+  import dialog states the configured limit, the unpacked files may come to
+  three times it (and at least the 200 MB allowed so far), and with the
+  setting in use the server prints at start what a reverse proxy in front
+  has to allow. A value that is not a limit is named in a warning and
+  leaves 60 MB in place.
+
 ## [1.25.0] — 2026-11-25
 
 ### Added
