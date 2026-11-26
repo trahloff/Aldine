@@ -2059,8 +2059,10 @@ button.presence__avatar:hover:not(:disabled), button.presence__avatar:focus-visi
 
 /* the files tab: the tree scrolls, the outline of the open file below it */
 .sidebar__panel--files { flex-direction: column; overflow: hidden; }
-.sidebar__tree { flex: 1 1 auto; min-height: 80px; overflow: auto; }
-.outline { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 0; max-height: 45%; border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 4px; }
+/* The tree takes what the outline leaves (basis 0): with basis auto a long tree
+   out-shrinks the outline down to a clipped sliver of its header. */
+.sidebar__tree { flex: 1 1 0; min-height: 80px; overflow: auto; }
+.outline { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; max-height: 45%; border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 4px; }
 .outline__head { display: flex; align-items: center; gap: 4px; flex: none; border: 0; background: transparent; color: var(--text-2); font: 600 var(--text-s) var(--font-ui); text-align: left; padding: 4px 6px; border-radius: var(--radius-s); cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .outline__head:hover { color: var(--text); background: var(--bg-hover); } }
 .outline__chev { display: inline-flex; transition: transform 150ms var(--ease); }

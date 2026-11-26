@@ -103,7 +103,9 @@ test.describe('app shell on a phone', () => {
       await phoneMore(page, 'sidebar-toggle', 'tap');
       await expect(page.getByTestId('file-main.tex')).toBeVisible();
       expect(await height(page.getByTestId('file-main.tex'))).toBeGreaterThanOrEqual(40);
-      for (const t of ['tab-files', 'tab-review', 'tab-more']) expect(await height(page.getByTestId(t))).toBeGreaterThanOrEqual(40);
+      // a phone-wide sidebar has room for every panel's tab, so More may not be there
+      const extra = (await page.getByTestId('tab-more').count()) ? 'tab-more' : 'tab-plugin:zotero';
+      for (const t of ['tab-files', 'tab-review', extra]) expect(await height(page.getByTestId(t))).toBeGreaterThanOrEqual(40);
       for (const t of ['tab-search', 'sidebar-collapse']) {
         expect(await height(page.getByTestId(t))).toBeGreaterThanOrEqual(40);
         expect(await width(page.getByTestId(t))).toBeGreaterThanOrEqual(40);

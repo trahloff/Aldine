@@ -246,4 +246,46 @@ test.describe('sidebar', () => {
       await expect(page.getByTestId('dir-chapters').locator('.tree__chevron svg')).toHaveCount(1);
     } finally { await cleanup(request, id); }
   });
+
+  test('a wide sidebar shows every panel as a tab, and More only when one does not fit', async ({ page, request }) => {
+    const id = await createProject(request, 'Sidebar Wide');
+    try {
+      await page.addInitScript(() => localStorage.setItem('aldine.sidebarWidth', '400'));
+      await openProject(page, id);
+      await expect(page.getByTestId('tab-plugin:zotero')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('tab-plugin:aifix')).toBeVisible();
+      await expect(page.getByTestId('tab-more')).toHaveCount(0);
+      await expect(page.getByTestId('tab-plugin:zotero')).toHaveAttribute('aria-label', 'Zotero');
+      await page.getByTestId('tab-plugin:zotero').click();
+      await expect(page.getByTestId('zotero-panel')).toBeVisible();
+      // narrowed by hand, the tabs that no longer fit move back into More
+      await page.evaluate(() => { const s = document.querySelector<HTMLElement>('[data-testid="sidebar"]')!; s.style.setProperty('--sidebar-w', '230px'); });
+      await expect(page.getByTestId('tab-more')).toBeVisible();
+      await expect(page.getByTestId('tab-more')).toHaveAttribute('aria-label', 'More panels: Zotero');
+      const cut = await page.locator('.sidebar__tabs > *').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+      expect(cut).toBe(0);
+    } finally { await cleanup(request, id); }
+  });
+
+  test('the outline header stays whole under a long file tree', async ({ page, request }) => {
+    const id = await createProject(request, 'Sidebar Outline');
+    try {
+      for (let i = 0; i < 60; i++) expect((await put(request, id, `chapters/c${String(i).padStart(2, '0')}.tex`, `\\section{C${i}}\n`)).ok()).toBeTruthy();
+      await page.addInitScript(() => localStorage.setItem('aldine.outlineOpen', '0'));
+      await openProject(page, id);
+      await page.getByTestId('dir-chapters').click();
+      await expect(page.getByTestId('file-chapters/c59.tex')).toBeAttached({ timeout: 15_000 });
+      const head = page.getByTestId('outline-toggle');
+      await expect(head).toBeVisible();
+      const clipped = await head.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const outline = el.closest('.outline')!.getBoundingClientRect();
+        return { cut: el.scrollHeight > el.clientHeight + 1, outside: box.bottom > outline.bottom + 1, short: box.height < 20 };
+      });
+      expect(clipped).toEqual({ cut: false, outside: false, short: false });
+      // the tree scrolls instead: its last row is reachable
+      await page.getByTestId('file-chapters/c59.tex').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('file-chapters/c59.tex')).toBeInViewport();
+    } finally { await cleanup(request, id); }
+  });
 });
