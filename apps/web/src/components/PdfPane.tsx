@@ -8,6 +8,7 @@ import { bindSelection, markHits, unbindSelection, type TextSpans } from '../uti
 import { clampZoom, PDF_ZOOM_STEPS, wheelZoom } from '../util/filePreview';
 import { outputFileName } from '../util/outputFiles';
 import PdfFindBar from './PdfFindBar';
+import PdfOutline, { type PdfOutlineItem } from './PdfOutline';
 import type { PageViewport, PDFDocumentProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import type { TextContent, TextItem } from 'pdfjs-dist/types/src/display/api';
 
@@ -56,6 +57,10 @@ interface Props {
   pages?: PdfPagesStore;
   /** A pinch or Ctrl+wheel over the pages asks for this zoom. */
   onZoom?(zoom: number): void;
+  /** The PDF's native bookmarks are shown over the pages. */
+  outlineOpen?: boolean;
+  onOutlineOpenChange?(open: boolean): void;
+  onOutlineAvailable?(available: boolean): void;
 }
 
 /** A laid-out page: its canvas, CSS pixels per PDF point, and its viewport
@@ -428,7 +433,7 @@ function stretch(info: PageInfo[], ratio: number) {
 /** CSS pixels per PDF point of a page as it is sized now, stretched or not. */
 const shownScale = (info: PageInfo) => info.el.offsetHeight / info.view.height;
 
-const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, staleNote, notice, ready = true, hasTex = true, onFirstOpen, onInverse, onShowErrors, pages, onZoom }, ref) {
+const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, branch, status, zoom = 1, hasErrors = false, stale = false, staleNote, notice, ready = true, hasTex = true, onFirstOpen, onInverse, onShowErrors, pages, onZoom, outlineOpen = false, onOutlineOpenChange, onOutlineAvailable }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typesetKeys = useShortcutLabel('typeset');
   const innerRef = useRef<HTMLDivElement>(null);
@@ -440,6 +445,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   const renderTask = useRef(0);
   /** The latest PDF loaded for pdfUrl; it is laid out at every zoom and width. */
   const [doc, setDoc] = useState<LoadedPdf | null>(null);
+  const [outline, setOutline] = useState<PdfOutlineItem[]>([]);
   const docRef = useRef<LoadedPdf | null>(null);
   /** The layout on screen. Its document stays open until another one's pages
    *  replace it, also while pdfUrl is null after a run that left no PDF. */
@@ -465,6 +471,7 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
   /** Find: whether its bar is open, what it holds, the matches in a
    *  document, and the one it is on. */
   const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => { if (outlineOpen) setFindOpen(false); }, [outlineOpen]);
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<{ doc: LoadedPdf; query: string; list: FoundMatch[] } | null>(null);
   const [current, setCurrent] = useState(-1);
@@ -506,6 +513,20 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     }
     scroller.scrollTo({ top: info.el.offsetTop + y * shownScale(info) - LINK_MARGIN, behavior: 'smooth' });
     flash(info, y, LINK_FLASH);
+  };
+
+  const followOutline = async (dest: NonNullable<PdfOutlineItem['dest']>) => {
+    const pdf = docRef.current?.pdf;
+    if (!pdf) return;
+    const target = await resolveDest(pdf, dest).catch(() => null);
+    if (!target) return;
+    const info = pageInfo.current[target.page - 1];
+    if (target.y == null || !info) {
+      followLink(target.page, null);
+      return;
+    }
+    const [, top] = toPage(info.view, target.x ?? 0, target.y);
+    followLink(target.page, top);
   };
 
   useImperativeHandle(ref, () => ({
@@ -759,6 +780,27 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
     };
   }, [pdfUrl, loadTick, collect, empty]);
 
+  // The outline belongs to the PDF, not the source editor: fetch it once per
+  // loaded document and keep an old document's late response off the screen.
+  useEffect(() => {
+    let live = true;
+    setOutline([]);
+    onOutlineAvailable?.(false);
+    onOutlineOpenChange?.(false);
+    if (!doc) return () => { live = false; };
+    void doc.pdf.getOutline().then((items) => {
+      if (!live) return;
+      const next = items ?? [];
+      setOutline(next);
+      onOutlineAvailable?.(next.length > 0);
+    }).catch((err) => {
+      if (!live) return;
+      console.error('[pdf] outline failed', err);
+      onOutlineAvailable?.(false);
+    });
+    return () => { live = false; };
+  }, [doc, onOutlineAvailable, onOutlineOpenChange]);
+
   // Each layout draws the pages it will put on screen before they replace
   // the ones there, and holds the spot in the middle of the view: a zoom, a
   // width change and a new typeset all keep the page being read, drawn.
@@ -982,6 +1024,13 @@ const PdfPane = forwardRef<PdfPaneHandle, Props>(function PdfPane({ pdfUrl, bran
 
   return (
     <div className="pdf-view" onKeyDown={onFindKeys} onCopy={copyText}>
+      {outlineOpen && outline.length > 0 && (
+        <PdfOutline
+          items={outline}
+          onNavigate={(dest) => { void followOutline(dest); }}
+          onClose={() => onOutlineOpenChange?.(false)}
+        />
+      )}
       <div className="pdf-pane" ref={scrollRef} tabIndex={0} role="region" aria-label="Pages of the typeset PDF" data-testid="pdf-pane">
         {stale && rendered && (
           <div className="pdf-stale" data-testid="pdf-stale">{staleNote ?? 'Preview is from the last successful typeset'}</div>

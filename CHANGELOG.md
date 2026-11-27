@@ -7,6 +7,10 @@ What 1.0 changes about that is in [docs/STABILITY.md](docs/STABILITY.md).
 
 ## [Unreleased]
 
+### Added
+- The typeset PDF preview can show the PDF's native bookmarks as a navigable
+  outline, including nested entries.
+
 ### Fixed
 - Git commands run through the server again stop at the data directory. Since
   the move to simple-git 4 they had lost that limit, so an autosave in a

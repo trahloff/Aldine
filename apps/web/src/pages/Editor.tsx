@@ -29,7 +29,7 @@ import FileTabs from '../components/FileTabs';
 import { PluginHost, PluginPanel, type PluginErrorsAction, type PluginCommand, type PluginConfirm } from '../plugins/host';
 import { hintFor, offersUnicodeEngine } from '../editor/errorHints';
 import { unicodeFontPlan, type UnicodeFontPlan } from '../editor/unicodeFont';
-import { IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconBook, IconHistory, IconQuote, IconRun, IconSpark, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
+import { IconBookmark, IconChevronDown, IconChevronLeft, IconChevronRight, IconComment, IconDownload, IconEllipsis, IconFiles, IconBook, IconHistory, IconQuote, IconRun, IconSpark, IconLayoutBoth, IconLayoutEditor, IconLayoutPdf, IconSearch, IconSidebar, IconToSource } from '../components/Icons';
 import CommandPalette, { Command, PaletteTrigger } from '../components/CommandPalette';
 import ConnectClaudeModal from '../components/ClaudeConnect';
 import { invalidateBibCache, invalidateLabelCache } from '../editor/latexExtras';
@@ -417,6 +417,12 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
   const codeRef = useRef<CodePaneHandle>(null);
   const pdfRef = useRef<PdfPaneHandle>(null);
   const [pdfPages] = useState(createPdfPagesStore);
+  const [pdfOutlineAvailable, setPdfOutlineAvailable] = useState(false);
+  const [pdfOutlineOpen, setPdfOutlineOpen] = useState(false);
+  const onPdfOutlineAvailable = useCallback((available: boolean) => {
+    setPdfOutlineAvailable(available);
+    if (!available) setPdfOutlineOpen(false);
+  }, []);
   const compilingRef = useRef(false);
   const pendingRef = useRef(false);
   /** A queued typeset owes a full run (someone asked for one while a draft ran). */
@@ -2908,6 +2914,20 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
                 Jump<span className="jump__more"> to PDF</span> <span className="kbd">{keys.jump}</span>
               </button>
             )}
+            {pdfOutlineAvailable && hasPdf && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--small pdf-outline-toggle"
+                onClick={() => setPdfOutlineOpen((open) => !open)}
+                title={pdfOutlineOpen ? 'Hide PDF bookmarks' : 'Show PDF bookmarks'}
+                aria-label="PDF bookmarks"
+                aria-expanded={pdfOutlineOpen}
+                aria-controls="pdf-outline"
+                data-testid="pdf-outline-toggle"
+              >
+                <IconBookmark />
+              </button>
+            )}
             <PdfPageNav store={pdfPages} onGo={(page) => pdfRef.current?.goToPage(page)} />
             <div className="zoom" data-testid="zoom-controls">
               <button className="btn btn--ghost btn--small" onClick={() => zoomPdf(-1)} title="Zoom out (-)" aria-label="Zoom out">−</button>
@@ -2957,6 +2977,9 @@ export default function Editor({ linkProblem }: { linkProblem?: string } = {}) {
             onShowErrors={shown === 'pdf' ? () => revealRef.current('editor') : undefined}
             pages={pdfPages}
             onZoom={setZoom}
+            outlineOpen={pdfOutlineOpen}
+            onOutlineOpenChange={setPdfOutlineOpen}
+            onOutlineAvailable={onPdfOutlineAvailable}
           />
         </section>
       </div>
