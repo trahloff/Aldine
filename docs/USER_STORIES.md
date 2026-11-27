@@ -86,7 +86,8 @@ in `21-zip-import.spec.ts`.*
 
 ## Compile & preview (COMP)
 
-*Automated in `02-compile.spec.ts`; SyncTeX in `07-features.spec.ts`.*
+*Automated in `02-compile.spec.ts` and `89-pdf-outline.spec.ts`; SyncTeX in
+`07-features.spec.ts`.*
 
 - **COMP-1** — I press ⌘S (or Typeset) and get a rendered PDF in the preview
   pane within a few seconds.
@@ -101,6 +102,8 @@ in `21-zip-import.spec.ts`.*
 - **COMP-7** — A missing-package error names the package and says how to add
   it: one `tlmgr install` line in a derived compiler image, or
   `ALDINE_TEXLIVE=-full`.
+- **COMP-8** — I can open the PDF's native bookmarks in the typeset preview as
+  a nested outline; selecting an entry jumps to its destination.
 
 ## Collaboration (COLLAB)
 
